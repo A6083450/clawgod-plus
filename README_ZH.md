@@ -49,6 +49,7 @@ irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | ie
 | **GrowthBook 覆盖** | 通过配置文件覆盖任意 Feature Flag |
 | **Agent Teams** | 多智能体协作，无需额外参数 |
 | **Computer Use** | 无需 Max/Pro 订阅即可使用屏幕控制（macOS） |
+| **Claude in Chrome** | 浏览器工具优先使用本地 Chrome 扩展 socket/pipe，API Key 模式无需 OAuth 订阅桥接鉴权 |
 | **Auto-mode** | 解锁第三方 API 用户的 auto-mode（移除 firstParty 限制） |
 | **Ultraplan** | 通过 Claude Code Remote 进行多智能体规划 |
 | **Ultrareview** | 通过 Claude Code Remote 自动化 Bug 查找 |
@@ -88,12 +89,14 @@ irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | ie
 ## 使用
 
 ```bash
-claude              # 已 Patch 的 Claude Code（替换官方 launcher）
+claude              # 已 Patch 的 Claude Code，交互会话默认带 --chrome
 clawgod             # 同 `claude`，显式且永远生效的入口
 claude.orig         # 原版未修改版本（自动备份）
 ```
 
 `clawgod` 是一个无歧义的入口：Windows 上即便 `claude.exe` 抢占了 `claude.cmd`，`clawgod.cmd` 始终生效；即便官方自动更新覆盖了 `claude`，`clawgod` 仍跑 patched 版本。
+
+设置 `CLAWGOD_NO_AUTO_CHROME=1` 可以临时禁用默认 `--chrome` 注入。
 
 ## 配置
 
@@ -120,7 +123,7 @@ claude.orig         # 原版未修改版本（自动备份）
 2. 从 `__BUN` segment（Mach-O / ELF / PE）抽出嵌入的 `cli.js` 源码
 3. 抽出嵌入的 `.node` 原生模块（audio-capture、image-processor、computer-use-*、url-handler）放到 `~/.clawgod/vendor/`
 4. 把 `/$bunfs/...` 虚拟路径重写到本地 vendor 路径
-5. 应用 28 条正则 patch（跨版本兼容，同一组 regex 覆盖多个 release）
+5. 应用 28 条跨版本 patch，包括 AST 辅助的 Chrome 浏览器工具 socket fallback
 6. `claude` / `clawgod` launcher 在 Bun runtime 下跑 patched cli.js
 
 `~/.clawgod/.source-version` 标记当时被 patch 的版本号。每次启动 wrapper 比对它和 `versions/` 里最新二进制；如果用户走官方途径升级了 Claude Code，下次启动会自动重打补丁。

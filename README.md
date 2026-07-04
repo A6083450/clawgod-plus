@@ -49,6 +49,7 @@ Green logo = patched. Orange logo = original.
 | **GrowthBook Overrides** | Override any feature flag via config file |
 | **Agent Teams** | Multi-agent swarm collaboration, no flags needed |
 | **Computer Use** | Screen control without Max/Pro subscription (macOS) |
+| **Claude in Chrome** | Browser tools use the local Chrome extension socket/pipe first, so API-key mode works without OAuth subscription bridge auth |
 | **Auto-mode** | Unlocks auto-mode for third-party API users (no firstParty gate) |
 | **Ultraplan** | Multi-agent planning via Claude Code Remote |
 | **Ultrareview** | Automated bug hunting via Claude Code Remote |
@@ -88,12 +89,14 @@ Green logo = patched. Orange logo = original.
 ## Commands
 
 ```bash
-claude              # Patched Claude Code (replaces the official launcher)
+claude              # Patched Claude Code, starts interactive sessions with --chrome
 clawgod             # Same as `claude`, explicit & guaranteed entry point
 claude.orig         # Original unpatched version (auto-backed-up)
 ```
 
 `clawgod` is unambiguous: on Windows where `claude.exe` may shadow `claude.cmd`, `clawgod.cmd` always works. Even after official self-update overwrites `claude`, `clawgod` keeps running the patched build.
+
+Set `CLAWGOD_NO_AUTO_CHROME=1` to launch without the default `--chrome` injection.
 
 ## Configuration
 
@@ -120,7 +123,7 @@ Since `@anthropic-ai/claude-code` v2.1.113, the npm package no longer ships `cli
 2. Extracts the embedded `cli.js` source from the `__BUN` segment (Mach-O / ELF / PE)
 3. Extracts the embedded `.node` native modules (audio-capture, image-processor, computer-use-*, url-handler) into `~/.clawgod/vendor/`
 4. Rewrites `/$bunfs/...` virtual paths to point at the extracted modules
-5. Applies 28 regex-based patches (version-agnostic — same patches work across many releases)
+5. Applies 28 version-agnostic patches, including AST-guided Chrome browser-tool socket fallback
 6. The `claude` / `clawgod` launchers run the patched cli.js under the Bun runtime
 
 A `.source-version` stamp in `~/.clawgod/` records which native version was patched. On every launch the wrapper compares it against the latest binary in `versions/`; if the user upgraded Claude Code via the official installer, ClawGod auto-re-patches on the next run.

@@ -49,6 +49,7 @@ irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | ie
 | **GrowthBook オーバーライド** | 設定ファイルで任意のフィーチャーフラグを上書き |
 | **Agent Teams** | マルチエージェント協調、フラグ不要 |
 | **Computer Use** | Max/Proサブスク不要で画面操作（macOS） |
+| **Claude in Chrome** | ブラウザツールはローカル Chrome 拡張の socket/pipe を優先し、APIキー運用でも OAuth サブスク bridge 認証なしで動作 |
 | **Auto-mode** | サードパーティ API ユーザー向け auto-mode のロック解除（firstParty 制限を撤去） |
 | **Ultraplan** | Claude Code Remote 経由のマルチエージェント計画 |
 | **Ultrareview** | Claude Code Remote 経由の自動バグ検出 |
@@ -88,12 +89,14 @@ irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | ie
 ## コマンド
 
 ```bash
-claude              # パッチ済み Claude Code（公式 launcher を置き換え）
+claude              # パッチ済み Claude Code、対話セッションはデフォルトで --chrome 付き
 clawgod             # `claude` と同じ、明示的かつ常に動作するエントリポイント
 claude.orig         # オリジナル未修正版（自動バックアップ） 
 ```
 
 `clawgod` は曖昧さのないエントリポイントです：Windows で `claude.exe` が `claude.cmd` を覆い隠す場合でも `clawgod.cmd` は常に動作し、公式自動更新で `claude` が上書きされても `clawgod` はパッチ済みビルドを実行し続けます。
+
+`CLAWGOD_NO_AUTO_CHROME=1` を設定すると、デフォルトの `--chrome` 注入を一時的に無効化できます。
 
 ## 設定
 
@@ -120,7 +123,7 @@ claude.orig         # オリジナル未修正版（自動バックアップ）
 2. `__BUN` セグメント（Mach-O / ELF / PE）から埋め込まれた `cli.js` ソースを抽出
 3. 埋め込まれた `.node` ネイティブモジュール（audio-capture、image-processor、computer-use-*、url-handler）を `~/.clawgod/vendor/` に抽出
 4. `/$bunfs/...` 仮想パスをローカル vendor パスに書き換え
-5. 28 個の正規表現パッチを適用（バージョン横断的——同じ regex 群で複数リリースをカバー）
+5. 28 個のバージョン横断パッチを適用（AST 補助の Chrome ブラウザツール socket fallback を含む）
 6. `claude` / `clawgod` ランチャが Bun ランタイムでパッチ済み cli.js を実行
 
 `~/.clawgod/.source-version` がパッチ時のバージョンを記録します。起動毎に wrapper がそれと `versions/` の最新バイナリを比較し、ユーザが公式手段で Claude Code をアップグレードした場合は次回起動時に自動再パッチが走ります。
