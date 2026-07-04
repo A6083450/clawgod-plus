@@ -26,6 +26,7 @@ if ($env:CLAWGOD_NO_UPGRADE -eq "1") { $NoUpgrade = [switch]$true }
 
 $ClawDir = Join-Path $env:USERPROFILE ".clawgod"
 $BinDir  = Join-Path $env:USERPROFILE ".local\bin"
+$ClawSelfVersion = "1.4.0"
 
 function Install-ChromeFixScript {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
@@ -1039,8 +1040,32 @@ if (!process.env.CLAUDE_INTERNAL_FC_OVERRIDES && existsSync(featuresFile)) {
 // CLAUDE_CODE_EXECPATH is still exported by the shell launcher for any code
 // paths that need to know the native binary explicitly.
 
+// Update check — cached, non-blocking, 24h interval
+try {
+  const _ucFile = join(clawgodDir, '.update-check');
+  const _verFile = join(clawgodDir, '.clawgod-version');
+  if (existsSync(_verFile)) {
+    const _localVer = readFileSync(_verFile, 'utf8').trim();
+    let _uc = null;
+    try { if (existsSync(_ucFile)) _uc = JSON.parse(readFileSync(_ucFile, 'utf8')); } catch {}
+    if (_uc && _uc.v && _uc.v !== _localVer) {
+      process.stderr.write('[clawgod] v' + _uc.v + ' available (installed: v' + _localVer + ") — run 'claude update' to upgrade\n");
+    }
+    if (!_uc || Date.now() - (_uc.t || 0) > 86400000) {
+      fetch('https://api.github.com/repos/0Chencc/clawgod/releases/latest', {
+        headers: { 'User-Agent': 'clawgod' },
+        signal: AbortSignal.timeout(5000),
+      }).then(function(r) { return r.json(); }).then(function(d) {
+        var v = (d.tag_name || '').replace(/^v/, '');
+        if (v) writeFileSync(_ucFile, JSON.stringify({ t: Date.now(), v: v }));
+      }).catch(function() {});
+    }
+  }
+} catch {}
+
 require('./cli.original.cjs');
 '@ | Set-Content (Join-Path $ClawDir "cli.cjs") -Encoding UTF8
+Set-Content (Join-Path $ClawDir ".clawgod-version") $ClawSelfVersion
 Write-OK "Wrapper created (cli.cjs)"
 
 # ─── Write universal patcher ──────────────────────────
@@ -1487,8 +1512,8 @@ const patches = [
     // touching the bun runtime. Escape hatch for users who want vanilla
     // update is printed every run.
     name: "Redirect `claude update` to clawgod self-update",
-    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\)\.action\(async\(\)=>\{)/g,
-    replacer: (m, prefix) => {
+    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\(async\(\)=>\{)/g,
+    replacer: (m, chain, action) => {
       // PowerShell 5.1's Invoke-WebRequest ignores HTTP_PROXY/HTTPS_PROXY env
       // (only reads IE system proxy). Read env explicitly and pass via -Proxy
       // so it works on both PS 5.1 and PS 7. Use Invoke-RestMethod (irm) not
@@ -1503,7 +1528,7 @@ const patches = [
         "if($p){iex(irm -Proxy $p $u)}else{iex(irm $u)}";
       const psB64 = Buffer.from(psScript, 'utf16le').toString('base64');
       return (
-        prefix +
+        chain + '.allowUnknownOption()' + action +
         `const _ui=process.argv.findIndex(a=>a==="update"||a==="upgrade");` +
         `const _ua=_ui>=0?process.argv.slice(_ui+1):[];` +
         `const _vi=_ua.indexOf("--version");` +
@@ -1523,6 +1548,14 @@ const patches = [
     pattern: /#da7756/g,
     replacer: () => '#22c55e',
     sentinel: '#da7756',
+  },
+  {
+    name: 'Restore Glob/Grep tools (un-inline EMBEDDED_SEARCH_TOOLS)',
+    pattern: /function ([\w$]+)\(\)\{if\(!([\w$]+)\("true"\)\)return!1;if\([\w$]+\(\)\)return!1;return process\.env\.CLAUDE_CODE_ENTRYPOINT!=="local-agent"\}/g,
+    replacer: (m, fn, envCheck) =>
+      `function ${fn}(){if(!${envCheck}(process.env.EMBEDDED_SEARCH_TOOLS))return!1;if(typeof globalThis.__dpBinOk>"u"){try{var _w=process.platform==="win32"?"where":"which";require("child_process").execFileSync(_w,["bfs"],{timeout:2e3});require("child_process").execFileSync(_w,["ugrep"],{timeout:2e3});globalThis.__dpBinOk=!0}catch{globalThis.__dpBinOk=!1}}if(!globalThis.__dpBinOk)return!1;return process.env.CLAUDE_CODE_ENTRYPOINT!=="local-agent"}`,
+    sentinel: 'ct("true")',
+    optional: true,
   },
   {
     name: 'Neutralize geo-steganography in date string (qla)',

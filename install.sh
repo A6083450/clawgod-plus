@@ -16,6 +16,7 @@ CLAWGOD_DIR="$HOME/.clawgod"
 BIN_DIR="$HOME/.local/bin"
 VERSION="${CLAWGOD_VERSION:-latest}"
 NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
+CLAWGOD_SELF_VERSION="1.4.0"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -909,9 +910,33 @@ if (!process.env.CLAUDE_INTERNAL_FC_OVERRIDES && existsSync(featuresFile)) {
 // CLAUDE_CODE_EXECPATH is still exported by the shell launcher for any code
 // paths that need to know the native binary explicitly.
 
+// Update check — cached, non-blocking, 24h interval
+try {
+  const _ucFile = join(clawgodDir, '.update-check');
+  const _verFile = join(clawgodDir, '.clawgod-version');
+  if (existsSync(_verFile)) {
+    const _localVer = readFileSync(_verFile, 'utf8').trim();
+    let _uc = null;
+    try { if (existsSync(_ucFile)) _uc = JSON.parse(readFileSync(_ucFile, 'utf8')); } catch {}
+    if (_uc && _uc.v && _uc.v !== _localVer) {
+      process.stderr.write('[clawgod] v' + _uc.v + ' available (installed: v' + _localVer + ") — run 'claude update' to upgrade\n");
+    }
+    if (!_uc || Date.now() - (_uc.t || 0) > 86400000) {
+      fetch('https://api.github.com/repos/0Chencc/clawgod/releases/latest', {
+        headers: { 'User-Agent': 'clawgod' },
+        signal: AbortSignal.timeout(5000),
+      }).then(function(r) { return r.json(); }).then(function(d) {
+        var v = (d.tag_name || '').replace(/^v/, '');
+        if (v) writeFileSync(_ucFile, JSON.stringify({ t: Date.now(), v: v }));
+      }).catch(function() {});
+    }
+  }
+} catch {}
+
 require('./cli.original.cjs');
 WRAPPER_EOF
 chmod +x "$CLAWGOD_DIR/cli.cjs"
+echo "$CLAWGOD_SELF_VERSION" > "$CLAWGOD_DIR/.clawgod-version"
 info "Wrapper created (cli.cjs)"
 
 # ─── Write universal patcher ───────────────────────────
@@ -1346,8 +1371,8 @@ const patches = [
     // Escape hatch printed on every run: `install.sh --uninstall` restores
     // claude.orig and lets vanilla `claude update` work again.
     name: "Redirect `claude update` to clawgod self-update",
-    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\)\.action\(async\(\)=>\{)/g,
-    replacer: (m, prefix) => {
+    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\(async\(\)=>\{)/g,
+    replacer: (m, chain, action) => {
       // PowerShell 5.1's Invoke-WebRequest ignores HTTP_PROXY/HTTPS_PROXY env
       // (only reads IE system proxy). Read env explicitly and pass via -Proxy
       // so it works on both PS 5.1 and PS 7. Use Invoke-RestMethod (irm) not
@@ -1362,7 +1387,7 @@ const patches = [
         "if($p){iex(irm -Proxy $p $u)}else{iex(irm $u)}";
       const psB64 = Buffer.from(psScript, 'utf16le').toString('base64');
       return (
-        prefix +
+        chain + '.allowUnknownOption()' + action +
         `const _ui=process.argv.findIndex(a=>a==="update"||a==="upgrade");` +
         `const _ua=_ui>=0?process.argv.slice(_ui+1):[];` +
         `const _vi=_ua.indexOf("--version");` +
@@ -1420,6 +1445,30 @@ const patches = [
     pattern: /#da7756/g,
     replacer: () => '#22c55e',
     sentinel: '#da7756',
+  },
+
+  // ── Glob/Grep 工具恢复 ──
+
+  {
+    // Bun inlines EMBEDDED_SEARCH_TOOLS env as literal "true" at compile time.
+    // This makes bC() always return true → Wft() returns the shadow set
+    // containing "Glob" and "Grep" → those tools are hidden from the user.
+    // Under clawgod (Bun runtime, not native binary) the env is unset, but
+    // the code still says ct("true") instead of ct(process.env.EMBEDDED_SEARCH_TOOLS).
+    //
+    // Shape:
+    //   function bC(){if(!ct("true"))return!1;if(mEr())return!1;
+    //     return process.env.CLAUDE_CODE_ENTRYPOINT!=="local-agent"}
+    //
+    // Patch: replace ct("true") with ct(process.env.EMBEDDED_SEARCH_TOOLS)
+    // so the guard reads the actual env var (unset → falsy → return false →
+    // Glob/Grep tools available).
+    name: 'Restore Glob/Grep tools (un-inline EMBEDDED_SEARCH_TOOLS)',
+    pattern: /function ([\w$]+)\(\)\{if\(!([\w$]+)\("true"\)\)return!1;if\([\w$]+\(\)\)return!1;return process\.env\.CLAUDE_CODE_ENTRYPOINT!=="local-agent"\}/g,
+    replacer: (m, fn, envCheck) =>
+      `function ${fn}(){if(!${envCheck}(process.env.EMBEDDED_SEARCH_TOOLS))return!1;if(typeof globalThis.__dpBinOk>"u"){try{var _w=process.platform==="win32"?"where":"which";require("child_process").execFileSync(_w,["bfs"],{timeout:2e3});require("child_process").execFileSync(_w,["ugrep"],{timeout:2e3});globalThis.__dpBinOk=!0}catch{globalThis.__dpBinOk=!1}}if(!globalThis.__dpBinOk)return!1;return process.env.CLAUDE_CODE_ENTRYPOINT!=="local-agent"}`,
+    sentinel: 'ct("true")',
+    optional: true,
   },
 
   // ── 地区隐写中和 (v2.1.197+) ──

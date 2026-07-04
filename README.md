@@ -82,9 +82,11 @@ Green logo = patched. Orange logo = original.
 
 | Feature | What it does |
 |---------|-------------|
+| **Glob/Grep Restore** | Bun compile inlines `EMBEDDED_SEARCH_TOOLS=true`, hiding built-in Glob/Grep tools. Patch un-inlines the env check and adds bfs/ugrep binary availability detection — tools are restored when running under Bun runtime |
 | **1h Prompt Cache** | Forces 1h TTL allowlist on (was effectively 5m → much higher cache_creation token usage) |
 | **Third-Party Cache Fix** | Auto-disables `x-anthropic-billing-header` when `baseURL` is non-Anthropic. The header's per-request `cch` field breaks prompt-cache hit rate on DeepSeek / OneAPI / Bedrock / vLLM and any other Anthropic-compatible proxy. You no longer need to set `CLAUDE_CODE_ATTRIBUTION_HEADER=0` yourself. |
 | **Auto Re-patch** | Detects when the user's native Claude binary has been upgraded; transparently re-extracts and re-patches on next launch |
+| **Update Notification** | Checks GitHub releases once per 24h (async, non-blocking). Shows a one-line notice if a newer ClawGod version is available |
 
 ## Commands
 
@@ -124,6 +126,7 @@ Since `@anthropic-ai/claude-code` v2.1.113, the npm package no longer ships `cli
 3. Extracts the embedded `.node` native modules (audio-capture, image-processor, computer-use-*, url-handler) into `~/.clawgod/vendor/`
 4. Rewrites `/$bunfs/...` virtual paths to point at the extracted modules
 5. Applies 28 version-agnostic patches, including AST-guided Chrome browser-tool socket fallback
+5. Applies 29 regex-based patches (version-agnostic — same patches work across many releases)
 6. The `claude` / `clawgod` launchers run the patched cli.js under the Bun runtime
 
 A `.source-version` stamp in `~/.clawgod/` records which native version was patched. On every launch the wrapper compares it against the latest binary in `versions/`; if the user upgraded Claude Code via the official installer, ClawGod auto-re-patches on the next run.

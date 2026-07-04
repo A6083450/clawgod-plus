@@ -82,14 +82,16 @@ irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | ie
 
 | 機能 | 効果 |
 |------|------|
+| **Glob/Grep 復元** | Bun コンパイル時に `EMBEDDED_SEARCH_TOOLS=true` がリテラルとしてインライン化され、内蔵の Glob/Grep ツールが非表示になります。パッチにより env チェックを復元し、bfs/ugrep バイナリの可用性検出を追加 — Bun ランタイム実行時にツールが自動復元されます |
 | **1h Prompt Cache** | 1h TTL allowlist を強制有効化（デフォルトは実質 5m → アイドル後の cache_creation トークン浪費を防止） |
 | **サードパーティ Cache 修正** | `baseURL` が Anthropic 以外を指す場合、`x-anthropic-billing-header` を自動的に無効化します。このヘッダーの `cch` フィールドはリクエストごとに変化するため、DeepSeek / OneAPI / Bedrock / vLLM など Anthropic 互換プロキシでは prompt-cache ヒット率がゼロになります。`CLAUDE_CODE_ATTRIBUTION_HEADER=0` を自分で設定する必要はもうありません。 |
 | **自動再パッチ** | ユーザーがネイティブ Claude バイナリをアップグレードすると、次回起動時に自動的に再抽出・再パッチ |
+| **アップデート通知** | 24時間ごとに GitHub releases を非同期チェック（ノンブロッキング）。新バージョンが利用可能な場合、起動前に1行の通知を表示 |
 
 ## コマンド
 
 ```bash
-claude              # パッチ済み Claude Code、対話セッションはデフォルトで --chrome 付き
+claude              # パッチ済み Claude Code（公式 launcher を置き換え）
 clawgod             # `claude` と同じ、明示的かつ常に動作するエントリポイント
 claude.orig         # オリジナル未修正版（自動バックアップ） 
 ```
@@ -123,7 +125,7 @@ claude.orig         # オリジナル未修正版（自動バックアップ）
 2. `__BUN` セグメント（Mach-O / ELF / PE）から埋め込まれた `cli.js` ソースを抽出
 3. 埋め込まれた `.node` ネイティブモジュール（audio-capture、image-processor、computer-use-*、url-handler）を `~/.clawgod/vendor/` に抽出
 4. `/$bunfs/...` 仮想パスをローカル vendor パスに書き換え
-5. 28 個のバージョン横断パッチを適用（AST 補助の Chrome ブラウザツール socket fallback を含む）
+5. 29 個の正規表現パッチを適用（バージョン横断的——同じ regex 群で複数リリースをカバー）
 6. `claude` / `clawgod` ランチャが Bun ランタイムでパッチ済み cli.js を実行
 
 `~/.clawgod/.source-version` がパッチ時のバージョンを記録します。起動毎に wrapper がそれと `versions/` の最新バイナリを比較し、ユーザが公式手段で Claude Code をアップグレードした場合は次回起動時に自動再パッチが走ります。
