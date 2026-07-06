@@ -26,7 +26,7 @@ if ($env:CLAWGOD_NO_UPGRADE -eq "1") { $NoUpgrade = [switch]$true }
 
 $ClawDir = Join-Path $env:USERPROFILE ".clawgod"
 $BinDir  = Join-Path $env:USERPROFILE ".local\bin"
-$ClawSelfVersion = "1.4.0"
+$ClawSelfVersion = "1.4.1"
 
 function Install-ChromeFixScript {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
@@ -1537,7 +1537,7 @@ const patches = [
         `process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");` +
         `const _w=process.platform==='win32';` +
         `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:['bash','-c','curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash'];` +
-        `const _r=require('child_process').spawnSync(_c[0],_c.slice(1),{stdio:'inherit'});` +
+        `const _r=require('child_process').spawnSync(_c[0],_c.slice(1),{stdio:'inherit',env:process.env});` +
         `process.exit(_r.status||0);`
       );
     },

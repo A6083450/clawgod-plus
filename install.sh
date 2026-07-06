@@ -16,7 +16,7 @@ CLAWGOD_DIR="$HOME/.clawgod"
 BIN_DIR="$HOME/.local/bin"
 VERSION="${CLAWGOD_VERSION:-latest}"
 NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
-CLAWGOD_SELF_VERSION="1.4.0"
+CLAWGOD_SELF_VERSION="1.4.1"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -1396,7 +1396,7 @@ const patches = [
         `process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");` +
         `const _w=process.platform==='win32';` +
         `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:['bash','-c','curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash'];` +
-        `const _r=require('child_process').spawnSync(_c[0],_c.slice(1),{stdio:'inherit'});` +
+        `const _r=require('child_process').spawnSync(_c[0],_c.slice(1),{stdio:'inherit',env:process.env});` +
         `process.exit(_r.status||0);`
       );
     },
