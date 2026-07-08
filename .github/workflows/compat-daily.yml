@@ -119,6 +119,51 @@ jobs:
           failed=$(echo "$line" | sed -E 's/.*skipped, ([0-9]+) failed.*/\1/')
           [[ "$failed" -eq 0 ]] || { echo "::error::patch.mjs reported $failed failed patches"; exit 1; }
 
+      - name: Verify lean settings applied
+        shell: bash
+        run: |
+          settings="$HOME/.claude/settings.json"
+          [[ -f "$settings" ]] || { echo "::error::~/.claude/settings.json not created"; exit 1; }
+          # Check that lean keys are present
+          for key in disableWorkflows disableRemoteControl disableClaudeAiConnectors disableArtifact; do
+            if ! grep -q "\"$key\"" "$settings"; then
+              echo "::error::lean key $key missing from settings.json"
+              cat "$settings"
+              exit 1
+            fi
+          done
+          for tool in DesignSync NotebookEdit CronCreate; do
+            if ! grep -q "\"$tool\"" "$settings"; then
+              echo "::error::deny tool $tool missing from settings.json"
+              cat "$settings"
+              exit 1
+            fi
+          done
+          echo "Lean settings verified:"
+          cat "$settings"
+
+      - name: Verify lean-off / lean-on toggle
+        shell: bash
+        run: |
+          # --lean-off should remove lean keys and create flag
+          bash install.sh --no-upgrade --lean-off 2>&1 | tail -3
+          [[ -f "$HOME/.clawgod/.lean-disabled" ]] || { echo "::error::.lean-disabled flag not created"; exit 1; }
+          settings="$HOME/.claude/settings.json"
+          if grep -q '"disableWorkflows"' "$settings"; then
+            echo "::error::lean-off failed to remove disableWorkflows"
+            cat "$settings"
+            exit 1
+          fi
+          # --lean-on should restore
+          bash install.sh --no-upgrade --lean-on 2>&1 | tail -3
+          [[ ! -f "$HOME/.clawgod/.lean-disabled" ]] || { echo "::error::.lean-disabled flag not removed"; exit 1; }
+          if ! grep -q '"disableWorkflows"' "$settings"; then
+            echo "::error::lean-on failed to restore disableWorkflows"
+            cat "$settings"
+            exit 1
+          fi
+          echo "Lean toggle verified"
+
       - name: Smoke test — claude --version
         # Exercises the wrapper path:
         #   launcher → bun cli.cjs → require('./cli.original.cjs')

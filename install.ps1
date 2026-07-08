@@ -16,17 +16,23 @@
 param(
     [string]$Version = "latest",
     [switch]$NoUpgrade,
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [switch]$LeanOff,
+    [switch]$LeanOn,
+    [switch]$LeanMax
 )
 
 $ErrorActionPreference = "Stop"
 
 if ($env:CLAWGOD_VERSION -and $Version -eq "latest") { $Version = $env:CLAWGOD_VERSION }
 if ($env:CLAWGOD_NO_UPGRADE -eq "1") { $NoUpgrade = [switch]$true }
+if ($env:CLAWGOD_LEAN_OFF -eq "1") { $LeanOff = [switch]$true }
+if ($env:CLAWGOD_LEAN_ON -eq "1") { $LeanOn = [switch]$true }
+if ($env:CLAWGOD_LEAN_MAX -eq "1") { $LeanMax = [switch]$true }
 
 $ClawDir = Join-Path $env:USERPROFILE ".clawgod"
 $BinDir  = Join-Path $env:USERPROFILE ".local\bin"
-$ClawSelfVersion = "1.4.1"
+$ClawSelfVersion = "1.6.0"
 
 function Install-ChromeFixScript {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
@@ -1040,6 +1046,57 @@ if (!process.env.CLAUDE_INTERNAL_FC_OVERRIDES && existsSync(featuresFile)) {
 // CLAUDE_CODE_EXECPATH is still exported by the shell launcher for any code
 // paths that need to know the native binary explicitly.
 
+// Lean mode toggle — --lean-off / --lean-on / --lean-max
+if (process.argv.includes('--lean-off') || process.argv.includes('--lean-on') || process.argv.includes('--lean-max')) {
+  const _leanOff = join(clawgodDir, '.lean-disabled');
+  const _leanMax = join(clawgodDir, '.lean-max');
+  const _leanSettings = join(homedir(), '.claude', 'settings.json');
+  const _baseDeny = ['DesignSync','NotebookEdit','PushNotification','RemoteTrigger','CronCreate','CronDelete','CronList'];
+  const _maxDeny = ['EnterPlanMode','ExitPlanMode','SendMessage','ScheduleWakeup','AskUserQuestion','ReportFindings'];
+  const _baseFlags = ['disableWorkflows','disableRemoteControl','disableClaudeAiConnectors','disableArtifact'];
+  const _maxFlags = ['disableBundledSkills'];
+  const _allDeny = new Set([..._baseDeny, ..._maxDeny]);
+  const _allFlags = [..._baseFlags, ..._maxFlags];
+  const _unlink = function(p) { try { require('fs').unlinkSync(p); } catch {} };
+  if (process.argv.includes('--lean-off')) {
+    writeFileSync(_leanOff, '');
+    _unlink(_leanMax);
+    try {
+      const _s = JSON.parse(readFileSync(_leanSettings, 'utf8'));
+      for (const _k of _allFlags) delete _s[_k];
+      if (Array.isArray(_s.permissions?.deny)) _s.permissions.deny = _s.permissions.deny.filter(function(t) { return !_allDeny.has(t); });
+      writeFileSync(_leanSettings, JSON.stringify(_s, null, 2) + '\n');
+    } catch {}
+    process.stderr.write('[clawgod] Lean mode disabled. All tools restored.\n');
+  } else {
+    const _isMax = process.argv.includes('--lean-max');
+    _unlink(_leanOff);
+    if (_isMax) writeFileSync(_leanMax, ''); else _unlink(_leanMax);
+    const _deny = _isMax ? [..._baseDeny, ..._maxDeny] : _baseDeny;
+    const _flags = _isMax ? _allFlags : _baseFlags;
+    try {
+      let _s = {};
+      try { _s = JSON.parse(readFileSync(_leanSettings, 'utf8')); } catch {}
+      let _ch = false;
+      for (const _k of _flags) { if (!(_k in _s)) { _s[_k] = true; _ch = true; } }
+      if (!_isMax) { for (const _k of _maxFlags) { if (_k in _s) { delete _s[_k]; _ch = true; } } }
+      if (!_s.permissions) _s.permissions = {};
+      if (!Array.isArray(_s.permissions.deny)) _s.permissions.deny = [];
+      const _ex = new Set(_s.permissions.deny);
+      for (const _t of _deny) { if (!_ex.has(_t)) { _s.permissions.deny.push(_t); _ch = true; } }
+      if (!_isMax) {
+        const _maxSet = new Set(_maxDeny);
+        const _before = _s.permissions.deny.length;
+        _s.permissions.deny = _s.permissions.deny.filter(function(t) { return !_maxSet.has(t); });
+        if (_s.permissions.deny.length !== _before) _ch = true;
+      }
+      if (_ch) writeFileSync(_leanSettings, JSON.stringify(_s, null, 2) + '\n');
+    } catch {}
+    process.stderr.write('[clawgod] Lean mode: ' + (_isMax ? 'max' : 'on') + '. Settings updated.\n');
+  }
+  process.exit(0);
+}
+
 // Update check — cached, non-blocking, 24h interval
 try {
   const _ucFile = join(clawgodDir, '.update-check');
@@ -1534,6 +1591,9 @@ const patches = [
         `const _vi=_ua.indexOf("--version");` +
         `if(_vi>=0&&_ua[_vi+1])process.env.CLAWGOD_VERSION=_ua[_vi+1];` +
         `if(_ua.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";` +
+        `if(_ua.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";` +
+        `if(_ua.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";` +
+        `if(_ua.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";` +
         `process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");` +
         `const _w=process.platform==='win32';` +
         `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:['bash','-c','curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash'];` +
@@ -1793,6 +1853,68 @@ if (-not (Test-Path $featuresFile)) {
 '@
     [System.IO.File]::WriteAllText($featuresFile, $featuresJson, (New-Object System.Text.UTF8Encoding $false))
     Write-OK "Default features.json created"
+}
+
+# ─── Lean mode: optimize ~/.claude/settings.json ─────
+$leanOffFlag = Join-Path $ClawDir ".lean-disabled"
+$leanMaxFlag = Join-Path $ClawDir ".lean-max"
+$claudeSettingsDir = Join-Path $env:USERPROFILE ".claude"
+$claudeSettings = Join-Path $claudeSettingsDir "settings.json"
+New-Item -ItemType Directory -Force -Path $claudeSettingsDir | Out-Null
+
+if ($LeanOff) {
+    New-Item -ItemType File -Force -Path $leanOffFlag | Out-Null
+    if (Test-Path $leanMaxFlag) { Remove-Item $leanMaxFlag -Force }
+    $leanRemoveScript = @'
+const fs=require("fs"),p=process.argv[1];
+const allDeny=new Set(["DesignSync","NotebookEdit","PushNotification","RemoteTrigger","CronCreate","CronDelete","CronList","EnterPlanMode","ExitPlanMode","SendMessage","ScheduleWakeup","AskUserQuestion","ReportFindings"]);
+const allFlags=["disableWorkflows","disableRemoteControl","disableClaudeAiConnectors","disableArtifact","disableBundledSkills"];
+let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{process.exit(0)}
+for(const k of allFlags)delete s[k];
+if(Array.isArray(s.permissions?.deny))s.permissions.deny=s.permissions.deny.filter(t=>!allDeny.has(t));
+fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");
+'@
+    if (Test-Path $claudeSettings) {
+        try { node -e $leanRemoveScript "$claudeSettings" 2>$null } catch {}
+    }
+    Write-OK "Lean mode disabled (all tools restored)"
+} elseif ($LeanOn) {
+    if (Test-Path $leanOffFlag) { Remove-Item $leanOffFlag -Force }
+    if (Test-Path $leanMaxFlag) { Remove-Item $leanMaxFlag -Force }
+} elseif ($LeanMax) {
+    if (Test-Path $leanOffFlag) { Remove-Item $leanOffFlag -Force }
+    New-Item -ItemType File -Force -Path $leanMaxFlag | Out-Null
+}
+
+if (-not (Test-Path $leanOffFlag)) {
+    $leanIsMax = (Test-Path $leanMaxFlag)
+    $leanApplyScript = @'
+const fs = require("fs");
+const settingsPath = process.argv[1];
+const isMax = process.argv[2] === "true";
+const baseDeny = ["DesignSync","NotebookEdit","PushNotification","RemoteTrigger","CronCreate","CronDelete","CronList"];
+const maxDeny = ["EnterPlanMode","ExitPlanMode","SendMessage","ScheduleWakeup","AskUserQuestion","ReportFindings"];
+const baseFlags = ["disableWorkflows","disableRemoteControl","disableClaudeAiConnectors","disableArtifact"];
+const maxFlags = ["disableBundledSkills"];
+const deny = isMax ? [...baseDeny, ...maxDeny] : baseDeny;
+const flags = isMax ? [...baseFlags, ...maxFlags] : baseFlags;
+let s = {};
+try { s = JSON.parse(fs.readFileSync(settingsPath, "utf8")); } catch {}
+let changed = false;
+for (const k of flags) { if (!(k in s)) { s[k] = true; changed = true; } }
+if (!s.permissions) s.permissions = {};
+if (!Array.isArray(s.permissions.deny)) s.permissions.deny = [];
+const ex = new Set(s.permissions.deny);
+for (const t of deny) { if (!ex.has(t)) { s.permissions.deny.push(t); changed = true; } }
+if (changed) fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + "\n");
+'@
+    try {
+        node -e $leanApplyScript "$claudeSettings" "$leanIsMax" 2>$null
+        if ($leanIsMax) { Write-OK "Lean settings applied: max (~/.claude/settings.json)" }
+        else { Write-OK "Lean settings applied: on (~/.claude/settings.json)" }
+    } catch {}
+} else {
+    Write-Host "  $([char]0x2022) Lean mode disabled (claude --lean-on to re-enable)" -ForegroundColor DarkGray
 }
 
 # ─── Sanity check: ensure user's Bun can actually load cli.original.cjs ──

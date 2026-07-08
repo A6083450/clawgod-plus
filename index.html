@@ -131,7 +131,19 @@
 
   <section class="section">
     <header class="section-head">
-      <h2><span class="num">03</span>Visual</h2>
+      <h2><span class="num">03</span>Geo-steganography neutralization</h2>
+      <p>Client-side location fingerprinting removed at patch time.</p>
+    </header>
+    <div class="patches-grid">
+      <article class="patch-card"><span class="badge remove">Remove</span><div class="name">Date string stego (qla)</div><div class="desc">Unicode apostrophe variants + date separator encode user location into the system prompt. Patched to always use ASCII.</div></article>
+      <article class="patch-card"><span class="badge remove">Remove</span><div class="name">Geo-detection probe (rdp)</div><div class="desc">Timezone check (Asia/Shanghai), XOR-obfuscated 100+ domain blocklist, CN-LLM vendor keywords. Forced to return null.</div></article>
+      <article class="patch-card"><span class="badge remove">Remove</span><div class="name">Apostrophe selector (odp)</div><div class="desc">Four Unicode apostrophes (U+0027/2019/02BC/02B9) encode proxy detection state. Forced to ASCII. Defense-in-depth.</div></article>
+    </div>
+  </section>
+
+  <section class="section">
+    <header class="section-head">
+      <h2><span class="num">04</span>Visual</h2>
       <p>A single signal that you are running the patched build.</p>
     </header>
     <div class="patches-grid">
@@ -142,11 +154,27 @@
 
   <section class="section">
     <header class="section-head">
-      <h2><span class="num">04</span>Routing</h2>
+      <h2><span class="num">05</span>Reliability</h2>
+      <p>Token savings, cache optimization, and self-maintenance.</p>
+    </header>
+    <div class="patches-grid">
+      <article class="patch-card"><span class="badge route">Optimize</span><div class="name">Glob/Grep restore</div><div class="desc">Bun compile inlines <code>EMBEDDED_SEARCH_TOOLS=true</code>, hiding built-in tools. Patch un-inlines the env check + adds bfs/ugrep detection.</div></article>
+      <article class="patch-card"><span class="badge route">Optimize</span><div class="name">1h prompt cache</div><div class="desc">Forces 1h TTL allowlist — default 5m wastes tokens on cache_creation after idle.</div></article>
+      <article class="patch-card"><span class="badge route">Optimize</span><div class="name">Third-party cache fix</div><div class="desc">Auto-disables <code>x-anthropic-billing-header</code> on non-Anthropic proxies. Prevents zero cache-hit rate on DeepSeek / OneAPI / vLLM.</div></article>
+      <article class="patch-card"><span class="badge route">Optimize</span><div class="name">Lean settings (3-level)</div><div class="desc">Token optimization for <code>settings.json</code>. <strong>on</strong> (default): removes unused tools + disables Workflows/Artifact. <strong>max</strong>: also removes Plan mode, Agent Teams, bundled skills. <strong>off</strong>: all restored. Toggle: <code>claude --lean-on</code> / <code>--lean-max</code> / <code>--lean-off</code>.</div></article>
+      <article class="patch-card"><span class="badge route">Optimize</span><div class="name">Update notification</div><div class="desc">Checks GitHub releases once per 24h (async, non-blocking). One-line notice on startup if a newer version is available.</div></article>
+      <article class="patch-card"><span class="badge route">Optimize</span><div class="name">Auto re-patch</div><div class="desc">Detects when the native Claude binary has been upgraded; transparently re-extracts and re-patches on next launch.</div></article>
+    </div>
+  </section>
+
+  <section class="section">
+    <header class="section-head">
+      <h2><span class="num">06</span>Routing</h2>
       <p>Upgrade flow that survives Anthropic's bun-runtime swaps.</p>
     </header>
     <div class="patches-grid">
-      <article class="patch-card"><span class="badge route">Routing</span><div class="name">claude update redirect</div><div class="desc"><code>claude update</code> routes through clawgod's installer — pulls latest Anthropic release + re-patches in one step.</div></article>
+      <article class="patch-card"><span class="badge route">Routing</span><div class="name">claude update redirect</div><div class="desc"><code>claude update</code> routes through clawgod's installer — pulls latest Anthropic release + re-patches in one step. Supports <code>--version</code> and <code>--no-upgrade</code>.</div></article>
+      <article class="patch-card"><span class="badge route">Routing</span><div class="name">Shell integration fix</div><div class="desc">Redirects multitool dispatch (find/grep/rg) to <code>claude.orig</code> binary — shell scripts can't preserve argv[0].</div></article>
     </div>
   </section>
 
