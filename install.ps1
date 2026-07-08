@@ -32,7 +32,7 @@ if ($env:CLAWGOD_LEAN_MAX -eq "1") { $LeanMax = [switch]$true }
 
 $ClawDir = Join-Path $env:USERPROFILE ".clawgod"
 $BinDir  = Join-Path $env:USERPROFILE ".local\bin"
-$ClawSelfVersion = "1.6.0"
+$ClawSelfVersion = "1.6.1"
 
 function Install-ChromeFixScript {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
@@ -1608,6 +1608,14 @@ const patches = [
     pattern: /#da7756/g,
     replacer: () => '#22c55e',
     sentinel: '#da7756',
+  },
+  {
+    name: 'macOS Cmd+V image paste fallback to clipboard read',
+    pattern: /if\(([\w$]+)\.length===0&&([\w$]+)\.length>0\)([\w$]+)\("input_image_drag","read_failed"\),([\w$]+)\.push\(\.\.\.\2\)/g,
+    replacer: (m, L, R, at, D) =>
+      `if(${L}.length===0&&${R}.length>0){${at}("input_image_drag","read_failed");if(d&&${D}.length===0){m();return}${D}.push(...${R})}`,
+    sentinel: '"input_image_drag","read_failed"',
+    optional: true,
   },
   {
     name: 'Restore Glob/Grep tools (un-inline EMBEDDED_SEARCH_TOOLS)',

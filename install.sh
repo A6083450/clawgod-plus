@@ -19,7 +19,7 @@ NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
 LEAN_OFF="${CLAWGOD_LEAN_OFF:-}"
 LEAN_ON="${CLAWGOD_LEAN_ON:-}"
 LEAN_MAX="${CLAWGOD_LEAN_MAX:-}"
-CLAWGOD_SELF_VERSION="1.6.0"
+CLAWGOD_SELF_VERSION="1.6.1"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -1507,6 +1507,31 @@ const patches = [
     pattern: /#da7756/g,
     replacer: () => '#22c55e',
     sentinel: '#da7756',
+  },
+
+  // ── macOS Cmd+V 图片粘贴修复 ──
+
+  {
+    // Under Bun runtime (clawgod), macOS Cmd+V pastes the image file path
+    // as text instead of triggering the clipboard image read. The paste
+    // handler detects the path as an image file (gCc), tries to read it
+    // via yCc, fails, and falls through to display the raw path as text.
+    //
+    // Fix: when all image path reads fail (L.length===0 && R.length>0)
+    // and we're on macOS (d) with no other text (D.length===0), fall back
+    // to the clipboard image reader (m()) — same path that Ctrl+V uses.
+    //
+    // Shape:
+    //   if(L.length===0&&R.length>0)at("input_image_drag","read_failed"),D.push(...R)
+    //
+    // Patched:
+    //   if(L.length===0&&R.length>0){at("input_image_drag","read_failed");if(d&&D.length===0){m();return}D.push(...R)}
+    name: 'macOS Cmd+V image paste fallback to clipboard read',
+    pattern: /if\(([\w$]+)\.length===0&&([\w$]+)\.length>0\)([\w$]+)\("input_image_drag","read_failed"\),([\w$]+)\.push\(\.\.\.\2\)/g,
+    replacer: (m, L, R, at, D) =>
+      `if(${L}.length===0&&${R}.length>0){${at}("input_image_drag","read_failed");if(d&&${D}.length===0){m();return}${D}.push(...${R})}`,
+    sentinel: '"input_image_drag","read_failed"',
+    optional: true,
   },
 
   // ── Glob/Grep 工具恢复 ──
