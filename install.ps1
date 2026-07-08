@@ -1404,24 +1404,24 @@ const patches = [
     // jobs. Preserve the Chrome flag so sessions created from `claude agents`
     // keep `claude-in-chrome` after attach/respawn.
     name: 'Claude in Chrome agents config state',
-    pattern: /r=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1\}/g,
-    replacer: () => 'r={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1,chrome:!1,noChrome:!1}',
-    appliedMarker: 'strictMcpConfig:!1,chrome:!1,noChrome:!1',
+    pattern: /([\w$]+)=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1\}/g,
+    replacer: (m, cfg) => `${cfg}={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1,chrome:!1,noChrome:!1}`,
+    appliedMarker: /[\w$]+=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1,chrome:!1,noChrome:!1\}/,
     validate: (match, code) => !code.includes('strictMcpConfig:!1,chrome:!1,noChrome:!1'),
   },
   {
     name: 'Claude in Chrome agents flag parser',
-    pattern: /if\(a==="--strict-mcp-config"\)\{r\.strictMcpConfig=!0;continue\}/g,
-    replacer: (m) => 'if(a==="--chrome"){r.chrome=!0;continue}if(a==="--no-chrome"){r.noChrome=!0;continue}' + m,
-    appliedMarker: 'if(a==="--chrome"){r.chrome=!0;continue}',
-    validate: (match, code) => !code.includes('if(a==="--chrome"){r.chrome=!0;continue}'),
+    pattern: /if\(([\w$]+)==="--strict-mcp-config"\)\{([\w$]+)\.strictMcpConfig=!0;continue\}/g,
+    replacer: (m, arg, cfg) => `if(${arg}==="--chrome"){${cfg}.chrome=!0;continue}if(${arg}==="--no-chrome"){${cfg}.noChrome=!0;continue}` + m,
+    appliedMarker: /if\([\w$]+==="--chrome"\)\{[\w$]+\.chrome=!0;continue\}if\([\w$]+==="--no-chrome"\)\{[\w$]+\.noChrome=!0;continue\}/,
+    validate: (match, code) => !/if\([\w$]+==="--chrome"\)\{[\w$]+\.chrome=!0;continue\}/.test(code),
   },
   {
     name: 'Claude in Chrome agents config resolver',
-    pattern: /strictMcpConfig:e\.strictMcpConfig\}\}function dWe/g,
-    replacer: () => 'strictMcpConfig:e.strictMcpConfig,chrome:e.chrome&&!e.noChrome,noChrome:e.noChrome}}function dWe',
-    appliedMarker: 'chrome:e.chrome&&!e.noChrome,noChrome:e.noChrome',
-    validate: (match, code) => !code.includes('chrome:e.chrome&&!e.noChrome,noChrome:e.noChrome'),
+    pattern: /strictMcpConfig:([\w$]+)\.strictMcpConfig\}\}function ([\w$]+)/g,
+    replacer: (m, cfg, fn) => `strictMcpConfig:${cfg}.strictMcpConfig,chrome:${cfg}.chrome&&!${cfg}.noChrome,noChrome:${cfg}.noChrome}}function ${fn}`,
+    appliedMarker: /chrome:[\w$]+\.chrome&&![\w$]+\.noChrome,noChrome:[\w$]+\.noChrome/,
+    validate: (match, code) => !/chrome:[\w$]+\.chrome&&![\w$]+\.noChrome/.test(code),
   },
   {
     name: 'Claude in Chrome agents dispatch args',
@@ -1498,8 +1498,9 @@ const patches = [
   },
   {
     name: 'Computer Use gate bypass',
-    pattern: /function ([\w$]+)\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\.enabled\}/g,
+    pattern: /function ([\w$]+)\(\)\{if\([\w$]+\("hipaa"\)\)return\s*!1;return [\w$]+\(\)&&[\w$]+\(\)\.enabled\}/g,
     replacer: (m, fn) => `function ${fn}(){return!0}`,
+    sentinel: '"hipaa"',
   },
   {
     // ≤v2.1.18x: voice mode was GrowthBook-killable via
@@ -1776,7 +1777,7 @@ for (const p of patches) {
   }
   if (relevant.length === 0) {
     if (p.optional) { console.log(`  >> ${p.name} (not in this version)`); skipped++; continue; }
-    if (p.appliedMarker !== undefined && code.includes(p.appliedMarker)) { console.log(`  OK ${p.name} (already applied, marker present)`); applied++; continue; }
+    if (p.appliedMarker !== undefined && (p.appliedMarker instanceof RegExp ? p.appliedMarker.test(code) : code.includes(p.appliedMarker))) { console.log(`  OK ${p.name} (already applied, marker present)`); applied++; continue; }
     if (p.sentinel !== undefined) {
       const sentinels = Array.isArray(p.sentinel) ? p.sentinel : [p.sentinel];
       const stillPresent = sentinels.filter((s) => code.includes(s));
@@ -1869,6 +1870,12 @@ $leanMaxFlag = Join-Path $ClawDir ".lean-max"
 $claudeSettingsDir = Join-Path $env:USERPROFILE ".claude"
 $claudeSettings = Join-Path $claudeSettingsDir "settings.json"
 New-Item -ItemType Directory -Force -Path $claudeSettingsDir | Out-Null
+
+# Default to lean-off: if no lean flag files exist and user didn't explicitly
+# request lean-on or lean-max, create the .lean-disabled flag so lean stays off.
+if (-not (Test-Path $leanOffFlag) -and -not (Test-Path $leanMaxFlag) -and -not $LeanOn -and -not $LeanMax) {
+    New-Item -ItemType File -Force -Path $leanOffFlag | Out-Null
+}
 
 if ($LeanOff) {
     New-Item -ItemType File -Force -Path $leanOffFlag | Out-Null

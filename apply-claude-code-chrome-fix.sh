@@ -374,16 +374,16 @@ function findRegexFix(name, pattern, replacement) {
 if (!code.includes('strictMcpConfig:!1,chrome:!1,noChrome:!1')) {
     findRegexFix(
         'agentsConfigState',
-        /r=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1\}/g,
-        'r={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1,chrome:!1,noChrome:!1}'
+        /[rn]=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1\}/g,
+        (m) => m[0][0] + '={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1,chrome:!1,noChrome:!1}'
     );
 }
 
-if (!code.includes('if(a==="--chrome"){r.chrome=!0;continue}')) {
+if (!code.includes('if(a==="--chrome"){r.chrome=!0;continue}') && !code.includes('if(a==="--chrome"){n.chrome=!0;continue}')) {
     findRegexFix(
         'agentsFlagParser',
-        /if\(a==="--strict-mcp-config"\)\{r\.strictMcpConfig=!0;continue\}/g,
-        (m) => 'if(a==="--chrome"){r.chrome=!0;continue}if(a==="--no-chrome"){r.noChrome=!0;continue}' + m[0]
+        /if\(a==="--strict-mcp-config"\)\{([a-z])\.strictMcpConfig=!0;continue\}/g,
+        (m) => `if(a==="--chrome"){${m[1]}.chrome=!0;continue}if(a==="--no-chrome"){${m[1]}.noChrome=!0;continue}` + m[0]
     );
 }
 
@@ -409,7 +409,7 @@ const allAlreadyPatched = code.includes('__ccpp_bridge_fallback') &&
     (code.includes('__ccpp_sub_msg_bypass') || !code.includes('Claude in Chrome requires a claude.ai subscription.')) &&
     (code.includes('__ccpp_no_select_browser') || !code.includes('select-browser')) &&
     code.includes('strictMcpConfig:!1,chrome:!1,noChrome:!1') &&
-    code.includes('if(a==="--chrome"){r.chrome=!0;continue}') &&
+    (code.includes('if(a==="--chrome"){r.chrome=!0;continue}') || code.includes('if(a==="--chrome"){n.chrome=!0;continue}')) &&
     code.includes('chrome:e.chrome&&!e.noChrome,noChrome:e.noChrome') &&
     code.includes('__ccpp_agents_chrome_dispatch');
 if (allAlreadyPatched && !Object.values(fixes).some(f => f.found)) {
