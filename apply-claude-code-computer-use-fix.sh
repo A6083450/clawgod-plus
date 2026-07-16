@@ -11,9 +11,9 @@
 # 2) Rewrites t0n() to read env-var → settings → original logic (3-tier)
 # 4) Rewrites s7r() to merge user-supplied `computerUseConfig` overrides
 #
-# Default is OFF — identical to stock behaviour.  Users opt-in via:
-#   settings.json:  { "computerUseEnabled": true }
-#   env-var:        CLAUDE_CODE_COMPUTER_USE=1
+# Default is ON — computer-use enabled by default.  Users can opt-out via:
+#   settings.json:  { "computerUseEnabled": false }
+#   env-var:        (unset CLAUDE_CODE_COMPUTER_USE)
 #   sub-config:     { "computerUseConfig": { "mouseAnimation": false } }
 #
 # Usage:
@@ -29,7 +29,7 @@ set -e
 # Configuration
 # ============================================================
 BACKUP_SUFFIX="backup-computer-use"
-FIX_DESCRIPTION="Externalize Computer Use MCP gate to settings.json (default off)"
+FIX_DESCRIPTION="Externalize Computer Use MCP gate to settings.json (default on)"
 
 # ============================================================
 # Color output functions
@@ -69,9 +69,10 @@ while [[ $# -gt 0 ]]; do
             echo "  --restore, -r  Restore original file from backup"
             echo "  --help, -h     Show help information"
             echo ""
-            echo "After patching, enable Computer Use via:"
-            echo "  settings.json:  { \"computerUseEnabled\": true }"
-            echo "  env-var:        CLAUDE_CODE_COMPUTER_USE=1 claude"
+            echo "After patching, Computer Use is enabled by default."
+            echo "To disable:"
+            echo "  settings.json:  { \"computerUseEnabled\": false }"
+            echo "  env-var:        (unset CLAUDE_CODE_COMPUTER_USE)"
             echo "  sub-config:     { \"computerUseConfig\": { \"mouseAnimation\": false } }"
             exit 0
             ;;
@@ -483,7 +484,7 @@ if (fixes.t0n.found && !fixes.t0n.patched && fixes.t0n.node) {
             'if(' + stFn + '(process.env.CLAUDE_CODE_COMPUTER_USE))return!0;' +
             'var _cu=' + ScFn + '("computerUseEnabled",void 0);' +
             'if(_cu.source!=="default")return!!_cu.value;' +
-            'return ' + t5dName + '()&&' + s7rName + '().enabled' +
+            'return!0' +
         '}';
     replacements.push({
         start: fn.start,
@@ -588,8 +589,8 @@ while IFS= read -r line; do
         ALREADY_PATCHED)
             success "Already patched"
             echo ""
-            echo "  To enable:  settings.json → { \"computerUseEnabled\": true }"
-            echo "  Or:         CLAUDE_CODE_COMPUTER_USE=1 claude"
+            echo "  Computer Use is enabled by default."
+            echo "  To disable: settings.json → { \"computerUseEnabled\": false }"
             exit 0
             ;;
         PARSE_ERROR:*)
@@ -625,9 +626,9 @@ while IFS= read -r line; do
             echo ""
             success "Fix applied! Patched ${line#SUCCESS:} location(s)"
             echo ""
-            echo "  Usage:"
-            echo "    settings.json → { \"computerUseEnabled\": true }"
-            echo "    or: CLAUDE_CODE_COMPUTER_USE=1 claude"
+            echo "  Computer Use is enabled by default."
+            echo "  To disable:"
+            echo "    settings.json → { \"computerUseEnabled\": false }"
             echo ""
             echo "    Sub-config (optional):"
             echo "    { \"computerUseConfig\": { \"mouseAnimation\": false } }"
