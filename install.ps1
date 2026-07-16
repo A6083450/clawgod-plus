@@ -32,7 +32,7 @@ if ($env:CLAWGOD_LEAN_MAX -eq "1") { $LeanMax = [switch]$true }
 
 $ClawDir = Join-Path $env:USERPROFILE ".clawgod"
 $BinDir  = Join-Path $env:USERPROFILE ".local\bin"
-$ClawSelfVersion = "1.6.1"
+$ClawSelfVersion = "1.7.0"
 
 function Install-ChromeFixScript {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
