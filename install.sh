@@ -70,7 +70,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/.source-version"
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/install.sh"
   hash -r 2>/dev/null
   info "ClawGod uninstalled"
   echo ""
@@ -998,6 +998,21 @@ chmod +x "$CLAWGOD_DIR/cli.cjs"
 echo "$CLAWGOD_SELF_VERSION" > "$CLAWGOD_DIR/.clawgod-version"
 info "Wrapper created (cli.cjs)"
 
+# Drop a copy of this installer at ~/.clawgod/install.sh so that:
+#  1) the patched `claude update` redirect can re-run it locally instead of
+#     curling the release (see 'Redirect claude update' patch), and
+#  2) the documented `bash ~/.clawgod/install.sh --uninstall` hint actually works.
+# Only when run from a real file (repo checkout), never from `curl | bash`;
+# skip when the source already IS the destination (a local-mode re-run).
+_self_src="${BASH_SOURCE[0]:-$0}"
+if [ -n "$_self_src" ] && [ -f "$_self_src" ]; then
+  _self_abs="$(cd "$(dirname "$_self_src")" 2>/dev/null && pwd)/$(basename "$_self_src")"
+  if [ -n "$_self_abs" ] && [ -f "$_self_abs" ] && [ "$_self_abs" != "$CLAWGOD_DIR/install.sh" ]; then
+    cp "$_self_abs" "$CLAWGOD_DIR/install.sh" && chmod +x "$CLAWGOD_DIR/install.sh"
+    info "Local installer copied → ~/.clawgod/install.sh ('claude update' will use it)"
+  fi
+fi
+
 # ─── Write universal patcher ───────────────────────────
 
 cat > "$CLAWGOD_DIR/patch.mjs" << 'PATCHER_EOF'
@@ -1459,7 +1474,10 @@ const patches = [
         `if(_ua.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";` +
         `process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");` +
         `const _w=process.platform==='win32';` +
-        `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:['bash','-c','curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash'];` +
+        `const _li=require('path').join(require('os').homedir(),'.clawgod','install.sh');` +
+        `const _hasLocal=!_w&&require('fs').existsSync(_li);` +
+        `if(_hasLocal)process.stderr.write('[clawgod] using local installer (remote skipped): '+_li+'\\n');` +
+        `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:(_hasLocal?['bash',_li]:['bash','-c','curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash']);` +
         `const _r=require('child_process').spawnSync(_c[0],_c.slice(1),{stdio:'inherit',env:process.env});` +
         `process.exit(_r.status||0);`
       );
