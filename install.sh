@@ -1253,6 +1253,7 @@ const patches = [
     replacer: (m, fn, flag, val) =>
       `function ${fn}(){if(!${flag}){${flag}=!0;try{let e=process.env.CLAUDE_INTERNAL_FC_OVERRIDES;if(e)${val}=JSON.parse(e)}catch(e){}}return ${val}}`,
     unique: true,  // must match exactly 1
+    optional: true,  // v2.1.197+ refactored to schema-based env export; pattern no longer exists
   },
   {
     name: 'GrowthBook config overrides',
