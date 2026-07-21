@@ -34,6 +34,51 @@ $ClawDir = Join-Path $env:USERPROFILE ".clawgod"
 $BinDir  = Join-Path $env:USERPROFILE ".local\bin"
 $ClawSelfVersion = "0.0.0-dev"  # injected by release workflow from git tag
 
+function Install-ChromeFixScript {
+    New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
+    $dst = Join-Path $ClawDir "apply-claude-code-chrome-fix.ps1"
+    $localCandidates = @()
+    if ($PSScriptRoot) { $localCandidates += Join-Path $PSScriptRoot "apply-claude-code-chrome-fix.ps1" }
+    $localCandidates += Join-Path (Get-Location) "apply-claude-code-chrome-fix.ps1"
+
+    foreach ($src in $localCandidates) {
+        if ($src -and (Test-Path $src)) {
+            Copy-Item $src $dst -Force
+            return $true
+        }
+    }
+
+    try {
+        Invoke-WebRequest -Uri "https://github.com/0Chencc/clawgod/releases/latest/download/apply-claude-code-chrome-fix.ps1" -OutFile $dst -UseBasicParsing
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Invoke-ChromePostInstallFix {
+    $script = Join-Path $ClawDir "apply-claude-code-chrome-fix.ps1"
+    if (-not (Test-Path $script)) {
+        if (-not (Install-ChromeFixScript)) {
+            Write-Warn "Claude in Chrome post-install fix script not available; skipping"
+            return
+        }
+    }
+
+    $target = Join-Path $ClawDir "cli.original.cjs"
+    Write-Dim "Applying Claude Code Chrome post-install fix ..."
+    try {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $script -CliPath $target
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "Claude Code Chrome post-install fix applied"
+        } else {
+            Write-Warn "Claude Code Chrome post-install fix did not apply; ClawGod core install will continue"
+        }
+    } catch {
+        Write-Warn "Claude Code Chrome post-install fix failed; ClawGod core install will continue"
+    }
+}
+
 # ─── Colors ───────────────────────────────────────────
 
 function Write-OK($msg)   { Write-Host "  ✓ $msg" -ForegroundColor Green }
@@ -70,7 +115,7 @@ if ($Uninstall) {
         Write-OK "Removed clawgod alias"
     }
 
-    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs",".source-version","node_modules","bun-runtime","vendor")) {
+    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","apply-claude-code-chrome-fix.ps1",".source-version","node_modules","bun-runtime","vendor")) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
@@ -237,6 +282,11 @@ if ($NoUpgrade) {
 
 New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BinDir  | Out-Null
+if (Install-ChromeFixScript) {
+    Write-OK "Chrome fix helper installed (apply-claude-code-chrome-fix.ps1)"
+} else {
+    Write-Warn "Could not install Chrome fix helper; will try again after patching"
+}
 
 $NativeBin = $null
 $NativeBinLabel = $null
@@ -1287,19 +1337,14 @@ if (!process.env.CLAUDE_INTERNAL_FC_OVERRIDES && existsSync(featuresFile)) {
   } catch {}
 }
 
-// Monkey-patch process.execPath: Anthropic's CLI uses process.execPath to
-// locate the native binary for shell wrappers (find→bfs, grep→ugrep, rg) and
-// subprocess spawning. Under Bun, process.execPath returns the Bun runtime
-// path, not the Claude native binary. The launcher script sets
-// CLAUDE_CODE_EXECPATH to claude.orig (the real binary) before exec'ing
-// Bun, so we use that as the source of truth.  See issue #100.
-const _realExecPath = process.env.CLAUDE_CODE_EXECPATH || process.execPath;
-if (_realExecPath !== process.execPath) {
-  Object.defineProperty(process, 'execPath', {
-    value: _realExecPath,
-    configurable: true,
-  });
-}
+// Keep process.execPath as the Bun runtime. Claude Code's background daemon
+// launch path respawns this patched JS entrypoint as:
+//   process.execPath process.argv[1] daemon run ...
+// If process.execPath is rewritten to the native Claude binary, the native
+// binary receives cli.cjs as an argument and the daemon/control socket never
+// comes up, leaving `claude agents` stuck on opening completed sessions.
+// CLAUDE_CODE_EXECPATH is still exported by the shell launcher for any code
+// paths that need to know the native binary explicitly.
 
 // Lean mode toggle — --lean-off / --lean-on / --lean-max
 if (process.argv.includes('--lean-off') || process.argv.includes('--lean-on') || process.argv.includes('--lean-max')) {
@@ -1388,13 +1433,238 @@ $patcherCode = @'
 /**
  * ClawGod Universal Patcher
  */
-import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TARGET = join(__dirname, 'cli.original.cjs');
 const BACKUP = TARGET + '.bak';
+const require = createRequire(import.meta.url);
+const ACORN_CACHE = join(__dirname, 'vendor', 'acorn.js');
+
+async function loadAcorn() {
+  try {
+    if (existsSync(ACORN_CACHE)) return require(ACORN_CACHE);
+  } catch {}
+  try {
+    return require('acorn');
+  } catch {}
+  if (typeof fetch !== 'function') return null;
+  try {
+    mkdirSync(dirname(ACORN_CACHE), { recursive: true });
+    const res = await fetch('https://unpkg.com/acorn@8.16.0/dist/acorn.js');
+    if (!res.ok) return null;
+    writeFileSync(ACORN_CACHE, await res.text(), 'utf8');
+    return require(ACORN_CACHE);
+  } catch {
+    return null;
+  }
+}
+
+function findNodes(node, predicate, results = []) {
+  if (!node || typeof node !== 'object') return results;
+  if (predicate(node)) results.push(node);
+  for (const key of Object.keys(node)) {
+    const child = node[key];
+    if (!child || typeof child !== 'object') continue;
+    if (Array.isArray(child)) {
+      for (const item of child) findNodes(item, predicate, results);
+    } else {
+      findNodes(child, predicate, results);
+    }
+  }
+  return results;
+}
+
+function isChromeClientFactory(node) {
+  let bodyStmts;
+  if (node.body?.type === 'BlockStatement') bodyStmts = node.body.body;
+  else return false;
+  if (!node.params || node.params.length !== 1) return false;
+  if (bodyStmts.length !== 1 || bodyStmts[0].type !== 'ReturnStatement') return false;
+  const ret = bodyStmts[0].argument;
+  if (!ret || ret.type !== 'ConditionalExpression') return false;
+  if (ret.test?.type !== 'MemberExpression' || ret.test.property?.name !== 'bridgeConfig') return false;
+  const alt = ret.alternate;
+  if (!alt || alt.type !== 'ConditionalExpression') return false;
+  if (alt.test?.type !== 'MemberExpression' || alt.test.property?.name !== 'getSocketPaths') return false;
+  return true;
+}
+
+async function applyClaudeChromeSocketPatch(source, { dryRun, verify }) {
+  const replacements = [];
+  const seen = new Set();
+  const needs = {
+    clientFactory: !source.includes('__ccpp_bridge_fallback'),
+    subscriptionGate: !source.includes('__ccpp_sub_bypass'),
+    subscriptionMsg: !source.includes('__ccpp_sub_msg_bypass'),
+    selectBrowserHide: !source.includes('__ccpp_no_select_browser'),
+  };
+
+  function add(name, start, end, replacement) {
+    if (!needs[name] || seen.has(name)) return;
+    replacements.push({ name, start, end, replacement });
+    seen.add(name);
+  }
+
+  let parseSource = source;
+  let offset = 0;
+  if (parseSource.startsWith('#!')) {
+    const idx = parseSource.indexOf('\n');
+    if (idx >= 0) {
+      offset = idx + 1;
+      parseSource = parseSource.slice(offset);
+    }
+  }
+
+  const acorn = Object.values(needs).some(Boolean) ? await loadAcorn() : null;
+  if (acorn) {
+    try {
+      const ast = acorn.parse(parseSource, { ecmaVersion: 'latest', sourceType: 'module' });
+      const src = (node) => parseSource.slice(node.start, node.end);
+      const abs = (pos) => pos + offset;
+
+      if (needs.clientFactory) {
+        const funcs = [
+          ...findNodes(ast, (n) => n.type === 'FunctionDeclaration'),
+          ...findNodes(ast, (n) =>
+            n.type === 'VariableDeclarator' &&
+            n.init &&
+            (n.init.type === 'ArrowFunctionExpression' || n.init.type === 'FunctionExpression')
+          ),
+        ];
+        for (const node of funcs) {
+          const fnNode = node.type === 'VariableDeclarator' ? node.init : node;
+          if (!isChromeClientFactory(fnNode)) continue;
+          const paramName = fnNode.params[0].name;
+          const cond = fnNode.body.body[0].argument;
+          const bridgeCall = src(cond.consequent);
+          const socketCall = src(cond.alternate.consequent);
+          const nativeCall = src(cond.alternate.alternate);
+          add(
+            'clientFactory',
+            abs(fnNode.body.start),
+            abs(fnNode.body.end),
+            `{if(${paramName}.getSocketPaths){var __paths=${paramName}.getSocketPaths();if(__paths&&__paths.length>0)return ${socketCall}}return ${paramName}.bridgeConfig?${bridgeCall}:${nativeCall}}/*__ccpp_bridge_fallback*/`
+          );
+          break;
+        }
+      }
+
+      if (needs.subscriptionGate) {
+        for (const decl of findNodes(ast, (n) => n.type === 'VariableDeclarator')) {
+          if (!decl.init || decl.init.type !== 'LogicalExpression' || decl.init.operator !== '&&') continue;
+          const left = decl.init.left;
+          const right = decl.init.right;
+          if (left.type !== 'CallExpression' || !left.arguments?.length) continue;
+          const arg = left.arguments[0];
+          if (!arg || arg.type !== 'MemberExpression' || arg.property?.name !== 'chrome') continue;
+          if (right.type !== 'CallExpression' || right.arguments?.length !== 0) continue;
+          const calleeName = left.callee?.name || left.callee?.property?.name;
+          if (!calleeName) continue;
+          const defs = findNodes(ast, (n) =>
+            (n.type === 'FunctionDeclaration' && n.id?.name === calleeName) ||
+            (n.type === 'VariableDeclarator' && n.id?.name === calleeName)
+          );
+          if (!defs.some((def) => src(def).includes('claudeInChromeDefaultEnabled'))) continue;
+          add('subscriptionGate', abs(decl.init.start), abs(decl.init.end), `${src(left)}/*__ccpp_sub_bypass*/`);
+          break;
+        }
+      }
+
+      if (needs.subscriptionMsg) {
+        const msgAnchor = 'Claude in Chrome requires a claude.ai subscription.';
+        const msgPos = parseSource.indexOf(msgAnchor);
+        if (msgPos >= 0) {
+          const before = parseSource.slice(Math.max(0, msgPos - 200), msgPos);
+          if (!before.includes('false&&')) {
+            const logicals = findNodes(ast, (n) =>
+              n.type === 'LogicalExpression' &&
+              n.operator === '&&' &&
+              n.start <= msgPos &&
+              n.end >= msgPos &&
+              n.left?.type === 'UnaryExpression' &&
+              n.left.operator === '!'
+            );
+            if (logicals.length > 0) {
+              const target = logicals.reduce((a, b) => (b.end - b.start) < (a.end - a.start) ? b : a);
+              add('subscriptionMsg', abs(target.left.start), abs(target.left.end), 'false/*__ccpp_sub_msg_bypass*/');
+            }
+          }
+        }
+      }
+
+      if (needs.selectBrowserHide) {
+        const selectBrowserNodes = findNodes(ast, (n) => {
+          if (n.type !== 'ObjectExpression') return false;
+          return n.properties?.some((p) => p.key?.name === 'value' && p.value?.value === 'select-browser');
+        });
+        if (selectBrowserNodes.length > 0) {
+          const sbNode = selectBrowserNodes[0];
+          const pushCalls = findNodes(ast, (n) =>
+            n.type === 'CallExpression' &&
+            n.callee?.property?.name === 'push' &&
+            n.start >= sbNode.start &&
+            n.start - sbNode.end <= 200
+          );
+          if (pushCalls.length > 0) {
+            add('selectBrowserHide', abs(pushCalls[0].start), abs(pushCalls[0].end), 'void 0/*__ccpp_no_select_browser*/');
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // Regex fallback for the current minified bundle shape. The AST path above
+  // handles name drift; this keeps install/repatch useful if acorn is absent.
+  if (needs.clientFactory && !seen.has('clientFactory')) {
+    const re = /function ([\w$]+)\(([\w$]+)\)\{return \2\.bridgeConfig\?([\w$]+\(\2\)):\2\.getSocketPaths\?([\w$]+\(\2\)):([\w$]+\(\2\))\}/g;
+    const m = re.exec(source);
+    if (m) add('clientFactory', m.index, m.index + m[0].length, `function ${m[1]}(${m[2]}){if(${m[2]}.getSocketPaths){var __paths=${m[2]}.getSocketPaths();if(__paths&&__paths.length>0)return ${m[4]}}return ${m[2]}.bridgeConfig?${m[3]}:${m[5]}}/*__ccpp_bridge_fallback*/`);
+  }
+
+  if (needs.subscriptionGate && !seen.has('subscriptionGate')) {
+    const re = /(\b[\w$]+\(([\w$]+)\.chrome\);let [\w$]+=)([\w$]+\(\2\.chrome\))&&[\w$]+\(\)(?=,[\s\S]{0,1600}?tengu_claude_in_chrome_setup)/g;
+    const m = re.exec(source);
+    if (m) add('subscriptionGate', m.index, m.index + m[0].length, `${m[1]}${m[3]}/*__ccpp_sub_bypass*/`);
+  }
+
+  if (needs.subscriptionMsg && !seen.has('subscriptionMsg')) {
+    const re = /(\b[\w$]+=)(![\w$]+)(&&[\s\S]{0,500}?"Claude in Chrome requires a claude\.ai subscription\.")/g;
+    const m = re.exec(source);
+    if (m) add('subscriptionMsg', m.index, m.index + m[0].length, `${m[1]}false/*__ccpp_sub_msg_bypass*/${m[3]}`);
+  }
+
+  if (needs.selectBrowserHide && !seen.has('selectBrowserHide')) {
+    const re = /(\{label:"Select browser(?:\\u2026|\u2026)",value:"select-browser"\}[\s\S]{0,240}?)([\w$]+)\.push\(([\w$]+)\)/g;
+    const m = re.exec(source);
+    if (m) add('selectBrowserHide', m.index, m.index + m[0].length, `${m[1]}void 0/*__ccpp_no_select_browser*/`);
+  }
+
+  if (replacements.length === 0) {
+    const hasChrome = source.includes('tengu_claude_in_chrome_setup') ||
+      source.includes('Claude in Chrome requires a claude.ai subscription.') ||
+      source.includes('select-browser');
+    const allApplied = source.includes('__ccpp_bridge_fallback') &&
+      (source.includes('__ccpp_sub_bypass') || !source.includes('tengu_claude_in_chrome_setup')) &&
+      (source.includes('__ccpp_sub_msg_bypass') || !source.includes('Claude in Chrome requires a claude.ai subscription.')) &&
+      (source.includes('__ccpp_no_select_browser') || !source.includes('select-browser'));
+    if (allApplied) return { status: 'already', detail: 'already applied' };
+    if (!hasChrome) return { status: 'skipped', detail: 'not present in this version' };
+    return { status: 'failed', detail: 'Chrome socket patterns not found' };
+  }
+
+  if (verify) return { status: 'verify', count: replacements.length };
+
+  let next = source;
+  if (!dryRun) {
+    replacements.sort((a, b) => b.start - a.start);
+    for (const r of replacements) next = next.slice(0, r.start) + r.replacement + next.slice(r.end);
+  }
+  return { status: 'applied', count: replacements.length, code: next };
+}
 
 const patches = [
   {
@@ -1426,6 +1696,39 @@ const patches = [
     name: 'Agent Teams always enabled',
     pattern: /function ([\w$]+)\(\)\{if\(![\w$]+\(process\.env\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\)&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}/g,
     replacer: (m, fn) => `function ${fn}(){return!0}`,
+    sentinel: 'tengu_amber_flint',
+  },
+  {
+    // `claude --chrome agents` enables Chrome tools in the Fleet View host, but
+    // upstream only persists a narrow config subset into dispatched background
+    // jobs. Preserve the Chrome flag so sessions created from `claude agents`
+    // keep `claude-in-chrome` after attach/respawn.
+    name: 'Claude in Chrome agents config state',
+    pattern: /([\w$]+)=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1\}/g,
+    replacer: (m, cfg) => `${cfg}={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1,chrome:!1,noChrome:!1}`,
+    appliedMarker: /[\w$]+=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1,chrome:!1,noChrome:!1\}/,
+    validate: (match, code) => !code.includes('strictMcpConfig:!1,chrome:!1,noChrome:!1'),
+  },
+  {
+    name: 'Claude in Chrome agents flag parser',
+    pattern: /if\(([\w$]+)==="--strict-mcp-config"\)\{([\w$]+)\.strictMcpConfig=!0;continue\}/g,
+    replacer: (m, arg, cfg) => `if(${arg}==="--chrome"){${cfg}.chrome=!0;continue}if(${arg}==="--no-chrome"){${cfg}.noChrome=!0;continue}` + m,
+    appliedMarker: /if\([\w$]+==="--chrome"\)\{[\w$]+\.chrome=!0;continue\}if\([\w$]+==="--no-chrome"\)\{[\w$]+\.noChrome=!0;continue\}/,
+    validate: (match, code) => !/if\([\w$]+==="--chrome"\)\{[\w$]+\.chrome=!0;continue\}/.test(code),
+  },
+  {
+    name: 'Claude in Chrome agents config resolver',
+    pattern: /strictMcpConfig:([\w$]+)\.strictMcpConfig\}\}function ([\w$]+)/g,
+    replacer: (m, cfg, fn) => `strictMcpConfig:${cfg}.strictMcpConfig,chrome:${cfg}.chrome&&!${cfg}.noChrome,noChrome:${cfg}.noChrome}}function ${fn}`,
+    appliedMarker: /chrome:[\w$]+\.chrome&&![\w$]+\.noChrome,noChrome:[\w$]+\.noChrome/,
+    validate: (match, code) => !/chrome:[\w$]+\.chrome&&![\w$]+\.noChrome/.test(code),
+  },
+  {
+    name: 'Claude in Chrome agents dispatch args',
+    pattern: /\.\.\.e\.strictMcpConfig\?\["--strict-mcp-config"\]:\[\]\]\}/g,
+    replacer: () => '...e.chrome?["--chrome"/*__ccpp_agents_chrome_dispatch*/]:[],...e.noChrome?["--no-chrome"]:[],...e.strictMcpConfig?["--strict-mcp-config"]:[]]}',
+    appliedMarker: '__ccpp_agents_chrome_dispatch',
+    validate: (match, code) => !code.includes('__ccpp_agents_chrome_dispatch'),
   },
   {
     name: 'Computer Use subscription bypass',
@@ -1436,6 +1739,7 @@ const patches = [
     name: 'Computer Use default enabled',
     pattern: /([\w$]+=)\{enabled:!1,pixelValidation/g,
     replacer: (m, prefix) => `${prefix}{enabled:!0,pixelValidation`,
+    sentinel: '{enabled:!1,pixelValidation',
   },
   {
     // v2.1.92+: name:"ultraplan",get description(){...},argumentHint:"<prompt>",isEnabled:()=>fnRef()
@@ -1444,6 +1748,7 @@ const patches = [
     pattern: /(name:"ultraplan",[\s\S]{1,500}?argumentHint:"<prompt>",isEnabled:\(\)=>)(?:!1|[\w$]+\(\))/g,
     replacer: (m, prefix) => `${prefix}!0`,
     sentinel: 'name:"ultraplan"',
+    appliedMarker: 'argumentHint:"<prompt>",isEnabled:()=>!0',
   },
   {
     name: 'Ultrareview enable (rQt gate)',
@@ -1459,46 +1764,65 @@ const patches = [
         ? `function ${fn}(){return!0}`
         : `function ${fn}(){let _r=${getter}("tengu_review_bughunter_config",null);return _r?{..._r,enabled:!0}:{enabled:!0}}`,
     optional: true,
+    sentinel: '"tengu_review_bughunter_config"',
+    appliedMarker: ',enabled:!0}:{enabled:!0}}',
   },
   {
     name: 'Logo + brand color → green (RGB dark)',
     pattern: /clawd_body:"rgb\(215,119,87\)"/g,
     replacer: () => 'clawd_body:"rgb(34,197,94)"',
+    sentinel: 'clawd_body:"rgb(215,119,87)"',
   },
   {
     name: 'Logo + brand color → green (ANSI)',
     pattern: /clawd_body:"ansi:redBright"/g,
     replacer: () => 'clawd_body:"ansi:greenBright"',
+    sentinel: 'clawd_body:"ansi:redBright"',
   },
   {
     name: 'Theme claude color → green (dark)',
     pattern: /claude:"rgb\(215,119,87\)"/g,
     replacer: () => 'claude:"rgb(34,197,94)"',
+    sentinel: 'claude:"rgb(215,119,87)"',
   },
   {
     name: 'Theme claude color → green (light)',
     pattern: /claude:"rgb\(255,153,51\)"/g,
     replacer: () => 'claude:"rgb(22,163,74)"',
+    sentinel: 'claude:"rgb(255,153,51)"',
   },
   {
     name: 'Shimmer → green',
     pattern: /claudeShimmer:"rgb\(2[34]5,1[45]9,1[12]7\)"/g,
     replacer: () => 'claudeShimmer:"rgb(74,222,128)"',
+    appliedMarker: 'claudeShimmer:"rgb(74,222,128)"',
   },
   {
     name: 'Shimmer light → green',
     pattern: /claudeShimmer:"rgb\(255,183,101\)"/g,
     replacer: () => 'claudeShimmer:"rgb(34,197,94)"',
+    sentinel: 'claudeShimmer:"rgb(255,183,101)"',
   },
   {
     name: 'Computer Use gate bypass',
-    pattern: /function ([\w$]+)\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\.enabled\}/g,
+    pattern: /function ([\w$]+)\(\)\{if\([\w$]+\("hipaa"\)\)return\s*!1;return [\w$]+\(\)&&[\w$]+\(\)\.enabled\}/g,
     replacer: (m, fn) => `function ${fn}(){return!0}`,
+    sentinel: '"hipaa"',
   },
   {
+    // ≤v2.1.18x: voice mode was GrowthBook-killable via
+    //   function X(){return!Y("tengu_amber_quartz_disabled",!1)}
+    // v2.1.183 removed that flag entirely; voice mode is now gated only by real
+    // requirements — a Claude.ai account (hT(): if(!hT())return "...requires a
+    // Claude.ai account...") plus microphone permission — neither a bypassable
+    // flag. Faking the auth gate would show voice as available then fail at the
+    // stream layer (voice_stream_no_auth), so there is nothing to bypass on
+    // current builds. optional keeps it working on older bundles that still ship
+    // the kill-flag, without a false "0 matches — cannot verify".
     name: 'Voice Mode enable (bypass GrowthBook kill)',
     pattern: /function ([\w$]+)\(\)\{return![\w$]+\("tengu_amber_quartz_disabled",!1\)\}/g,
     replacer: (m, fn) => `function ${fn}(){return!0}`,
+    optional: true,
   },
   {
     // v2.1.158+: provider gate refactored into helper function:
@@ -1519,10 +1843,26 @@ const patches = [
     // v2.1.214+: if(r!=="firstParty"&&!d6(r)&&(t==="claude-opus-4-6"||…))return!1;
     //   "anthropicAws" replaced by helper function !fn(var).
     //   Match both: \1!=="anthropicAws" OR !fn(\1).
+    // [^;]* absorbs the optional model-condition tail safely. This patch is
+    // optional because newer bundles may use the provider helper below.
     name: 'Auto-mode unlock for third-party API (inline gate)',
     pattern: /if\(([\w$]+)!=="firstParty"&&(?:\1!=="anthropicAws"|![\w$]+\(\1\))[^;]*\)return!1;/g,
     replacer: () => '',
-    sentinel: '!=="firstParty"&&',
+    optional: true,
+  },
+  {
+    // v2.1.158+: the auto-mode provider opt-in helper. Older bundles gated it
+    // at the call site (if(!mw$(q))return!1;) — see 'provider helper gate'
+    // above. By v2.1.183 the call site became a warning-message branch
+    // (else if(!_kt(xr()))p="provider",...) so the call-site strip no longer
+    // matches. The helper shape is unchanged, so neutralize it directly —
+    // every provider becomes auto-mode eligible without needing the
+    // CLAUDE_CODE_ENABLE_AUTO_MODE opt-in:
+    //   function _kt(e){if(e==="firstParty"||e==="anthropicAws")return!0;return st(process.env.CLAUDE_CODE_ENABLE_AUTO_MODE)}
+    name: 'Auto-mode unlock for third-party API (provider opt-in helper)',
+    pattern: /function ([\w$]+)\(([\w$]+)\)\{if\(\2==="firstParty"\|\|\2==="anthropicAws"\)return!0;return [\w$]+\(process\.env\.CLAUDE_CODE_ENABLE_AUTO_MODE\)\}/g,
+    replacer: (m, fn) => `function ${fn}(){return!0}`,
+    sentinel: 'process.env.CLAUDE_CODE_ENABLE_AUTO_MODE)}',
   },
   {
     // Redirect CLI `claude update` to clawgod self-update. Upstream's
@@ -1572,6 +1912,7 @@ const patches = [
     name: 'Hex brand color → green',
     pattern: /#da7756/g,
     replacer: () => '#22c55e',
+    sentinel: '#da7756',
   },
   {
     name: 'macOS Cmd+V image paste fallback to clipboard read',
@@ -1740,6 +2081,7 @@ for (const p of patches) {
   }
   if (relevant.length === 0) {
     if (p.optional) { console.log(`  >> ${p.name} (not in this version)`); skipped++; continue; }
+    if (p.appliedMarker !== undefined && (p.appliedMarker instanceof RegExp ? p.appliedMarker.test(code) : code.includes(p.appliedMarker))) { console.log(`  OK ${p.name} (already applied, marker present)`); applied++; continue; }
     if (p.sentinel !== undefined) {
       const sentinels = Array.isArray(p.sentinel) ? p.sentinel : [p.sentinel];
       const stillPresent = sentinels.filter((s) => code.includes(s));
@@ -1764,6 +2106,25 @@ for (const p of patches) {
   else { console.log(`  >> ${p.name} (no change)`); skipped++; }
 }
 
+const chromePatch = await applyClaudeChromeSocketPatch(code, { dryRun, verify });
+if (chromePatch.status === 'applied') {
+  if (!dryRun) code = chromePatch.code;
+  console.log(`  OK Claude in Chrome local socket fallback (${chromePatch.count})`);
+  applied++;
+} else if (chromePatch.status === 'verify') {
+  console.log(`  -- Claude in Chrome local socket fallback — ${chromePatch.count} match(es), not yet applied`);
+  skipped++;
+} else if (chromePatch.status === 'already') {
+  console.log(`  OK Claude in Chrome local socket fallback (${chromePatch.detail})`);
+  applied++;
+} else if (chromePatch.status === 'skipped') {
+  console.log(`  >> Claude in Chrome local socket fallback (${chromePatch.detail})`);
+  skipped++;
+} else {
+  console.log(`  XX Claude in Chrome local socket fallback — ${chromePatch.detail}`);
+  failed++;
+}
+
 console.log(`\n${'-'.repeat(55)}`);
 console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed`);
 
@@ -1782,6 +2143,7 @@ Write-OK "Patcher created (patch.mjs)"
 
 Write-Dim "Applying patches ..."
 node (Join-Path $ClawDir "patch.mjs")
+Invoke-ChromePostInstallFix
 
 # ─── Create default configs ───────────────────────────
 
@@ -1812,6 +2174,12 @@ $leanMaxFlag = Join-Path $ClawDir ".lean-max"
 $claudeSettingsDir = Join-Path $env:USERPROFILE ".claude"
 $claudeSettings = Join-Path $claudeSettingsDir "settings.json"
 New-Item -ItemType Directory -Force -Path $claudeSettingsDir | Out-Null
+
+# Default to lean-off: if no lean flag files exist and user didn't explicitly
+# request lean-on or lean-max, create the .lean-disabled flag so lean stays off.
+if (-not (Test-Path $leanOffFlag) -and -not (Test-Path $leanMaxFlag) -and -not $LeanOn -and -not $LeanMax) {
+    New-Item -ItemType File -Force -Path $leanOffFlag | Out-Null
+}
 
 if ($LeanOff) {
     New-Item -ItemType File -Force -Path $leanOffFlag | Out-Null
@@ -1951,7 +2319,39 @@ if (-not (Test-Path $importBin)) {
 }
 
 $importPathInCmd = "%USERPROFILE%\.clawgod\clawgod-import.exe"
-$launcherContent = "@echo off`r`nif `"%~1`"==`"import`" (`r`n  if exist `"$importPathInCmd`" (`r`n    shift`r`n    `"$importPathInCmd`" %1 %2 %3 %4 %5 %6 %7 %8 %9`r`n    exit /b %ERRORLEVEL%`r`n  ) else (`r`n    echo clawgod: import tool not installed. Reinstall clawgod to get it.`r`n    exit /b 127`r`n  )`r`n)`r`nif not exist `"$cliPathInCmd`" (`r`n  echo clawgod: cli.cjs not found. Reinstall: irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 ^| iex`r`n  exit /b 127`r`n)`r`nif not exist `"$bunPathInCmd`" (`r`n  echo clawgod: bun not found at $bunPathInCmd. Install: https://bun.sh/install`r`n  exit /b 127`r`n)`r`nset `"CLAUDE_CODE_EXECPATH=%~dp0claude.orig.exe`"`r`n`"$bunPathInCmd`" `"$cliPathInCmd`" %*"
+$launcherContent = @"
+@echo off
+setlocal
+if /I "%~1"=="import" (
+  if exist "$importPathInCmd" (
+    shift
+    "$importPathInCmd" %1 %2 %3 %4 %5 %6 %7 %8 %9
+    exit /b %ERRORLEVEL%
+  ) else (
+    echo clawgod: import tool not installed. Reinstall clawgod to get it.
+    exit /b 127
+  )
+)
+if not exist "$cliPathInCmd" (
+  echo clawgod: cli.cjs not found. Reinstall: irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 ^| iex
+  exit /b 127
+)
+if not exist "$bunPathInCmd" (
+  echo clawgod: bun not found at $bunPathInCmd. Install: https://bun.sh/install
+  exit /b 127
+)
+set "CLAUDE_CODE_EXECPATH=%~dp0claude.orig.exe"
+set "CLAWGOD_AUTO_CHROME=1"
+if "%CLAWGOD_NO_AUTO_CHROME%"=="1" set "CLAWGOD_AUTO_CHROME=0"
+for %%A in (%*) do if /I "%%~A"=="--chrome" set "CLAWGOD_AUTO_CHROME=0"
+for %%A in (-h --help -v --version version update upgrade auth login logout config mcp daemon logs attach stop kill respawn rm doctor install uninstall completion migrate-installer setup-token) do if /I "%~1"=="%%~A" set "CLAWGOD_AUTO_CHROME=0"
+if "%CLAWGOD_AUTO_CHROME%"=="1" (
+  "$bunPathInCmd" "$cliPathInCmd" --chrome %*
+) else (
+  "$bunPathInCmd" "$cliPathInCmd" %*
+)
+exit /b %ERRORLEVEL%
+"@
 
 # Find and back up original claude
 $claudeCmd = Join-Path $BinDir "claude.cmd"

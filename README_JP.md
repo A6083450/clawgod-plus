@@ -49,6 +49,7 @@ irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | ie
 | **GrowthBook オーバーライド** | 設定ファイルで任意のフィーチャーフラグを上書き |
 | **Agent Teams** | マルチエージェント協調、フラグ不要 |
 | **Computer Use** | Max/Proサブスク不要で画面操作（macOS） |
+| **Claude in Chrome** | ブラウザツールはローカル Chrome 拡張の socket/pipe を優先し、APIキー運用でも OAuth サブスク bridge 認証なしで動作 |
 | **Auto-mode** | サードパーティ API ユーザー向け auto-mode のロック解除（firstParty 制限を撤去） |
 | **Ultraplan** | Claude Code Remote 経由のマルチエージェント計画 |
 | **Ultrareview** | Claude Code Remote 経由の自動バグ検出 |
@@ -86,9 +87,9 @@ irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | ie
 | **サードパーティ Cache 修正** | `baseURL` が Anthropic 以外を指す場合、`x-anthropic-billing-header` を自動的に無効化します。このヘッダーの `cch` フィールドはリクエストごとに変化するため、DeepSeek / OneAPI / Bedrock / vLLM など Anthropic 互換プロキシでは prompt-cache ヒット率がゼロになります。`CLAUDE_CODE_ATTRIBUTION_HEADER=0` を自分で設定する必要はもうありません。 |
 | **自動再パッチ** | ユーザーがネイティブ Claude バイナリをアップグレードすると、次回起動時に自動的に再抽出・再パッチ |
 | **アップデート通知** | 24時間ごとに GitHub releases を非同期チェック（ノンブロッキング）。新バージョンが利用可能な場合、起動前に1行の通知を表示 |
-| **リーン設定** | `~/.claude/settings.json` の3段階トークン最適化。**on**（デフォルト）：未使用ツール定義の削除 + Workflows/RemoteControl/Artifact 無効化。**max**：Plan mode、Agent Teams、内蔵スキルも追加削除。**off**：全ツール復元 |
+| **リーン設定** | `~/.claude/settings.json` の3段階トークン最適化。**on**：未使用ツール定義の削除 + Workflows/RemoteControl/Artifact 無効化。**max**：Plan mode、Agent Teams、内蔵スキルも追加削除。**off**（デフォルト）：全ツール復元 |
 
-> **リーン設定**は既存の設定を壊さず、アップデート後も選択が維持されます。いつでも切替：`claude --lean-on`（デフォルト）/ `claude --lean-max`（アグレッシブ）/ `claude --lean-off`（全復元）。個別設定の解除は自分で値を設定（例：`"disableArtifact": false`）。
+> **リーン設定**は既存の設定を壊さず、アップデート後も選択が維持されます。いつでも切替：`claude --lean-on` / `claude --lean-max`（アグレッシブ）/ `claude --lean-off`（デフォルト、全復元）。個別設定の解除は自分で値を設定（例：`"disableArtifact": false`）。
 
 ## コマンド
 
@@ -99,6 +100,8 @@ claude.orig         # オリジナル未修正版（自動バックアップ）
 ```
 
 `clawgod` は曖昧さのないエントリポイントです：Windows で `claude.exe` が `claude.cmd` を覆い隠す場合でも `clawgod.cmd` は常に動作し、公式自動更新で `claude` が上書きされても `clawgod` はパッチ済みビルドを実行し続けます。
+
+`CLAWGOD_NO_AUTO_CHROME=1` を設定すると、デフォルトの `--chrome` 注入を一時的に無効化できます。
 
 ## 設定
 

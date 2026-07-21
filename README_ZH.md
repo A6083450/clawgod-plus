@@ -49,6 +49,7 @@ irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | ie
 | **GrowthBook 覆盖** | 通过配置文件覆盖任意 Feature Flag |
 | **Agent Teams** | 多智能体协作，无需额外参数 |
 | **Computer Use** | 无需 Max/Pro 订阅即可使用屏幕控制（macOS） |
+| **Claude in Chrome** | 浏览器工具优先使用本地 Chrome 扩展 socket/pipe，API Key 模式无需 OAuth 订阅桥接鉴权 |
 | **Auto-mode** | 解锁第三方 API 用户的 auto-mode（移除 firstParty 限制） |
 | **Ultraplan** | 通过 Claude Code Remote 进行多智能体规划 |
 | **Ultrareview** | 通过 Claude Code Remote 自动化 Bug 查找 |
@@ -86,19 +87,21 @@ irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | ie
 | **第三方 Cache 修复** | 当 `baseURL` 指向非 Anthropic 域名时自动关闭 `x-anthropic-billing-header`。该 header 里的 `cch` 字段每请求都变，会让 DeepSeek / OneAPI / Bedrock / vLLM 以及所有 Anthropic 协议代理的 prompt-cache 命中率归零。不需要再自行配置 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`。 |
 | **自动重打补丁** | 检测到用户官方升级了 native Claude binary 时，下次启动自动重新抽取 + 重新 patch |
 | **更新通知** | 每 24h 异步检查 GitHub releases（非阻塞），发现新版本时启动前显示一行提示 |
-| **精简设置** | 三级 token 优化，作用于 `~/.claude/settings.json`。**on**（默认）：移除未使用工具定义 + 禁用 Workflows/RemoteControl/Artifact。**max**：额外移除 Plan mode、Agent Teams、内置 skills。**off**：恢复全部工具 |
+| **精简设置** | 三级 token 优化，作用于 `~/.claude/settings.json`。**on**：移除未使用工具定义 + 禁用 Workflows/RemoteControl/Artifact。**max**：额外移除 Plan mode、Agent Teams、内置 skills。**off**（默认）：恢复全部工具 |
 
-> **精简设置**不会破坏现有配置，更新时保持用户选择。随时切换：`claude --lean-on`（默认）/ `claude --lean-max`（激进）/ `claude --lean-off`（恢复全部）。取消单项设置只需自行修改（如 `"disableArtifact": false`）。
+> **精简设置**不会破坏现有配置，更新时保持用户选择。随时切换：`claude --lean-on` / `claude --lean-max`（激进）/ `claude --lean-off`（默认，恢复全部）。取消单项设置只需自行修改（如 `"disableArtifact": false`）。
 
 ## 使用
 
 ```bash
-claude              # 已 Patch 的 Claude Code（替换官方 launcher）
+claude              # 已 Patch 的 Claude Code，交互会话默认带 --chrome
 clawgod             # 同 `claude`，显式且永远生效的入口
 claude.orig         # 原版未修改版本（自动备份）
 ```
 
 `clawgod` 是一个无歧义的入口：Windows 上即便 `claude.exe` 抢占了 `claude.cmd`，`clawgod.cmd` 始终生效；即便官方自动更新覆盖了 `claude`，`clawgod` 仍跑 patched 版本。
+
+设置 `CLAWGOD_NO_AUTO_CHROME=1` 可以临时禁用默认 `--chrome` 注入。
 
 ## 配置
 
@@ -126,6 +129,7 @@ claude.orig         # 原版未修改版本（自动备份）
 3. 抽出嵌入的 `.node` 原生模块（audio-capture、image-processor、computer-use-*、url-handler）放到 `~/.clawgod/vendor/`
 4. 把 `/$bunfs/...` 虚拟路径重写到本地 vendor 路径
 5. 应用 29 条正则 patch（跨版本兼容，同一组 regex 覆盖多个 release）
+5. 应用 28 条跨版本 patch，包括 AST 辅助的 Chrome 浏览器工具 socket fallback
 6. `claude` / `clawgod` launcher 在 Bun runtime 下跑 patched cli.js
 
 `~/.clawgod/.source-version` 标记当时被 patch 的版本号。每次启动 wrapper 比对它和 `versions/` 里最新二进制；如果用户走官方途径升级了 Claude Code，下次启动会自动重打补丁。
