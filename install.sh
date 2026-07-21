@@ -19,7 +19,7 @@ NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
 LEAN_OFF="${CLAWGOD_LEAN_OFF:-}"
 LEAN_ON="${CLAWGOD_LEAN_ON:-}"
 LEAN_MAX="${CLAWGOD_LEAN_MAX:-}"
-CLAWGOD_SELF_VERSION="1.7.0"
+CLAWGOD_SELF_VERSION="0.0.0-dev"  # injected by release workflow from git tag
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -806,6 +806,275 @@ REPATCH_EOF
 chmod +x "$CLAWGOD_DIR/repatch.mjs"
 info "Re-patch helper installed (repatch.mjs)"
 
+# ─── Write OpenAI-compatible proxy ────────────────────────────
+
+cat > "$CLAWGOD_DIR/openai-proxy.cjs" << 'PROXY_EOF'
+'use strict';
+// Anthropic Messages API <-> OpenAI Chat Completions API translation proxy
+// Allows Claude Code to use xAI/Grok and other OpenAI-compatible APIs
+
+function translateSystem(system) {
+  if (!system) return [];
+  if (typeof system === 'string') return [{ role: 'system', content: system }];
+  if (Array.isArray(system)) {
+    var text = system.filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('\n');
+    return text ? [{ role: 'system', content: text }] : [];
+  }
+  return [];
+}
+
+function translateMessages(msgs) {
+  var out = [];
+  for (var i = 0; i < msgs.length; i++) {
+    var msg = msgs[i];
+    if (msg.role === 'user') {
+      if (typeof msg.content === 'string') { out.push({ role: 'user', content: msg.content }); continue; }
+      if (!Array.isArray(msg.content)) continue;
+      var toolResults = [], otherBlocks = [];
+      for (var j = 0; j < msg.content.length; j++) {
+        if (msg.content[j].type === 'tool_result') toolResults.push(msg.content[j]);
+        else otherBlocks.push(msg.content[j]);
+      }
+      for (var k = 0; k < toolResults.length; k++) {
+        var tr = toolResults[k], content = '';
+        if (typeof tr.content === 'string') content = tr.content;
+        else if (Array.isArray(tr.content)) content = tr.content.filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('\n');
+        if (tr.is_error) content = '[ERROR] ' + content;
+        out.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: content || '' });
+      }
+      if (otherBlocks.length > 0) {
+        var parts = [];
+        for (var l = 0; l < otherBlocks.length; l++) {
+          var block = otherBlocks[l];
+          if (block.type === 'text') parts.push({ type: 'text', text: block.text });
+          else if (block.type === 'image') {
+            var url = block.source.type === 'base64' ? 'data:' + block.source.media_type + ';base64,' + block.source.data : block.source.url;
+            parts.push({ type: 'image_url', image_url: { url: url } });
+          }
+        }
+        if (parts.length === 1 && parts[0].type === 'text') out.push({ role: 'user', content: parts[0].text });
+        else if (parts.length > 0) out.push({ role: 'user', content: parts });
+      }
+    } else if (msg.role === 'assistant') {
+      if (typeof msg.content === 'string') { out.push({ role: 'assistant', content: msg.content }); continue; }
+      if (!Array.isArray(msg.content)) continue;
+      var textContent = '', toolCalls = [];
+      for (var m = 0; m < msg.content.length; m++) {
+        var b = msg.content[m];
+        if (b.type === 'text') textContent += b.text;
+        else if (b.type === 'tool_use') toolCalls.push({ id: b.id, type: 'function', function: { name: b.name, arguments: typeof b.input === 'string' ? b.input : JSON.stringify(b.input) } });
+      }
+      var assistantMsg = { role: 'assistant', content: textContent || null };
+      if (toolCalls.length > 0) assistantMsg.tool_calls = toolCalls;
+      out.push(assistantMsg);
+    }
+  }
+  return out;
+}
+
+function translateTools(tools) {
+  if (!tools || tools.length === 0) return undefined;
+  return tools.map(function (t) {
+    return { type: 'function', function: { name: t.name, description: t.description || '', parameters: t.input_schema || { type: 'object', properties: {} } } };
+  });
+}
+
+function stripCacheControl(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(stripCacheControl);
+  var out = {};
+  for (var key in obj) { if (key === 'cache_control') continue; out[key] = stripCacheControl(obj[key]); }
+  return out;
+}
+
+function translateRequest(body) {
+  var cleaned = stripCacheControl(body);
+  var systemMsgs = translateSystem(cleaned.system);
+  var userMsgs = translateMessages(cleaned.messages || []);
+  var openaiBody = { model: cleaned.model, messages: systemMsgs.concat(userMsgs), stream: !!cleaned.stream };
+  if (cleaned.max_tokens) openaiBody.max_tokens = cleaned.max_tokens;
+  if (cleaned.temperature !== undefined) openaiBody.temperature = cleaned.temperature;
+  if (cleaned.top_p !== undefined) openaiBody.top_p = cleaned.top_p;
+  if (cleaned.stop_sequences) openaiBody.stop = cleaned.stop_sequences;
+  var tools = translateTools(cleaned.tools);
+  if (tools) openaiBody.tools = tools;
+  if (cleaned.stream) openaiBody.stream_options = { include_usage: true };
+  return openaiBody;
+}
+
+function mapFinishReason(reason) {
+  if (reason === 'stop') return 'end_turn';
+  if (reason === 'tool_calls') return 'tool_use';
+  if (reason === 'length') return 'max_tokens';
+  return 'end_turn';
+}
+
+function translateResponse(openaiResp, requestModel) {
+  var choice = openaiResp.choices && openaiResp.choices[0];
+  if (!choice) return { id: 'msg_proxy_error', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'No response from upstream API' }], model: requestModel, stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } };
+  var content = [];
+  if (choice.message.content) content.push({ type: 'text', text: choice.message.content });
+  if (choice.message.tool_calls) {
+    for (var i = 0; i < choice.message.tool_calls.length; i++) {
+      var tc = choice.message.tool_calls[i], input = {};
+      try { input = JSON.parse(tc.function.arguments || '{}'); } catch (e) {}
+      content.push({ type: 'tool_use', id: tc.id, name: tc.function.name, input: input });
+    }
+  }
+  if (content.length === 0) content.push({ type: 'text', text: '' });
+  return { id: openaiResp.id || ('msg_' + Date.now()), type: 'message', role: 'assistant', content: content, model: requestModel || openaiResp.model, stop_reason: mapFinishReason(choice.finish_reason), stop_sequence: null, usage: { input_tokens: (openaiResp.usage && openaiResp.usage.prompt_tokens) || 0, output_tokens: (openaiResp.usage && openaiResp.usage.completion_tokens) || 0 } };
+}
+
+function sse(event, data) { return 'event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n'; }
+
+function createStreamTranslator(requestModel) {
+  var state = { model: requestModel, blockIndex: 0, sentStart: false, inText: false, tcBufs: {}, inTok: 0, outTok: 0, msgId: 'msg_' + Date.now() };
+  return function (chunk) {
+    var events = [];
+    if (!state.sentStart) {
+      state.sentStart = true;
+      if (chunk.id) state.msgId = chunk.id;
+      events.push(sse('message_start', { type: 'message_start', message: { id: state.msgId, type: 'message', role: 'assistant', content: [], model: state.model || chunk.model, stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } } }));
+      events.push(sse('ping', { type: 'ping' }));
+    }
+    var choice = chunk.choices && chunk.choices[0];
+    if (!choice) { if (chunk.usage) { state.inTok = chunk.usage.prompt_tokens || 0; state.outTok = chunk.usage.completion_tokens || 0; } return events; }
+    var delta = choice.delta || {};
+    if (delta.content) {
+      if (!state.inText) { state.inText = true; events.push(sse('content_block_start', { type: 'content_block_start', index: state.blockIndex, content_block: { type: 'text', text: '' } })); }
+      events.push(sse('content_block_delta', { type: 'content_block_delta', index: state.blockIndex, delta: { type: 'text_delta', text: delta.content } }));
+    }
+    if (delta.tool_calls) {
+      if (state.inText) { events.push(sse('content_block_stop', { type: 'content_block_stop', index: state.blockIndex })); state.blockIndex++; state.inText = false; }
+      for (var i = 0; i < delta.tool_calls.length; i++) {
+        var tc = delta.tool_calls[i], idx = tc.index;
+        if (!state.tcBufs[idx]) {
+          var tcId = tc.id || ('toolu_' + Date.now() + '_' + idx), tcName = (tc.function && tc.function.name) || '';
+          state.tcBufs[idx] = { id: tcId, name: tcName, bi: state.blockIndex };
+          events.push(sse('content_block_start', { type: 'content_block_start', index: state.blockIndex, content_block: { type: 'tool_use', id: tcId, name: tcName, input: {} } }));
+          state.blockIndex++;
+        }
+        var buf = state.tcBufs[idx];
+        if (tc.function && tc.function.name) buf.name = tc.function.name;
+        if (tc.function && tc.function.arguments) {
+          events.push(sse('content_block_delta', { type: 'content_block_delta', index: buf.bi, delta: { type: 'input_json_delta', partial_json: tc.function.arguments } }));
+        }
+      }
+    }
+    if (choice.finish_reason) {
+      if (state.inText) { events.push(sse('content_block_stop', { type: 'content_block_stop', index: state.blockIndex })); state.inText = false; }
+      for (var key in state.tcBufs) events.push(sse('content_block_stop', { type: 'content_block_stop', index: state.tcBufs[key].bi }));
+      events.push(sse('message_delta', { type: 'message_delta', delta: { stop_reason: mapFinishReason(choice.finish_reason), stop_sequence: null }, usage: { output_tokens: state.outTok } }));
+      events.push(sse('message_stop', { type: 'message_stop' }));
+    }
+    return events;
+  };
+}
+
+function parseSSELines(text) {
+  var chunks = [], lines = text.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (!line.startsWith('data: ')) continue;
+    var payload = line.substring(6);
+    if (payload === '[DONE]') { chunks.push(null); continue; }
+    try { chunks.push(JSON.parse(payload)); } catch (e) {}
+  }
+  return chunks;
+}
+
+function startProxy(config) {
+  var upstreamURL = (config.baseURL || 'https://api.x.ai/v1').replace(/\/+$/, '');
+  var upstreamKey = config.apiKey;
+
+  var server = Bun.serve({
+    port: 0, hostname: '127.0.0.1', idleTimeout: 255,
+    fetch: async function (req) {
+      var url = new URL(req.url);
+      if (req.method === 'GET' && url.pathname === '/health') return new Response('ok');
+      if (req.method !== 'POST' || !url.pathname.endsWith('/messages'))
+        return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+
+      var body;
+      try { body = await req.json(); } catch (e) {
+        return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON' } }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      var requestModel = body.model || config.model || '';
+      var isStream = !!body.stream;
+      var openaiBody;
+      try { openaiBody = translateRequest(body); } catch (e) {
+        return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Translation error: ' + e.message } }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      var upstreamResp;
+      try {
+        upstreamResp = await fetch(upstreamURL + '/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + upstreamKey },
+          body: JSON.stringify(openaiBody),
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Upstream connection failed: ' + e.message } }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (!upstreamResp.ok && !isStream) {
+        var errText = await upstreamResp.text().catch(function () { return ''; });
+        var errBody; try { errBody = JSON.parse(errText); } catch (e) { errBody = null; }
+        return new Response(JSON.stringify({ type: 'error', error: { type: upstreamResp.status === 429 ? 'rate_limit_error' : 'api_error', message: (errBody && errBody.error && errBody.error.message) || errText || ('HTTP ' + upstreamResp.status) } }), { status: upstreamResp.status, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (!isStream) {
+        var result; try { result = await upstreamResp.json(); } catch (e) {
+          return new Response(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Invalid upstream response' } }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify(translateResponse(result, requestModel)), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      var translator = createStreamTranslator(requestModel);
+      var upstreamBody = upstreamResp.body;
+      var readable = new ReadableStream({
+        async start(controller) {
+          var encoder = new TextEncoder(), decoder = new TextDecoder(), buffer = '';
+          try {
+            var reader = upstreamBody.getReader();
+            while (true) {
+              var r = await reader.read();
+              if (r.done) break;
+              buffer += decoder.decode(r.value, { stream: true });
+              var boundary = buffer.lastIndexOf('\n');
+              if (boundary === -1) continue;
+              var complete = buffer.substring(0, boundary + 1);
+              buffer = buffer.substring(boundary + 1);
+              var chunks = parseSSELines(complete);
+              for (var ci = 0; ci < chunks.length; ci++) {
+                if (chunks[ci] === null) continue;
+                var evts = translator(chunks[ci]);
+                for (var ei = 0; ei < evts.length; ei++) controller.enqueue(encoder.encode(evts[ei]));
+              }
+            }
+            if (buffer.trim()) {
+              var rem = parseSSELines(buffer);
+              for (var ri = 0; ri < rem.length; ri++) {
+                if (rem[ri] === null) continue;
+                var revts = translator(rem[ri]);
+                for (var rei = 0; rei < revts.length; rei++) controller.enqueue(encoder.encode(revts[rei]));
+              }
+            }
+          } catch (e) { controller.enqueue(encoder.encode(sse('error', { type: 'error', error: { type: 'api_error', message: 'Stream error: ' + e.message } }))); }
+          finally { controller.close(); }
+        },
+      });
+      return new Response(readable, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } });
+    },
+  });
+  return { port: server.port, stop: function () { server.stop(); } };
+}
+
+module.exports = { startProxy: startProxy };
+PROXY_EOF
+info "OpenAI-compatible proxy created (openai-proxy.cjs)"
+
 # ─── Write wrapper (cli.cjs, runs under Bun) ──────────────────
 
 cat > "$CLAWGOD_DIR/cli.cjs" << 'WRAPPER_EOF'
@@ -863,6 +1132,39 @@ if (existsSync(configFile)) {
   writeFileSync(configFile, JSON.stringify(defaultConfig, null, 2) + '\n');
 }
 
+// OpenAI-compatible provider proxy (grok, openai-compat, etc.)
+const _proxyTypes = { grok: 1, 'openai-compat': 1 };
+if (_proxyTypes[config.type]) {
+  let _proxyKey = config.apiKey || '';
+  if (!_proxyKey && config.type === 'grok') {
+    try {
+      const _gs = JSON.parse(readFileSync(join(homedir(), '.grok', 'user-settings.json'), 'utf8'));
+      _proxyKey = _gs.apiKey || '';
+    } catch {}
+    if (!_proxyKey) _proxyKey = process.env.GROK_API_KEY || '';
+  }
+  if (_proxyKey) {
+    const { startProxy } = require('./openai-proxy.cjs');
+    const _proxy = startProxy({
+      apiKey: _proxyKey,
+      baseURL: config.baseURL || (config.type === 'grok' ? 'https://api.x.ai/v1' : ''),
+      model: config.model || '',
+    });
+    process.env.ANTHROPIC_API_KEY = 'proxy-passthrough';
+    process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:' + _proxy.port;
+    process.env.ANTHROPIC_AUTH_TOKEN = 'proxy-passthrough';
+    if (config.model) process.env.ANTHROPIC_MODEL = config.model;
+    if (config.smallModel) process.env.ANTHROPIC_SMALL_FAST_MODEL = config.smallModel;
+    process.env.CLAUDE_CODE_ATTRIBUTION_HEADER = '0';
+    process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS ??= '1';
+    process.on('exit', function () { try { _proxy.stop(); } catch {} });
+    process.stderr.write('[clawgod] OpenAI-compat proxy on port ' + _proxy.port + ' (type: ' + config.type + ')\n');
+    config = { ...defaultConfig };  // prevent fallthrough to apiKey/baseURL injection below
+  } else {
+    process.stderr.write('[clawgod] Warning: type=' + config.type + ' but no API key found\n');
+  }
+}
+
 const hasProviderApiKey = !!config.apiKey;
 
 if (hasProviderApiKey) {
@@ -887,6 +1189,19 @@ if (hasProviderApiKey) {
 // Users can force re-enable with CLAUDE_CODE_ATTRIBUTION_HEADER=1 if needed.
 if (config.baseURL && !/anthropic\.com/i.test(config.baseURL)) {
   process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ??= '0';
+  // Third-party proxies (headroom, etc.) often require remote control.
+  // Lean mode sets disableRemoteControl:true in settings.json — undo it
+  // when the user is routing through a non-Anthropic endpoint.
+  try {
+    const _rcSettings = join(homedir(), '.claude', 'settings.json');
+    if (existsSync(_rcSettings)) {
+      const _rcS = JSON.parse(readFileSync(_rcSettings, 'utf8'));
+      if (_rcS.disableRemoteControl) {
+        delete _rcS.disableRemoteControl;
+        writeFileSync(_rcSettings, JSON.stringify(_rcS, null, 2) + '\n');
+      }
+    }
+  } catch {}
 }
 
 if (config.timeoutMs) {
@@ -1346,20 +1661,26 @@ const patches = [
   {
     // ≤v2.1.110: function X(){return Y("tengu_review_bughunter_config",null)?.enabled===!0}
     // v2.1.119+: function X(){return Y("tengu_review_bughunter_config",null)} — bare getter
-    //            and the gate at function Z(){return X()?.enabled===!0} elsewhere.
-    // v2.1.152+: same bare-getter shape, but the returned config object now also
-    //            feeds OIH/ca/Tm4 helpers that read .cost_note / .duration_note /
-    //            .model. Earlier replacer returned `{enabled:!0}` flat — that
-    //            stripped those fields, and some downstream init path read .model
-    //            then hung the boot before the trust dialog ever rendered
-    //            (issue #86, observed on 2.1.152). Preserve the original config
-    //            shape and only force-flip the enabled flag.
-    name: 'Ultrareview enable',
+    // v2.1.152+: same bare-getter shape, config also feeds cost_note/duration_note/model
+    // v2.1.214+: config key moved to a variable:
+    //   var Yau="tengu_review_bughunter_config";
+    //   function Fot(){return et(Yau,null)}
+    //   function rQt(){return Fot()?.enabled===!0&&ru()&&!J6()}
+    //   Patch rQt to always return true so ultrareview is unlocked.
+    //   Also match the old direct-literal form for <=2.1.213 compat.
+    name: 'Ultrareview enable (rQt gate)',
+    pattern: /function ([\w$]+)\(\)\{return ([\w$]+)\(\)\?\.enabled===!0&&[\w$]+\(\)&&![\w$]+\(\)\}/g,
+    replacer: (m, fn) => `function ${fn}(){return!0}`,
+    optional: true,
+  },
+  {
+    name: 'Ultrareview enable (direct literal, <=2.1.213)',
     pattern: /function ([\w$]+)\(\)\{return ([\w$]+)\("tengu_review_bughunter_config",null\)(\?\.enabled===!0)?\}/g,
     replacer: (m, fn, getter, gate) =>
       gate
         ? `function ${fn}(){return!0}`
         : `function ${fn}(){let _r=${getter}("tengu_review_bughunter_config",null);return _r?{..._r,enabled:!0}:{enabled:!0}}`,
+    optional: true,
     sentinel: '"tengu_review_bughunter_config"',
     appliedMarker: ',enabled:!0}:{enabled:!0}}',
   },
@@ -1399,17 +1720,14 @@ const patches = [
   },
   {
     // ≤v2.1.149: if(Y!=="firstParty"&&Y!=="anthropicAws")return!1;
-    // v2.1.158+: same shape with model-condition suffix:
-    //   if(q!=="firstParty"&&q!=="anthropicAws"&&($==="claude-opus-4-6"||…))return!1;
-    //   [^;]* absorbs the optional &&(…) tail safely (no semicolons inside
-    //   the if-condition).
-    // optional (no sentinel): superseded by the 'provider opt-in helper' patch
-    // below on v2.1.158+. The old sentinel '!=="firstParty"&&' produced a false
-    // "regex stale" on v2.1.183, whose ohn() body
-    //   {let e=xr();return e!=="firstParty"&&e!=="anthropicAws"&&_kt(e)}
-    // contains that substring even though there is no inline if-gate to strip.
+    // v2.1.158+: if(q!=="firstParty"&&q!=="anthropicAws"&&($==="claude-opus-4-6"||…))return!1;
+    // v2.1.214+: if(r!=="firstParty"&&!d6(r)&&(t==="claude-opus-4-6"||…))return!1;
+    //   "anthropicAws" replaced by helper function !fn(var).
+    //   Match both: \1!=="anthropicAws" OR !fn(\1).
+    // [^;]* absorbs the optional model-condition tail safely. This patch is
+    // optional because newer bundles may use the provider helper below.
     name: 'Auto-mode unlock for third-party API (inline gate)',
-    pattern: /if\(([\w$]+)!=="firstParty"&&\1!=="anthropicAws"[^;]*\)return!1;/g,
+    pattern: /if\(([\w$]+)!=="firstParty"&&(?:\1!=="anthropicAws"|![\w$]+\(\1\))[^;]*\)return!1;/g,
     replacer: () => '',
     optional: true,
   },
@@ -2049,10 +2367,46 @@ if [ -z "$CLAUDE_BIN" ]; then
 fi
 CLAUDE_DIR=$(dirname "$CLAUDE_BIN")
 
+# ─── Download clawgod-import binary ─────────────────────
+IMPORT_BIN="$CLAWGOD_DIR/clawgod-import"
+if [ ! -x "$IMPORT_BIN" ]; then
+  IMPORT_ARCH="$(uname -m)"
+  IMPORT_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$IMPORT_ARCH" in
+    x86_64|amd64) IMPORT_ARCH="x64" ;;
+    aarch64|arm64) IMPORT_ARCH="arm64" ;;
+  esac
+  case "$IMPORT_OS" in
+    darwin) IMPORT_SUFFIX="darwin-$IMPORT_ARCH" ;;
+    linux)  IMPORT_SUFFIX="linux-$IMPORT_ARCH" ;;
+    *)      IMPORT_SUFFIX="" ;;
+  esac
+  if [ -n "$IMPORT_SUFFIX" ]; then
+    IMPORT_URL="https://github.com/0Chencc/clawgod/releases/latest/download/clawgod-import-$IMPORT_SUFFIX"
+    if curl -fsSL -o "$IMPORT_BIN" "$IMPORT_URL" 2>/dev/null; then
+      chmod +x "$IMPORT_BIN"
+      info "Provider import tool installed (clawgod-import)"
+    else
+      dim "Provider import tool not yet available (build pending)"
+    fi
+  fi
+fi
+
 LAUNCHER_CONTENT="#!/bin/bash
 # clawgod launcher
 CLAWGOD_CLI=\"$CLAWGOD_DIR/cli.cjs\"
+CLAWGOD_IMPORT=\"$CLAWGOD_DIR/clawgod-import\"
 BUN_BIN=\"$BUN_BIN\"
+# Route 'import' subcommand to clawgod-import binary
+if [ \"\$1\" = \"import\" ]; then
+  shift
+  if [ -x \"\$CLAWGOD_IMPORT\" ]; then
+    exec \"\$CLAWGOD_IMPORT\" \"\$@\"
+  else
+    echo \"clawgod: import tool not installed. Reinstall clawgod to get it.\" >&2
+    exit 127
+  fi
+fi
 if [ ! -f \"\$CLAWGOD_CLI\" ]; then
   echo \"clawgod: installation at $CLAWGOD_DIR is missing (cli.cjs not found)\" >&2
   echo \"clawgod: reinstall via  curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash\" >&2

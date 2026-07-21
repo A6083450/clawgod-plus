@@ -1,0 +1,97 @@
+name: Build clawgod-import
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: clawgod-import-linux-x64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: clawgod-import-linux-arm64
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-13
+            artifact: clawgod-import-darwin-x64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: clawgod-import-darwin-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: clawgod-import-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup update stable
+          rustup target add ${{ matrix.target }}
+
+      - name: Install cross (Linux ARM64)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build
+        working-directory: tools/provider-import
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Rename artifact
+        shell: bash
+        run: |
+          src="tools/provider-import/target/${{ matrix.target }}/release/clawgod-import"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            src="${src}.exe"
+          fi
+          cp "$src" "${{ matrix.artifact }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  attach-to-release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          for dir in dist/*/; do
+            for file in "$dir"*; do
+              echo "Uploading: $file"
+              gh release upload "$tag" "$file" --clobber --repo "${{ github.repository }}"
+            done
+          done

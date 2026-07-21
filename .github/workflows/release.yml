@@ -68,14 +68,21 @@ jobs:
             fi
           } > release-notes.md
 
+      - name: Inject version from tag
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          echo "Injecting version: $ver"
+          sed -i "s/^CLAWGOD_SELF_VERSION=\".*\"/CLAWGOD_SELF_VERSION=\"${ver}\"/" install.sh
+          sed -i "s/^\\\$ClawSelfVersion = \"[^\"]*\"/\$ClawSelfVersion = \"${ver}\"/" install.ps1
+          grep 'CLAWGOD_SELF_VERSION=' install.sh | head -1
+          grep 'ClawSelfVersion' install.ps1 | head -1
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ steps.versions.outputs.tag }}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            # Release already exists (e.g. created manually with curated notes).
-            # Refresh assets only — don't touch notes/title.
             gh release upload "$tag" install.sh install.ps1 --clobber
           else
             gh release create "$tag" install.sh install.ps1 \
