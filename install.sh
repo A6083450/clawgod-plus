@@ -1671,8 +1671,9 @@ const patches = [
     //   Also match the old direct-literal form for <=2.1.213 compat.
     name: 'Ultrareview enable (rQt gate)',
     pattern: /function ([\w$]+)\(\)\{return ([\w$]+)\(\)\?\.enabled===!0&&[\w$]+\(\)&&![\w$]+\(\)\}/g,
-    replacer: (m, fn) => `function ${fn}(){return!0}`,
+    replacer: (m, fn) => `function ${fn}(){/*__clawgod_ultrareview_enabled__*/return!0}`,
     optional: true,
+    appliedMarker: '/*__clawgod_ultrareview_enabled__*/',
   },
   {
     name: 'Ultrareview enable (direct literal, <=2.1.213)',
