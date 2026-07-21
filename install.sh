@@ -1599,8 +1599,8 @@ const patches = [
   },
   {
     name: 'Agent Teams always enabled',
-    pattern: /function ([\w$]+)\(\)\{if\(![\w$]+\(process\.env\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\)&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}/g,
-    replacer: (m, fn) => `function ${fn}(){return!0}`,
+    pattern: /function ([\w$]+)\(\)\{if\(![\w$]+\(process\.env\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\)&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}|function ([\w$]+)\(\)\{if\(![\w$]+\.[\w$]+&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}/g,
+    replacer: (m, fn1, fn2) => `function ${fn1||fn2}(){return!0}`,
     sentinel: 'tengu_amber_flint',
   },
   {
@@ -1638,7 +1638,8 @@ const patches = [
   {
     name: 'Computer Use subscription bypass',
     pattern: /function ([\w$]+)\(\)\{let [\w$]+=[\w$]+\(\);return [\w$]+==="max"\|\|[\w$]+==="pro"\}/g,
-    replacer: (m, fn) => `function ${fn}(){return!0}`,
+    replacer: (m, fn) => `function ${fn}(){/*__clawgod_computer_use_subscription__*/return!0}`,
+    appliedMarker: '/*__clawgod_computer_use_subscription__*/',
   },
   {
     name: 'Computer Use default enabled',
@@ -1681,14 +1682,29 @@ const patches = [
         ? `function ${fn}(){return!0}`
         : `function ${fn}(){let _r=${getter}("tengu_review_bughunter_config",null);return _r?{..._r,enabled:!0}:{enabled:!0}}`,
     optional: true,
-    sentinel: '"tengu_review_bughunter_config"',
+    sentinel: '("tengu_review_bughunter_config",null)',
     appliedMarker: ',enabled:!0}:{enabled:!0}}',
+  },
+  {
+    // v2.1.215+: the getter now uses a variable indirection — e.g.
+    //   function Bot(){return et(ulu,null)}   (ulu = "tengu_review_bughunter_config")
+    //   function oQt(){return Bot()?.enabled===!0&&ru()&&!X6()}
+    // The old pattern can't match because et() receives a variable, not the
+    // literal string. Match the getter (which uses ulu) and gate function
+    // together. The ulu variable reference is unique to this feature.
+    name: 'Ultrareview enable (v2.1.215+ gate)',
+    pattern: /(function ([\w$]+)\(\)\{return [\w$]+\(ulu,null\)\})([\s\S]{0,1500}?)(function ([\w$]+)\(\)\{return \2\(\)\?\.enabled===!0&&[\w$]+\(\)&&![\w$]+\(\)\})/g,
+    replacer: (m, getterDef, getter, between, gateDef, gate) =>
+      `${getterDef}${between}function ${gate}(){/*__clawgod_ultrareview_enabled__*/return!0}`,
+    sentinel: 'var ulu="tengu_review_bughunter_config"',
+    appliedMarker: '/*__clawgod_ultrareview_enabled__*/',
   },
   {
     name: 'Computer Use gate bypass',
     pattern: /function ([\w$]+)\(\)\{if\([\w$]+\("hipaa"\)\)return\s*!1;return [\w$]+\(\)&&[\w$]+\(\)\.enabled\}/g,
-    replacer: (m, fn) => `function ${fn}(){return!0}`,
+    replacer: (m, fn) => `function ${fn}(){/*__clawgod_computer_use_gate__*/return!0}`,
     sentinel: '"hipaa"',
+    appliedMarker: '/*__clawgod_computer_use_gate__*/',
   },
   {
     // ≤v2.1.18x: voice mode was GrowthBook-killable via
@@ -1801,6 +1817,7 @@ const patches = [
       );
     },
     sentinel: '.command("update").alias("upgrade")',
+    appliedMarker: "[clawgod] 'claude update' is handled by clawgod self-update.",
   },
   // ── 绿色主题 (patch 标识) ──
 
@@ -1852,22 +1869,40 @@ const patches = [
   {
     // Under Bun runtime (clawgod), macOS Cmd+V pastes the image file path
     // as text instead of triggering the clipboard image read. The paste
-    // handler detects the path as an image file (gCc), tries to read it
-    // via yCc, fails, and falls through to display the raw path as text.
+    // handler detects the path as an image file (rju), tries to read it
+    // via nju, fails, and falls through to display the raw path as text.
     //
-    // Fix: when all image path reads fail (L.length===0 && R.length>0)
-    // and we're on macOS (d) with no other text (D.length===0), fall back
-    // to the clipboard image reader (m()) — same path that Ctrl+V uses.
+    // The paste handler flow:
+    //   1. Empty text + macOS → clipboard reader (m()) — works ✓
+    //   2. Text with paths → rju() detects image paths → nju() reads files
+    //   3. If reads succeed → display images ✓
+    //   4. If ALL reads fail → else branch:
+    //      else if(N&&d) m()   ← N = TemporaryItems/screenshot check
+    //      else We("input_image_drag","read_failed"), g(x), y()
+    //
+    // Bug: the else-if only calls clipboard reader (m) for macOS screenshot
+    // temp paths (N = /TemporaryItems/...screencaptureui/.../Screenshot/).
+    // For other image paths (Preview, Finder, web copies), the final else
+    // types the raw path as text.
+    //
+    // Note: there's also a fallback inside the if(W.length>0) block:
+    //   if(W.length===0&&k.length>0){...if(d&&O.length===0){m();return}...}
+    // But that's dead code — when all reads fail (W.length===0 && P.length===0),
+    // the outer if(W.length>0||P.length>0) is false, so we skip straight to
+    // the else branch.
     //
     // Shape:
-    //   if(L.length===0&&R.length>0)at("input_image_drag","read_failed"),D.push(...R)
+    //   }else if(N&&d)m();else We("input_image_drag","read_failed"),g(x),y()
     //
     // Patched:
-    //   if(L.length===0&&R.length>0){at("input_image_drag","read_failed");if(d&&D.length===0){m();return}D.push(...R)}
+    //   }else if(d)m();else We("input_image_drag","read_failed"),g(x),y()
+    //
+    // Always try clipboard reader on macOS when image path reads failed,
+    // not just for TemporaryItems screenshot paths.
     name: 'macOS Cmd+V image paste fallback to clipboard read',
-    pattern: /if\(([\w$]+)\.length===0&&([\w$]+)\.length>0\)([\w$]+)\("input_image_drag","read_failed"\),([\w$]+)\.push\(\.\.\.\2\)/g,
-    replacer: (m, L, R, at, D) =>
-      `if(${L}.length===0&&${R}.length>0){${at}("input_image_drag","read_failed");if(d&&${D}.length===0){m();return}${D}.push(...${R})}`,
+    pattern: /\}else if\(([\w$]+)&&([\w$]+)\)([\w$]+)\(\);else ([\w$]+)\("input_image_drag","read_failed"\),([\w$]+)\(([\w$]+)\),([\w$]+)\(\)/g,
+    replacer: (m, N, d, mFn, We, g, x, y) =>
+      `}else if(${d})${mFn}();else ${We}("input_image_drag","read_failed"),${g}(${x}),${y}()`,
     sentinel: '"input_image_drag","read_failed"',
     optional: true,
   },
@@ -2539,7 +2574,7 @@ dim "    claude update --no-upgrade        (re-patch without downloading)"
 dim "  To leave clawgod and use vanilla update:"
 dim "    bash ~/.clawgod/install.sh --uninstall"
 echo ""
-warn "  If 'claude' still runs the old version, restart your terminal or run: hash -r"
+dim "  If 'claude' still runs the old version, restart your terminal or run: hash -r"
 echo ""
 dim "  Config: ~/.clawgod/provider.json"
 dim "  Flags:  ~/.clawgod/features.json"

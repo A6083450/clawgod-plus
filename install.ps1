@@ -1733,7 +1733,8 @@ const patches = [
   {
     name: 'Computer Use subscription bypass',
     pattern: /function ([\w$]+)\(\)\{let [\w$]+=[\w$]+\(\);return [\w$]+==="max"\|\|[\w$]+==="pro"\}/g,
-    replacer: (m, fn) => `function ${fn}(){return!0}`,
+    replacer: (m, fn) => `function ${fn}(){/*__clawgod_computer_use_subscription__*/return!0}`,
+    appliedMarker: '/*__clawgod_computer_use_subscription__*/',
   },
   {
     name: 'Computer Use default enabled',
@@ -1764,8 +1765,19 @@ const patches = [
         ? `function ${fn}(){return!0}`
         : `function ${fn}(){let _r=${getter}("tengu_review_bughunter_config",null);return _r?{..._r,enabled:!0}:{enabled:!0}}`,
     optional: true,
-    sentinel: '"tengu_review_bughunter_config"',
+    sentinel: '("tengu_review_bughunter_config",null)',
     appliedMarker: ',enabled:!0}:{enabled:!0}}',
+  },
+  {
+    // v2.1.215+: the config key is stored in ulu and the gate moved away
+    // from the getter. Preserve every declaration between them and replace
+    // only the gate; deleting that span leaves runtime references undefined.
+    name: 'Ultrareview enable (v2.1.215+ gate)',
+    pattern: /(function ([\w$]+)\(\)\{return [\w$]+\(ulu,null\)\})([\s\S]{0,1500}?)(function ([\w$]+)\(\)\{return \2\(\)\?\.enabled===!0&&[\w$]+\(\)&&![\w$]+\(\)\})/g,
+    replacer: (m, getterDef, getter, between, gateDef, gate) =>
+      `${getterDef}${between}function ${gate}(){/*__clawgod_ultrareview_enabled__*/return!0}`,
+    sentinel: 'var ulu="tengu_review_bughunter_config"',
+    appliedMarker: '/*__clawgod_ultrareview_enabled__*/',
   },
   {
     name: 'Logo + brand color → green (RGB dark)',
@@ -1806,8 +1818,9 @@ const patches = [
   {
     name: 'Computer Use gate bypass',
     pattern: /function ([\w$]+)\(\)\{if\([\w$]+\("hipaa"\)\)return\s*!1;return [\w$]+\(\)&&[\w$]+\(\)\.enabled\}/g,
-    replacer: (m, fn) => `function ${fn}(){return!0}`,
+    replacer: (m, fn) => `function ${fn}(){/*__clawgod_computer_use_gate__*/return!0}`,
     sentinel: '"hipaa"',
+    appliedMarker: '/*__clawgod_computer_use_gate__*/',
   },
   {
     // ≤v2.1.18x: voice mode was GrowthBook-killable via
@@ -1907,6 +1920,7 @@ const patches = [
       );
     },
     sentinel: '.command("update").alias("upgrade")',
+    appliedMarker: "[clawgod] 'claude update' is handled by clawgod self-update.",
   },
   {
     name: 'Hex brand color → green',
@@ -2455,7 +2469,7 @@ Write-Dim "    claude update --no-upgrade        (re-patch without downloading)"
 Write-Dim "  To leave clawgod and use vanilla update:"
 Write-Dim "    bash ~/.clawgod/install.sh --uninstall"
 Write-Host ""
-Write-Err "  If 'claude' still runs the old version, restart your terminal."
+Write-Dim "  If 'claude' still runs the old version, restart your terminal."
 Write-Host ""
 Write-Dim "  Config: ~/.clawgod/provider.json"
 Write-Dim "  Flags:  ~/.clawgod/features.json"
