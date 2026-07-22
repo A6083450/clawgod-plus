@@ -181,6 +181,50 @@ jobs:
           fi
           [[ $rc -eq 0 ]] || { echo "::error::claude --version exited $rc"; exit 1; }
 
+      - name: Functional checks — runtime invariants
+        # Verify that clawgod's monkey-patches produce correct runtime state.
+        # These catch issues like #133 (daemon/fork broken because
+        # Bun.isStandaloneExecutable wasn't patched) before users hit them.
+        shell: bash
+        run: |
+          # The launcher sets CLAUDE_CODE_EXECPATH before running bun cli.cjs.
+          # Simulate the same env so cli.cjs monkey-patches take effect.
+          exec_path="$HOME/.local/bin/claude.orig"
+          export CLAUDE_CODE_EXECPATH="$exec_path"
+
+          echo "── Checking fv() patched (Bun.isStandaloneExecutable → true) ──"
+          # The patcher replaces fv(){return Bun.isStandaloneExecutable===!0}
+          # with fv(){return!0}. If the original form is still present, the
+          # patch missed and daemon/fork/multitool will break.
+          if grep -q 'Bun\.isStandaloneExecutable===!0' "$HOME/.clawgod/cli.original.cjs"; then
+            echo "::error::fv() not patched — Bun.isStandaloneExecutable===!0 still in source"
+            exit 1
+          fi
+          echo "  fv() patched: OK"
+
+          echo "── Checking process.execPath monkey-patch in wrapper ──"
+          grep -q 'CLAUDE_CODE_EXECPATH' "$HOME/.clawgod/cli.cjs" || {
+            echo "::error::cli.cjs missing CLAUDE_CODE_EXECPATH monkey-patch"
+            exit 1
+          }
+          echo "  execPath patch: OK"
+
+          echo "── Checking multitool dispatch (ugrep, bfs, rg) ──"
+          for tool in ugrep bfs rg; do
+            if ARGV0="$tool" "$exec_path" --version >/dev/null 2>&1; then
+              echo "  $tool dispatch: OK"
+            else
+              echo "::error::multitool dispatch failed for $tool via $exec_path"
+              exit 1
+            fi
+          done
+
+          echo "── Checking openai-proxy.cjs exists ──"
+          test -f "$HOME/.clawgod/openai-proxy.cjs" || { echo "::error::openai-proxy.cjs missing"; exit 1; }
+          echo "  openai-proxy.cjs: OK ($(wc -c < "$HOME/.clawgod/openai-proxy.cjs") bytes)"
+
+          echo "── All functional checks passed ──"
+
       - name: Publish supported-Claude-version badge
         # Write the version we just verified end-to-end to a JSON file on the
         # `badges` branch (force-pushed; that branch holds nothing else and is

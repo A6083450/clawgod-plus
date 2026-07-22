@@ -1674,6 +1674,11 @@ const patches = [
     sentinel: 'return"external"',
   },
   {
+    name: 'Bun.isStandaloneExecutable → true',
+    pattern: /function ([\w$]+)\(\)\{return Bun\.isStandaloneExecutable===!0\}/g,
+    replacer: (m, fn) => `function ${fn}(){return!0}`,
+  },
+  {
     name: 'GrowthBook env overrides',
     pattern: /function ([\w$]+)\(\)\{if\(!([\w$]+)\)\2=!0;return ([\w$]+)\}/g,
     replacer: (m, fn, flag, val) =>

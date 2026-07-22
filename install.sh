@@ -1578,6 +1578,17 @@ const patches = [
     sentinel: 'return"external"',
   },
   {
+    // Bun.isStandaloneExecutable is false under clawgod (plain Bun runtime,
+    // not a compiled standalone binary). fv() guards daemon/fork spawn logic
+    // (DLt), multitool dispatch (RS), and several other codepaths that need
+    // to behave as if running the native binary. The property is frozen on
+    // Bun 1.4+ (configurable:false, writable:false), so runtime monkey-patch
+    // is impossible — patch the source instead. See issue #133.
+    name: 'Bun.isStandaloneExecutable → true',
+    pattern: /function ([\w$]+)\(\)\{return Bun\.isStandaloneExecutable===!0\}/g,
+    replacer: (m, fn) => `function ${fn}(){return!0}`,
+  },
+  {
     name: 'GrowthBook env overrides',
     pattern: /function ([\w$]+)\(\)\{if\(!([\w$]+)\)\2=!0;return ([\w$]+)\}/g,
     replacer: (m, fn, flag, val) =>
