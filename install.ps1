@@ -100,6 +100,9 @@ if ($Uninstall) {
     if (Test-Path $claudeOrig) {
         Move-Item -Force $claudeOrig $claudeCmd
         Write-OK "Original claude restored"
+    } elseif ((Test-Path $claudeCmd) -and (Select-String -Path $claudeCmd -Pattern "clawgod" -Quiet -ErrorAction SilentlyContinue)) {
+        Remove-Item -Force $claudeCmd
+        Write-OK "Removed ClawGod launcher ($claudeCmd)"
     }
     # Also check for .exe backup
     $claudeExeOrig = Join-Path $BinDir "claude.orig.exe"
@@ -115,7 +118,7 @@ if ($Uninstall) {
         Write-OK "Removed clawgod alias"
     }
 
-    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","apply-claude-code-chrome-fix.ps1",".source-version","node_modules","bun-runtime","vendor")) {
+    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","openai-proxy.cjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1",".source-version","node_modules","bun-runtime","vendor")) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
