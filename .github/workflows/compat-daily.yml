@@ -12,10 +12,18 @@ on:
     branches: [main]
     paths:
       - install.sh
+      - install.ps1
+      - apply-claude-code-chrome-fix.sh
+      - apply-claude-code-chrome-fix.ps1
+      - tests/patcher-*.mjs
       - .github/workflows/compat-daily.yml
   pull_request:
     paths:
       - install.sh
+      - install.ps1
+      - apply-claude-code-chrome-fix.sh
+      - apply-claude-code-chrome-fix.ps1
+      - tests/patcher-*.mjs
       - .github/workflows/compat-daily.yml
 
 permissions:
@@ -181,33 +189,37 @@ jobs:
           fi
           [[ $rc -eq 0 ]] || { echo "::error::claude --version exited $rc"; exit 1; }
 
-      - name: Functional checks — runtime invariants
-        # Verify that clawgod's monkey-patches produce correct runtime state.
-        # These catch issues like #133 (daemon/fork broken because
-        # Bun.isStandaloneExecutable wasn't patched) before users hit them.
+      - name: Regression checks — embedded patchers
         shell: bash
         run: |
-          # The launcher sets CLAUDE_CODE_EXECPATH before running bun cli.cjs.
-          # Simulate the same env so cli.cjs monkey-patches take effect.
+          for test in tests/patcher-*.mjs; do
+            node "$test"
+          done
+
+      - name: Functional checks — runtime invariants
+        # Verify that ClawGod preserves the plain Bun runtime model. Background
+        # workers must launch `bun cli.cjs …`, not treat Bun as a standalone CLI.
+        shell: bash
+        run: |
           exec_path="$HOME/.local/bin/claude.orig"
-          export CLAUDE_CODE_EXECPATH="$exec_path"
 
-          echo "── Checking fv() patched (Bun.isStandaloneExecutable → true) ──"
-          # The patcher replaces fv(){return Bun.isStandaloneExecutable===!0}
-          # with fv(){return!0}. If the original form is still present, the
-          # patch missed and daemon/fork/multitool will break.
-          if grep -q 'Bun\.isStandaloneExecutable===!0' "$HOME/.clawgod/cli.original.cjs"; then
-            echo "::error::fv() not patched — Bun.isStandaloneExecutable===!0 still in source"
-            exit 1
-          fi
-          echo "  fv() patched: OK"
-
-          echo "── Checking process.execPath monkey-patch in wrapper ──"
-          grep -q 'CLAUDE_CODE_EXECPATH' "$HOME/.clawgod/cli.cjs" || {
-            echo "::error::cli.cjs missing CLAUDE_CODE_EXECPATH monkey-patch"
+          echo "── Checking worker resolver patched for plain Bun ──"
+          grep -q '__clawgod_plain_bun_worker__' "$HOME/.clawgod/cli.original.cjs" || {
+            echo "::error::worker resolver was not patched for cli.cjs"
             exit 1
           }
-          echo "  execPath patch: OK"
+          grep -q 'Bun\.isStandaloneExecutable===!0' "$HOME/.clawgod/cli.original.cjs" || {
+            echo "::error::shared Bun.isStandaloneExecutable predicate was rewritten"
+            exit 1
+          }
+          echo "  worker resolver: OK"
+
+          echo "── Checking wrapper preserves Bun process.execPath ──"
+          grep -q 'Keep process.execPath as the Bun runtime' "$HOME/.clawgod/cli.cjs" || {
+            echo "::error::cli.cjs does not preserve the Bun runtime strategy"
+            exit 1
+          }
+          echo "  Bun process.execPath: OK"
 
           echo "── Checking multitool dispatch (ugrep, bfs, rg) ──"
           for tool in ugrep bfs rg; do

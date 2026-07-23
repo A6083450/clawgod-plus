@@ -83,9 +83,9 @@ jobs:
         run: |
           tag="${{ steps.versions.outputs.tag }}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" install.sh install.ps1 --clobber
+            gh release upload "$tag" install.sh install.ps1 apply-claude-code-chrome-fix.sh apply-claude-code-chrome-fix.ps1 --clobber
           else
-            gh release create "$tag" install.sh install.ps1 \
+            gh release create "$tag" install.sh install.ps1 apply-claude-code-chrome-fix.sh apply-claude-code-chrome-fix.ps1 \
               --title "ClawGod $tag" \
               --notes-file release-notes.md
           fi

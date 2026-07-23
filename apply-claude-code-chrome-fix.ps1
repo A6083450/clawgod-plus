@@ -172,6 +172,7 @@ let fixes = {
     subscriptionGate: { found: false, patched: false, node: null },
     subscriptionMsg: { found: false, patched: false, node: null },
     selectBrowserHide: { found: false, patched: false, node: null },
+    oauthScopeGate: { found: false, patched: false, node: null },
     agentsConfigState: { found: false, patched: false, node: null },
     agentsFlagParser: { found: false, patched: false, node: null },
     agentsConfigResolver: { found: false, patched: false, node: null },
@@ -203,6 +204,18 @@ function findNodes(node, predicate, results = []) {
 
 const src = (node) => code.slice(node.start, node.end);
 
+const legacyClientFactoryRe = /function ([\w$]+)\(([\w$]+)\)\{if\(\2\.getSocketPaths\)\{var __paths=\2\.getSocketPaths\(\);if\(__paths&&__paths\.length>0\)return ([\w$]+\(\2\))\}return \2\.bridgeConfig\?([\w$]+\(\2\)):([\w$]+\(\2\))\}\/\*__ccpp_bridge_fallback\*\//;
+const legacyClientFactory = legacyClientFactoryRe.exec(code);
+if (legacyClientFactory) {
+    fixes.clientFactory.found = true;
+    fixes.clientFactory.node = {
+        type: 'LegacyClientFactory',
+        start: legacyClientFactory.index,
+        end: legacyClientFactory.index + legacyClientFactory[0].length,
+        match: legacyClientFactory
+    };
+}
+
 // === 1. Client factory: bridgeConfig ? bridge : getSocketPaths ? socket : native ===
 function isClientFactory(node) {
     let bodyStmts;
@@ -220,7 +233,7 @@ function isClientFactory(node) {
 }
 
 const funcDecls = findNodes(ast, n => n.type === 'FunctionDeclaration');
-for (const fn of funcDecls) {
+for (const fn of fixes.clientFactory.found ? [] : funcDecls) {
     if (isClientFactory(fn)) {
         fixes.clientFactory.found = true;
         fixes.clientFactory.node = fn;
@@ -293,6 +306,21 @@ if (!code.includes('__ccpp_sub_msg_bypass')) {
     }
 }
 
+// Explicit --chrome uses the local socket client and does not require the
+// Claude.ai OAuth scopes checked by the bridge path.
+if (!code.includes('__ccpp_chrome_oauth_scope_bypass')) {
+    const match = /function ([\w$]+)\(([\w$]+)\)\{if\(![\w$]+\(\)\)return [\w$]+\("\[Claude in Chrome\] Disabled: OAuth token has no scope accepted by \/api\/oauth\/validate[^"]*"\),!1;if\(\2===!0\)return!0;/.exec(code);
+    if (match) {
+        fixes.oauthScopeGate.found = true;
+        fixes.oauthScopeGate.node = {
+            start: match.index,
+            end: match.index + match[0].length,
+            replacement: `function ${match[1]}(${match[2]}){/*__ccpp_chrome_oauth_scope_bypass*/if(${match[2]}===!0)return!0;`
+        };
+        console.log('FOUND:oauthScopeGate -> ' + match[0].slice(0, 80));
+    }
+}
+
 // === 4. Select browser menu item ===
 if (!code.includes('__ccpp_no_select_browser')) {
     const selectBrowserNodes = findNodes(ast, n => {
@@ -351,7 +379,8 @@ if (!code.includes('__ccpp_agents_chrome_dispatch')) {
 }
 
 // === Check if already patched ===
-const allAlreadyPatched = code.includes('__ccpp_bridge_fallback') &&
+const allAlreadyPatched = code.includes('__ccpp_bridge_fallback_v2') &&
+    (code.includes('__ccpp_chrome_oauth_scope_bypass') || !code.includes('OAuth token has no scope accepted by /api/oauth/validate')) &&
     (code.includes('__ccpp_sub_bypass') || !code.includes('tengu_claude_in_chrome_setup')) &&
     (code.includes('__ccpp_sub_msg_bypass') || !code.includes('Claude in Chrome requires a claude.ai subscription.')) &&
     (code.includes('__ccpp_no_select_browser') || !code.includes('select-browser')) &&
@@ -381,6 +410,17 @@ let replacements = [];
 
 if (fixes.clientFactory.found && fixes.clientFactory.node) {
     const node = fixes.clientFactory.node;
+    if (node.type === 'LegacyClientFactory') {
+        const m = node.match;
+        replacements.push({
+            start: node.start,
+            end: node.end,
+            replacement: `function ${m[1]}(${m[2]}){return ${m[2]}.getSocketPaths?${m[3]}:${m[2]}.bridgeConfig?${m[4]}:${m[5]}}/*__ccpp_bridge_fallback_v2*/`,
+            name: 'clientFactory'
+        });
+        fixes.clientFactory.patched = true;
+        console.log('PATCH:clientFactory - Upgraded legacy synchronous socket probe');
+    } else {
     let fnNode, paramName;
     if (node.type === 'FunctionDeclaration') { fnNode = node; paramName = node.params[0].name; }
     else { fnNode = node.init; paramName = fnNode.params[0].name; }
@@ -389,16 +429,20 @@ if (fixes.clientFactory.found && fixes.clientFactory.node) {
     const bridgeCall = src(cond.consequent);
     const socketCall = src(cond.alternate.consequent);
     const nativeCall = src(cond.alternate.alternate);
-    const newReturn = `{` +
-        `if(${paramName}.getSocketPaths){` +
-            `var __paths=${paramName}.getSocketPaths();` +
-            `if(__paths&&__paths.length>0)return ${socketCall}` +
-        `}` +
-        `return ${paramName}.bridgeConfig?${bridgeCall}:${nativeCall}` +
-    `}/*__ccpp_bridge_fallback*/`;
+    // Socket discovery may be asynchronous; the socket pool client owns
+    // discovery and refresh, so the factory must not inspect paths itself.
+    const newReturn = `{return ${paramName}.getSocketPaths?${socketCall}:${paramName}.bridgeConfig?${bridgeCall}:${nativeCall}}/*__ccpp_bridge_fallback_v2*/`;
     replacements.push({ start: fnNode.body.start, end: fnNode.body.end, replacement: newReturn, name: 'clientFactory' });
     fixes.clientFactory.patched = true;
     console.log('PATCH:clientFactory - Socket priority over bridge when local socket available');
+    }
+}
+
+if (fixes.oauthScopeGate.found && fixes.oauthScopeGate.node) {
+    const node = fixes.oauthScopeGate.node;
+    replacements.push({ start: node.start, end: node.end, replacement: node.replacement, name: 'oauthScopeGate' });
+    fixes.oauthScopeGate.patched = true;
+    console.log('PATCH:oauthScopeGate - Allowed explicit --chrome for local socket mode');
 }
 
 if (fixes.subscriptionGate.found && fixes.subscriptionGate.node) {

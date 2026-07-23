@@ -1500,7 +1500,7 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify }) {
   const replacements = [];
   const seen = new Set();
   const needs = {
-    clientFactory: !source.includes('__ccpp_bridge_fallback'),
+    clientFactory: !source.includes('__ccpp_bridge_fallback_v2'),
     subscriptionGate: !source.includes('__ccpp_sub_bypass'),
     subscriptionMsg: !source.includes('__ccpp_sub_msg_bypass'),
     selectBrowserHide: !source.includes('__ccpp_no_select_browser'),
@@ -1510,6 +1510,17 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify }) {
     if (!needs[name] || seen.has(name)) return;
     replacements.push({ name, start, end, replacement });
     seen.add(name);
+  }
+
+  const legacyClientFactoryRe = /function ([\w$]+)\(([\w$]+)\)\{if\(\2\.getSocketPaths\)\{var __paths=\2\.getSocketPaths\(\);if\(__paths&&__paths\.length>0\)return ([\w$]+\(\2\))\}return \2\.bridgeConfig\?([\w$]+\(\2\)):([\w$]+\(\2\))\}\/\*__ccpp_bridge_fallback\*\//g;
+  const legacyClientFactory = legacyClientFactoryRe.exec(source);
+  if (legacyClientFactory) {
+    add(
+      'clientFactory',
+      legacyClientFactory.index,
+      legacyClientFactory.index + legacyClientFactory[0].length,
+      `function ${legacyClientFactory[1]}(${legacyClientFactory[2]}){return ${legacyClientFactory[2]}.getSocketPaths?${legacyClientFactory[3]}:${legacyClientFactory[2]}.bridgeConfig?${legacyClientFactory[4]}:${legacyClientFactory[5]}}/*__ccpp_bridge_fallback_v2*/`
+    );
   }
 
   let parseSource = source;
@@ -1550,7 +1561,7 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify }) {
             'clientFactory',
             abs(fnNode.body.start),
             abs(fnNode.body.end),
-            `{if(${paramName}.getSocketPaths){var __paths=${paramName}.getSocketPaths();if(__paths&&__paths.length>0)return ${socketCall}}return ${paramName}.bridgeConfig?${bridgeCall}:${nativeCall}}/*__ccpp_bridge_fallback*/`
+            `{return ${paramName}.getSocketPaths?${socketCall}:${paramName}.bridgeConfig?${bridgeCall}:${nativeCall}}/*__ccpp_bridge_fallback_v2*/`
           );
           break;
         }
@@ -1625,7 +1636,7 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify }) {
   if (needs.clientFactory && !seen.has('clientFactory')) {
     const re = /function ([\w$]+)\(([\w$]+)\)\{return \2\.bridgeConfig\?([\w$]+\(\2\)):\2\.getSocketPaths\?([\w$]+\(\2\)):([\w$]+\(\2\))\}/g;
     const m = re.exec(source);
-    if (m) add('clientFactory', m.index, m.index + m[0].length, `function ${m[1]}(${m[2]}){if(${m[2]}.getSocketPaths){var __paths=${m[2]}.getSocketPaths();if(__paths&&__paths.length>0)return ${m[4]}}return ${m[2]}.bridgeConfig?${m[3]}:${m[5]}}/*__ccpp_bridge_fallback*/`);
+    if (m) add('clientFactory', m.index, m.index + m[0].length, `function ${m[1]}(${m[2]}){return ${m[2]}.getSocketPaths?${m[4]}:${m[2]}.bridgeConfig?${m[3]}:${m[5]}}/*__ccpp_bridge_fallback_v2*/`);
   }
 
   if (needs.subscriptionGate && !seen.has('subscriptionGate')) {
@@ -1650,7 +1661,7 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify }) {
     const hasChrome = source.includes('tengu_claude_in_chrome_setup') ||
       source.includes('Claude in Chrome requires a claude.ai subscription.') ||
       source.includes('select-browser');
-    const allApplied = source.includes('__ccpp_bridge_fallback') &&
+    const allApplied = source.includes('__ccpp_bridge_fallback_v2') &&
       (source.includes('__ccpp_sub_bypass') || !source.includes('tengu_claude_in_chrome_setup')) &&
       (source.includes('__ccpp_sub_msg_bypass') || !source.includes('Claude in Chrome requires a claude.ai subscription.')) &&
       (source.includes('__ccpp_no_select_browser') || !source.includes('select-browser'));
@@ -1669,6 +1680,78 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify }) {
   return { status: 'applied', count: replacements.length, code: next };
 }
 
+async function applyContextLimitPatch(source, { dryRun, verify }) {
+  const ENV_EXPR = '(+process.env.CLAUDE_CODE_CONTEXT_LIMIT||+process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS||200000)';
+  const dualRe = /var\s+([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*32000\s*,\s*([\w$]+)\s*=\s*128000\s*,\s*([\w$]+)\s*=\s*1e6\b/;
+  const alreadyRe = new RegExp('var\\s+([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*[\\w$]+\\s*=\\s*32000\\s*,\\s*[\\w$]+\\s*=\\s*128000\\s*,\\s*[\\w$]+\\s*=\\s*1e6\\b');
+
+  const dualMatch = dualRe.exec(source);
+  const alreadyMatch = alreadyRe.exec(source);
+  if (!dualMatch && !alreadyMatch) {
+    if (!source.includes('200000')) return { status: 'skipped', detail: 'not present in this version' };
+    return { status: 'failed', detail: 'context default constants not found' };
+  }
+
+  const match = dualMatch || alreadyMatch;
+  const [, varA, varB, varC, varD, varE] = match;
+  const replacements = [];
+  if (dualMatch) {
+    replacements.push({
+      start: dualMatch.index,
+      end: dualMatch.index + dualMatch[0].length,
+      replacement: `var ${varA}=${ENV_EXPR},${varB}=${ENV_EXPR},${varC}=32000,${varD}=128000,${varE}=1e6`,
+    });
+
+    // The large-message guard has the minified shape
+    // `return message?tokenCount(message)>200000:!1`. Patch only that guard;
+    // unrelated numeric thresholds and model metadata must stay upstream-owned.
+    const cmpRe = /\breturn ([\w$]+)\?([\w$]+)\(\1\)>200000:!1/g;
+    let cm;
+    while ((cm = cmpRe.exec(source)) !== null) {
+      const comparison = `${cm[2]}(${cm[1]})>200000`;
+      const start = cm.index + cm[0].indexOf(comparison);
+      replacements.push({
+        start,
+        end: start + comparison.length,
+        replacement: `${cm[2]}(${cm[1]})>${ENV_EXPR}`,
+      });
+    }
+  }
+
+  const envReassign = `;${varA}=${ENV_EXPR};${varB}=${ENV_EXPR};`;
+  const acorn = await loadAcorn();
+  if (acorn) {
+    try {
+      const ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'script', allowReturnOutsideFunction: true });
+      const envAssigns = findNodes(ast, (n) =>
+        n.type === 'ExpressionStatement' &&
+        n.expression?.type === 'CallExpression' &&
+        n.expression.callee?.type === 'MemberExpression' &&
+        n.expression.callee.object?.name === 'Object' &&
+        n.expression.callee.property?.name === 'assign' &&
+        n.expression.arguments?.length >= 2 &&
+        n.expression.arguments[0]?.type === 'MemberExpression' &&
+        n.expression.arguments[0].object?.name === 'process' &&
+        n.expression.arguments[0].property?.name === 'env'
+      );
+      for (const stmt of envAssigns.slice(0, 6)) {
+        if (source.startsWith(envReassign, stmt.end)) continue;
+        replacements.push({ start: stmt.end, end: stmt.end, replacement: envReassign });
+      }
+    } catch {}
+  }
+
+  if (replacements.length === 0) return { status: 'already', detail: 'already applied' };
+  if (verify) return { status: 'verify', count: replacements.length };
+
+  let next = source;
+  if (!dryRun) {
+    replacements.sort((a, b) => b.start - a.start);
+    for (const r of replacements) next = next.slice(0, r.start) + r.replacement + next.slice(r.end);
+  }
+  return { status: 'applied', count: replacements.length, code: next };
+}
+
 const patches = [
   {
     name: 'USER_TYPE → ant',
@@ -1677,9 +1760,23 @@ const patches = [
     sentinel: 'return"external"',
   },
   {
-    name: 'Bun.isStandaloneExecutable → true',
-    pattern: /function ([\w$]+)\(\)\{return Bun\.isStandaloneExecutable===!0\}/g,
-    replacer: (m, fn) => `function ${fn}(){return!0}`,
+    // ClawGod runs extracted cli.cjs under Bun even when Bun reports itself as
+    // standalone. Special-case only the worker/daemon resolver; the shared
+    // standalone predicate also controls Chrome and Computer Use MCP commands.
+    name: 'Worker resolver for plain Bun cli.cjs (target shape)',
+    pattern: /if\(([\w$]+)\(\)\)return\{cmd:process\.execPath,prefixArgs:\[\],target:process\.execPath\};let ([\w$]+)=process\.argv\[1\];if\(!\2\)return\{cmd:process\.execPath,prefixArgs:\[\],target:process\.execPath\};return\{cmd:process\.execPath,prefixArgs:\[\2\],target:\2\}/g,
+    replacer: (m, standalone, entry) => `let ${entry}=process.argv[1];if(${entry}&&/(?:^|[\\/])cli\\.cjs$/.test(${entry}))return{cmd:process.execPath,prefixArgs:[${entry}],target:${entry}}/*__clawgod_plain_bun_worker__*/;if(${standalone}())return{cmd:process.execPath,prefixArgs:[],target:process.execPath};if(!${entry})return{cmd:process.execPath,prefixArgs:[],target:process.execPath};return{cmd:process.execPath,prefixArgs:[${entry}],target:${entry}}`,
+    appliedMarker: '/*__clawgod_plain_bun_worker__*/',
+    knownShape: /if\([\w$]+\(\)\)return\{cmd:process\.execPath,prefixArgs:\[\],target:process\.execPath\};let [\w$]+=process\.argv\[1\];if\(![\w$]+\)return\{cmd:process\.execPath,prefixArgs:\[\],target:process\.execPath\};return\{cmd:process\.execPath,prefixArgs:/,
+    optional: true,
+  },
+  {
+    name: 'Worker resolver for plain Bun cli.cjs (legacy shape)',
+    pattern: /if\(([\w$]+)\(\)\)return\{cmd:process\.execPath,prefixArgs:\[\]\};let ([\w$]+)=process\.argv\[1\];if\(!\2\)return\{cmd:process\.execPath,prefixArgs:\[\]\};return\{cmd:process\.execPath,prefixArgs:\[\2\]\}/g,
+    replacer: (m, standalone, entry) => `let ${entry}=process.argv[1];if(${entry}&&/(?:^|[\\/])cli\\.cjs$/.test(${entry}))return{cmd:process.execPath,prefixArgs:[${entry}]}/*__clawgod_plain_bun_worker__*/;if(${standalone}())return{cmd:process.execPath,prefixArgs:[]};if(!${entry})return{cmd:process.execPath,prefixArgs:[]};return{cmd:process.execPath,prefixArgs:[${entry}]}`,
+    appliedMarker: '/*__clawgod_plain_bun_worker__*/',
+    knownShape: /if\([\w$]+\(\)\)return\{cmd:process\.execPath,prefixArgs:\[\]\};let [\w$]+=process\.argv\[1\];if\(![\w$]+\)return\{cmd:process\.execPath,prefixArgs:\[\]\};return\{cmd:process\.execPath,prefixArgs:/,
+    optional: true,
   },
   {
     name: 'GrowthBook env overrides',
@@ -1705,6 +1802,15 @@ const patches = [
     pattern: /function ([\w$]+)\(\)\{if\(![\w$]+\(process\.env\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\)&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}/g,
     replacer: (m, fn) => `function ${fn}(){return!0}`,
     sentinel: 'tengu_amber_flint',
+  },
+  {
+    // API-key and setup-token sessions expose only user:inference, but local
+    // socket mode does not require Claude.ai OAuth scopes. Respect --chrome.
+    name: 'Claude in Chrome OAuth scope bypass',
+    pattern: /function ([\w$]+)\(([\w$]+)\)\{if\(![\w$]+\(\)\)return [\w$]+\("\[Claude in Chrome\] Disabled: OAuth token has no scope accepted by \/api\/oauth\/validate[^"]*"\),!1;if\(\2===!0\)return!0;/g,
+    replacer: (m, fn, arg) => `function ${fn}(${arg}){/*__ccpp_chrome_oauth_scope_bypass*/if(${arg}===!0)return!0;`,
+    appliedMarker: '/*__ccpp_chrome_oauth_scope_bypass*/',
+    optional: true,
   },
   {
     // `claude --chrome agents` enables Chrome tools in the Fleet View host, but
@@ -1958,8 +2064,9 @@ const patches = [
     //     let e=await Promise.resolve().then(() => R(vAu(),1)),t=gGg(e);  // import("sharp")
     //     ...
     //
-    // clawgod patches the standalone predicate to false (worker-launch fix),
-    // so the native branch is skipped and the npm "sharp" fallback throws
+    // ClawGod runs under Bun, whose standalone predicate may not reflect the
+    // extracted module layout, so the native branch can be skipped and the npm
+    // "sharp" fallback throws
     // (nothing is installed under ~/.clawgod) → the paste image read throws →
     // the paste handler's .catch types the raw temp PNG path as text instead
     // of attaching [Image #N]. Terminals like Ghostty always paste clipboard
@@ -1977,6 +2084,18 @@ const patches = [
     pattern: /if\(([\w$]+)\(\)\)(try\{let [\w$]+=await Promise\.resolve\(\)\.then\(\(\)\s*=>\s*\([\w$]+\(\),[\w$]+\)\),[\w$]+=[\w$]+\.sharp\|\|[\w$]+\.default;return [\w$]+=\{default:[\w$]+\},[\w$]+\}catch\{console\.warn\("Native image processor not available, falling back to sharp"\)\})/g,
     replacer: (m, gate, body) => body,
     appliedMarker: /return [\w$]+\.default;try\{let [\w$]+=await Promise\.resolve\(\)\.then\(\(\)\s*=>\s*\([\w$]+\(\),[\w$]+\)\)/,
+  },
+  {
+    // macOS clipboard managers can paste copied images as escaped TIFF paths.
+    // The native file decoder does not support TIFF, but classifying these as
+    // image paths makes the existing macOS failure branch read the clipboard
+    // directly, where readClipboardImage converts the image to PNG.
+    name: 'Image paste: recognize TIFF paths for macOS clipboard fallback',
+    pattern: /([\w$]+)=\/\\\.\(png\|jpe\?g\|gif\|webp\)\$\/i(?=;[\w$]+=\/\^\(\?:\[A-Za-z\]:\\\\\|\\\\\\\\\)\/)/g,
+    replacer: (m, imagePathRe) => `${imagePathRe}=/\\.(png|jpe?g|gif|webp|tiff?)$/i`,
+    sentinel: '/\\.(png|jpe?g|gif|webp)$/i;',
+    appliedMarker: '/\\.(png|jpe?g|gif|webp|tiff?)$/i;',
+    unique: true,
   },
   {
     name: 'Restore Glob/Grep tools (un-inline EMBEDDED_SEARCH_TOOLS)',
@@ -2136,6 +2255,7 @@ for (const p of patches) {
     failed++; continue;
   }
   if (relevant.length === 0) {
+    if (p.knownShape?.test(code)) { console.log(`  XX ${p.name} — known resolver shape did not match exactly`); failed++; continue; }
     if (p.optional) { console.log(`  >> ${p.name} (not in this version)`); skipped++; continue; }
     if (p.appliedMarker !== undefined && (p.appliedMarker instanceof RegExp ? p.appliedMarker.test(code) : code.includes(p.appliedMarker))) { console.log(`  OK ${p.name} (already applied, marker present)`); applied++; continue; }
     if (p.sentinel !== undefined) {
@@ -2160,6 +2280,25 @@ for (const p of patches) {
   }
   if (count > 0) { console.log(`  OK ${p.name} (${count})`); applied++; }
   else { console.log(`  >> ${p.name} (no change)`); skipped++; }
+}
+
+const contextLimitPatch = await applyContextLimitPatch(code, { dryRun, verify });
+if (contextLimitPatch.status === 'applied') {
+  if (!dryRun) code = contextLimitPatch.code;
+  console.log(`  OK Context limit configurable (${contextLimitPatch.count})`);
+  applied++;
+} else if (contextLimitPatch.status === 'verify') {
+  console.log(`  -- Context limit configurable — ${contextLimitPatch.count} match(es), not yet applied`);
+  skipped++;
+} else if (contextLimitPatch.status === 'already') {
+  console.log(`  OK Context limit configurable (${contextLimitPatch.detail})`);
+  applied++;
+} else if (contextLimitPatch.status === 'skipped') {
+  console.log(`  >> Context limit configurable (${contextLimitPatch.detail})`);
+  skipped++;
+} else {
+  console.log(`  XX Context limit configurable — ${contextLimitPatch.detail}`);
+  failed++;
 }
 
 const chromePatch = await applyClaudeChromeSocketPatch(code, { dryRun, verify });

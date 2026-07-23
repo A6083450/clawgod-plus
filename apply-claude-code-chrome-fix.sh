@@ -14,22 +14,22 @@
 #   return H.bridgeConfig ? ei6(H) : H.getSocketPaths ? uFA(H) : ri6(H)
 #
 # FIX:
-# Create a composite client that tries BridgeClient first, and falls back to
-# SocketClient (uFA) when bridge connection fails (no OAuth token / no userId).
-# Also preserve --chrome/--no-chrome through `claude agents` dispatches so
-# background sessions keep the claude-in-chrome MCP server.
+# Prefer SocketClient (uFA) whenever getSocketPaths is configured. SocketClient
+# owns asynchronous socket discovery and refresh, so the factory must not inspect
+# the result synchronously. Also preserve --chrome/--no-chrome through
+# `claude agents` dispatches so background sessions keep the MCP server.
 #
 # Usage:
-#   ./apply-claude-code-bridge-socket-fallback.sh                    # Apply fix
-#   ./apply-claude-code-bridge-socket-fallback.sh /path/to/cli.js    # Specific file
-#   ./apply-claude-code-bridge-socket-fallback.sh --check            # Check only
-#   ./apply-claude-code-bridge-socket-fallback.sh --restore          # Restore backup
+#   ./apply-claude-code-chrome-fix.sh                    # Apply fix
+#   ./apply-claude-code-chrome-fix.sh /path/to/cli.js    # Specific file
+#   ./apply-claude-code-chrome-fix.sh --check            # Check only
+#   ./apply-claude-code-chrome-fix.sh --restore          # Restore backup
 #
 
 set -e
 
 BACKUP_SUFFIX="backup-bridge-fallback"
-FIX_DESCRIPTION="Enable socket fallback when WebSocket bridge fails (for API Key mode)"
+FIX_DESCRIPTION="Prefer the local Chrome socket client (for API Key mode)"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -155,6 +155,7 @@ let fixes = {
     subscriptionGate: { found: false, patched: false, node: null },
     subscriptionMsg: { found: false, patched: false, node: null },
     selectBrowserHide: { found: false, patched: false, node: null },
+    oauthScopeGate: { found: false, patched: false, node: null },
     agentsConfigState: { found: false, patched: false, node: null },
     agentsFlagParser: { found: false, patched: false, node: null },
     agentsConfigResolver: { found: false, patched: false, node: null },
@@ -186,6 +187,18 @@ function findNodes(node, predicate, results = []) {
 }
 
 const src = (node) => code.slice(node.start, node.end);
+
+const legacyClientFactoryRe = /function ([\w$]+)\(([\w$]+)\)\{if\(\2\.getSocketPaths\)\{var __paths=\2\.getSocketPaths\(\);if\(__paths&&__paths\.length>0\)return ([\w$]+\(\2\))\}return \2\.bridgeConfig\?([\w$]+\(\2\)):([\w$]+\(\2\))\}\/\*__ccpp_bridge_fallback\*\//;
+const legacyClientFactory = legacyClientFactoryRe.exec(code);
+if (legacyClientFactory) {
+    fixes.clientFactory.found = true;
+    fixes.clientFactory.node = {
+        type: 'LegacyClientFactory',
+        start: legacyClientFactory.index,
+        end: legacyClientFactory.index + legacyClientFactory[0].length,
+        match: legacyClientFactory
+    };
+}
 
 // ============================================================
 // Find B4_() — the client factory function
@@ -235,7 +248,7 @@ function isClientFactory(node) {
 }
 
 // Search both function declarations and variable-assigned functions
-for (const fn of funcDecls) {
+for (const fn of fixes.clientFactory.found ? [] : funcDecls) {
     if (isClientFactory(fn)) {
         fixes.clientFactory.found = true;
         fixes.clientFactory.node = fn;
@@ -336,6 +349,21 @@ if (!code.includes('__ccpp_sub_msg_bypass')) {
     }
 }
 
+// Explicit --chrome uses the local socket client and does not require the
+// Claude.ai OAuth scopes checked by the bridge path.
+if (!code.includes('__ccpp_chrome_oauth_scope_bypass')) {
+    const match = /function ([\w$]+)\(([\w$]+)\)\{if\(![\w$]+\(\)\)return [\w$]+\("\[Claude in Chrome\] Disabled: OAuth token has no scope accepted by \/api\/oauth\/validate[^"]*"\),!1;if\(\2===!0\)return!0;/.exec(code);
+    if (match) {
+        fixes.oauthScopeGate.found = true;
+        fixes.oauthScopeGate.node = {
+            start: match.index,
+            end: match.index + match[0].length,
+            replacement: `function ${match[1]}(${match[2]}){/*__ccpp_chrome_oauth_scope_bypass*/if(${match[2]}===!0)return!0;`
+        };
+        console.log('FOUND:oauthScopeGate -> ' + match[0].slice(0, 80));
+    }
+}
+
 // ============================================================
 // Find "Select browser…" menu item
 // Structural: ObjectExpression with label:"Select browser…" and value:"select-browser"
@@ -404,7 +432,8 @@ if (!code.includes('__ccpp_agents_chrome_dispatch')) {
 }
 
 // Check if already patched
-const allAlreadyPatched = code.includes('__ccpp_bridge_fallback') &&
+const allAlreadyPatched = code.includes('__ccpp_bridge_fallback_v2') &&
+    (code.includes('__ccpp_chrome_oauth_scope_bypass') || !code.includes('OAuth token has no scope accepted by /api/oauth/validate')) &&
     (code.includes('__ccpp_sub_bypass') || !code.includes('tengu_claude_in_chrome_setup')) &&
     (code.includes('__ccpp_sub_msg_bypass') || !code.includes('Claude in Chrome requires a claude.ai subscription.')) &&
     (code.includes('__ccpp_no_select_browser') || !code.includes('select-browser')) &&
@@ -429,7 +458,7 @@ if (checkOnly) {
 }
 
 // ============================================================
-// Apply fix: wrap the factory to add socket fallback
+// Apply fix: prefer the socket pool when socket discovery is configured
 // ============================================================
 
 let newCode = code;
@@ -437,6 +466,17 @@ let replacements = [];
 
 if (fixes.clientFactory.found && fixes.clientFactory.node) {
     const node = fixes.clientFactory.node;
+    if (node.type === 'LegacyClientFactory') {
+        const m = node.match;
+        replacements.push({
+            start: node.start,
+            end: node.end,
+            replacement: `function ${m[1]}(${m[2]}){return ${m[2]}.getSocketPaths?${m[3]}:${m[2]}.bridgeConfig?${m[4]}:${m[5]}}/*__ccpp_bridge_fallback_v2*/`,
+            name: 'clientFactory'
+        });
+        fixes.clientFactory.patched = true;
+        console.log('PATCH:clientFactory - Upgraded legacy synchronous socket probe');
+    } else {
 
     // Get the function body — extract the return statement's conditional
     let fnNode, paramName;
@@ -458,23 +498,9 @@ if (fixes.clientFactory.found && fixes.clientFactory.node) {
     const socketCall = src(cond.alternate.consequent);  // uFA(H) or similar
     const nativeCall = src(cond.alternate.alternate);   // ri6(H) or similar
 
-    // Extract factory function names
-    const bridgeFactoryName = cond.consequent.callee?.name;
-    const socketFactoryName = cond.alternate.consequent.callee?.name;
-
-    // New return body: try bridge, wrap with socket fallback
-    // The composite client tries bridge first; if ensureConnected fails, delegates to socket
-    // Strategy: prefer socket when available, fall back to bridge.
-    // Socket client (xFA) is the native path — same API as bridge client,
-    // already has ensureConnected/callTool/setNotificationHandler.
-    // No proxy needed — just swap the priority.
-    const newReturn = `{` +
-        `if(${paramName}.getSocketPaths){` +
-            `var __paths=${paramName}.getSocketPaths();` +
-            `if(__paths&&__paths.length>0)return ${socketCall}` +
-        `}` +
-        `return ${paramName}.bridgeConfig?${bridgeCall}:${nativeCall}` +
-    `}/*__ccpp_bridge_fallback*/`;
+    // Socket discovery may be asynchronous; the socket pool client owns
+    // discovery and refresh, so the factory must not inspect paths itself.
+    const newReturn = `{return ${paramName}.getSocketPaths?${socketCall}:${paramName}.bridgeConfig?${bridgeCall}:${nativeCall}}/*__ccpp_bridge_fallback_v2*/`;
 
     // Replace the function body
     const bodyNode = fnNode.body;
@@ -487,6 +513,14 @@ if (fixes.clientFactory.found && fixes.clientFactory.node) {
 
     fixes.clientFactory.patched = true;
     console.log('PATCH:clientFactory - Socket priority over bridge when local socket available');
+    }
+}
+
+if (fixes.oauthScopeGate.found && fixes.oauthScopeGate.node) {
+    const node = fixes.oauthScopeGate.node;
+    replacements.push({ start: node.start, end: node.end, replacement: node.replacement, name: 'oauthScopeGate' });
+    fixes.oauthScopeGate.patched = true;
+    console.log('PATCH:oauthScopeGate - Allowed explicit --chrome for local socket mode');
 }
 
 // ── Subscription gate: remove && vA() ──

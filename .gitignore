@@ -8,4 +8,5 @@ out
 gen
 .omc
 .omx
+.claude/worktrees/
 CLAUDE.md

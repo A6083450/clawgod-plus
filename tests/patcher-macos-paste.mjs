@@ -45,6 +45,34 @@ const imageProcessorFixture = `
 async function N8e(){if(tco)return tco.default;if(WE())try{let r=await Promise.resolve().then(() => (Blo(),Flo)),n=r.sharp||r.default;return tco={default:n},n}catch{console.warn("Native image processor not available, falling back to sharp")}let e=await Promise.resolve().then(() => R(vAu(),1)),t=gGg(e);return tco={default:t},t}
 `;
 
+// Paste for macOS can emit TIFF paths (for example, Paste.app stores copied
+// browser images as .tiff files). The direct decoder does not support TIFF,
+// but classifying the path as an image lets the existing macOS clipboard
+// fallback convert the clipboard contents to PNG.
+const imageExtensionFixture = `
+var unrelatedI=/\\.(png|jpe?g|gif|webp)$/i;
+var unrelatedFlags=/\\.(png|jpe?g|gif|webp)$/ig;
+var unr=/\\.(png|jpe?g|gif|webp)$/i;VAu=/^(?:[A-Za-z]:\\\\|\\\\\\\\)/;
+`;
+
+// Exercise the combined behavior rather than only checking replacement text:
+// a shell-escaped TIFF path is classified as an image, direct decoding returns
+// null, and the patched macOS branch reads the clipboard instead of typing the
+// raw path.
+const tiffFallbackFixture = `
+var unr=/\\.(png|jpe?g|gif|webp)$/i;VAu=/^(?:[A-Za-z]:\\\\|\\\\\\\\)/;
+const calls=[];
+function zAu(path){return unr.test(path)}
+function KAu(){return Promise.resolve(null)}
+function m(){calls.push("clipboard")}
+function g(path){calls.push("text:"+path)}
+function y(){}
+function We(){}
+function paste(x,d){if(zAu(x)){let W=[x],P=[];Promise.all(W.map(KAu)).then((R)=>{let q=R.filter((v)=>v!==null);if(q.length>0||P.length>0){}else if(N&&d)m();else We("input_image_drag","read_failed"),g(x),y()});return}g(x)}
+paste("/tmp/Google\\\\ Chrome.tiff",true);
+setTimeout(()=>console.log(JSON.stringify(calls)),0);
+`;
+
 for (const [name, patcher] of [
   ['install.sh', extractUnixPatcher()],
   ['install.ps1', extractPowerShellPatcher()],
@@ -84,6 +112,39 @@ for (const [name, patcher] of [
     assert.ok(
       patched.includes('Native image processor not available, falling back to sharp'),
       `${name}: npm sharp fallback must be preserved`,
+    );
+
+    // TIFF paths must enter the image pipeline. Direct TIFF decoding may fail,
+    // after which the existing macOS clipboard reader supplies a PNG.
+    writeFileSync(join(dir, 'cli.original.cjs'), imageExtensionFixture, 'utf8');
+    run = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    output = run.stdout + run.stderr;
+    assert.equal(run.status, 0, `${name}: ${output}`);
+    patched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    assert.match(
+      patched,
+      /var unr=\/\\\.\(png\|jpe\?g\|gif\|webp\|tiff\?\)\$\/i/,
+      `${name}: image path detection must include TIFF so macOS can use clipboard fallback`,
+    );
+    assert.ok(
+      patched.includes('var unrelatedI=/\\.(png|jpe?g|gif|webp)$/i'),
+      `${name}: TIFF patch must not rewrite an unrelated regex with the same flags`,
+    );
+    assert.ok(
+      patched.includes('var unrelatedFlags=/\\.(png|jpe?g|gif|webp)$/ig'),
+      `${name}: TIFF patch must not partially rewrite regexes with extra flags`,
+    );
+
+    writeFileSync(join(dir, 'cli.original.cjs'), tiffFallbackFixture, 'utf8');
+    run = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    output = run.stdout + run.stderr;
+    assert.equal(run.status, 0, `${name}: ${output}`);
+    const behavior = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(behavior.status, 0, `${name}: ${behavior.stdout}${behavior.stderr}`);
+    assert.equal(
+      behavior.stdout.trim(),
+      '["clipboard"]',
+      `${name}: TIFF decode failure on macOS must read the clipboard instead of typing the path`,
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
