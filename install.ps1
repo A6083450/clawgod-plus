@@ -1939,11 +1939,44 @@ const patches = [
   },
   {
     name: 'macOS Cmd+V image paste fallback to clipboard read',
-    pattern: /if\(([\w$]+)\.length===0&&([\w$]+)\.length>0\)([\w$]+)\("input_image_drag","read_failed"\),([\w$]+)\.push\(\.\.\.\2\)/g,
-    replacer: (m, L, R, at, D) =>
-      `if(${L}.length===0&&${R}.length>0){${at}("input_image_drag","read_failed");if(d&&${D}.length===0){m();return}${D}.push(...${R})}`,
+    pattern: /\}else if\(([\w$]+)&&([\w$]+)\)([\w$]+)\(\);else ([\w$]+)\("input_image_drag","read_failed"\),([\w$]+)\(([\w$]+)\),([\w$]+)\(\)/g,
+    replacer: (m, N, d, mFn, We, g, x, y) =>
+      `}else if(${d})${mFn}();else ${We}("input_image_drag","read_failed"),${g}(${x}),${y}()`,
     sentinel: '"input_image_drag","read_failed"',
     optional: true,
+  },
+  {
+    // Current bundles restructured the paste handler: the clipboard-read
+    // fallback above is now unconditional upstream, but the image processor
+    // loader only tries the vendored native image-processor.node behind the
+    // standalone-executable predicate:
+    //
+    //   async function N8e(){
+    //     if(tco)return tco.default;
+    //     if(WE())try{let r=await Promise.resolve().then(() => (Blo(),Flo)),n=r.sharp||r.default;return tco={default:n},n}
+    //     catch{console.warn("Native image processor not available, falling back to sharp")}
+    //     let e=await Promise.resolve().then(() => R(vAu(),1)),t=gGg(e);  // import("sharp")
+    //     ...
+    //
+    // clawgod patches the standalone predicate to false (worker-launch fix),
+    // so the native branch is skipped and the npm "sharp" fallback throws
+    // (nothing is installed under ~/.clawgod) → the paste image read throws →
+    // the paste handler's .catch types the raw temp PNG path as text instead
+    // of attaching [Image #N]. Terminals like Ghostty always paste clipboard
+    // images as temp file paths, so this breaks Cmd+V image paste entirely.
+    //
+    // The native branch (vendor/image-processor/<arch>-<platform>/*.node,
+    // resolved relative to cli.cjs) works fine under clawgod — the installer
+    // vendors it. Drop the gate so the native loader is always tried first;
+    // the catch still falls back to the npm sharp import on failure.
+    //
+    // appliedMarker (not sentinel): the warn string intentionally survives in
+    // the patched output, so it cannot distinguish "stale regex" from
+    // "already patched".
+    name: 'Image paste: try native image processor regardless of standalone gate',
+    pattern: /if\(([\w$]+)\(\)\)(try\{let [\w$]+=await Promise\.resolve\(\)\.then\(\(\)\s*=>\s*\([\w$]+\(\),[\w$]+\)\),[\w$]+=[\w$]+\.sharp\|\|[\w$]+\.default;return [\w$]+=\{default:[\w$]+\},[\w$]+\}catch\{console\.warn\("Native image processor not available, falling back to sharp"\)\})/g,
+    replacer: (m, gate, body) => body,
+    appliedMarker: /return [\w$]+\.default;try\{let [\w$]+=await Promise\.resolve\(\)\.then\(\(\)\s*=>\s*\([\w$]+\(\),[\w$]+\)\)/,
   },
   {
     name: 'Restore Glob/Grep tools (un-inline EMBEDDED_SEARCH_TOOLS)',
