@@ -1292,7 +1292,8 @@ try {
     const _localVer = readFileSync(_verFile, 'utf8').trim();
     let _uc = null;
     try { if (existsSync(_ucFile)) _uc = JSON.parse(readFileSync(_ucFile, 'utf8')); } catch {}
-    if (_uc && _uc.v && _uc.v !== _localVer) {
+    var _semGt = function(a, b) { var x = a.split('.'), y = b.split('.'); for (var i = 0; i < 3; i++) { var d = (parseInt(x[i]||0)) - (parseInt(y[i]||0)); if (d) return d > 0; } return false; };
+    if (_uc && _uc.v && _semGt(_uc.v, _localVer)) {
       process.stderr.write('[clawgod] v' + _uc.v + ' available (installed: v' + _localVer + ") — run 'claude update' to upgrade\n");
     }
     if (!_uc || Date.now() - (_uc.t || 0) > 86400000) {
@@ -1974,6 +1975,31 @@ const patches = [
     pattern: /#da7756/g,
     replacer: () => '#22c55e',
     sentinel: '#da7756',
+  },
+  {
+    name: 'Theme claude color → green (ANSI)',
+    pattern: /claude:"ansi:redBright"/g,
+    replacer: () => 'claude:"ansi:greenBright"',
+  },
+  {
+    name: 'Shimmer → green (ANSI)',
+    pattern: /claudeShimmer:"ansi:yellowBright"/g,
+    replacer: () => 'claudeShimmer:"ansi:greenBright"',
+  },
+  {
+    name: 'Brief label claude color → green (RGB dark)',
+    pattern: /briefLabelClaude:"rgb\(215,119,87\)"/g,
+    replacer: () => 'briefLabelClaude:"rgb(34,197,94)"',
+  },
+  {
+    name: 'Brief label claude color → green (RGB light)',
+    pattern: /briefLabelClaude:"rgb\(255,153,51\)"/g,
+    replacer: () => 'briefLabelClaude:"rgb(22,163,74)"',
+  },
+  {
+    name: 'Brief label claude color → green (ANSI)',
+    pattern: /briefLabelClaude:"ansi:redBright"/g,
+    replacer: () => 'briefLabelClaude:"ansi:greenBright"',
   },
 
   // ── macOS Cmd+V 图片粘贴修复 ──
