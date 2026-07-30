@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -57,6 +57,7 @@ function WE(){return Bun.isStandaloneExecutable===!0}
 ${workerResolver}
 function chromeMcpCommand(){return WE()?[process.execPath,"--claude-in-chrome-mcp"]:[process.execPath,process.argv[1],"--claude-in-chrome-mcp"]}
 function computerUseMcpCommand(){return WE()?[process.execPath,"--computer-use-mcp"]:[process.execPath,process.argv[1],"--computer-use-mcp"]}
+async function computerUseStartup(){if(Lt()==="macos"&&!_n()&&Lbo())try{let{setupComputerUseMCP:jt}=await loadComputerUse(),{mcpConfig:xr,allowedTools:Ar}=jt();return{xr,Ar}}catch(jt){}}
 globalThis.standalone=WE;
 globalThis.resolveWorker=W1t;
 globalThis.chromeMcpCommand=chromeMcpCommand;
@@ -91,6 +92,11 @@ globalThis.computerUseMcpCommand=computerUseMcpCommand;
         patched.match(/\/\*__clawgod_plain_bun_worker__\*\//g)?.length,
         1,
         `${name}: worker resolver patch marker must be present exactly once`,
+      );
+      assert.match(
+        patched,
+        /if\(Lt\(\)==="macos"&&Lbo\(\)\)\/\*__clawgod_computer_use_noninteractive__\*\//,
+        `${name}: Computer Use must be available to stream-json workers`,
       );
 
       const plainBun = {
@@ -197,5 +203,54 @@ assert.match(
   /worker resolver patched for plain Bun/,
   'compat workflow must assert the targeted worker resolver invariant',
 );
+
+const launcherStart = unixInstaller.indexOf('LAUNCHER_CONTENT="');
+const launcherEnd = unixInstaller.indexOf('"\n\n\n# Back up original claude', launcherStart);
+assert.notEqual(launcherStart, -1, 'install.sh must embed the Unix launcher');
+assert.notEqual(launcherEnd, -1, 'install.sh Unix launcher must end');
+
+const launcherDir = mkdtempSync(join(tmpdir(), 'clawgod-launcher-'));
+try {
+  const cli = join(launcherDir, 'cli.cjs');
+  const bun = join(launcherDir, 'fake-bun');
+  const launcher = join(launcherDir, 'claude');
+  const capture = join(launcherDir, 'argv.txt');
+  writeFileSync(cli, '', 'utf8');
+  writeFileSync(bun, '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CAPTURE_FILE"\n', 'utf8');
+  chmodSync(bun, 0o755);
+
+  const assignment = unixInstaller.slice(launcherStart, launcherEnd + 1);
+  const rendered = spawnSync('bash', ['-c', `${assignment}\nprintf '%s' "$LAUNCHER_CONTENT"`], {
+    encoding: 'utf8',
+    env: { ...process.env, CLAWGOD_DIR: launcherDir, BUN_BIN: bun, CLAUDE_BIN: launcher },
+  });
+  assert.equal(rendered.status, 0, rendered.stderr);
+  writeFileSync(launcher, rendered.stdout, 'utf8');
+  chmodSync(launcher, 0o755);
+
+  const runLauncher = (args) => {
+    const run = spawnSync(launcher, args, { encoding: 'utf8', env: { ...process.env, CAPTURE_FILE: capture } });
+    assert.equal(run.status, 0, run.stderr);
+    return readFileSync(capture, 'utf8').trim().split('\n');
+  };
+
+  assert.deepEqual(
+    runLauncher(['--session-id', 'worker', '--input-format', 'stream-json']),
+    [cli, '--session-id', 'worker', '--input-format', 'stream-json'],
+    'stream-json workers must not auto-enable Chrome',
+  );
+  assert.deepEqual(
+    runLauncher(['--session-id', 'interactive']),
+    [cli, '--chrome', '--session-id', 'interactive'],
+    'interactive sessions keep automatic Chrome integration',
+  );
+  assert.deepEqual(
+    runLauncher(['--chrome', '--input-format', 'stream-json']),
+    [cli, '--chrome', '--input-format', 'stream-json'],
+    'an explicit --chrome still wins in stream-json mode',
+  );
+} finally {
+  rmSync(launcherDir, { recursive: true, force: true });
+}
 
 console.log('patcher worker launch checks passed');
