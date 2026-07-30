@@ -104,7 +104,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          bash install.sh 2>&1 | tee /tmp/install.log
+          bash install.sh --lean-on 2>&1 | tee /tmp/install.log
 
       - name: Verify install artifacts
         shell: bash
