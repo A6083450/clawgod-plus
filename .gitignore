@@ -10,3 +10,5 @@ gen
 .omx
 .claude/worktrees/
 CLAUDE.md
+.claude
+.fastRequest
