@@ -85,18 +85,18 @@ Claude Code 官方安装器：
 
 ## 安装 ClawGod Plus
 
-安装命令直接读取 `A6083450/clawgod-plus` 的 `main` 分支，因此无需等待首个 Release。
+安装命令始终下载最新的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/latest/download/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/latest/download/install.ps1 | iex
 ```
 
 常用安装参数：

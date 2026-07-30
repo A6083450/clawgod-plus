@@ -51,11 +51,11 @@ Do not use `bash install.sh` as a casual local test unless you intend to install
 README-documented user install commands:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/latest/download/install.sh | bash
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/latest/download/install.ps1 | iex
 ```
 
 Useful local installer options:

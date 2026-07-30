@@ -7,7 +7,7 @@ set -e
 #  Downloads Claude Code from npm, applies patches, replaces claude command
 #
 #  用法:
-#    curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash
+#    curl -fsSL https://github.com/A6083450/clawgod-plus/releases/latest/download/install.sh | bash
 #    # 或
 #    bash install.sh [--version 2.1.89] [--no-upgrade]
 # ─────────────────────────────────────────────────────────
@@ -2154,7 +2154,7 @@ const patches = [
       // arg-quoting; payload must be UTF-16LE base64.
       const psScript =
         "$p=if($env:HTTPS_PROXY){$env:HTTPS_PROXY}elseif($env:HTTP_PROXY){$env:HTTP_PROXY}else{$null};" +
-        "$u='https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1';" +
+        "$u='https://github.com/A6083450/clawgod-plus/releases/latest/download/install.ps1';" +
         "if($p){iex(irm -Proxy $p $u)}else{iex(irm $u)}";
       const psB64 = Buffer.from(psScript, 'utf16le').toString('base64');
       return (
@@ -2172,7 +2172,7 @@ const patches = [
         `const _li=require('path').join(require('os').homedir(),'.clawgod','install.sh');` +
         `const _hasLocal=!_w&&require('fs').existsSync(_li);` +
         `if(_hasLocal)process.stderr.write('[clawgod] using local installer (remote skipped): '+_li+'\\n');` +
-        `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:(_hasLocal?['bash',_li]:['bash','-c','curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash']);` +
+        `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:(_hasLocal?['bash',_li]:['bash','-c','curl -fsSL https://github.com/A6083450/clawgod-plus/releases/latest/download/install.sh | bash']);` +
         `const _r=require('child_process').spawnSync(_c[0],_c.slice(1),{stdio:'inherit',env:process.env});` +
         `process.exit(_r.status||0);`
       );
@@ -2900,7 +2900,7 @@ if [ \"\$1\" = \"import\" ]; then
 fi
 if [ ! -f \"\$CLAWGOD_CLI\" ]; then
   echo \"clawgod: installation at $CLAWGOD_DIR is missing (cli.cjs not found)\" >&2
-  echo \"clawgod: reinstall via  curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash\" >&2
+  echo \"clawgod: reinstall via  curl -fsSL https://github.com/A6083450/clawgod-plus/releases/latest/download/install.sh | bash\" >&2
   echo \"clawgod: or remove this launcher:  rm \\\"\$0\\\"\" >&2
   exit 127
 fi

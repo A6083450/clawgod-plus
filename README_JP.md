@@ -85,18 +85,18 @@ Claude Code 公式インストーラ：
 
 ## ClawGod Plus をインストール
 
-以下のコマンドは `A6083450/clawgod-plus` の `main` ブランチからインストーラを直接取得するため、最初の Release 公開を待つ必要はありません。
+以下のコマンドは、常に最新の ClawGod Plus Release アセットをダウンロードします。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/latest/download/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/latest/download/install.ps1 | iex
 ```
 
 主なインストーラオプション：
