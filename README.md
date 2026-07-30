@@ -342,3 +342,7 @@ GitHub 兼容性工作流还会执行完整的 Unix 安装和运行时检查。�
 - Anthropic：本项目所修改的官方 Claude Code 运行时；ClawGod Plus 与 Anthropic 没有关联。
 
 项目使用 [GPL-3.0](LICENSE) 许可。请仅在获得授权的场景中使用，并自行承担运行补丁开发工具的风险。
+
+## 🔗 友情链接
+
+- [linux.do](https://linux.do)：**学AI，上L站！！！**

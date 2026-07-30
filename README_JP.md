@@ -342,3 +342,7 @@ GitHub 互換性ワークフローでは、さらに Unix の完全インスト�
 - Anthropic：このプロジェクトがパッチする公式 Claude Code ランタイム。ClawGod Plus は Anthropic と提携していません。
 
 [GPL-3.0](LICENSE) ライセンスで提供します。許可された範囲でのみ使用し、パッチ済み開発ツールを実行するリスクを理解した上で利用してください。
+
+## 🔗 相互リンク
+
+- [linux.do](https://linux.do)：**AIを学ぶなら、Lサイトへ！！！**

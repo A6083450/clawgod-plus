@@ -342,3 +342,7 @@ The GitHub compatibility workflow additionally performs an end-to-end Unix insta
 - Anthropic: official Claude Code runtime patched by this project; ClawGod Plus is not affiliated with Anthropic.
 
 Licensed under [GPL-3.0](LICENSE). Use only where you are authorized to do so and accept the risks of running a patched development tool.
+
+## 🔗 Friendly Links
+
+- [linux.do](https://linux.do): **Learn AI on L-Site!!!**
