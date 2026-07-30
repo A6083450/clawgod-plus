@@ -1,12 +1,12 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    ClawGod Installer for Windows
+    ClawGod Plus Installer for Windows
 .DESCRIPTION
     Downloads Claude Code from npm, applies feature unlock patches,
     and replaces the 'claude' command with the patched version.
 .EXAMPLE
-    irm clawgod.0chen.cc/install.ps1 | iex
+    irm https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1 | iex
     # or
     .\install.ps1
     .\install.ps1 -Version 2.1.89
@@ -251,7 +251,7 @@ function Install-ChromeFixScript {
     }
 
     try {
-        Invoke-WebRequest -Uri "https://github.com/0Chencc/clawgod/releases/latest/download/apply-claude-code-chrome-fix.ps1" -OutFile $dst -UseBasicParsing
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/A6083450/clawgod-plus/main/apply-claude-code-chrome-fix.ps1" -OutFile $dst -UseBasicParsing
         return $true
     } catch {
         return $false
@@ -274,10 +274,10 @@ function Invoke-ChromePostInstallFix {
         if ($LASTEXITCODE -eq 0) {
             Write-OK "Claude Code Chrome post-install fix applied"
         } else {
-            Write-Warn "Claude Code Chrome post-install fix did not apply; ClawGod core install will continue"
+            Write-Warn "Claude Code Chrome post-install fix did not apply; ClawGod Plus core install will continue"
         }
     } catch {
-        Write-Warn "Claude Code Chrome post-install fix failed; ClawGod core install will continue"
+        Write-Warn "Claude Code Chrome post-install fix failed; ClawGod Plus core install will continue"
     }
 }
 
@@ -289,7 +289,7 @@ function Write-Warn($msg) { Write-Host "  ! $msg" -ForegroundColor Yellow }
 function Write-Dim($msg)  { Write-Host "  $msg" -ForegroundColor DarkGray }
 
 Write-Host ""
-Write-Host "  ClawGod Installer" -ForegroundColor White -NoNewline
+Write-Host "  ClawGod Plus Installer" -ForegroundColor White -NoNewline
 Write-Host " (Windows)" -ForegroundColor DarkGray
 Write-Host ""
 
@@ -303,7 +303,7 @@ if ($Uninstall) {
             & node $claudeMemCompat uninstall
             if ($LASTEXITCODE -ne 0) { throw "claude-mem compatibility helper exited $LASTEXITCODE" }
         } catch {
-            Write-Warn "Could not restore claude-mem compatibility settings; ClawGod was not uninstalled"
+            Write-Warn "Could not restore claude-mem compatibility settings; ClawGod Plus was not uninstalled"
             exit 1
         }
     }
@@ -315,7 +315,7 @@ if ($Uninstall) {
         Write-OK "Original claude restored"
     } elseif ((Test-Path $claudeCmd) -and (Select-String -Path $claudeCmd -Pattern "clawgod" -Quiet -ErrorAction SilentlyContinue)) {
         Remove-Item -Force $claudeCmd
-        Write-OK "Removed ClawGod launcher ($claudeCmd)"
+        Write-OK "Removed ClawGod Plus launcher ($claudeCmd)"
     }
     # Also check for .exe backup
     $claudeExeOrig = Join-Path $BinDir "claude.orig.exe"
@@ -335,7 +335,7 @@ if ($Uninstall) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
-    Write-OK "ClawGod uninstalled"
+    Write-OK "ClawGod Plus uninstalled"
     Write-Host ""
     Write-Dim "Restart your terminal for changes to take effect."
     Write-Host ""
@@ -683,7 +683,7 @@ $extractorPath = Join-Path $ClawDir "extract-natives.mjs"
 @'
 #!/usr/bin/env node
 /**
- * ClawGod Bun section extractor
+ * ClawGod Plus Bun section extractor
  *
  * Parses the .bun (PE/ELF) or __BUN,__bun (Mach-O) section embedded in a
  * Bun standalone executable, walks the module graph, and extracts:
@@ -1516,7 +1516,7 @@ if (hasProviderApiKey) {
 }
 
 // claude-mem deliberately starts SDK subprocesses without Claude settings or
-// inherited auth. Its ClawGod-specific launcher marks those subprocesses so the
+// inherited auth. Its ClawGod Plus-specific launcher marks those subprocesses so the
 // wrapper can resolve the same provider and Haiku mapping at spawn time without
 // copying credentials into ~/.claude-mem/.env.
 if (process.env.CLAWGOD_CLAUDE_MEM === '1') {
@@ -1655,7 +1655,7 @@ try {
       process.stderr.write('[clawgod] v' + _uc.v + ' available (installed: v' + _localVer + ") — run 'claude update' to upgrade\n");
     }
     if (!_uc || Date.now() - (_uc.t || 0) > 86400000) {
-      fetch('https://api.github.com/repos/0Chencc/clawgod/releases/latest', {
+      fetch('https://api.github.com/repos/A6083450/clawgod-plus/releases/latest', {
         headers: { 'User-Agent': 'clawgod' },
         signal: AbortSignal.timeout(5000),
       }).then(function(r) { return r.json(); }).then(function(d) {
@@ -1677,7 +1677,7 @@ Write-OK "Wrapper created (cli.cjs)"
 $patcherCode = @'
 #!/usr/bin/env node
 /**
- * ClawGod Universal Patcher
+ * ClawGod Plus Universal Patcher
  */
 import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
@@ -2003,7 +2003,7 @@ const patches = [
     sentinel: 'return"external"',
   },
   {
-    // ClawGod runs extracted cli.cjs under Bun even when Bun reports itself as
+    // ClawGod Plus runs extracted cli.cjs under Bun even when Bun reports itself as
     // standalone. Special-case only the worker/daemon resolver; the shared
     // standalone predicate also controls Chrome and Computer Use MCP commands.
     name: 'Worker resolver for plain Bun cli.cjs (target shape)',
@@ -2267,7 +2267,7 @@ const patches = [
       // arg-quoting; payload must be UTF-16LE base64.
       const psScript =
         "$p=if($env:HTTPS_PROXY){$env:HTTPS_PROXY}elseif($env:HTTP_PROXY){$env:HTTP_PROXY}else{$null};" +
-        "$u='https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1';" +
+        "$u='https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1';" +
         "if($p){iex(irm -Proxy $p $u)}else{iex(irm $u)}";
       const psB64 = Buffer.from(psScript, 'utf16le').toString('base64');
       return (
@@ -2282,7 +2282,7 @@ const patches = [
         `if(_ua.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";` +
         `process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");` +
         `const _w=process.platform==='win32';` +
-        `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:['bash','-c','curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash'];` +
+        `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:['bash','-c','curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash'];` +
         `const _r=require('child_process').spawnSync(_c[0],_c.slice(1),{stdio:'inherit',env:process.env});` +
         `process.exit(_r.status||0);`
       );
@@ -2342,7 +2342,7 @@ const patches = [
     //     let e=await Promise.resolve().then(() => R(vAu(),1)),t=gGg(e);  // import("sharp")
     //     ...
     //
-    // ClawGod runs under Bun, whose standalone predicate may not reflect the
+    // ClawGod Plus runs under Bun, whose standalone predicate may not reflect the
     // extracted module layout, so the native branch can be skipped and the npm
     // "sharp" fallback throws
     // (nothing is installed under ~/.clawgod) → the paste image read throws →
@@ -2516,7 +2516,7 @@ const verMatch = code.match(/Version:\s*([\d.]+)/);
 const version = verMatch ? verMatch[1] : 'unknown';
 
 console.log(`\n${'='.repeat(55)}`);
-console.log(`  ClawGod (universal)`);
+console.log(`  ClawGod Plus (universal)`);
 console.log(`  Target: cli.original.cjs (v${version})`);
 console.log(`  Mode: ${dryRun ? 'DRY RUN' : verify ? 'VERIFY' : 'APPLY'}`);
 console.log(`${'='.repeat(55)}\n`);
@@ -2806,7 +2806,7 @@ if /I "%~1"=="import" (
   )
 )
 if not exist "$cliPathInCmd" (
-  echo clawgod: cli.cjs not found. Reinstall: irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 ^| iex
+  echo clawgod: cli.cjs not found. Reinstall: irm https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1 ^| iex
   exit /b 127
 )
 if not exist "$bunPathInCmd" (
@@ -2916,7 +2916,7 @@ try {
         Write-OK "claude-mem compatibility configured"
     }
 } catch {
-    Write-Warn "claude-mem compatibility setup failed; ClawGod core install will continue"
+    Write-Warn "claude-mem compatibility setup failed; ClawGod Plus core install will continue"
 } finally {
     Remove-Item Env:CLAWGOD_BUN_BIN -ErrorAction SilentlyContinue
     Remove-Item Env:CLAWGOD_CLAUDE_BIN -ErrorAction SilentlyContinue
@@ -2935,7 +2935,7 @@ if ($userPath -notlike "*$BinDir*") {
 # ─── Done ─────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "  ClawGod installed!" -ForegroundColor Green
+Write-Host "  ClawGod Plus installed!" -ForegroundColor Green
 Write-Host ""
 Write-Dim "  claude            — Start patched Claude Code (green logo)"
 Write-Dim "  claude.orig       — Run original unpatched Claude Code"

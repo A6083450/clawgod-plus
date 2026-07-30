@@ -131,7 +131,7 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
     assert.deepEqual(
       JSON.parse(readFileSync(join(memDir, 'settings.json'), 'utf8')),
       { ...edited, CLAUDE_MEM_CLAUDE_AUTH_METHOD: original.CLAUDE_MEM_CLAUDE_AUTH_METHOD, CLAUDE_CODE_PATH: original.CLAUDE_CODE_PATH },
-      'uninstall must preserve user changes while restoring ClawGod-owned settings',
+      'uninstall must preserve user changes while restoring ClawGod Plus-owned settings',
     );
 
     writeFileSync(join(memDir, 'settings.json'), `${JSON.stringify(configured, null, 2)}\n`, 'utf8');

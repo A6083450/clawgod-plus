@@ -1,4 +1,4 @@
-# ClawGod Handbook
+# ClawGod Plus Handbook
 
 面向 Claude Code 安全研究工作流的上下文治理参考文档。
 
@@ -20,7 +20,7 @@
 1. **模型层**：模型把合法的安全研究请求误判为恶意请求，拒绝回答或降质
 2. **客户端层**：客户端内置安全策略，在工具调用前拦截，即使模型已经同意
 
-ClawGod 解决客户端层。Session Rules 解决模型层。Guard 重建可控边界。
+ClawGod Plus 解决客户端层。Session Rules 解决模型层。Guard 重建可控边界。
 
 ### 不是什么
 
@@ -35,7 +35,7 @@ ClawGod 解决客户端层。Session Rules 解决模型层。Guard 重建可控�
 
 ### 最小配置（5 分钟）
 
-1. 安装 [ClawGod](https://github.com/0Chencc/clawgod) — 解除客户端层限制
+1. 安装 [ClawGod Plus](https://github.com/A6083450/clawgod-plus) — 解除客户端层限制
 2. 复制 `01-session-rules/security-research-context.md` 到 `~/.claude/rules/`
 3. 完成。两层限制同时解除。
 
@@ -111,7 +111,7 @@ clawgod-handbook/
 │   └── ir-walkthrough.md                 # 应急响应
 └── appendix/
     ├── audit-log-schema.md               # 审计日志格式
-    ├── clawgod-integration.md            # 与 ClawGod 配合说明
+    ├── clawgod-integration.md            # 与 ClawGod Plus 配合说明
     └── compatibility.md                  # 非 Claude Code 适配
 ```
 
@@ -122,7 +122,7 @@ clawgod-handbook/
 ```
 用户输入
     ↓
-Layer 0: ClawGod Runtime Patch    ← 解除客户端黑箱限制
+Layer 0: ClawGod Plus Runtime Patch    ← 解除客户端黑箱限制
     ↓
 Layer 1: Session Rules            ← 给模型补齐"你是谁"
     ↓
@@ -143,7 +143,7 @@ Layer 3: PreToolUse Guard         ← 决定"工具该不该执行"
 
 1. **该注入时注入，不该注入时沉默** — 好的治理框架首先要知道什么时候不该介入
 2. **零门槛安装** — `bash setup.sh` 一行命令，hook 脚本复制即用，不需要手写代码
-3. **最小配置起效** — ClawGod + 一份 Rules 文件就能解决 80% 的问题
+3. **最小配置起效** — ClawGod Plus + 一份 Rules 文件就能解决 80% 的问题
 4. **全链路可审计** — 每一层决策都可以追溯和复盘
 5. **通用方法论** — 四层架构的思想可以适配其他 AI Code 产品
 
@@ -153,7 +153,7 @@ Layer 3: PreToolUse Guard         ← 决定"工具该不该执行"
 
 MIT — 自由使用、修改和分发。
 
-与 ClawGod 项目独立，不要求安装 ClawGod 即可使用本文档。
+与 ClawGod Plus 项目独立，不要求安装 ClawGod Plus 即可使用本文档。
 
 ---
 

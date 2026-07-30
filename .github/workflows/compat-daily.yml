@@ -197,7 +197,7 @@ jobs:
           done
 
       - name: Functional checks — runtime invariants
-        # Verify that ClawGod preserves the plain Bun runtime model. Background
+        # Verify that ClawGod Plus preserves the plain Bun runtime model. Background
         # workers must launch `bun cli.cjs …`, not treat Bun as a standalone CLI.
         shell: bash
         run: |

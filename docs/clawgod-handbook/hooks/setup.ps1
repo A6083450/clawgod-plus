@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    ClawGod Handbook Hook 安装器 (Windows)
+    ClawGod Plus Handbook Hook 安装器 (Windows)
 .DESCRIPTION
     安装 scene-router 和 tool-guard hook 到 ~/.claude/hooks/
     并注册到 settings.json
@@ -26,7 +26,7 @@ function Write-Err($msg)  { Write-Host "  ✗ $msg" -ForegroundColor Red }
 function Write-Dim($msg)  { Write-Host "  $msg" -ForegroundColor DarkGray }
 
 Write-Host ""
-Write-Host "  ClawGod Handbook — Hook 安装器" -ForegroundColor White
+Write-Host "  ClawGod Plus Handbook — Hook 安装器" -ForegroundColor White
 Write-Host ""
 
 # ── Uninstall ──────────────────────────────────────────

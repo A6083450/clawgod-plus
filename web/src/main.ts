@@ -15,10 +15,10 @@
  * behind the deferred JS fetch and cause a Flash of Unstyled Content.
  */
 
-const REPO = '0Chencc/clawgod';
+const REPO = 'A6083450/clawgod-plus';
 const BADGES_JSON = `https://raw.githubusercontent.com/${REPO}/badges/claude-version.json`;
 
-const escape = (s: string) =>
+const escapeHtml = (s: string) =>
   s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -123,7 +123,7 @@ interface BadgeJson {
     const data = (await res.json()) as BadgeJson;
     if (!data.message) throw new Error('no version');
     dot.classList.remove('idle');
-    text.innerHTML = `Verified on Claude Code <strong style="color: var(--text)">${escape(data.message)}</strong>`;
+    text.innerHTML = `Verified on Claude Code <strong style="color: var(--text)">${escapeHtml(data.message)}</strong>`;
   } catch {
     /* Branch not yet populated (first deploy) or network down — keep
      * the static fallback "Daily compat verified" already in the HTML. */

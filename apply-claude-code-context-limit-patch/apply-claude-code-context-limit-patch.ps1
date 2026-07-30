@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Claude Code / ClawGod — Configurable Context Limit Patch (Windows)
+    Claude Code / ClawGod Plus — Configurable Context Limit Patch (Windows)
 
 .DESCRIPTION
     Makes the hardcoded 200000 (200K) default context window configurable via:
       CLAUDE_CODE_CONTEXT_LIMIT
     (falls back to CLAUDE_CODE_MAX_CONTEXT_TOKENS, then 200000)
 
-    Targets Claude Code 2.1.x bundles (including ClawGod's
+    Targets Claude Code 2.1.x bundles (including ClawGod Plus
     %USERPROFILE%\.clawgod\cli.original.cjs).
 
     Patches:
@@ -18,7 +18,7 @@
       3) Large-message comparison thresholds using >200000
 
     Does NOT bypass Anthropic first-party Extra Usage / long-context credits.
-    Re-run after claude update / ClawGod reinstall.
+    Re-run after claude update / ClawGod Plus reinstall.
 
 .PARAMETER Check
     Check only (no writes)
@@ -71,7 +71,7 @@ function Invoke-ClaudeCodeContextLimitPatch {
 
     if ($Help) {
         Write-Host @"
-Claude Code / ClawGod — $FIX_DESCRIPTION
+Claude Code / ClawGod Plus — $FIX_DESCRIPTION
 
 Usage:
     .\$($MyInvocation.MyCommand.Name) [options]
@@ -88,10 +88,10 @@ After patch:
     # { "env": { "CLAUDE_CODE_CONTEXT_LIMIT": "1000000" } }
 
 Notes:
-    - Prefer patching %USERPROFILE%\.clawgod\cli.original.cjs when using ClawGod.
+    - Prefer patching %USERPROFILE%\.clawgod\cli.original.cjs when using ClawGod Plus.
     - Do not patch the thin wrapper cli.cjs.
     - First-party Extra Usage billing is separate from this local default.
-    - Re-run after claude update / ClawGod reinstall.
+    - Re-run after claude update / ClawGod Plus reinstall.
 "@
         return 0
     }
@@ -115,7 +115,7 @@ Notes:
             }
         } catch {}
 
-        # Prefer a real bundle (>1MB). Skip thin ClawGod wrappers.
+        # Prefer a real bundle (>1MB). Skip thin ClawGod Plus wrappers.
         foreach ($path in $locations) {
             if (Test-Path -LiteralPath $path) {
                 $item = Get-Item -LiteralPath $path
@@ -138,7 +138,7 @@ Notes:
     } else {
         $cliPathResolved = Find-CliPath
         if (-not $cliPathResolved) {
-            Write-FixError "Claude Code / ClawGod bundle not found"
+            Write-FixError "Claude Code / ClawGod Plus bundle not found"
             Write-Host ""
             Write-Host "Searched:"
             Write-Host "  %USERPROFILE%\.clawgod\cli.original.cjs"
@@ -154,7 +154,7 @@ Notes:
 
     $cliPath = $cliPathResolved
 
-    # Guard: refuse to patch the thin ClawGod launcher wrapper
+    # Guard: refuse to patch the thin ClawGod Plus launcher wrapper
     if ((Split-Path $cliPath -Leaf) -eq "cli.cjs") {
         $original = Join-Path (Split-Path $cliPath) "cli.original.cjs"
         if ((Test-Path -LiteralPath $original) -and ((Get-Item -LiteralPath $cliPath).Length -lt 1000000)) {

@@ -77,15 +77,15 @@ EOF
 
 Rules 解决"模型懂不懂你"，Hooks 解决"工具链能不能跑"。
 
-## 与 ClawGod 的关系
+## 与 ClawGod Plus 的关系
 
 | 限制类型 | 由谁解决 | 机制 |
 |----------|----------|------|
 | 模型拒绝/降质 | Session Rules | 上下文注入，让模型正确理解场景 |
-| 客户端 CYBER_RISK 拦截 | ClawGod | Runtime patch 移除拦截指令 |
-| Feature Flag 限制 | ClawGod | GrowthBook override |
-| 工具调用前阻断 | ClawGod + Guard Hook | Patch 移除限制 + Hook 重建可控边界 |
+| 客户端 CYBER_RISK 拦截 | ClawGod Plus | Runtime patch 移除拦截指令 |
+| Feature Flag 限制 | ClawGod Plus | GrowthBook override |
+| 工具调用前阻断 | ClawGod Plus + Guard Hook | Patch 移除限制 + Hook 重建可控边界 |
 
-**只有 Rules 没有 ClawGod**：模型愿意回答但客户端仍会拦截。
-**只有 ClawGod 没有 Rules**：客户端不拦截但模型仍然会拒绝。
+**只有 Rules 没有 ClawGod Plus**：模型愿意回答但客户端仍会拦截。
+**只有 ClawGod Plus 没有 Rules**：客户端不拦截但模型仍然会拒绝。
 **两者配合**：双层限制同时解除。

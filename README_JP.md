@@ -1,111 +1,209 @@
-# ClawGod
+# ClawGod Plus
 
-[English](README.md) | [中文](README_ZH.md) | [日本語](README_JP.md)
+[English](README_EN.md) | [简体中文](README.md) | **日本語**
 
-[![Latest](https://img.shields.io/github/v/release/0chencc/clawgod?style=flat&label=Latest)](https://github.com/0Chencc/clawgod/releases/latest)
-[![Released](https://img.shields.io/github/release-date/0chencc/clawgod?style=flat&label=Released)](https://github.com/0Chencc/clawgod/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/0chencc/clawgod/total?style=flat&label=Downloads)](https://github.com/0Chencc/clawgod/releases)
-[![Compat](https://img.shields.io/github/actions/workflow/status/0chencc/clawgod/compat-daily.yml?branch=main&style=flat&label=Compat)](https://github.com/0Chencc/clawgod/actions/workflows/compat-daily.yml)
-[![Claude tested](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/0Chencc/clawgod/badges/claude-version.json&style=flat)](https://github.com/0Chencc/clawgod/actions/workflows/compat-daily.yml)
+> [0Chencc/clawgod](https://github.com/0Chencc/clawgod) をベースに継続メンテナンスしている拡張ブランチです。Claude Code をサードパーティ製クライアントで置き換えるのではなく、公式ランタイム上に構築されています。
 
-> [Claude Code](https://docs.anthropic.com/en/docs/claude-code) ゴッドモード。
+ClawGod Plus は Claude Code の Bun standalone バイナリに埋め込まれた JavaScript を抽出し、バージョン差分に強いパッチを適用して、変更済み CLI を Bun で実行します。このブランチは上流の全機能を維持しながら、ブラウザ、Computer Use、コンテキストウィンドウ、claude-mem、Worker ランタイム、回帰テストを強化しています。
 
-**これはサードパーティ製の Claude Code クライアントではありません。** ClawGod は公式 Claude Code の上に適用されるランタイムパッチです。どのバージョンにも対応し、Claude Code が更新されると次回起動時に自動的に新バージョンから再抽出・再パッチを行います。
+![ClawGod Plus パッチ済みランタイム](bypass.png)
+
+## このブランチは上流よりどれだけ先行しているか
+
+以下は拡張機能スナップショット `b4ed6a1` と、上流 **v1.7.5** のコミット [`507405a`](https://github.com/0Chencc/clawgod/commit/507405a053c917c3a27c162e3f66c3d1897d4591) を比較した結果です。確認日は **2026-07-30** です。今回の README 書き直しはエンジニアリング量の集計から除外しています。
+
+| 測定可能な差分 | 拡張ブランチ | 上流 v1.7.5 |
+|---|---:|---:|
+| ブランチ固有コミット | **23** | 0 |
+| 変更ファイル数 | **26** | 0 |
+| ソース差分 | **+6,631 / -101 行** | ベースライン |
+| パッチ回帰スクリプト | **8** | 0 |
+| 独立パッチソース | **3 系統・5 本** | 0 |
+| 文書化済み拡張領域 | **6** | 上流の基本機能セット |
+
+数値は `git rev-list upstream/main..b4ed6a1`、`git diff --shortstat upstream/main...b4ed6a1`、および同スナップショットの `tests/` 配下にある追跡対象ファイルから算出しています。これは指定した上流スナップショットとの差分を示すものであり、性能や品質が何倍という根拠のない主張ではありません。
+
+## 上流より改善されている点
+
+| 拡張項目 | 出所 | 実用上の改善 |
+|---|---|---|
+| **claude-mem 互換性** | ローカル統合 | claude-mem の `.env` に資格情報をコピーせず、設定済み ClawGod Plus Provider を再利用できます。管理対象設定のバックアップ、後から行ったユーザー変更の保持、Worker 再起動、古い Chroma プロセスの整理、アンインストール時の復元にも対応します。 |
+| **API キーモードの Claude in Chrome** | **哈雷佬によるパッチ系列を統合** | OAuth サブスクリプションブリッジを使わず、ローカル Chrome 拡張の socket または named pipe を利用します。Agent ディスパッチでも `--chrome` と `--no-chrome` を維持します。 |
+| **Computer Use をデフォルト有効化** | **哈雷佬によるパッチ系列とローカル Launcher 統合** | Feature Gate を外部設定化し、Computer Use をデフォルトで有効にします。cmux や stream-json などの非対話 Worker でも利用でき、機械処理向けコマンドには `--chrome` を自動注入しないため、空白タブの反復生成を防ぎます。 |
+| **設定可能なコンテキスト上限** | **哈雷佬によるパッチ系列を統合** | ハードコードされたローカル 200K fallback を、`CLAUDE_CODE_CONTEXT_LIMIT`、`CLAUDE_CODE_MAX_CONTEXT_TOKENS`、200K の順で解決するよう変更し、チェックと復元モードも提供します。 |
+| **Bun と Worker ランタイムの堅牢化** | ローカル統合 | 新旧の圧縮済み Worker Resolver 形状を対象にしつつ、Bun 共有の standalone-executable セマンティクスを維持し、daemon、fork、MCP、バックグラウンド Worker の相互破損を防ぎます。 |
+| **インストーラとランタイムの信頼性** | ローカル統合 | `--no-upgrade` 制御フローの検証、ローカルインストーラへの更新ルーティング、macOS TIFF クリップボードパス認識、CI トリガー拡張、パッチドリフト検出用の独立 Fixture を追加しています。 |
+
+### 統合パッチの作者帰属
+
+独立した `apply-claude-code-*` スクリプト、そのアーカイブ、およびそこから統合されたパッチ手法は、すべて **哈雷佬** による成果です。このブランチはそれらを Unix / Windows インストーラへ統合して堅牢化していますが、統合によって原作者の帰属が変わることはありません。
+
+該当するソースファイル：
+
+- [`apply-claude-code-chrome-fix.sh`](apply-claude-code-chrome-fix.sh) と [`apply-claude-code-chrome-fix.ps1`](apply-claude-code-chrome-fix.ps1)
+- [`apply-claude-code-computer-use-fix.sh`](apply-claude-code-computer-use-fix.sh)
+- [`apply-claude-code-context-limit-patch/`](apply-claude-code-context-limit-patch/)
+
+## 統合済みの上流変更
+
+これは更新が止まった Fork ではありません。上流 v1.7.5 までの変更を取り込んでいます。
+
+| 上流バージョン範囲 | このブランチに維持されている変更 |
+|---|---|
+| **v1.3.0** | 日付句読点、タイムゾーン/プロキシ/Provider 検出、アポストロフィ選択に関する地域ステガノグラフィー無効化。 |
+| **v1.6.0 - v1.6.1** | Lean Settings 制御と macOS 画像貼り付け fallback の改善。 |
+| **v1.7.0 - v1.7.2** | OpenAI 互換プロキシ、Provider インポート、サードパーティ Provider の Remote Control、Release バージョン注入。 |
+| **v1.7.3 - v1.7.5** | Bun ランタイム互換性、Windows アンインストール時の整理、リモート版が新しい場合だけ表示する更新通知。 |
+
+## 全機能
+
+拡張ブランチは上流の全パッチ機能を維持しています。
+
+| 分野 | 機能 |
+|---|---|
+| **機能アンロック** | Internal User モードと隠しコマンド、GrowthBook オーバーライド、Agent Teams、Computer Use、Auto-mode、Ultraplan、Ultrareview。 |
+| **制限解除** | `CYBER_RISK_INSTRUCTION`、URL 推測制限、慎重操作の強制確認、起動時ログイン通知を削除。 |
+| **Provider 対応** | Anthropic API キー、OAuth、Anthropic 互換エンドポイント、OpenAI 互換ゲートウェイ、Provider インポート、サードパーティ Prompt Cache Header 処理。 |
+| **信頼性** | Glob/Grep 復元、1 時間 Prompt Cache Allowlist、Claude 更新後の自動再パッチ、更新通知、3 段階 Lean Settings。 |
+| **視覚識別** | 緑色のパッチ済みテーマと、非 Anthropic Provider 向けメッセージ表示修正。 |
 
 ## 必要条件
 
-ClawGod インストーラ実行**前**に揃えておくもの：
+拡張版インストーラを実行する前に、次をインストールしてください。
 
-| ツール | 用途 | インストール |
-|--------|------|-------------|
-| **Claude Code**（ネイティブバイナリ） | ClawGod は既に入っている公式 Bun standalone バイナリにパッチを当てる | [`claude.ai/install.sh`](https://claude.ai/install.sh)（macOS/Linux）または [`claude.ai/install.ps1`](https://claude.ai/install.ps1)（Windows） |
-| **ripgrep** | Claude Code の Grep ツールが必須 | `brew install ripgrep` / `apt install ripgrep` / `winget install BurntSushi.ripgrep.MSVC` |
-| **Node.js >= 18** | パッチャが利用 | [nodejs.org](https://nodejs.org) |
-| **Bun** | パッチ済み cli.js の実行ランタイム、未検出時は自動インストール | [bun.sh](https://bun.sh)、`npm install -g bun`、`scoop install bun`、または `choco install bun` |
+| ツール | 要件 | 用途 |
+|---|---|---|
+| **Claude Code ネイティブバイナリ** | 現行の公式インストール | ClawGod Plus が抽出・変更する Bun standalone バイナリを提供します。 |
+| **Node.js** | 18 以上 | 抽出とパッチスクリプトを実行します。 |
+| **Bun** | 現行リリース | 変更済み CLI を実行します。未導入ならインストーラが追加できます。 |
+| **ripgrep** | 現行リリース | Claude Code の Grep ツールに必要です。 |
 
-## インストール
+Claude Code 公式インストーラ：
 
-**macOS / Linux:**
+- macOS/Linux：[`https://claude.ai/install.sh`](https://claude.ai/install.sh)
+- Windows：[`https://claude.ai/install.ps1`](https://claude.ai/install.ps1)
+
+## ClawGod Plus をインストール
+
+以下のコマンドは `A6083450/clawgod-plus` の `main` ブランチからインストーラを直接取得するため、最初の Release 公開を待つ必要はありません。
+
+**macOS / Linux**
+
 ```bash
-curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash
 ```
 
-**Windows (PowerShell):**
+**Windows PowerShell**
+
 ```powershell
-irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1 | iex
 ```
 
-緑のロゴ = パッチ適用済み。オレンジのロゴ = オリジナル。
-
-![ClawGod 適用結果](bypass.png)
-
-## 機能一覧
-
-### 機能アンロック
-
-| パッチ | 内容 |
-|--------|------|
-| **内部ユーザーモード** | 24以上の隠しコマンド（`/share`、`/teleport`、`/issue`、`/bughunter`...）、デバッグログ、APIリクエストダンプ |
-| **GrowthBook オーバーライド** | 設定ファイルで任意のフィーチャーフラグを上書き |
-| **Agent Teams** | マルチエージェント協調、フラグ不要 |
-| **Computer Use** | Max/Proサブスク不要で画面操作（macOS） |
-| **Claude in Chrome** | ブラウザツールはローカル Chrome 拡張の socket/pipe を優先し、APIキー運用でも OAuth サブスク bridge 認証なしで動作 |
-| **Auto-mode** | サードパーティ API ユーザー向け auto-mode のロック解除（firstParty 制限を撤去） |
-| **Ultraplan** | Claude Code Remote 経由のマルチエージェント計画 |
-| **Ultrareview** | Claude Code Remote 経由の自動バグ検出 |
-
-### 制限の解除
-
-| パッチ | 解除内容 |
-|--------|---------|
-| **CYBER_RISK_INSTRUCTION** | セキュリティテスト拒否プロンプト（ペネトレーション、C2、エクスプロイト） |
-| **URL制限** | 「URLを生成・推測してはならない」指示 |
-| **慎重操作** | 破壊的操作前の強制確認 |
-| **ログイン通知** | 起動時の「未ログイン」リマインダー |
-
-### 地域ステガノグラフィー無効化
-
-| パッチ | 無効化される内容 |
-|--------|-----------------|
-| **日付文字列 (qla)** | システムプロンプトが Unicode アポストロフィ変体（U+0027 / U+2019 / U+02BC / U+02B9）と日付区切り文字（CN タイムゾーンでは `-` → `/`）でユーザーの地理情報をエンコード。パッチにより常に ASCII `'` と元の日付形式を使用 |
-| **地域検出プローブ (rdp)** | クライアント側の3軸検出：タイムゾーン（`Asia/Shanghai` / `Asia/Urumqi`）、プロキシホスト名の XOR 難読化 100+ ドメインブロックリスト照合、ベース URL 内の中国 LLM ベンダーキーワード。パッチにより常に null を返却 |
-| **アポストロフィセレクター (odp)** | 検出結果に基づき4種の Unicode アポストロフィから1つを選択。パッチにより常に ASCII `'` を返却（多層防御） |
-
-### ビジュアル
-
-| パッチ | 効果 |
-|--------|------|
-| **グリーンテーマ** | ブランドカラー → 緑。パッチ適用を一目で確認 |
-| **メッセージフィルター** | Anthropic 社外ユーザーに非表示のコンテンツを表示 |
-
-### 信頼性
-
-| 機能 | 効果 |
-|------|------|
-| **Glob/Grep 復元** | Bun コンパイル時に `EMBEDDED_SEARCH_TOOLS=true` がリテラルとしてインライン化され、内蔵の Glob/Grep ツールが非表示になります。パッチにより env チェックを復元し、bfs/ugrep バイナリの可用性検出を追加 — Bun ランタイム実行時にツールが自動復元されます |
-| **1h Prompt Cache** | 1h TTL allowlist を強制有効化（デフォルトは実質 5m → アイドル後の cache_creation トークン浪費を防止） |
-| **サードパーティ Cache 修正** | `baseURL` が Anthropic 以外を指す場合、`x-anthropic-billing-header` を自動的に無効化します。このヘッダーの `cch` フィールドはリクエストごとに変化するため、DeepSeek / OneAPI / Bedrock / vLLM など Anthropic 互換プロキシでは prompt-cache ヒット率がゼロになります。`CLAUDE_CODE_ATTRIBUTION_HEADER=0` を自分で設定する必要はもうありません。 |
-| **自動再パッチ** | ユーザーがネイティブ Claude バイナリをアップグレードすると、次回起動時に自動的に再抽出・再パッチ |
-| **アップデート通知** | 24時間ごとに GitHub releases を非同期チェック（ノンブロッキング）。新バージョンが利用可能な場合、起動前に1行の通知を表示 |
-| **リーン設定** | `~/.claude/settings.json` の3段階トークン最適化。**on**：未使用ツール定義の削除 + Workflows/RemoteControl/Artifact 無効化。**max**：Plan mode、Agent Teams、内蔵スキルも追加削除。**off**（デフォルト）：全ツール復元 |
-
-> **リーン設定**は既存の設定を壊さず、アップデート後も選択が維持されます。いつでも切替：`claude --lean-on` / `claude --lean-max`（アグレッシブ）/ `claude --lean-off`（デフォルト、全復元）。個別設定の解除は自分で値を設定（例：`"disableArtifact": false`）。
-
-## コマンド
+主なインストーラオプション：
 
 ```bash
-claude              # パッチ済み Claude Code（公式 launcher を置き換え）
-clawgod             # `claude` と同じ、明示的かつ常に動作するエントリポイント
-claude.orig         # オリジナル未修正版（自動バックアップ） 
+bash install.sh --version 2.1.220  # 指定した Claude Code バージョンをインストール
+bash install.sh --no-upgrade      # 現在抽出済みのバージョンへ再パッチ
+bash install.sh --lean-on         # 未使用ツール定義を削減
+bash install.sh --lean-max        # アグレッシブなトークン削減
+bash install.sh --lean-off        # 全ツールを復元。デフォルト
 ```
 
-`clawgod` は曖昧さのないエントリポイントです：Windows で `claude.exe` が `claude.cmd` を覆い隠す場合でも `clawgod.cmd` は常に動作し、公式自動更新で `claude` が上書きされても `clawgod` はパッチ済みビルドを実行し続けます。
+緑色のブランド表示はパッチ済みランタイムが有効であることを示します。元のコマンドは置換前にバックアップされます。
 
-`CLAWGOD_NO_AUTO_CHROME=1` を設定すると、デフォルトの `--chrome` 注入を一時的に無効化できます。
+## コマンドと起動動作
 
-## 設定
+```bash
+claude              # パッチ済み Claude Code。対話起動では --chrome がデフォルト
+clawgod             # パッチ済み版を明示するエントリポイント
+claude.orig         # 元の未変更コマンドのバックアップ
+```
 
-初回起動時に `~/.clawgod/provider.json` が自動生成されます。`apiKey` を設定すれば **OAuth ログイン不要**で、Anthropic 互換エンドポイントに接続できます。
+対話起動にはデフォルトで `--chrome` が追加されます。help、version、update、auth、config、MCP、daemon、print、permission、構造化入出力モードでは自動追加されません。明示的な `--chrome` は常に維持されます。
+
+1 回の起動または現在の Shell で Chrome 自動統合を無効化：
+
+```bash
+CLAWGOD_NO_AUTO_CHROME=1 claude
+```
+
+## 推奨コンパニオン：Claude HUD
+
+ClawGod Plus のマルチエージェント処理や長時間タスクには、ステータスラインプラグイン [Claude HUD](https://github.com/jarrodwatts/claude-hud) を推奨します。別ウィンドウを開かずに、モデルとコンテキストの状態、プロジェクトと Git、Claude 設定数、使用量、ツール、Agent、Todo、コスト、速度、セッション時間を常時確認できます。
+
+Claude Code 内でインストール：
+
+```text
+/plugin marketplace add jarrodwatts/claude-hud
+/plugin install claude-hud
+/reload-plugins
+/claude-hud:setup
+```
+
+以下の画像は、この推奨設定をマルチエージェントセッションで使用した実際の表示例です。
+
+![推奨 Claude HUD コンパクト表示](docs/images/claude-hud-recommended.png)
+
+推奨 `~/.claude/plugins/claude-hud/config.json`：
+
+```json
+{
+  "language": "zh",
+  "lineLayout": "compact",
+  "pathLevels": 1,
+  "elementOrder": ["project", "tools", "context", "usage", "memory", "environment", "agents", "todos", "sessionTime"],
+  "gitStatus": {
+    "enabled": true,
+    "showDirty": true,
+    "showAheadBehind": true,
+    "showFileStats": true
+  },
+  "display": {
+    "showModel": true,
+    "showAddedDirs": true,
+    "addedDirsLayout": "line",
+    "showContextBar": true,
+    "contextValue": "tokens",
+    "showConfigCounts": true,
+    "showCost": true,
+    "showDuration": true,
+    "showSpeed": true,
+    "showUsage": true,
+    "showTools": true,
+    "showAgents": true,
+    "showTodos": true,
+    "showTokenBreakdown": true,
+    "usageBarEnabled": true
+  },
+  "colors": {
+    "context": "green",
+    "usage": "brightBlue",
+    "warning": "yellow",
+    "usageWarning": "brightMagenta",
+    "critical": "red",
+    "model": "cyan",
+    "project": "yellow",
+    "git": "magenta",
+    "gitBranch": "cyan",
+    "label": "#ff4fc2",
+    "custom": "#FF6600"
+  }
+}
+```
+
+## Claude in Chrome ブラウザ拡張機能
+
+[`claude-browser-1.0.77-patched.zip`](claude-browser-1.0.77-patched.zip) は、パッケージ済みの **Claude in Chrome ブラウザ拡張機能**であり、Claude Code プラグインではありません。パッチ済み Manifest V3 拡張機能と、**哈雷佬** が作成した Unix / Windows 用 `apply-claude-code-chrome-fix` スクリプトを収録しています。
+
+1. ZIP をダウンロードして展開します。
+2. Chrome で `chrome://extensions` を開き、右上の**デベロッパーモード**を有効にします。
+3. **パッケージ化されていない拡張機能を読み込む**をクリックし、展開した `claude-browser-1.0.77-patched/` ディレクトリを選択します。
+
+このパッチ版拡張機能は広範なブラウザ権限を要求します。収録ソースを確認し、実行を許可された環境でのみ使用してください。
+
+## Provider 設定
+
+初回起動時に `~/.clawgod/provider.json` が作成されます。
 
 ```json
 {
@@ -117,74 +215,130 @@ claude.orig         # オリジナル未修正版（自動バックアップ）
 }
 ```
 
-- **`apiKey` を設定**：ClawGod が `ANTHROPIC_API_KEY` として注入し、`~/.claude/settings.json` から隔離します。Anthropic / DeepSeek など OpenAI 互換ゲートウェイでも動作。`baseURL` が Anthropic 以外を指す場合、ゲートウェイ認証用に `ANTHROPIC_AUTH_TOKEN` も自動設定されます。
-- **`apiKey` 未設定**：OAuth パス。一度 `claude auth login` を実行すれば、`~/.claude` 配下の subagents / skills / MCP はそのまま使えます。
+- `apiKey` を設定すると OAuth を省略し、Anthropic または互換ゲートウェイを使用できます。
+- `apiKey` を空にすると、`claude auth login` と通常の OAuth パスを使用します。
+- Anthropic 以外の `baseURL` では互換ゲートウェイ認証を自動設定し、Prompt Cache ヒット率を下げる可能性があるリクエスト単位の Attribution Header を無効化します。
+- 既存の `~/.claude` にある Agent、Skill、Hook、MCP 設定は引き続き利用できます。
 
-## 仕組み
+## 設定可能なコンテキストウィンドウ
 
-`@anthropic-ai/claude-code` v2.1.113 以降、npm パッケージは `cli.js` を同梱せず、プラットフォーム固有の Bun standalone バイナリへ転送する thin loader だけになりました。ClawGod は次のように対応しています：
+1 回の起動にローカル fallback 上限を設定：
 
-1. `~/.local/share/claude/versions/` からユーザの Bun ネイティブバイナリを検出
-2. `__BUN` セグメント（Mach-O / ELF / PE）から埋め込まれた `cli.js` ソースを抽出
-3. 埋め込まれた `.node` ネイティブモジュール（audio-capture、image-processor、computer-use-*、url-handler）を `~/.clawgod/vendor/` に抽出
-4. `/$bunfs/...` 仮想パスをローカル vendor パスに書き換え
-5. 29 個の正規表現パッチを適用（バージョン横断的——同じ regex 群で複数リリースをカバー）
-6. `claude` / `clawgod` ランチャが Bun ランタイムでパッチ済み cli.js を実行
+```bash
+CLAUDE_CODE_CONTEXT_LIMIT=1000000 claude
+```
 
-`~/.clawgod/.source-version` がパッチ時のバージョンを記録します。起動毎に wrapper がそれと `versions/` の最新バイナリを比較し、ユーザが公式手段で Claude Code をアップグレードした場合は次回起動時に自動再パッチが走ります。
+`~/.claude/settings.json` に永続設定することもできます。
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_CONTEXT_LIMIT": "1000000"
+  }
+}
+```
+
+これは Claude Code のローカル 200K 定数とチェックを変更します。Anthropic の課金、モデル能力、公式の長文コンテキスト利用資格を回避するものでは**ありません**。
+
+## claude-mem 互換性
+
+claude-mem がインストールされ、Claude Provider に設定されている場合、インストーラは次を行えます。
+
+- claude-mem の `.env` に資格情報を書かず、現在の ClawGod Plus Provider または Claude 設定を再利用する。
+- 専用 ClawGod Plus Launcher 経由で claude-mem SDK サブプロセスを起動する。
+- 互換ヘルパーが管理する設定だけをバックアップし、アンインストール時に復元する。
+- インストール後にユーザーが変更した claude-mem 設定を上書きしない。
+- 重複した古い Chroma MCP プロセスを整理して Worker を再起動する。
+
+claude-mem が存在しない、別 Provider を使用している、有効な資格情報がない、またはユーザー所有の競合設定がある場合でも、ClawGod Plus 本体のインストールは継続し、それらの設定を管理対象にしません。
+
+## 独立パッチツール
+
+このセクションの全ツールは **哈雷佬** が作成し、適用可能なものは拡張版インストーラにも統合されています。
+
+| パッチ系列 | Unix | Windows | チェック / 復元 |
+|---|---|---|---|
+| Claude in Chrome socket とサブスクリプション経路 | `apply-claude-code-chrome-fix.sh` | `apply-claude-code-chrome-fix.ps1` | `--check`、`--restore` |
+| Computer Use 設定とデフォルト有効 Gate | `apply-claude-code-computer-use-fix.sh` | インストーラへ統合 | `--check`、`--restore` |
+| 設定可能なコンテキスト上限 | `apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch.sh` | `apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch.ps1` | `--check`、`--restore` |
+
+読み取り専用チェックの例：
+
+```bash
+bash apply-claude-code-chrome-fix.sh --check
+bash apply-claude-code-computer-use-fix.sh --check
+bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch.sh --check
+```
+
+各スクリプトは変更適用前にバックアップを作成します。対応する `--restore` で直近のパッチバックアップを復元できます。
+
+## インストーラの仕組み
+
+1. 現在のプラットフォーム向け公式 Claude Code パッケージを検出またはダウンロードします。
+2. Mach-O、ELF、PE 形式の Bun standalone バイナリから埋め込み JavaScript を抽出します。
+3. 埋め込み `.node` ネイティブモジュールを `~/.clawgod/vendor/` へ抽出します。
+4. Bun 仮想パスをローカルモジュールパスへ書き換えます。
+5. 生成した `patch.mjs` からバージョン差分に強い正規表現および AST ベースのパッチを適用します。
+6. 統合済みの Chrome、Computer Use、コンテキスト上限、Worker、貼り付け、Provider、機能パッチを適用します。
+7. Bun がパッチ済み CLI を読み込めることを検証します。
+8. 元の Launcher をバックアップし、`claude` と `clawgod` Launcher を作成します。
+
+`~/.clawgod/.source-version` はパッチ対象のネイティブ版を記録します。その後の起動で Wrapper が公式 Claude Code の更新を検出し、新しいバイナリへ再パッチします。
 
 ## アップデート
 
-**そのまま `claude update` を実行するだけで OK です。** ClawGod はこのコマンドを自身のインストーラへ流すようパッチしており、npm から Anthropic の現行リリース（`@anthropic-ai/claude-code-<plat>@latest`）を取得し、cli.js を再抽出、パッチを再適用、launcher を書き直します。そのため上流の `claude update` コマンドは期待通りに動作します——1 コマンドで最新の Claude を取得し、パッチも適用された状態を保てます。
-
-追加オプション：
+通常のコマンドを使用します。
 
 ```bash
-claude update --version 2.1.180   # 特定の Claude Code バージョンに固定
-claude update --no-upgrade        # ダウンロードせず既存の cli.js に再パッチのみ
+claude update
 ```
 
-`--version` は新リリースに問題がある場合、動作確認済みバージョンに留まりたいときに便利です。`--no-upgrade` は既存の cli.js に最新のパッチを再適用します——パッチャのみ更新された場合（正規表現の修正等）、新しい Claude をダウンロードする必要がないときに最適です。
-
-直接インストーラを実行したい場合（効果は同じで、どちらも同じ上流リリースを取得してパッチを当て直します）：
-
-**macOS / Linux:**
-```bash
-curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash
-```
-
-**Windows:**
-```powershell
-irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | iex
-```
-
-ClawGod を外して Anthropic 本来の `claude update`（独自に管理されたパスへ書き込み、私たちの launcher を上書きします）を使いたい場合は、先にアンインストールしてください：
+ローカル ClawGod Plus インストーラが存在する場合、拡張パッチは更新をそこへルーティングし、対象 Claude Code パッケージのダウンロード、再抽出、全パッチの再適用、Launcher の再作成を行います。
 
 ```bash
-bash ~/.clawgod/install.sh --uninstall
+claude update --version 2.1.220  # 既知の Claude Code バージョンに固定
+claude update --no-upgrade      # ダウンロードせずパッチだけ再適用
 ```
 
 ## アンインストール
 
-**macOS / Linux:**
+**macOS / Linux**
+
 ```bash
-curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash -s -- --uninstall
-hash -r  # シェルキャッシュをリフレッシュ
+bash ~/.clawgod/install.sh --uninstall
+hash -r
 ```
 
-**Windows:**
+**Windows PowerShell**
+
 ```powershell
-irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 -OutFile install.ps1; .\install.ps1 -Uninstall
+.\install.ps1 -Uninstall
 ```
 
-アンインストールは `claude.orig` を `claude` に戻し、`clawgod` エイリアスを削除します。
+アンインストールは元の Claude Launcher を復元し、ClawGod Plus エイリアスと生成済みランタイムファイルを削除し、互換ヘルパーが引き続き所有している claude-mem 設定を復元します。
 
-> インストール・アンインストール後、コマンドがすぐに反映されない場合はターミナルを再起動するか `hash -r` を実行してください。
+## 検証
 
-## ライセンス
+このブランチには 8 本の回帰スクリプトがあります。Claude Code 2.1.215 のパッチ形状、Chrome Agent の引数伝達、非同期 socket fallback、claude-mem の設定所有権と整理、コンテキスト上限、`--no-upgrade` 制御フロー、macOS 貼り付け処理、Worker/Computer Use の起動動作を対象にしています。
 
-GPL-3.0 — Anthropic とは無関係です。自己責任でご使用ください。
+ClawGod Plus をインストールせずに実行できます。
 
-## Star History
+```bash
+for test_file in tests/*.mjs; do
+  node "$test_file" || exit 1
+done
 
-[![Star History Chart](https://api.star-history.com/chart?repos=0Chencc/clawgod&type=date&legend=top-left)](https://www.star-history.com/?repos=0Chencc%2Fclawgod&type=date&legend=top-left)
+bash -n install.sh
+git diff --check
+```
+
+GitHub 互換性ワークフローでは、さらに Unix の完全インストールとランタイムチェックを実行します。軽量テストではローカルの `bash install.sh` を実行しません。これはユーザーが現在使用している Claude Launcher を置き換えるためです。
+
+## クレジットとライセンス
+
+- [A6083450](https://github.com/A6083450)：ClawGod Plus 拡張ブランチのメンテナ。
+- [0Chencc/clawgod](https://github.com/0Chencc/clawgod)：上流プロジェクトおよび v1.7.5 比較ベースライン。
+- **哈雷佬**：`apply-claude-code-*` パッチ系列と、このブランチへ統合された対応パッチ手法の作者。
+- Anthropic：このプロジェクトがパッチする公式 Claude Code ランタイム。ClawGod Plus は Anthropic と提携していません。
+
+[GPL-3.0](LICENSE) ライセンスで提供します。許可された範囲でのみ使用し、パッチ済み開発ツールを実行するリスクを理解した上で利用してください。

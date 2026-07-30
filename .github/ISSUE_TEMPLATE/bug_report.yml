@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a problem with ClawGod
+description: Report a problem with ClawGod Plus
 labels: ["bug"]
 body:
   - type: input

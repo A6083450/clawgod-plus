@@ -2,12 +2,12 @@
 set -e
 
 # ─────────────────────────────────────────────────────────
-#  ClawGod Installer
+#  ClawGod Plus Installer
 #
 #  Downloads Claude Code from npm, applies patches, replaces claude command
 #
 #  用法:
-#    curl -fsSL https://raw.githubusercontent.com/0Chencc/clawgod/main/install.sh | bash
+#    curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash
 #    # 或
 #    bash install.sh [--version 2.1.89] [--no-upgrade]
 # ─────────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ CLAUDE_MEM_COMPAT_EOF
 }
 
 echo ""
-echo -e "${BOLD}  ClawGod Installer${NC}"
+echo -e "${BOLD}  ClawGod Plus Installer${NC}"
 echo ""
 
 # ─── Uninstall ─────────────────────────────────────────
@@ -253,11 +253,11 @@ echo ""
 if [ "$UNINSTALL" = "1" ]; then
   if [ -f "$CLAWGOD_DIR/claude-mem-compat.cjs" ]; then
     if ! command -v node >/dev/null 2>&1; then
-      warn "Node.js is required to restore claude-mem settings; ClawGod was not uninstalled"
+      warn "Node.js is required to restore claude-mem settings; ClawGod Plus was not uninstalled"
       exit 1
     fi
     if ! node "$CLAWGOD_DIR/claude-mem-compat.cjs" uninstall; then
-      warn "Could not restore claude-mem compatibility settings; ClawGod was not uninstalled"
+      warn "Could not restore claude-mem compatibility settings; ClawGod Plus was not uninstalled"
       exit 1
     fi
   fi
@@ -271,17 +271,17 @@ if [ "$UNINSTALL" = "1" ]; then
     elif [ -f "$DIR/claude" ] && grep -q "clawgod" "$DIR/claude" 2>/dev/null; then
       # Our launcher, no backup — remove it (otherwise it points to deleted cli.js)
       rm -f "$DIR/claude"
-      info "Removed ClawGod launcher ($DIR/claude)"
+      info "Removed ClawGod Plus launcher ($DIR/claude)"
     fi
     # Always remove the explicit clawgod alias if it's ours
     if [ -f "$DIR/clawgod" ] && grep -q "clawgod" "$DIR/clawgod" 2>/dev/null; then
       rm -f "$DIR/clawgod"
-      info "Removed ClawGod alias ($DIR/clawgod)"
+      info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
   rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/install.sh"
   hash -r 2>/dev/null
-  info "ClawGod uninstalled"
+  info "ClawGod Plus uninstalled"
   echo ""
   warn "  Restart your terminal or run: hash -r"
   echo ""
@@ -384,7 +384,7 @@ install_chrome_fix_script() {
   if [ -n "$local_src" ] && [ -f "$local_src" ]; then
     cp "$local_src" "$dst"
   elif command -v curl >/dev/null 2>&1; then
-    curl -fsSL "https://github.com/0Chencc/clawgod/releases/latest/download/apply-claude-code-chrome-fix.sh" -o "$dst" || return 1
+    curl -fsSL "https://raw.githubusercontent.com/A6083450/clawgod-plus/main/apply-claude-code-chrome-fix.sh" -o "$dst" || return 1
   else
     return 1
   fi
@@ -410,7 +410,7 @@ run_claude_code_chrome_fix() {
   if [ "$rc" -eq 0 ]; then
     info "Claude Code Chrome post-install fix applied"
   else
-    warn "Claude Code Chrome post-install fix did not apply; ClawGod core install will continue"
+    warn "Claude Code Chrome post-install fix did not apply; ClawGod Plus core install will continue"
   fi
 }
 
@@ -532,7 +532,7 @@ fi
 cat > "$CLAWGOD_DIR/extract-natives.mjs" << 'EXTRACTOR_EOF'
 #!/usr/bin/env node
 /**
- * ClawGod Bun section extractor
+ * ClawGod Plus Bun section extractor
  *
  * Parses the .bun (PE/ELF) or __BUN,__bun (Mach-O) section embedded in a
  * Bun standalone executable, walks the module graph, and extracts:
@@ -1389,7 +1389,7 @@ if (hasProviderApiKey) {
 }
 
 // claude-mem deliberately starts SDK subprocesses without Claude settings or
-// inherited auth. Its ClawGod-specific launcher marks those subprocesses so the
+// inherited auth. Its ClawGod Plus-specific launcher marks those subprocesses so the
 // wrapper can resolve the same provider and Haiku mapping at spawn time without
 // copying credentials into ~/.claude-mem/.env.
 if (process.env.CLAWGOD_CLAUDE_MEM === '1') {
@@ -1535,7 +1535,7 @@ try {
       process.stderr.write('[clawgod] v' + _uc.v + ' available (installed: v' + _localVer + ") — run 'claude update' to upgrade\n");
     }
     if (!_uc || Date.now() - (_uc.t || 0) > 86400000) {
-      fetch('https://api.github.com/repos/0Chencc/clawgod/releases/latest', {
+      fetch('https://api.github.com/repos/A6083450/clawgod-plus/releases/latest', {
         headers: { 'User-Agent': 'clawgod' },
         signal: AbortSignal.timeout(5000),
       }).then(function(r) { return r.json(); }).then(function(d) {
@@ -1572,7 +1572,7 @@ fi
 cat > "$CLAWGOD_DIR/patch.mjs" << 'PATCHER_EOF'
 #!/usr/bin/env node
 /**
- * ClawGod Universal Patcher — 正则模式匹配, 跨版本兼容
+ * ClawGod Plus Universal Patcher — 正则模式匹配, 跨版本兼容
  */
 import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
@@ -1900,7 +1900,7 @@ const patches = [
     sentinel: 'return"external"',
   },
   {
-    // ClawGod runs extracted cli.cjs under Bun even when Bun reports itself as
+    // ClawGod Plus runs extracted cli.cjs under Bun even when Bun reports itself as
     // standalone. Special-case only the worker/daemon resolver; the shared
     // standalone predicate also controls Chrome and Computer Use MCP commands.
     name: 'Worker resolver for plain Bun cli.cjs (target shape)',
@@ -2154,7 +2154,7 @@ const patches = [
       // arg-quoting; payload must be UTF-16LE base64.
       const psScript =
         "$p=if($env:HTTPS_PROXY){$env:HTTPS_PROXY}elseif($env:HTTP_PROXY){$env:HTTP_PROXY}else{$null};" +
-        "$u='https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1';" +
+        "$u='https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1';" +
         "if($p){iex(irm -Proxy $p $u)}else{iex(irm $u)}";
       const psB64 = Buffer.from(psScript, 'utf16le').toString('base64');
       return (
@@ -2172,7 +2172,7 @@ const patches = [
         `const _li=require('path').join(require('os').homedir(),'.clawgod','install.sh');` +
         `const _hasLocal=!_w&&require('fs').existsSync(_li);` +
         `if(_hasLocal)process.stderr.write('[clawgod] using local installer (remote skipped): '+_li+'\\n');` +
-        `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:(_hasLocal?['bash',_li]:['bash','-c','curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash']);` +
+        `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:(_hasLocal?['bash',_li]:['bash','-c','curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash']);` +
         `const _r=require('child_process').spawnSync(_c[0],_c.slice(1),{stdio:'inherit',env:process.env});` +
         `process.exit(_r.status||0);`
       );
@@ -2305,7 +2305,7 @@ const patches = [
     //     let e=await Promise.resolve().then(() => R(vAu(),1)),t=gGg(e);  // import("sharp")
     //     ...
     //
-    // ClawGod runs under Bun, whose standalone predicate may not reflect the
+    // ClawGod Plus runs under Bun, whose standalone predicate may not reflect the
     // extracted module layout, so the native branch can be skipped and the npm
     // "sharp" fallback throws
     // (nothing is installed under ~/.clawgod) → the paste image read throws →
@@ -2553,7 +2553,7 @@ const verMatch = code.match(/Version:\s*([\d.]+)/);
 const version = verMatch ? verMatch[1] : 'unknown';
 
 console.log(`\n${'═'.repeat(55)}`);
-console.log(`  ClawGod (universal)`);
+console.log(`  ClawGod Plus (universal)`);
 console.log(`  Target: cli.original.cjs (v${version})`);
 console.log(`  Mode: ${dryRun ? 'DRY RUN' : verify ? 'VERIFY' : 'APPLY'}`);
 console.log(`${'═'.repeat(55)}\n`);
@@ -2900,7 +2900,7 @@ if [ \"\$1\" = \"import\" ]; then
 fi
 if [ ! -f \"\$CLAWGOD_CLI\" ]; then
   echo \"clawgod: installation at $CLAWGOD_DIR is missing (cli.cjs not found)\" >&2
-  echo \"clawgod: reinstall via  curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash\" >&2
+  echo \"clawgod: reinstall via  curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash\" >&2
   echo \"clawgod: or remove this launcher:  rm \\\"\$0\\\"\" >&2
   exit 127
 fi
@@ -3004,7 +3004,7 @@ install_claude_mem_compat_helper
 if CLAWGOD_BUN_BIN="$BUN_BIN" CLAWGOD_CLAUDE_BIN="$CLAUDE_BIN" node "$CLAWGOD_DIR/claude-mem-compat.cjs" install; then
   [ -f "$HOME/.claude-mem/clawgod-settings-backup.json" ] && info "claude-mem compatibility configured"
 else
-  warn "claude-mem compatibility setup failed; ClawGod core install will continue"
+  warn "claude-mem compatibility setup failed; ClawGod Plus core install will continue"
 fi
 
 # ─── Check PATH ───────────────────────────────────────
@@ -3029,7 +3029,7 @@ hash -r 2>/dev/null
 # ─── Done ─────────────────────────────────────────────
 
 echo ""
-echo -e "  ${BOLD}${GREEN}ClawGod installed!${NC}"
+echo -e "  ${BOLD}${GREEN}ClawGod Plus installed!${NC}"
 echo ""
 dim "  claude            — Start patched Claude Code (green logo)"
 dim "  claude.orig       — Run original unpatched Claude Code"

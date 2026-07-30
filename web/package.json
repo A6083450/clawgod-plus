@@ -1,5 +1,5 @@
 {
-  "name": "clawgod-web",
+  "name": "clawgod-plus-web",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@types/node": "^26.1.2",
     "typescript": "^5.6.3",
     "vite": "^7.0.0",
     "vite-plugin-singlefile": "^2.0.3"

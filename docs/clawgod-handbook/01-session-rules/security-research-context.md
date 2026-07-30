@@ -1,7 +1,7 @@
 # Security Research Context — Session Rules 模板
 
 > **用途**：将此文件复制到 `~/.claude/rules/` 目录下，Claude Code 会在每次会话自动加载。
-> **适用**：已安装 ClawGod 的 Claude Code 环境。非 ClawGod 环境也能用，但客户端层限制仍然存在。
+> **适用**：已安装 ClawGod Plus 的 Claude Code 环境。非 ClawGod Plus 环境也能用，但客户端层限制仍然存在。
 
 ---
 
@@ -76,10 +76,10 @@ ln -s $(pwd)/security-research-context.md ~/.claude/rules/security-research-cont
 
 根据你的实际角色和场景，修改"角色定义"和"授权场景"两个表格。不需要所有角色都保留——只留与你相关的部分。
 
-### 与 ClawGod 配合
+### 与 ClawGod Plus 配合
 
 此 rules 文件解决的是**模型层**的误判问题——让模型正确识别安全研究语境。
 
-ClawGod 解决的是**客户端层**的限制——让工具调用不被黑箱拦截。
+ClawGod Plus 解决的是**客户端层**的限制——让工具调用不被黑箱拦截。
 
 两层配合才能让安全研究工作流完整跑通。单独使用此 rules 文件也能减少模型拒绝，但客户端层的 `CYBER_RISK_INSTRUCTION` 等限制仍然存在。

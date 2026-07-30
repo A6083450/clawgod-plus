@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Claude Code / ClawGod — Configurable Context Limit Patch
+# Claude Code / ClawGod Plus — Configurable Context Limit Patch
 #
 # Makes the hardcoded 200000 (200K) default context window configurable via:
 #   CLAUDE_CODE_CONTEXT_LIMIT
 # (falls back to CLAUDE_CODE_MAX_CONTEXT_TOKENS, then 200000)
 #
-# Targets Claude Code 2.1.x bundles (including ClawGod's ~/.clawgod/cli.original.cjs).
+# Targets Claude Code 2.1.x bundles (including ClawGod Plus ~/.clawgod/cli.original.cjs).
 #
 # What this patches
 #   1) Default dual constants (minified names vary), e.g.:
@@ -19,7 +19,7 @@
 # What this does NOT do
 #   - Bypass Anthropic first-party Extra Usage / long-context credits gating
 #   - Change model catalog metadata (context:{window:200000, supports_1m_...})
-#   - Survive `claude update` / ClawGod reinstall — re-run after upgrades
+#   - Survive `claude update` / ClawGod Plus reinstall — re-run after upgrades
 #
 # Usage after patch
 #   CLAUDE_CODE_CONTEXT_LIMIT=1000000 claude
@@ -55,7 +55,7 @@ CLI_PATH=""
 
 usage() {
   cat <<EOF
-Claude Code / ClawGod — $FIX_DESCRIPTION
+Claude Code / ClawGod Plus — $FIX_DESCRIPTION
 
 Usage:
   $(basename "$0") [options] [cli-path]
@@ -73,7 +73,7 @@ Examples:
   CLAUDE_CODE_CONTEXT_LIMIT=1000000 claude
 
 Notes:
-  - Prefer patching ~/.clawgod/cli.original.cjs when using ClawGod.
+  - Prefer patching ~/.clawgod/cli.original.cjs when using ClawGod Plus.
   - Do not patch the thin wrapper ~/.clawgod/cli.cjs.
   - First-party "Extra usage is required for longer context" is a billing
     gate; this patch only raises the local 200k default / fallback constants.
@@ -120,7 +120,7 @@ find_cli_path() {
     fi
   fi
 
-  # Prefer a real bundle (>1MB). Skip thin ClawGod wrappers.
+  # Prefer a real bundle (>1MB). Skip thin ClawGod Plus wrappers.
   local p size
   for p in "${candidates[@]}"; do
     if [[ -f "$p" ]]; then
@@ -142,7 +142,7 @@ if [[ -n "$CLI_PATH" ]]; then
   info "Using specified file: $CLI_PATH"
 else
   if ! CLI_PATH="$(find_cli_path)"; then
-    err "Claude Code / ClawGod bundle not found"
+    err "Claude Code / ClawGod Plus bundle not found"
     echo ""
     echo "Searched:"
     echo "  ~/.clawgod/cli.original.cjs"
@@ -156,7 +156,7 @@ else
   info "Found bundle: $CLI_PATH"
 fi
 
-# Guard: refuse to patch the thin ClawGod launcher wrapper
+# Guard: refuse to patch the thin ClawGod Plus launcher wrapper
 if [[ "$(basename "$CLI_PATH")" == "cli.cjs" ]] && [[ -f "$(dirname "$CLI_PATH")/cli.original.cjs" ]]; then
   size="$(wc -c <"$CLI_PATH" | tr -d ' ')"
   if [[ "$size" -lt 1000000 ]]; then

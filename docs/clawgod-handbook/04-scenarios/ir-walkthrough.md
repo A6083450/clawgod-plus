@@ -14,7 +14,7 @@
 
 ## 配置步骤
 
-### 1. 安装 ClawGod
+### 1. 安装 ClawGod Plus
 
 （同前，此处省略）
 
@@ -137,5 +137,5 @@ claude
 应急响应是**时间敏感**场景。如果 Guard hook 导致延迟，可以：
 
 1. 临时禁用 Guard：从 settings.json 中移除 PreToolUse hook
-2. 依赖 ClawGod + Session Rules 而不加 Guard——在应急场景下，速度比精细控制更重要
+2. 依赖 ClawGod Plus + Session Rules 而不加 Guard——在应急场景下，速度比精细控制更重要
 3. 事后补写审计日志——应急过程中先操作，事后回顾

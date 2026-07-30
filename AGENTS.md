@@ -51,11 +51,11 @@ Do not use `bash install.sh` as a casual local test unless you intend to install
 README-documented user install commands:
 
 ```bash
-curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash
 ```
 
 ```powershell
-irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1 | iex
 ```
 
 Useful local installer options:
@@ -71,11 +71,11 @@ Windows uninstall:
 .\install.ps1 -Uninstall
 ```
 
-README states that `Codex update` is patched to route through the ClawGod installer, re-fetch the current Anthropic Codex release from npm, re-extract, re-patch, and rewrite launchers.
+README states that `Codex update` is patched to route through the ClawGod Plus installer, re-fetch the current Anthropic Codex release from npm, re-extract, re-patch, and rewrite launchers.
 
 ## Project Architecture
 
-ClawGod is an installer-driven runtime patch project for official Codex, not a conventional application library. The repository has three main parts:
+ClawGod Plus is an installer-driven runtime patch project for official Codex, not a conventional application library. The repository has three main parts:
 
 1. **Root installer and runtime patcher**
    - `install.sh` and `install.ps1` are the primary product entry points.

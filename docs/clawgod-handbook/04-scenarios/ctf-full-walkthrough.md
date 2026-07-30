@@ -21,18 +21,18 @@
 
 ---
 
-## 第一步：安装 ClawGod（2 分钟）
+## 第一步：安装 ClawGod Plus（2 分钟）
 
 ### macOS / Linux
 
 ```bash
-curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-irm https://github.com/0Chencc/clawgod/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.ps1 | iex
 ```
 
 ### 验证
@@ -119,7 +119,7 @@ claude
 
 ## 预期效果对比
 
-| 操作 | 原版 Claude Code | + Session Rules | + ClawGod |
+| 操作 | 原版 Claude Code | + Session Rules | + ClawGod Plus |
 |------|-----------------|-----------------|-----------|
 | 分析二进制文件 | 降质回答 | 正常回答 | 正常回答 |
 | 写 exploit 脚本 | 拒绝 | 可能拒绝（模型层） | 正常（客户端层解除） |
@@ -160,8 +160,8 @@ CTF 场景的 Guard 策略应该偏宽松：
 # 退出 Claude Code
 exit
 
-# 卸载 ClawGod（如果需要）
-curl -fsSL https://github.com/0Chencc/clawgod/releases/latest/download/install.sh | bash -s -- --uninstall
+# 卸载 ClawGod Plus（如果需要）
+curl -fsSL https://raw.githubusercontent.com/A6083450/clawgod-plus/main/install.sh | bash -s -- --uninstall
 
 # 移除 CTF rules
 rm ~/.claude/rules/ctf-context.md

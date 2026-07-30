@@ -27,12 +27,12 @@ Handbook 的四层架构可以通用适配。
 
 | 产品 | 可能的 Patch 方式 | 难度 |
 |------|-------------------|------|
-| Claude Code | 正则 patch cli.js（ClawGod 方式） | 中 |
+| Claude Code | 正则 patch cli.js（ClawGod Plus 方式） | 中 |
 | Cursor | 修改扩展 JS | 高（Electron 打包） |
 | Cline | 修改 VS Code 扩展 | 高（扩展签名） |
 | Copilot | 修改扩展 | 高（云端+本地混合） |
 
-**结论**：Layer 0 的适配高度产品特定，ClawGod 的方式不直接可移植。
+**结论**：Layer 0 的适配高度产品特定，ClawGod Plus 的方式不直接可移植。
 
 ### Layer 1 — Session Rules
 

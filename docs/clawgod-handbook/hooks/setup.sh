@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════
-# ClawGod Handbook — Hook 一键安装脚本
+# ClawGod Plus Handbook — Hook 一键安装脚本
 #
 # 用法：
 #   bash setup.sh              # 安装 hook 脚本 + 配置 settings.json
@@ -28,7 +28,7 @@ warn()  { echo -e "  ${RED}✗${NC} $1"; }
 dim()   { echo -e "  ${DIM}$1${NC}"; }
 
 echo ""
-echo "  ClawGod Handbook — Hook 安装器"
+echo "  ClawGod Plus Handbook — Hook 安装器"
 echo ""
 
 # ─── 卸载 ────────────────────────────────────────────────
