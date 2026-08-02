@@ -2047,6 +2047,18 @@ const patches = [
     sentinel: 'tengu_amber_flint',
   },
   {
+    // The launcher prepends --chrome to empty interactive starts. Upstream
+    // parses that flag before this gate, so validate the remaining arguments;
+    // otherwise defaultToAgentsView is never read.
+    name: 'Default Agents view with auto Chrome',
+    pattern: /,([\w$]+)=([\w$]+)\.hasAgentsPositional&&([\w$]+)\(([\w$]+)\);if\(\(\1\|\|\3\(([\w$]+)\)&&process\.stdin\.isTTY\)&&process\.stdout\.isTTY\)\{/g,
+    replacer: (m, explicit, parsed, validator, rest) =>
+      `,${explicit}=${parsed}.hasAgentsPositional&&${validator}(${rest});if((${explicit}||${validator}(${parsed}.rest/*__clawgod_default_agents_view__*/)&&process.stdin.isTTY)&&process.stdout.isTTY){`,
+    appliedMarker: '/*__clawgod_default_agents_view__*/',
+    knownShape: /hasAgentsPositional&&[\w$]+\([\w$]+\);if\(\([\w$]+\|\|[\w$]+\([\w$]+\)&&process\.stdin\.isTTY\)&&process\.stdout\.isTTY\)/,
+    unique: true,
+  },
+  {
     // API-key and setup-token sessions expose only user:inference, but local
     // socket mode does not require Claude.ai OAuth scopes. Respect --chrome.
     name: 'Claude in Chrome OAuth scope bypass',
