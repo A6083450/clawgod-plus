@@ -73,6 +73,23 @@ paste("/tmp/Google\\\\ Chrome.tiff",true);
 setTimeout(()=>console.log(JSON.stringify(calls)),0);
 `;
 
+const imageUrl = 'http://localhost:1024/team-bucket/recruit/HomeCarousel/d76d682171e948de9f9de4e875adb898_1920_7401678809233071.jpg';
+const imageUrlPasteFixture = `
+var unr=/\\.(png|jpe?g|gif|webp|tiff?)$/i;VAu=/^(?:[A-Za-z]:\\\\|\\\\\\\\)/;
+const calls=[];
+function qls(value){return value}
+function jls(value){return value}
+function zAu(value){let quoted=qls(value.trim()),path=jls(quoted);return unr.test(path)}
+function KAu(){return Promise.resolve(null)}
+function m(){calls.push("clipboard")}
+function g(value){calls.push("text:"+value)}
+function y(){}
+function We(){}
+function paste(value,d){if(zAu(value)){let W=[value],P=[];Promise.all(W.map(KAu)).then((R)=>{let q=R.filter((item)=>item!==null);if(q.length>0||P.length>0){}else if(N&&d)m();else We("input_image_drag","read_failed"),g(value),y()});return}g(value)}
+paste(${JSON.stringify(imageUrl)},true);
+setTimeout(()=>console.log(JSON.stringify(calls)),0);
+`;
+
 for (const [name, patcher] of [
   ['install.sh', extractUnixPatcher()],
   ['install.ps1', extractPowerShellPatcher()],
@@ -145,6 +162,18 @@ for (const [name, patcher] of [
       behavior.stdout.trim(),
       '["clipboard"]',
       `${name}: TIFF decode failure on macOS must read the clipboard instead of typing the path`,
+    );
+
+    writeFileSync(join(dir, 'cli.original.cjs'), imageUrlPasteFixture, 'utf8');
+    run = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    output = run.stdout + run.stderr;
+    assert.equal(run.status, 0, `${name}: ${output}`);
+    const urlBehavior = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(urlBehavior.status, 0, `${name}: ${urlBehavior.stdout}${urlBehavior.stderr}`);
+    assert.equal(
+      urlBehavior.stdout.trim(),
+      JSON.stringify([`text:${imageUrl}`]),
+      `${name}: HTTP image URLs must remain text instead of triggering the image clipboard fallback`,
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

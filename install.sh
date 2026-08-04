@@ -2350,6 +2350,15 @@ const patches = [
     appliedMarker: '/\\.(png|jpe?g|gif|webp|tiff?)$/i;',
     unique: true,
   },
+  {
+    // URLs ending in an image extension are text, not local image paths.
+    name: 'Image paste: keep HTTP image URLs as text',
+    pattern: /function ([\w$]+)\(([\w$]+)\)\{let ([\w$]+)=([\w$]+)\(\2\.trim\(\)\),([\w$]+)=([\w$]+)\(\3\);return ([\w$]+)\.test\(\5\)\}/g,
+    replacer: (m, fn, value, quoted, unquote, path, unescape, imagePathRe) =>
+      `function ${fn}(${value}){let ${quoted}=${unquote}(${value}.trim()),${path}=${unescape}(${quoted});return!/^https?:\\/\\//i.test(${path})&&${imagePathRe}.test(${path})}`,
+    appliedMarker: '/^https?:\\/\\//i.test(',
+    unique: true,
+  },
 
   // ── Glob/Grep 工具恢复 ──
 

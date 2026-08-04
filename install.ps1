@@ -2388,6 +2388,15 @@ const patches = [
     unique: true,
   },
   {
+    // URLs ending in an image extension are text, not local image paths.
+    name: 'Image paste: keep HTTP image URLs as text',
+    pattern: /function ([\w$]+)\(([\w$]+)\)\{let ([\w$]+)=([\w$]+)\(\2\.trim\(\)\),([\w$]+)=([\w$]+)\(\3\);return ([\w$]+)\.test\(\5\)\}/g,
+    replacer: (m, fn, value, quoted, unquote, path, unescape, imagePathRe) =>
+      `function ${fn}(${value}){let ${quoted}=${unquote}(${value}.trim()),${path}=${unescape}(${quoted});return!/^https?:\\/\\//i.test(${path})&&${imagePathRe}.test(${path})}`,
+    appliedMarker: '/^https?:\\/\\//i.test(',
+    unique: true,
+  },
+  {
     name: 'Restore Glob/Grep tools (un-inline EMBEDDED_SEARCH_TOOLS)',
     pattern: /function ([\w$]+)\(\)\{if\(!([\w$]+)\("true"\)\)return!1;if\([\w$]+\(\)\)return!1;return process\.env\.CLAUDE_CODE_ENTRYPOINT!=="local-agent"\}/g,
     replacer: (m, fn, envCheck) =>
