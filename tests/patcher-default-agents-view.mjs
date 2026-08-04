@@ -31,11 +31,23 @@ function extractPowerShellPatcher() {
 
 const fixture = `
 /* Version: 2.1.220 */
-function aNm(e){for(let t=0;t<e.length;t++){let r=e[t];if(r==="--debug")continue;return!1}return!0}
-function NNn(e){return{hasAgentsPositional:!1,rest:e.filter((t)=>t!=="--chrome")}}
+function aNm(e){for(let t=0;t<e.length;t++){let r=e[t];if(r==="--debug"||r==="-d"||r==="--debug-to-stderr"||r==="-d2e"||r.startsWith("--debug=")||r.startsWith("--debug-file="))continue;if(r==="--debug-file"&&t+1<e.length){t++;continue}return!1}return!0}
+function NNn(e){let t=[];for(let r=0;r<e.length;r++){if(e[r]==="--chrome")continue;if(e[r]==="--settings"&&r+1<e.length){r++;continue}t.push(e[r])}return{hasAgentsPositional:!1,rest:t}}
 function iTT(e){return{dispatchDefaults:void 0,rest:e}}
 function launch(t){let n=NNn(t),{dispatchDefaults:o,rest:i}=iTT(n.rest),s=n.hasAgentsPositional&&aNm(i);if((s||aNm(t)&&process.stdin.isTTY)&&process.stdout.isTTY){return"agents"}return"chat"}
 globalThis.launch=launch;
+
+let collapseState,stateCall=0,P9n=[];
+const NRi=["blocked","active","completed"];
+const Dn={
+  useState(initial){let value=typeof initial==="function"?initial():initial,index=++stateCall;if(index===2)collapseState=value;return[value,(update)=>{value=typeof update==="function"?update(value):update;if(index===2)collapseState=value}]},
+  useRef(current){return{current}},
+  useLayoutEffect(effect){effect()},
+};
+function O8m({initialCollapsed:i}){let[A,R]=Dn.useState(P9n),uo="directory",oo=Dn.useRef(uo),ed=(Ve,Rr)=>Ve==="pinned"?"pinned":\`\${Rr??oo.current}:\${Ve}\`,[Aa,gp]=Dn.useState(()=>{let Ve=NRi;return new Set((i??[]).map((Rr)=>Rr==="pinned"||/^(state|directory|group):/.test(Rr)?Rr:\`\${Ve.includes(Rr)?"state":"directory"}:\${Rr}\`))}),Vd=Dn.useRef(Aa);Vd.current=Aa;let[Rc,Eh]=Dn.useState(()=>new Set),xbe={rows:[...new Set(A.map((Ve)=>Ve.state.cwd))].map((Ve)=>({kind:"header",group:Ve}))},JE=xbe.rows;if(Aa.size>0)JE=JE.filter((Ve)=>Ve.kind==="header"||!Aa.has(ed(Ve.group)));function hGe(){}let Cs=(Ve)=>gp((Rr)=>{let jr=ed(Ve),Xr=new Set(Rr);if(Xr.has(jr))Xr.delete(jr);else Xr.add(jr);return Xr});globalThis.toggleGroup=Cs;return JE}
+globalThis.renderGroups=(jobs,initialCollapsed)=>{P9n=jobs;stateCall=0;return O8m({initialCollapsed})};
+globalThis.getCollapsed=()=>[...collapseState].sort();
+globalThis.getCollapsedDirectories=()=>[...collapseState].filter((key)=>key.startsWith("directory:")).sort();
 `;
 
 for (const [installerName, patcher] of [
@@ -62,9 +74,69 @@ for (const [installerName, patcher] of [
       `${installerName}: auto-injected --chrome must still honor defaultToAgentsView`,
     );
     assert.equal(
-      context.launch(['--chrome', 'answer this prompt']),
+      context.launch([
+        '--chrome',
+        '--session-id',
+        '11111111-2222-4333-8444-555555555555',
+        '--settings',
+        '{}',
+      ]),
+      'agents',
+      `${installerName}: session metadata must not suppress defaultToAgentsView`,
+    );
+    assert.equal(
+      context.launch([
+        '--chrome',
+        '--session-id',
+        '11111111-2222-4333-8444-555555555555',
+        '--settings',
+        '{}',
+        'answer this prompt',
+      ]),
       'chat',
       `${installerName}: a real prompt must still open the normal chat view`,
+    );
+
+    context.renderGroups([
+      { state: { cwd: '/repo/alpha' } },
+      { state: { cwd: '/repo/beta' } },
+    ]);
+    assert.deepEqual(
+      Array.from(context.getCollapsedDirectories()),
+      ['directory:/repo/alpha', 'directory:/repo/beta'],
+      `${installerName}: newly loaded directory groups must default to collapsed`,
+    );
+    context.toggleGroup('/repo/alpha');
+    assert.deepEqual(
+      Array.from(context.getCollapsedDirectories()),
+      ['directory:/repo/beta'],
+      `${installerName}: manually expanding one directory must leave the other collapsed`,
+    );
+    const persistedWithOneExpanded = context.getCollapsed();
+    context.renderGroups(
+      [
+        { state: { cwd: '/repo/alpha' } },
+        { state: { cwd: '/repo/beta' } },
+      ],
+      persistedWithOneExpanded.length ? persistedWithOneExpanded : undefined,
+    );
+    assert.deepEqual(
+      Array.from(context.getCollapsedDirectories()),
+      ['directory:/repo/beta'],
+      `${installerName}: an explicitly expanded directory must remain expanded after remount`,
+    );
+
+    context.renderGroups([{ state: { cwd: '/repo/only' } }]);
+    context.toggleGroup('/repo/only');
+    const persistedWithAllExpanded = context.getCollapsed();
+    context.renderGroups(
+      [{ state: { cwd: '/repo/only' } }],
+      persistedWithAllExpanded.length ? persistedWithAllExpanded : undefined,
+    );
+    assert.deepEqual(
+      Array.from(context.getCollapsedDirectories()),
+      [],
+      `${installerName}: expanding every directory must still survive remount`,
     );
 
     const rerun = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
