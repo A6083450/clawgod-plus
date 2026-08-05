@@ -48,6 +48,13 @@ function O8m({initialCollapsed:i}){let[A,R]=Dn.useState(P9n),uo="directory",oo=D
 globalThis.renderGroups=(jobs,initialCollapsed)=>{P9n=jobs;stateCall=0;return O8m({initialCollapsed})};
 globalThis.getCollapsed=()=>[...collapseState].sort();
 globalThis.getCollapsedDirectories=()=>[...collapseState].filter((key)=>key.startsWith("directory:")).sort();
+
+var NRm=5;
+function qr(){return globalThis.terminalSize}
+function bLe(e,t,r){globalThis.windowLimit=r;let n=Math.max(0,Math.min(e-r+1,Math.max(0,t-r))),o=Math.min(n+r,t);return{windowStart:n,windowEnd:o,moreAbove:n,moreBelow:t-o}}
+const Ts={jsx(){return!0}},I={};
+function vvl({showWorkflows:e=!1}={}){let t=globalThis.taskList,q=globalThis.selectedTaskIndex??0,{columns:s}=qr(),a=s,{windowStart:j,windowEnd:B,moreAbove:F,moreBelow:W}=bLe(q,t.length,NRm),moreVisible=t.length>NRm&&Ts.jsx(I,{justifyContent:"flex-end",children:W});return{moreVisible,values:[j,B,F,W,a,e]}}
+globalThis.visibleTaskState=(rows,count,selected=0)=>{globalThis.terminalSize={columns:120,rows};globalThis.taskList=Array.from({length:count});globalThis.selectedTaskIndex=selected;let result=vvl();return{limit:globalThis.windowLimit,moreVisible:result.moreVisible,windowStart:result.values[0],moreAbove:result.values[2],moreBelow:result.values[3]}};
 `;
 
 for (const [installerName, patcher] of [
@@ -67,6 +74,26 @@ for (const [installerName, patcher] of [
       process: { stdin: { isTTY: true }, stdout: { isTTY: true } },
     };
     runInNewContext(patched, context);
+
+    assert.equal(
+      context.visibleTaskState(8, 10).limit,
+      2,
+      `${installerName}: short terminals must reserve rows around the Agent list`,
+    );
+    assert.equal(
+      context.visibleTaskState(12, 10).limit,
+      5,
+      `${installerName}: normal terminals should retain the five-Agent window`,
+    );
+    assert.equal(
+      context.visibleTaskState(8, 4).moreVisible,
+      true,
+      `${installerName}: an adaptive window must still show that more Agents exist`,
+    );
+    const lastTask = context.visibleTaskState(8, 3, 2);
+    assert.equal(lastTask.windowStart, 1, `${installerName}: the last Agent must be reachable`);
+    assert.equal(lastTask.moreAbove, 1, `${installerName}: navigation must expose the upper overflow`);
+    assert.equal(lastTask.moreBelow, 0, `${installerName}: the selected last Agent must be in view`);
 
     assert.equal(
       context.launch(['--chrome']),
@@ -141,6 +168,16 @@ for (const [installerName, patcher] of [
 
     const rerun = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
     assert.equal(rerun.status, 0, `${installerName} idempotence: ${rerun.stdout}${rerun.stderr}`);
+    assert.match(
+      rerun.stdout + rerun.stderr,
+      /Chat Agent list fits terminal height \(already applied, marker present\)/,
+      `${installerName}: rerun must recognize the applied Agent-list marker`,
+    );
+    assert.match(
+      rerun.stdout + rerun.stderr,
+      /Chat Agent list keeps overflow indicator \(already applied, marker present\)/,
+      `${installerName}: rerun must recognize the applied overflow-indicator marker`,
+    );
     assert.equal(
       readFileSync(join(dir, 'cli.original.cjs'), 'utf8'),
       patched,

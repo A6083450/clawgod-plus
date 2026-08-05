@@ -2068,6 +2068,31 @@ const patches = [
     unique: true,
   },
   {
+    // Keep the chat Agent list from crowding out the composer in short terminals.
+    name: 'Chat Agent list fits terminal height',
+    pattern: /\{columns:([\w$]+)\}=([\w$]+)\(\)([\s\S]{0,8000}?)\{windowStart:([\w$]+),windowEnd:([\w$]+),moreAbove:([\w$]+),moreBelow:([\w$]+)\}=([\w$]+)\(([\w$]+),([\w$]+)\.length,([\w$]+)\)/g,
+    replacer: (m, columns, dimensions, middle, windowStart, windowEnd, moreAbove, moreBelow, windowFn, selected, tasks, limit) =>
+      `{columns:${columns},rows:__clawgodTerminalRows}=${dimensions}(),__clawgodMaxChatAgentRows=Math.max(1,Math.min(${limit},__clawgodTerminalRows-6))${middle}{windowStart:${windowStart},windowEnd:${windowEnd},moreAbove:${moreAbove},moreBelow:${moreBelow}}=${windowFn}(${selected},${tasks}.length,__clawgodMaxChatAgentRows/*__clawgod_chat_agent_rows__*/)`,
+    appliedMarker: '/*__clawgod_chat_agent_rows__*/',
+    validate: (match, code) => code.substring(Math.max(0, code.indexOf(match) - 300), code.indexOf(match)).includes('showWorkflows'),
+    optional: true,
+    unique: true,
+  },
+  {
+    name: 'Chat Agent list keeps overflow indicator',
+    pattern: /([\w$]+)\.length>([\w$]+)&&([\w$]+)\.jsx\(([\w$]+),\{justifyContent:"flex-end",children:/g,
+    replacer: (m, tasks, limit, react, box) =>
+      `${tasks}.length>__clawgodMaxChatAgentRows/*__clawgod_chat_agent_more__*/&&${react}.jsx(${box},{justifyContent:"flex-end",children:`,
+    appliedMarker: '/*__clawgod_chat_agent_more__*/',
+    validate: (match, code) => {
+      const marker = code.indexOf('/*__clawgod_chat_agent_rows__*/');
+      const pos = code.indexOf(match);
+      return marker >= 0 && pos > marker && pos - marker < 4000;
+    },
+    optional: true,
+    unique: true,
+  },
+  {
     name: 'Agents directories default collapsed state',
     pattern: /,\[([\w$]+),([\w$]+)\]=([\w$]+)\.useState\(\(\)=>\{let [\w$]+=[\w$]+;return new Set\([\s\S]{0,500}?\)\}\),([\w$]+)=\3\.useRef\(\1\);\4\.current=\1;let\[[\w$]+,[\w$]+\]=\3\.useState\(\(\)=>new Set\)/g,
     replacer: (m, collapsed, setCollapsed, react, collapsedRef) => {
@@ -2585,8 +2610,8 @@ for (const p of patches) {
   }
   if (relevant.length === 0) {
     if (p.knownShape?.test(code)) { console.log(`  XX ${p.name} — known resolver shape did not match exactly`); failed++; continue; }
-    if (p.optional) { console.log(`  >> ${p.name} (not in this version)`); skipped++; continue; }
     if (p.appliedMarker !== undefined && (p.appliedMarker instanceof RegExp ? p.appliedMarker.test(code) : code.includes(p.appliedMarker))) { console.log(`  OK ${p.name} (already applied, marker present)`); applied++; continue; }
+    if (p.optional) { console.log(`  >> ${p.name} (not in this version)`); skipped++; continue; }
     if (p.sentinel !== undefined) {
       const sentinels = Array.isArray(p.sentinel) ? p.sentinel : [p.sentinel];
       const stillPresent = sentinels.filter((s) => code.includes(s));
