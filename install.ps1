@@ -404,14 +404,16 @@ function Test-ClawGodLauncher {
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
         $content = [System.IO.File]::ReadAllText($Path)
     } catch {
         return $false
     }
-    if ($content -match '(?m)^rem CLAWGOD_LAUNCHER_V1\r?$') { return $true }
 
-    # Launchers written before the explicit marker have this fixed structure.
-    return (
+    # The marker identifies newer launchers, but never grants ownership alone.
+    $hasExplicitMarker = $content -match '(?m)^rem CLAWGOD_LAUNCHER_V1\r?$'
+    $hasStableStructure = (
         ($content -match '(?m)^@echo off\r?$') -and
         ($content -match '(?m)^setlocal\r?$') -and
         ($content -match '(?m)^if not exist ".*[\\/]\.clawgod[\\/]cli\.cjs" \(\r?$') -and
@@ -419,6 +421,8 @@ function Test-ClawGodLauncher {
         ($content -match '(?m)^set "CLAWGOD_AUTO_CHROME=1"\r?$') -and
         ($content -match '(?m)^exit /b %ERRORLEVEL%\r?$')
     )
+    if ($hasExplicitMarker -and -not $hasStableStructure) { return $false }
+    return $hasStableStructure
 }
 
 Write-Host ""
@@ -3469,30 +3473,30 @@ foreach ($loc in @(
     (Join-Path $env:USERPROFILE ".local\share\claude\versions"),
     (Join-Path $env:LOCALAPPDATA "Programs\claude-code")
 )) {
-    if (Test-Path $loc) {
-        # Back up .exe if exists and not already backed up
-        if ($loc -like "*.exe" -and -not (Test-Path $claudeOrigExe)) {
-            Copy-Item $loc $claudeOrigExe -Force
-            Write-OK "Original claude.exe backed up → claude.orig.exe"
-            $originalFound = $true
-        }
-        # Back up .cmd if exists and not already backed up
-        if ($loc -like "*.cmd" -and -not (Test-Path $claudeOrigCmd) -and -not (Test-ClawGodLauncher $loc)) {
-            Copy-Item $loc $claudeOrigCmd -Force
-            Write-OK "Original claude.cmd backed up → claude.orig.cmd"
-            $originalFound = $true
-        }
-        # If it's a versions directory, find the latest exe
-        if (Test-Path $loc -PathType Container) {
-            $latestExe = Get-ChildItem $loc -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($latestExe -and -not (Test-Path $claudeOrigExe)) {
-                Copy-Item $latestExe.FullName $claudeOrigExe -Force
-                Write-OK "Original claude backed up → claude.orig.exe ($($latestExe.Name))"
-                $originalFound = $true
-            }
-        }
-        break
+    if (-not (Test-Path $loc)) { continue }
+    if ($loc -like "*.cmd" -and (Test-ClawGodLauncher $loc)) { continue }
+    # Back up .exe if exists and not already backed up
+    if ($loc -like "*.exe" -and -not (Test-Path $claudeOrigExe)) {
+        Copy-Item $loc $claudeOrigExe -Force
+        Write-OK "Original claude.exe backed up → claude.orig.exe"
+        $originalFound = $true
     }
+    # Back up .cmd if exists and not already backed up
+    if ($loc -like "*.cmd" -and -not (Test-Path $claudeOrigCmd)) {
+        Copy-Item $loc $claudeOrigCmd -Force
+        Write-OK "Original claude.cmd backed up → claude.orig.cmd"
+        $originalFound = $true
+    }
+    # If it's a versions directory, find the latest exe
+    if (Test-Path $loc -PathType Container) {
+        $latestExe = Get-ChildItem $loc -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($latestExe -and -not (Test-Path $claudeOrigExe)) {
+            Copy-Item $latestExe.FullName $claudeOrigExe -Force
+            Write-OK "Original claude backed up → claude.orig.exe ($($latestExe.Name))"
+            $originalFound = $true
+        }
+    }
+    if ($originalFound) { break }
 }
 
 # Clean up leftover timestamped/old exes from previous installs

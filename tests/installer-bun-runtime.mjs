@@ -174,18 +174,44 @@ function unixLauncherIsOwned(path) {
     const primary = join(bin, 'claude');
     const legacy = join(bin, 'legacy-claude');
     const generic = join(bin, 'generic-claude');
+    const markerOnly = join(bin, 'marker-only-claude');
     const symlink = join(bin, 'symlinked-claude');
     const launcher = renderUnixLauncher(home, bin, primary);
     mkdirSync(bin, { recursive: true });
     writeFileSync(primary, launcher, 'utf8');
     writeFileSync(legacy, launcher.replace('# CLAWGOD_LAUNCHER_V1\n', ''), 'utf8');
     writeFileSync(generic, '#!/bin/sh\necho clawgod is mentioned here\n', 'utf8');
+    writeFileSync(markerOnly, '#!/bin/sh\n# CLAWGOD_LAUNCHER_V1\necho third-party launcher\n', 'utf8');
     symlinkSync(primary, symlink);
 
     assert.equal(unixLauncherIsOwned(primary), true, 'new marker must identify the current ClawGod launcher');
     assert.equal(unixLauncherIsOwned(legacy), true, 'the stable pre-marker launcher structure must remain compatible');
     assert.equal(unixLauncherIsOwned(generic), false, 'ordinary scripts mentioning clawgod must not be treated as launchers');
+    assert.equal(unixLauncherIsOwned(markerOnly), false, 'a marker-only third-party script must not be treated as a ClawGod launcher');
     assert.equal(unixLauncherIsOwned(symlink), false, 'symlinks must remain eligible for original-command backup');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+{
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-launcher-marker-only-'));
+  try {
+    const bin = join(home, '.local', 'bin');
+    const primary = join(bin, 'claude');
+    const alias = join(bin, 'clawgod');
+    const original = join(bin, 'claude.orig');
+    const thirdParty = '#!/bin/sh\n# CLAWGOD_LAUNCHER_V1\necho third-party launcher\n';
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(primary, thirdParty, 'utf8');
+    writeFileSync(alias, thirdParty, 'utf8');
+
+    runUnixBackup(home, bin, primary);
+    runUnixLauncherCleanup(home, bin);
+
+    assert.equal(readFileSync(primary, 'utf8'), thirdParty, 'a marker-only primary must be backed up and restored, not deleted');
+    assert.equal(readFileSync(alias, 'utf8'), thirdParty, 'a marker-only alias must not be deleted during uninstall');
+    assert.equal(existsSync(original), false, 'restoring a third-party primary must consume its backup');
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -205,14 +231,28 @@ for (const [name, createOriginal] of [
   try {
     const bin = join(home, '.local', 'bin');
     const primary = join(bin, 'claude');
+    const alias = join(bin, 'clawgod');
     mkdirSync(bin, { recursive: true });
     const target = createOriginal(primary, home);
+    const originalContent = name === 'symlink' ? null : readFileSync(primary);
     runUnixBackup(home, bin, primary);
     const backup = join(bin, 'claude.orig');
     assert.equal(existsSync(backup), true, `${name} must be backed up instead of treated as a ClawGod launcher`);
     if (name === 'symlink') {
       assert.equal(lstatSync(backup).isSymbolicLink(), true, 'official symlink backup must remain a symlink');
       assert.equal(readlinkSync(backup), target, 'official symlink backup must preserve its target');
+    }
+    const launcher = renderUnixLauncher(home, bin, primary);
+    writeUnixLauncher(primary, launcher);
+    writeUnixLauncher(alias, launcher);
+    runUnixLauncherCleanup(home, bin);
+    assert.equal(existsSync(alias), false, `${name} uninstall must remove only the complete ClawGod alias`);
+    assert.equal(existsSync(backup), false, `${name} uninstall must consume the original backup`);
+    if (name === 'symlink') {
+      assert.equal(lstatSync(primary).isSymbolicLink(), true, 'symlink original must remain a symlink after write-launcher and uninstall');
+      assert.equal(readlinkSync(primary), target, 'symlink original must restore its original target after write-launcher and uninstall');
+    } else {
+      assert.deepEqual(readFileSync(primary), originalContent, `${name} must restore its original content after write-launcher and uninstall`);
     }
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -262,9 +302,63 @@ for (const legacySignal of [
   assert.ok(windowsOwnership.includes(legacySignal), `install.ps1 legacy ownership contract must require ${legacySignal}`);
 }
 assert.match(windowsOwnership, /rem CLAWGOD_LAUNCHER_V1/, 'install.ps1 ownership contract must recognize the explicit marker');
-assert.match(windowsBackup, /\$loc -like "\*\.cmd".*-not \(Test-ClawGodLauncher \$loc\)/, 'install.ps1 must not back up its own cmd launcher');
 assert.match(windowsUninstall, /\(Test-Path \$claudeCmd\) -and \(Test-ClawGodLauncher \$claudeCmd\)/, 'install.ps1 must only remove a verified primary launcher');
 assert.match(windowsUninstall, /\(Test-Path \$clawgodCmd\) -and \(Test-ClawGodLauncher \$clawgodCmd\)/, 'install.ps1 must only remove a verified alias launcher');
+
+function modelWindowsLauncherOwnership({ reparsePoint, content }) {
+  if (reparsePoint) return false;
+  return [
+    /^@echo off$/m,
+    /^setlocal$/m,
+    /^if not exist ".*\\\.clawgod\\cli\.cjs" \($/m,
+    /^set "CLAUDE_CODE_EXECPATH=%~dp0claude\.orig\.exe"$/m,
+    /^set "CLAWGOD_AUTO_CHROME=1"$/m,
+    /^exit \/b %ERRORLEVEL%$/m,
+  ].every(pattern => pattern.test(content));
+}
+
+const windowsValidLauncher = [
+  '@echo off',
+  'rem CLAWGOD_LAUNCHER_V1',
+  'setlocal',
+  'if not exist "%USERPROFILE%\\.clawgod\\cli.cjs" (',
+  'set "CLAUDE_CODE_EXECPATH=%~dp0claude.orig.exe"',
+  'set "CLAWGOD_AUTO_CHROME=1"',
+  'exit /b %ERRORLEVEL%',
+].join('\n');
+const windowsMarkerOnly = '@echo off\nrem CLAWGOD_LAUNCHER_V1\necho third-party launcher\n';
+assert.equal(modelWindowsLauncherOwnership({ reparsePoint: false, content: windowsMarkerOnly }), false, 'marker-only Windows cmd content must remain third-party');
+assert.equal(modelWindowsLauncherOwnership({ reparsePoint: true, content: windowsValidLauncher }), false, 'a reparse-point Windows launcher must remain third-party even with valid content');
+assert.equal(modelWindowsLauncherOwnership({ reparsePoint: false, content: windowsValidLauncher }), true, 'complete Windows launcher structure must be owned');
+assert.match(windowsOwnership, /\$hasStableStructure = \(/, 'install.ps1 must model ownership as full structure');
+assert.match(windowsOwnership, /\$hasExplicitMarker -and -not \$hasStableStructure/, 'install.ps1 marker must not authorize incomplete launcher content');
+assert.match(windowsOwnership, /return \$hasStableStructure/, 'install.ps1 must require complete launcher structure after marker handling');
+assert.ok(windowsOwnership.indexOf('FileAttributes]::ReparsePoint') < windowsOwnership.indexOf('ReadAllText'), 'install.ps1 must reject reparse points before ReadAllText');
+
+function selectWindowsOriginal(candidates) {
+  for (const candidate of candidates) {
+    if (candidate.kind === 'cmd' && candidate.owned) continue;
+    if (candidate.kind === 'cmd' || candidate.kind === 'exe') return candidate;
+    if (candidate.kind === 'directory' && candidate.latestExe) return candidate.latestExe;
+  }
+  return null;
+}
+
+assert.deepEqual(
+  selectWindowsOriginal([
+    { kind: 'cmd', owned: true, name: 'claude.cmd' },
+    { kind: 'directory', latestExe: { kind: 'exe', name: 'versions/claude.exe' } },
+  ]),
+  { kind: 'exe', name: 'versions/claude.exe' },
+  'owned claude.cmd must not stop Windows original search before a versions executable is backed up',
+);
+assert.match(windowsOwnership, /FileAttributes]::ReparsePoint/, 'install.ps1 ownership check must reject reparse points before reading their content');
+assert.match(windowsBackup, /\$loc -like "\*\.cmd" -and \(Test-ClawGodLauncher \$loc\)\) \{ continue \}/, 'owned claude.cmd must continue Windows original search');
+assert.match(windowsBackup, /if \(\$originalFound\) \{ break \}/, 'Windows original search must stop only after a real original was backed up');
+assert.match(windowsBackup, /\$loc -like "\*\.exe" -and -not \(Test-Path \$claudeOrigExe\)/, 'Windows original exe backup must not overwrite an existing claude.orig.exe');
+assert.match(windowsBackup, /\$loc -like "\*\.cmd" -and -not \(Test-Path \$claudeOrigCmd\)/, 'Windows original cmd backup must not overwrite an existing claude.orig.cmd');
+assert.match(windowsBackup, /Copy-Item \$latestExe\.FullName \$claudeOrigExe -Force/, 'versions executable must be backed up as claude.orig.exe after owned cmd is skipped');
+assert.match(windowsUninstall, /Move-Item -Force \$claudeExeOrig \$claudeExe/, 'Windows uninstall must restore the backed-up versions executable');
 
 for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', windowsUninstall]]) {
   for (const artifact of ['.clawgod-version', '.update-check']) {

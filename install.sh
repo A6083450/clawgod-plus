@@ -259,10 +259,8 @@ is_clawgod_launcher() {
   local launcher="$1"
   [ -f "$launcher" ] || return 1
   [ -L "$launcher" ] && return 1
-  if grep -Fqx '# CLAWGOD_LAUNCHER_V1' "$launcher" 2>/dev/null; then
-    return 0
-  fi
-  # Launchers written before the explicit marker have this fixed structure.
+  # The marker identifies newer launchers, but never grants ownership alone.
+  # Every launcher, including pre-marker versions, must match this structure.
   [ "$(sed -n '1p' "$launcher" 2>/dev/null)" = '#!/bin/bash' ] \
     && [ "$(sed -n '2p' "$launcher" 2>/dev/null)" = '# clawgod launcher' ] \
     && grep -Eq '^CLAWGOD_CLI=".*\/\.clawgod\/cli\.cjs"$' "$launcher" 2>/dev/null \
