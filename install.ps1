@@ -243,18 +243,46 @@ import { existsSync, renameSync, rmSync } from 'node:fs';
 const [url, destination] = process.argv.slice(2);
 if (!url || !destination) throw new Error('usage: fetch-file.mjs <url> <destination>');
 
-function bypassesProxy(hostname) {
-  const entries = (process.env.NO_PROXY || process.env.no_proxy || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
-  const host = hostname.toLowerCase();
+function noProxyRule(value) {
+  let entry = value.trim().toLowerCase();
+  if (entry === '*') return { all: true };
+
+  let host = entry;
+  let port = '';
+  if (entry.startsWith('[')) {
+    const close = entry.indexOf(']');
+    if (close === -1) return { host: entry, port };
+    host = entry.slice(1, close);
+    const suffix = entry.slice(close + 1);
+    if (/^:\d+$/.test(suffix)) port = suffix.slice(1);
+    else if (suffix) return { host: entry, port };
+  } else {
+    const colon = entry.lastIndexOf(':');
+    if (colon > 0 && colon === entry.indexOf(':') && /^\d+$/.test(entry.slice(colon + 1))) {
+      host = entry.slice(0, colon);
+      port = entry.slice(colon + 1);
+    }
+  }
+  return { host: host.replace(/^\*\./, '.'), port };
+}
+
+function bypassesProxy(urlValue) {
+  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
+  const entries = (process.env.NO_PROXY || process.env.no_proxy || '').split(',').filter(value => value.trim());
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
   return entries.some(entry => {
-    const candidate = entry.replace(/^\*\./, '.').replace(/:\d+$/, '');
-    return candidate === '*' || candidate === host || (candidate.startsWith('.') && host.endsWith(candidate)) || host.endsWith(`.${candidate.replace(/^\./, '')}`);
+    const rule = noProxyRule(entry);
+    if (rule.all) return true;
+    const baseHost = rule.host.replace(/^\./, '');
+    const matchesHost = host === baseHost || host.endsWith(`.${baseHost}`);
+    return matchesHost && (!rule.port || rule.port === port);
   });
 }
 
 function proxyFor(urlValue) {
   const parsed = new URL(urlValue);
-  if (bypassesProxy(parsed.hostname)) return undefined;
+  if (bypassesProxy(parsed)) return undefined;
   return parsed.protocol === 'https:'
     ? process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy
     : process.env.HTTP_PROXY || process.env.http_proxy;
@@ -359,12 +387,13 @@ function Resolve-Bun {
     )
     foreach ($candidate in $candidates | Select-Object -Unique) {
         if (-not $candidate) { continue }
-        if ($candidate -match '\.ps1$') {
+        if ($candidate -match '\.(?:cmd|bat|ps1)$') {
             $native = Join-Path (Split-Path $candidate) "node_modules\bun\bin\bun.exe"
-            if (Test-Path $native) { return $native }
+            if (Test-Path -Path $native -PathType Leaf) { return $native }
             continue
         }
-        if (Test-Path $candidate) { return $candidate }
+        if ($candidate -notmatch '\.exe$') { continue }
+        if (Test-Path -Path $candidate -PathType Leaf) { return $candidate }
     }
     Write-Err "Bun is required. Install Bun first: https://bun.sh/install"
     return $null

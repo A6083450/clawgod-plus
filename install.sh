@@ -303,7 +303,7 @@ fi
 if ! resolve_bun; then
   exit 1
 fi
-info "Bun: $($BUN_BIN --version)"
+info "Bun: $("$BUN_BIN" --version)"
 
 # ─── Bun version pre-flight ───────────────────────────────────────────
 # Anthropic builds the native binary with Bun's canary channel; stable
@@ -314,7 +314,7 @@ info "Bun: $($BUN_BIN --version)"
 # again (track via 'bun upgrade --canary' on a runner + smoke test).
 
 MIN_BUN_VERSION="1.3.14"
-BUN_VERSION_RAW=$($BUN_BIN --version 2>/dev/null | head -1)
+BUN_VERSION_RAW=$("$BUN_BIN" --version 2>/dev/null | head -1)
 BUN_VERSION_NUM=$(echo "$BUN_VERSION_RAW" | sed 's/-.*//')
 if [ -z "$BUN_VERSION_NUM" ] \
    || [ "$(printf '%s\n%s\n' "$BUN_VERSION_NUM" "$MIN_BUN_VERSION" | sort -V | head -1)" != "$MIN_BUN_VERSION" ]; then
@@ -343,18 +343,46 @@ import { existsSync, renameSync, rmSync } from 'node:fs';
 const [url, destination] = process.argv.slice(2);
 if (!url || !destination) throw new Error('usage: fetch-file.mjs <url> <destination>');
 
-function bypassesProxy(hostname) {
-  const entries = (process.env.NO_PROXY || process.env.no_proxy || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
-  const host = hostname.toLowerCase();
+function noProxyRule(value) {
+  let entry = value.trim().toLowerCase();
+  if (entry === '*') return { all: true };
+
+  let host = entry;
+  let port = '';
+  if (entry.startsWith('[')) {
+    const close = entry.indexOf(']');
+    if (close === -1) return { host: entry, port };
+    host = entry.slice(1, close);
+    const suffix = entry.slice(close + 1);
+    if (/^:\d+$/.test(suffix)) port = suffix.slice(1);
+    else if (suffix) return { host: entry, port };
+  } else {
+    const colon = entry.lastIndexOf(':');
+    if (colon > 0 && colon === entry.indexOf(':') && /^\d+$/.test(entry.slice(colon + 1))) {
+      host = entry.slice(0, colon);
+      port = entry.slice(colon + 1);
+    }
+  }
+  return { host: host.replace(/^\*\./, '.'), port };
+}
+
+function bypassesProxy(urlValue) {
+  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
+  const entries = (process.env.NO_PROXY || process.env.no_proxy || '').split(',').filter(value => value.trim());
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
   return entries.some(entry => {
-    const candidate = entry.replace(/^\*\./, '.').replace(/:\d+$/, '');
-    return candidate === '*' || candidate === host || (candidate.startsWith('.') && host.endsWith(candidate)) || host.endsWith(`.${candidate.replace(/^\./, '')}`);
+    const rule = noProxyRule(entry);
+    if (rule.all) return true;
+    const baseHost = rule.host.replace(/^\./, '');
+    const matchesHost = host === baseHost || host.endsWith(`.${baseHost}`);
+    return matchesHost && (!rule.port || rule.port === port);
   });
 }
 
 function proxyFor(urlValue) {
   const parsed = new URL(urlValue);
-  if (bypassesProxy(parsed.hostname)) return undefined;
+  if (bypassesProxy(parsed)) return undefined;
   return parsed.protocol === 'https:'
     ? process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy
     : process.env.HTTP_PROXY || process.env.http_proxy;
@@ -2935,7 +2963,7 @@ dim "Verifying Bun can load patched cli.original.cjs ..."
 sanity_out=$("$BUN_BIN" "$CLAWGOD_DIR/cli.cjs" --version 2>&1 || true)
 if echo "$sanity_out" | grep -q "Expected CommonJS module to have a function wrapper"; then
   echo ""
-  warn "Bun $($BUN_BIN --version) cannot load Anthropic's cli.original.cjs."
+  warn "Bun $("$BUN_BIN" --version) cannot load Anthropic's cli.original.cjs."
   warn ""
   warn "  Anthropic builds with Bun's canary channel (currently ~1.3.14), while"
   warn "  bun.sh's main download is on stable (currently 1.3.13). The canary build"

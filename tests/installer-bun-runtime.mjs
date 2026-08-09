@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -26,12 +27,94 @@ function powerShellTemplate(name, firstLine) {
   return windows.slice(bodyStart, end);
 }
 
+function powerShellFunction(name) {
+  const start = windows.indexOf(`function ${name} {`);
+  assert.notEqual(start, -1, `install.ps1 must define ${name}`);
+  const end = windows.indexOf('\n}\n', start);
+  assert.notEqual(end, -1, `install.ps1 must close ${name}`);
+  return windows.slice(start, end + 3);
+}
+
+const executableNode = /(?:^|[;\r\n])\s*(?:&\s*)?(?:node(?:\.exe)?|\$NodeBin)\b(?:\s|$)|\bStart-Process\s+(?:-FilePath\s+)?(?:node(?:\.exe)?)\b/i;
+const forbiddenNodeFixtures = [
+  'node ./helper.mjs',
+  'node.exe --version',
+  '& node --version',
+  'Start-Process node -ArgumentList "--version"',
+  'Start-Process -FilePath node.exe -ArgumentList "--version"',
+  '& $NodeBin ./helper.mjs',
+];
+const allowedNodeReferences = [
+  "import { readFileSync } from 'node:fs';",
+  'require("node:path")',
+  'vendor/native-addon.node',
+];
+
+for (const fixture of forbiddenNodeFixtures) {
+  assert.match(fixture, executableNode, `Node execution policy must reject: ${fixture}`);
+}
+
+for (const fixture of allowedNodeReferences) {
+  assert.doesNotMatch(fixture, executableNode, `Node execution policy must allow: ${fixture}`);
+}
+
 for (const [name, source] of [['install.sh', unix], ['install.ps1', windows]]) {
   assert.doesNotMatch(source, /#!\/usr\/bin\/env node/, `${name}: generated scripts must use Bun shebangs`);
-  assert.doesNotMatch(source, /Get-Command node|command -v node|\bnode\s+-e\b|\bnode\s+["'$]/, `${name}: must not execute Node`);
+  assert.doesNotMatch(source, executableNode, `${name}: must not execute Node`);
   assert.match(source, /claude-mem-compat\.cjs["']?\s+uninstall/, `${name}: uninstall must still restore claude-mem`);
   assert.match(source, /Bun:|Bun version/, `${name}: Bun preflight must remain visible`);
 }
+
+assert.doesNotMatch(unix, /\$\(\$BUN_BIN\s+--version/, 'Unix Bun version probes must quote paths containing spaces');
+
+const resolveBunStart = unix.indexOf('resolve_bun() {');
+const normalPreflightStart = unix.indexOf('if ! resolve_bun; then', unix.indexOf('# ─── Bun prerequisite'));
+const normalPreflightEnd = unix.indexOf('mkdir -p "$CLAWGOD_DIR"', normalPreflightStart);
+assert.notEqual(resolveBunStart, -1, 'Unix installer must define resolve_bun');
+assert.notEqual(normalPreflightStart, -1, 'Unix installer must resolve Bun before normal installation');
+assert.notEqual(normalPreflightEnd, -1, 'Unix installer must retain its normal Bun preflight');
+
+const spacedBunHome = mkdtempSync(join(tmpdir(), 'clawgod bun path '));
+try {
+  const bunDirectory = join(spacedBunHome, '.bun', 'bin');
+  const fakeBun = join(bunDirectory, 'bun');
+  mkdirSync(bunDirectory, { recursive: true });
+  writeFileSync(fakeBun, '#!/bin/sh\n[ "$1" = "--version" ] && printf "1.3.14\\n"\n', 'utf8');
+  chmodSync(fakeBun, 0o755);
+
+  const preflightFixture = join(spacedBunHome, 'bun-preflight.sh');
+  writeFileSync(preflightFixture, `#!/usr/bin/env bash
+set -e
+warn() { printf '%s\\n' "$*" >&2; }
+info() { printf '%s\\n' "$*"; }
+${unix.slice(resolveBunStart, unix.indexOf('\n}\n', resolveBunStart) + 3)}
+${unix.slice(normalPreflightStart, normalPreflightEnd)}
+printf 'resolved=%s\\n' "$BUN_BIN"
+`, 'utf8');
+  chmodSync(preflightFixture, 0o755);
+
+  const preflight = spawnSync('bash', [preflightFixture], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: spacedBunHome, PATH: '/usr/bin:/bin' },
+  });
+  assert.equal(preflight.status, 0, `Bun preflight must support paths containing spaces:\n${preflight.stderr}`);
+  assert.match(preflight.stdout, /resolved=.*clawgod bun path /, 'Bun preflight must retain the resolved spaced path');
+} finally {
+  rmSync(spacedBunHome, { recursive: true, force: true });
+}
+
+const resolveBun = powerShellFunction('Resolve-Bun');
+const powerShellBunShim = /\.(?:cmd|bat|ps1)$/i;
+for (const fixture of [
+  'C:\\Users\\test\\AppData\\Roaming\\npm\\bun.cmd',
+  'C:\\Users\\test\\AppData\\Roaming\\npm\\bun.bat',
+  'C:\\Users\\test\\AppData\\Roaming\\npm\\bun.ps1',
+]) {
+  assert.match(fixture, powerShellBunShim, `Resolve-Bun must recognize wrapper shim fixture: ${fixture}`);
+}
+assert.doesNotMatch('C:\\Users\\test\\.bun\\bin\\bun.exe', powerShellBunShim, 'Resolve-Bun must retain native bun.exe candidates');
+assert.match(resolveBun, /\$candidate -match '\\\.\(\?:cmd\|bat\|ps1\)\$'/, 'Resolve-Bun must replace cmd, bat, and ps1 shims');
+assert.match(resolveBun, /\$candidate -notmatch '\\.exe\$'/, 'Resolve-Bun must only accept verified native executables');
 
 const unixTemplates = {
   'claude-mem-compat.cjs': unixTemplate('claude-mem-compat.cjs', 'cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << \'CLAUDE_MEM_COMPAT_EOF\''),
@@ -63,6 +146,61 @@ for (const [installerName, fetchFile] of [['install.sh', unixTemplates['fetch-fi
   assert.match(fetchFile, /redirects <= 5/, `${installerName}: fetch-file must cap redirects`);
   assert.match(fetchFile, /response\.status !== 200/, `${installerName}: fetch-file must reject non-200 responses`);
   assert.match(fetchFile, /renameSync\(temporary, destination\)/, `${installerName}: fetch-file must atomically replace completed downloads`);
+}
+
+const proxyProbeDirectory = mkdtempSync(join(tmpdir(), 'clawgod-fetch-proxy-'));
+try {
+  async function proxyFor(fetchFile, url, noProxy) {
+    const probe = join(proxyProbeDirectory, `${Math.random().toString(16).slice(2)}.mjs`);
+    const probeSource = fetchFile.replace(
+      'const temporary = `${destination}.${process.pid}.tmp`;',
+      `if (process.env.CLAWGOD_FETCH_FILE_PROBE === '1') {
+  console.log(JSON.stringify({ proxy: proxyFor(url) || null }));
+  process.exit(0);
+}
+
+const temporary = \`${'${destination}'}.${'${process.pid}'}.tmp\`;`,
+    );
+    assert.notEqual(probeSource, fetchFile, 'proxy probe must be injected into fetch-file.mjs');
+    await Bun.write(probe, probeSource);
+    const child = Bun.spawn([process.execPath, probe, url, join(proxyProbeDirectory, 'unused')], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: {
+        ...process.env,
+        CLAWGOD_FETCH_FILE_PROBE: '1',
+        HTTP_PROXY: 'http://proxy.test:3128',
+        HTTPS_PROXY: 'http://proxy.test:3128',
+        http_proxy: '',
+        https_proxy: '',
+        NO_PROXY: noProxy,
+        no_proxy: '',
+      },
+    });
+    const [status, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    assert.equal(status, 0, stderr);
+    return JSON.parse(stdout).proxy;
+  }
+
+  const proxyCases = [
+    ['https://example.com/archive', '.example.com', null],
+    ['https://api.example.com/archive', '.example.com', null],
+    ['https://example.com:8443/archive', 'example.com:8443', null],
+    ['https://example.com/archive', 'example.com:8443', 'http://proxy.test:3128'],
+    ['http://[::1]:8080/archive', '::1', null],
+    ['http://[::1]:8080/archive', '[::1]:8081', 'http://proxy.test:3128'],
+  ];
+  for (const [installerName, fetchFile] of [['install.sh', unixTemplates['fetch-file.mjs']], ['install.ps1', windowsTemplates['fetch-file.mjs']]]) {
+    for (const [url, noProxy, expected] of proxyCases) {
+      assert.equal(await proxyFor(fetchFile, url, noProxy), expected, `${installerName}: NO_PROXY=${noProxy} must select the expected proxy for ${url}`);
+    }
+  }
+} finally {
+  rmSync(proxyProbeDirectory, { recursive: true, force: true });
 }
 
 for (const [name, source] of [['install.sh', unix], ['install.ps1', windows]]) {
