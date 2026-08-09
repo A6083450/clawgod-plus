@@ -15,6 +15,7 @@ on:
       - 'apply-claude-code-*.sh'
       - 'apply-claude-code-*.ps1'
       - 'apply-claude-code-*.zip'
+      - claude-browser-1.0.77-patched.zip
       - 'apply-claude-code-context-limit-patch/**'
       - 'tests/*.mjs'
       - scripts/rebuild-helper-zips.mjs
@@ -26,6 +27,7 @@ on:
       - 'apply-claude-code-*.sh'
       - 'apply-claude-code-*.ps1'
       - 'apply-claude-code-*.zip'
+      - claude-browser-1.0.77-patched.zip
       - 'apply-claude-code-context-limit-patch/**'
       - 'tests/*.mjs'
       - scripts/rebuild-helper-zips.mjs
@@ -81,8 +83,21 @@ jobs:
             echo '::error::private ripgrep version smoke was not observed'
             exit 1
           }
-          grep -q '^worker resolver patched for plain Bun$' "$log" || {
+          grep -q '^patch summary unix initial: [0-9]\+ applied, [0-9]\+ skipped, 0 failed$' "$log" || {
+            echo '::error::clean initial patch summary was not observed'
+            exit 1
+          }
+          grep -q '^patch summary unix no-upgrade: [0-9]\+ applied, [0-9]\+ skipped, 0 failed$' "$log" || {
+            echo '::error::clean no-upgrade patch summary was not observed'
+            exit 1
+          }
+          grep -q '^worker resolver: marker-count=1 context=cli.cjs-return$' "$log" || {
             echo '::error::plain Bun worker resolver invariant was not observed'
+            exit 1
+          }
+          echo 'worker resolver patched for plain Bun'
+          grep -q '^version equality: wrapper=.* source=.*$' "$log" || {
+            echo '::error::wrapper and source version equality was not observed'
             exit 1
           }
           grep -q '^installer source version: ' "$log" || {
@@ -211,8 +226,19 @@ jobs:
             return ,$output
           }
 
+          function Assert-PatchSummary([string]$Label, [object[]]$Output) {
+            $text = $Output | Out-String
+            $summaries = [regex]::Matches($text, '(?m)^\s*Result: (\d+) applied, (\d+) skipped, (\d+) failed\s*$')
+            if ($summaries.Count -ne 1) { throw "$Label expected exactly one patch summary, found $($summaries.Count)" }
+            $summary = $summaries[0]
+            if ($summary.Groups[3].Value -ne '0') { throw "$Label patch summary reported $($summary.Groups[3].Value) failed" }
+            return $summary
+          }
+
           $installer = Join-Path $env:GITHUB_WORKSPACE 'install.ps1'
-          $null = Invoke-Checked 'initial -LeanOn install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-LeanOn')
+          $initialOutput = Invoke-Checked 'initial -LeanOn install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-LeanOn')
+          $initialSummary = Assert-PatchSummary 'initial' $initialOutput
+          Write-Host "patch summary windows initial: $($initialSummary.Groups[1].Value) applied, $($initialSummary.Groups[2].Value) skipped, 0 failed"
 
           $settingsPath = Join-Path $env:USERPROFILE '.claude\settings.json'
           $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
@@ -224,14 +250,40 @@ jobs:
 
           $launcher = Join-Path $env:USERPROFILE '.local\bin\clawgod.cmd'
           $wrapperVersion = Invoke-Checked 'clawgod wrapper version smoke' $launcher @('--version')
-          if (($wrapperVersion | Out-String) -notmatch '\b\d+\.\d+\.\d+\b') { throw 'ClawGod wrapper did not print a semantic version' }
+          $sourceVersion = (Get-Content (Join-Path $env:USERPROFILE '.clawgod\.source-version') -Raw).Trim()
+          $wrapperVersions = [regex]::Matches(($wrapperVersion | Out-String), '\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b')
+          if ($wrapperVersions.Count -ne 1) { throw "ClawGod wrapper printed $($wrapperVersions.Count) semantic versions" }
+          if ($wrapperVersions[0].Value -cne $sourceVersion) { throw "Wrapper version $($wrapperVersions[0].Value) differs from source version $sourceVersion" }
+          Write-Host "version equality windows: wrapper=$($wrapperVersions[0].Value) source=$sourceVersion"
 
-          $null = Invoke-Checked '-NoUpgrade -LeanOff install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-NoUpgrade', '-LeanOff')
+          $noUpgradeOutput = Invoke-Checked '-NoUpgrade -LeanOff install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-NoUpgrade', '-LeanOff')
+          $noUpgradeSummary = Assert-PatchSummary 'no-upgrade' $noUpgradeOutput
+          Write-Host "patch summary windows no-upgrade: $($noUpgradeSummary.Groups[1].Value) applied, $($noUpgradeSummary.Groups[2].Value) skipped, 0 failed"
           $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
           if ($null -ne $settings.disableWorkflows) { throw '-LeanOff did not remove lean settings' }
           if (-not (Test-Path (Join-Path $env:USERPROFILE '.clawgod\.lean-disabled'))) { throw '-LeanOff did not create its state marker' }
 
+          $settingsBeforeUninstall = [System.IO.File]::ReadAllBytes($settingsPath)
           $null = Invoke-Checked '-Uninstall' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-Uninstall')
-          if (Test-Path (Join-Path $env:USERPROFILE '.clawgod\vendor\ripgrep')) { throw 'Uninstall retained the private ripgrep directory' }
-          if (Test-Path $launcher) { throw 'Uninstall retained the clawgod launcher' }
+          $managedRoot = Join-Path $env:USERPROFILE '.clawgod'
+          $allowedPersistent = @('provider.json', 'features.json', '.lean-disabled', '.lean-max')
+          $remainingManaged = @(Get-ChildItem $managedRoot -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin $allowedPersistent })
+          if ($remainingManaged.Count -ne 0) { throw "Uninstall retained managed artifacts: $($remainingManaged.Name -join ', ')" }
+          $externalManaged = @(
+            (Join-Path $env:USERPROFILE '.local\bin\claude.cmd'),
+            (Join-Path $env:USERPROFILE '.local\bin\claude.exe'),
+            (Join-Path $env:USERPROFILE '.local\bin\clawgod.cmd'),
+            (Join-Path $env:USERPROFILE '.local\bin\claude.orig.cmd'),
+            (Join-Path $env:USERPROFILE '.local\bin\claude.orig.exe'),
+            (Join-Path $env:USERPROFILE '.claude-mem\clawgod-settings-backup.json'),
+            (Join-Path $env:USERPROFILE '.claude-mem\clawgod-settings-state.json')
+          )
+          foreach ($path in $externalManaged) {
+            if (Test-Path $path) { throw "Uninstall retained external managed path: $path" }
+          }
+          $settingsAfterUninstall = [System.IO.File]::ReadAllBytes($settingsPath)
+          if ([Convert]::ToBase64String($settingsBeforeUninstall) -cne [Convert]::ToBase64String($settingsAfterUninstall)) {
+            throw 'Uninstall changed unrelated Claude settings bytes'
+          }
+          Write-Host 'uninstall cleanup windows: managed-runtime=absent settings=byte-identical external-launchers=absent'
           Assert-NoForbiddenDependency @()

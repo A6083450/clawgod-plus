@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -16,6 +17,78 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const forbiddenText = 'forbidden dependency invoked:';
+
+function validatePatchSummary(label, output) {
+  const summaries = [...output.matchAll(/^\s*Result: (\d+) applied, (\d+) skipped, (\d+) failed\s*$/gm)];
+  assert.equal(summaries.length, 1, `${label}: expected exactly one patch summary, found ${summaries.length}`);
+  const [, applied, skipped, failed] = summaries[0];
+  assert.equal(failed, '0', `${label}: patch summary reported ${failed} failed`);
+  return `patch summary ${label}: ${applied} applied, ${skipped} skipped, 0 failed`;
+}
+
+function validateVersionEquality(wrapperOutput, sourceVersion) {
+  assert.match(sourceVersion, /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/, 'source version must be an exact semantic version');
+  const wrapperVersions = wrapperOutput.match(/\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b/g) ?? [];
+  assert.equal(wrapperVersions.length, 1, `wrapper output must contain exactly one semantic version, found ${wrapperVersions.length}`);
+  assert.equal(wrapperVersions[0], sourceVersion, `wrapper version ${wrapperVersions[0]} must equal source version ${sourceVersion}`);
+  return `version equality: wrapper=${wrapperVersions[0]} source=${sourceVersion}`;
+}
+
+function validateWorkerResolver(source) {
+  const marker = '/*__clawgod_plain_bun_worker__*/';
+  const markerCount = source.split(marker).length - 1;
+  assert.equal(markerCount, 1, `plain Bun worker marker must occur exactly once, found ${markerCount}`);
+  const markerIndex = source.indexOf(marker);
+  const precedingContext = source.slice(Math.max(0, markerIndex - 240), markerIndex);
+  assert.match(
+    precedingContext,
+    /cli\\\.cjs\$\/\.test\([\w$]+\)\)return\{cmd:process\.execPath,prefixArgs:\[[\w$]+\](?:,target:[\w$]+)?\}$/,
+    'plain Bun worker marker must immediately follow the cli.cjs resolver return branch',
+  );
+  return 'worker resolver: marker-count=1 context=cli.cjs-return';
+}
+
+function validateUninstallCleanup({ managedRoot, settingsPath, expectedSettingsBase64, externalPaths }) {
+  const allowedPersistentEntries = new Set(['provider.json', 'features.json', '.lean-disabled', '.lean-max']);
+  const staleManaged = existsSync(managedRoot)
+    ? readdirSync(managedRoot).filter(entry => !allowedPersistentEntries.has(entry))
+    : [];
+  assert.deepEqual(staleManaged, [], `managed runtime artifacts remain: ${staleManaged.join(', ')}`);
+  for (const path of externalPaths) {
+    assert.equal(existsSync(path), false, `external launcher or backup remains: ${path}`);
+  }
+  assert.deepEqual(
+    readFileSync(settingsPath),
+    Buffer.from(expectedSettingsBase64, 'base64'),
+    'uninstall must leave unrelated Claude settings byte-identical',
+  );
+  return 'uninstall cleanup: managed-runtime=absent settings=byte-identical external-launchers=absent';
+}
+
+if (process.env.CLAWGOD_E2E_CONTRACT) {
+  try {
+    const input = process.env.CLAWGOD_E2E_CONTRACT_INPUT ?? '';
+    let marker;
+    if (process.env.CLAWGOD_E2E_CONTRACT === 'patch-summary') {
+      const fixture = JSON.parse(input);
+      marker = validatePatchSummary(fixture.label, fixture.output);
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'version-equality') {
+      const fixture = JSON.parse(input);
+      marker = validateVersionEquality(fixture.wrapperOutput, fixture.sourceVersion);
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'worker-resolver') {
+      marker = validateWorkerResolver(input);
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'uninstall-cleanup') {
+      marker = validateUninstallCleanup(JSON.parse(input));
+    } else {
+      throw new Error(`unknown E2E contract: ${process.env.CLAWGOD_E2E_CONTRACT}`);
+    }
+    console.log(marker);
+    process.exit(0);
+  } catch (error) {
+    console.error(error?.stack ?? error);
+    process.exit(1);
+  }
+}
 
 if (process.env.CLAWGOD_E2E !== '1') {
   console.log('installer end-to-end test skipped: set CLAWGOD_E2E=1 to allow network downloads');
@@ -117,15 +190,11 @@ try {
     'utf8',
   );
 
-  run('initial --lean-on install', '/bin/bash', [join(root, 'install.sh'), '--lean-on']);
+  const initialInstallOutput = run('initial --lean-on install', '/bin/bash', [join(root, 'install.sh'), '--lean-on']);
+  console.log(validatePatchSummary('unix initial', initialInstallOutput));
   assertHarborKitePreserved('initial install');
   assertLeanOn();
-  assert.match(
-    readFileSync(join(clawgodDir, 'cli.original.cjs'), 'utf8'),
-    /__clawgod_plain_bun_worker__/,
-    'installed bundle must contain the targeted plain Bun worker resolver patch',
-  );
-  console.log('worker resolver patched for plain Bun');
+  console.log(validateWorkerResolver(readFileSync(join(clawgodDir, 'cli.original.cjs'), 'utf8')));
 
   assert.equal(existsSync(ripgrepPath), true, 'initial install must create the private ripgrep binary');
   const rgVersion = run('private ripgrep version smoke', ripgrepPath, ['--version']);
@@ -137,38 +206,29 @@ try {
 
   assert.equal(existsSync(launcherPath), true, 'initial install must create the clawgod launcher');
   const wrapperVersion = run('clawgod wrapper version smoke', launcherPath, ['--version']);
-  assert.match(wrapperVersion, /\b\d+\.\d+\.\d+\b/, 'installed clawgod wrapper must print a semantic version');
   const sourceVersion = readFileSync(join(clawgodDir, '.source-version'), 'utf8').trim();
-  assert.match(sourceVersion, /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/, 'installer must record the resolved Claude source version');
+  console.log(validateVersionEquality(wrapperVersion, sourceVersion));
   console.log(`installer source version: ${sourceVersion}`);
 
-  run('no-upgrade --lean-off install', '/bin/bash', [join(root, 'install.sh'), '--no-upgrade', '--lean-off']);
+  const noUpgradeOutput = run('no-upgrade --lean-off install', '/bin/bash', [join(root, 'install.sh'), '--no-upgrade', '--lean-off']);
+  console.log(validatePatchSummary('unix no-upgrade', noUpgradeOutput));
   assertHarborKitePreserved('no-upgrade install');
   assertLeanOff();
 
+  const settingsBeforeUninstall = readFileSync(settingsPath);
   run('uninstall', '/bin/bash', [join(root, 'install.sh'), '--uninstall']);
-  const removedArtifacts = [
-    ripgrepPath,
-    launcherPath,
-    ...[
-      'cli.cjs',
-      'cli.original.cjs',
-      'patch.mjs',
-      'extract-natives.mjs',
-      'post-process.mjs',
-      'repatch.mjs',
-      'openai-proxy.cjs',
-      'fetch-file.mjs',
-      'install-ripgrep.mjs',
-      'apply-claude-code-chrome-fix.sh',
-      'claude-mem-compat.cjs',
-      '.source-version',
-    ].map(path => join(clawgodDir, path)),
-  ];
-  for (const path of removedArtifacts) {
-    assert.equal(existsSync(path), false, `uninstall must remove ${path}`);
-  }
-  assert.equal(existsSync(settingsPath), true, 'uninstall must retain unrelated Claude settings');
+  console.log(validateUninstallCleanup({
+    managedRoot: clawgodDir,
+    settingsPath,
+    expectedSettingsBase64: settingsBeforeUninstall.toString('base64'),
+    externalPaths: [
+      join(tempHome, '.local', 'bin', 'claude'),
+      join(tempHome, '.local', 'bin', 'claude.orig'),
+      launcherPath,
+      join(tempHome, '.claude-mem', 'clawgod-settings-backup.json'),
+      join(tempHome, '.claude-mem', 'clawgod-settings-state.json'),
+    ],
+  }));
   assertHarborKitePreserved('uninstall');
   assert.equal(readSettings().unrelatedInstallerE2EValue, 'preserve-me', 'uninstall must retain unrelated settings values');
   assertNoForbiddenDependency();

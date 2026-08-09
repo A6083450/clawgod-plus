@@ -214,6 +214,15 @@ assert.match(workflow, /\.clawgod\\vendor\\ripgrep\\bin\\rg\.exe/, 'Windows smok
 assert.match(workflow, /forbidden dependency invoked:/, 'compat smoke must fail on the forbidden dependency marker');
 assert.match(workflow, /tests\/\*\.mjs/, 'compat path filters must include every Bun test');
 assert.match(workflow, /scripts\/rebuild-helper-zips\.mjs/, 'compat path filters must include the ZIP rebuild script');
+assert.equal(workflow.match(/claude-browser-1\.0\.77-patched\.zip/g)?.length, 2, 'browser extension ZIP changes must trigger both push and pull-request compat runs');
+assert.match(workflow, /Assert-PatchSummary/, 'Windows smoke must enforce patch summaries independently of child process exit codes');
+assert.match(workflow, /patch summary windows initial:/, 'Windows smoke must emit a stable initial patch summary marker');
+assert.match(workflow, /patch summary windows no-upgrade:/, 'Windows smoke must emit a stable no-upgrade patch summary marker');
+assert.match(workflow, /\.local\\bin\\claude\.cmd/, 'Windows uninstall checks must cover the primary launcher');
+assert.match(workflow, /\.local\\bin\\claude\.exe/, 'Windows uninstall checks must cover a primary executable left by backup handling');
+assert.match(workflow, /\.local\\bin\\clawgod\.cmd/, 'Windows uninstall checks must cover the explicit alias');
+assert.match(workflow, /clawgod-settings-backup\.json/, 'Windows uninstall checks must cover claude-mem backup state');
+assert.match(workflow, /clawgod-settings-state\.json/, 'Windows uninstall checks must cover claude-mem managed state');
 assert.equal(existsSync(join(root, '.github/workflows/cache-cleanup-weekly.yml')), false, 'obsolete npm cache cleanup workflow must not return');
 for (const path of readdirSync(join(root, '.github/workflows')).filter(path => /\.ya?ml$/.test(path))) {
   const source = read(`.github/workflows/${path}`);
