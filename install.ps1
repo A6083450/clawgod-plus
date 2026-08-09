@@ -511,8 +511,8 @@ Install-FetchFileHelper
 
 $ripgrepInstaller = @'
 #!/usr/bin/env bun
-import { chmodSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const RIPGREP_VERSION = '15.2.0';
 export const RIPGREP_ASSETS = {
@@ -752,16 +752,46 @@ export function validateRipgrepVersion(path, spawnImpl = Bun.spawnSync) {
   }
 }
 
-export function replaceManagedBinary(staged, target, fsOps = { existsSync, renameSync, rmSync }) {
-  const backup = `${target}.previous`;
-  fsOps.rmSync(backup, { force: true });
-  if (fsOps.existsSync(target)) fsOps.renameSync(target, backup);
+function assertContainedManagedPath(root, path) {
+  const child = relative(resolve(root), resolve(path));
+  if (!child || child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) {
+    throw new Error(`Managed ripgrep path escaped its root: ${path}`);
+  }
+}
+
+function assertNotSymbolicLink(path, fsOps = {}) {
+  const inspect = fsOps.lstatSync || lstatSync;
   try {
-    fsOps.renameSync(staged, target);
-    fsOps.rmSync(backup, { force: true });
+    if (inspect(path).isSymbolicLink()) throw new Error(`Managed ripgrep path must not be a symbolic link: ${path}`);
   } catch (error) {
-    if (fsOps.existsSync(backup)) fsOps.renameSync(backup, target);
-    throw error;
+    if (error?.code !== 'ENOENT') throw error;
+  }
+}
+
+export function replaceManagedBinary(staged, target, fsOps = { existsSync, lstatSync, renameSync, rmSync }) {
+  const backup = `${target}.previous`;
+  const displaced = `${target}.${process.pid}.current`;
+  for (const path of [staged, target, backup, displaced]) assertNotSymbolicLink(path, fsOps);
+  if (fsOps.existsSync(displaced)) throw new Error(`Managed ripgrep transaction path already exists: ${displaced}`);
+  let movedCurrent = false;
+  try {
+    if (fsOps.existsSync(target)) {
+      fsOps.renameSync(target, displaced);
+      movedCurrent = true;
+    }
+    try {
+      fsOps.renameSync(staged, target);
+    } catch (error) {
+      if (fsOps.existsSync(target)) fsOps.rmSync(target, { force: true });
+      if (fsOps.existsSync(backup)) fsOps.renameSync(backup, target);
+      else if (movedCurrent && fsOps.existsSync(displaced)) fsOps.renameSync(displaced, target);
+      if (fsOps.existsSync(displaced)) fsOps.rmSync(displaced, { force: true });
+      throw error;
+    }
+    fsOps.rmSync(backup, { force: true });
+    if (fsOps.existsSync(displaced)) fsOps.rmSync(displaced, { force: true });
+  } finally {
+    if (fsOps.existsSync(staged)) fsOps.rmSync(staged, { force: true });
   }
 }
 
@@ -770,12 +800,18 @@ export async function ensureRipgrep(root, options = {}) {
   const platform = options.platform || process.platform;
   const arch = options.arch || process.arch;
   const asset = selectRipgrepAsset(platform, arch);
-  const binDir = join(root, 'vendor', 'ripgrep', 'bin');
+  const vendorDir = join(root, 'vendor');
+  const ripgrepDir = join(vendorDir, 'ripgrep');
+  const binDir = join(ripgrepDir, 'bin');
   const target = join(binDir, platform === 'win32' ? 'rg.exe' : 'rg');
+  const staged = `${target}.${process.pid}.staged`;
+  const backup = `${target}.previous`;
+  const displaced = `${target}.${process.pid}.current`;
   const rootPath = resolve(root);
-  const targetPath = resolve(target);
-  if (targetPath !== join(rootPath, 'vendor', 'ripgrep', 'bin', platform === 'win32' ? 'rg.exe' : 'rg') || !targetPath.startsWith(`${rootPath}${sep}`)) {
-    throw new Error('managed ripgrep target escaped its root');
+  const managedPaths = [vendorDir, ripgrepDir, binDir, target, staged, backup, displaced];
+  for (const path of managedPaths) {
+    assertContainedManagedPath(rootPath, path);
+    assertNotSymbolicLink(path, options.fsOps);
   }
   const spawnImpl = options.spawnImpl || Bun.spawnSync;
   if (existsSync(target)) {
@@ -793,7 +829,7 @@ export async function ensureRipgrep(root, options = {}) {
   const executable = await extractRipgrep(archive, asset);
 
   mkdirSync(binDir, { recursive: true });
-  const staged = `${target}.${process.pid}.staged`;
+  for (const path of managedPaths) assertNotSymbolicLink(path, options.fsOps);
   rmSync(staged, { force: true });
   try {
     await Bun.write(staged, executable);
@@ -802,6 +838,7 @@ export async function ensureRipgrep(root, options = {}) {
     replaceManagedBinary(staged, target, options.fsOps);
     return target;
   } finally {
+    assertNotSymbolicLink(staged, options.fsOps);
     if (existsSync(staged)) rmSync(staged, { force: true });
   }
 }
@@ -1884,7 +1921,26 @@ const { spawnSync } = require('child_process');
 
 const clawgodDir = join(homedir(), '.clawgod');
 const ripgrepBin = join(clawgodDir, 'vendor', 'ripgrep', 'bin');
-process.env.PATH = `${ripgrepBin}${delimiter}${process.env.PATH || ''}`;
+const ripgrepPathWasReady = process.env.CLAWGOD_INTERNAL_RIPGREP_PATH_READY === ripgrepBin
+  && (process.env.PATH || '').split(delimiter)[0] === ripgrepBin;
+if ((process.env.PATH || '').split(delimiter)[0] !== ripgrepBin) {
+  process.env.PATH = `${ripgrepBin}${delimiter}${process.env.PATH || ''}`;
+}
+if (!ripgrepPathWasReady) {
+  const reexec = spawnSync(process.execPath, process.argv.slice(1), {
+    stdio: 'inherit',
+    env: { ...process.env, CLAWGOD_INTERNAL_RIPGREP_PATH_READY: ripgrepBin },
+  });
+  if (reexec.error) {
+    process.stderr.write('[clawgod] Failed to restart Bun with managed ripgrep PATH.\n');
+    process.exit(1);
+  }
+  if (reexec.signal) {
+    try { process.kill(process.pid, reexec.signal); } catch {}
+    process.exit(1);
+  }
+  process.exit(reexec.status ?? 1);
+}
 
 // Note: drift detection removed — see install.sh wrapper for full notes.
 // `versions/` either doesn't exist (Windows) or doesn't grow on healthy

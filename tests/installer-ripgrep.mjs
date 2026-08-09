@@ -9,10 +9,11 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 
@@ -253,6 +254,142 @@ try {
   assert.equal(readFileSync(target, 'utf8'), 'known-good', 'rollback must restore the prior managed binary');
   assert.equal(existsSync(`${target}.previous`), false, 'rollback must not leave the backup path behind');
 
+  for (const [label, currentContent] of [
+    ['missing current target', null],
+    ['invalid current target', 'invalid-current'],
+  ]) {
+    const interruptedDir = join(fixtureDir, label.replaceAll(' ', '-'));
+    mkdirSync(interruptedDir);
+    const interruptedTarget = join(interruptedDir, 'rg');
+    const interruptedBackup = `${interruptedTarget}.previous`;
+    const interruptedStaged = `${interruptedTarget}.staged`;
+    if (currentContent !== null) writeFileSync(interruptedTarget, currentContent);
+    writeFileSync(interruptedBackup, 'known-good-backup');
+    writeFileSync(interruptedStaged, 'new-binary');
+    assert.throws(
+      () => replaceManagedBinary(interruptedStaged, interruptedTarget, {
+        existsSync,
+        renameSync(from, to) {
+          if (from === interruptedStaged && to === interruptedTarget) throw new Error('injected interrupted replacement');
+          renameSync(from, to);
+        },
+        rmSync,
+      }),
+      /injected interrupted replacement/,
+      `${label} must surface the staged rename failure`,
+    );
+    assert.equal(readFileSync(interruptedTarget, 'utf8'), 'known-good-backup', `${label} must restore the pre-existing known-good backup`);
+    assert.equal(existsSync(interruptedBackup), false, `${label} restoration must consume the backup path`);
+    assert.equal(existsSync(interruptedStaged), false, `${label} failure must clean the staged artifact`);
+    assert.equal(readdirSync(interruptedDir).some(name => name.includes('.current')), false, `${label} failure must clean displaced-current artifacts`);
+  }
+
+  const successfulDir = join(fixtureDir, 'successful-replacement');
+  mkdirSync(successfulDir);
+  const successfulTarget = join(successfulDir, 'rg');
+  const successfulBackup = `${successfulTarget}.previous`;
+  const successfulStaged = `${successfulTarget}.staged`;
+  writeFileSync(successfulTarget, 'invalid-current');
+  writeFileSync(successfulBackup, 'known-good-backup');
+  writeFileSync(successfulStaged, 'new-binary');
+  replaceManagedBinary(successfulStaged, successfulTarget);
+  assert.equal(readFileSync(successfulTarget, 'utf8'), 'new-binary', 'successful replacement must commit the staged executable');
+  assert.equal(existsSync(successfulBackup), false, 'successful replacement must remove the superseded backup');
+  assert.equal(existsSync(successfulStaged), false, 'successful replacement must consume the staged artifact');
+  assert.equal(readdirSync(successfulDir).some(name => name.includes('.current')), false, 'successful replacement must clean displaced-current artifacts');
+
+  for (const protectedPath of ['target', 'staged', 'backup', 'displaced']) {
+    const transactionDir = join(fixtureDir, `symlink-transaction-${protectedPath}`);
+    const outsideDir = join(fixtureDir, `outside-transaction-${protectedPath}`);
+    mkdirSync(transactionDir);
+    mkdirSync(outsideDir);
+    const transactionTarget = join(transactionDir, 'rg');
+    const transactionStaged = `${transactionTarget}.staged`;
+    const transactionBackup = `${transactionTarget}.previous`;
+    const transactionDisplaced = `${transactionTarget}.${process.pid}.current`;
+    const outsideFile = join(outsideDir, 'sentinel');
+    writeFileSync(outsideFile, 'outside-must-not-change');
+    writeFileSync(transactionTarget, 'current-must-not-change');
+    writeFileSync(transactionStaged, 'staged-must-not-change');
+    if (protectedPath === 'target') {
+      rmSync(transactionTarget);
+      symlinkSync(outsideFile, transactionTarget);
+    } else if (protectedPath === 'staged') {
+      rmSync(transactionStaged);
+      symlinkSync(outsideFile, transactionStaged);
+    } else if (protectedPath === 'backup') {
+      symlinkSync(outsideFile, transactionBackup);
+    } else {
+      symlinkSync(outsideFile, transactionDisplaced);
+    }
+    assert.throws(
+      () => replaceManagedBinary(transactionStaged, transactionTarget),
+      /symbolic link/i,
+      `replacement must reject a symbolic-link ${protectedPath} before changing transaction paths`,
+    );
+    assert.equal(readFileSync(outsideFile, 'utf8'), 'outside-must-not-change', `symbolic-link ${protectedPath} must not modify its outside referent`);
+    assert.equal(existsSync(transactionStaged), true, `symbolic-link ${protectedPath} rejection must preserve the staged path`);
+    assert.equal(existsSync(transactionTarget), true, `symbolic-link ${protectedPath} rejection must preserve the target path`);
+  }
+
+  const managedLeaf = process.platform === 'win32' ? 'rg.exe' : 'rg';
+  for (const component of ['vendor', 'ripgrep', 'bin']) {
+    const symlinkRoot = join(fixtureDir, `symlink-component-${component}`);
+    const outsideDir = join(fixtureDir, `outside-component-${component}`);
+    const linkPath = component === 'vendor'
+      ? join(symlinkRoot, 'vendor')
+      : component === 'ripgrep'
+        ? join(symlinkRoot, 'vendor', 'ripgrep')
+        : join(symlinkRoot, 'vendor', 'ripgrep', 'bin');
+    mkdirSync(dirname(linkPath), { recursive: true });
+    mkdirSync(outsideDir);
+    const outsideFile = join(outsideDir, 'sentinel');
+    writeFileSync(outsideFile, 'outside-must-not-change');
+    symlinkSync(outsideDir, linkPath, 'dir');
+    let fetched = false;
+    let smoked = false;
+    await assert.rejects(
+      ensureRipgrep(symlinkRoot, {
+        fetchImpl: async () => { fetched = true; throw new Error('fetch must not run for a symlinked managed component'); },
+        spawnImpl: () => { smoked = true; throw new Error('smoke must not run for a symlinked managed component'); },
+      }),
+      /symbolic link/i,
+      `ensureRipgrep must reject a symbolic-link ${component} component`,
+    );
+    assert.equal(fetched, false, `symbolic-link ${component} must be rejected before fetch`);
+    assert.equal(smoked, false, `symbolic-link ${component} must be rejected before smoke`);
+    assert.equal(readFileSync(outsideFile, 'utf8'), 'outside-must-not-change', `symbolic-link ${component} must not modify outside files`);
+  }
+
+  for (const managedPath of ['target', 'staged', 'backup', 'displaced']) {
+    const symlinkRoot = join(fixtureDir, `symlink-managed-${managedPath}`);
+    const binDir = join(symlinkRoot, 'vendor', 'ripgrep', 'bin');
+    const targetPath = join(binDir, managedLeaf);
+    const paths = {
+      target: targetPath,
+      staged: `${targetPath}.${process.pid}.staged`,
+      backup: `${targetPath}.previous`,
+      displaced: `${targetPath}.${process.pid}.current`,
+    };
+    const outsideFile = join(fixtureDir, `outside-managed-${managedPath}`);
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(outsideFile, 'outside-must-not-change');
+    symlinkSync(outsideFile, paths[managedPath]);
+    let fetched = false;
+    let smoked = false;
+    await assert.rejects(
+      ensureRipgrep(symlinkRoot, {
+        fetchImpl: async () => { fetched = true; throw new Error('fetch must not run for a symlinked managed path'); },
+        spawnImpl: () => { smoked = true; return { exitCode: 0, stdout: Buffer.from('ripgrep 15.2.0\n') }; },
+      }),
+      /symbolic link/i,
+      `ensureRipgrep must reject a symbolic-link ${managedPath} path`,
+    );
+    assert.equal(fetched, false, `symbolic-link ${managedPath} must be rejected before fetch`);
+    assert.equal(smoked, false, `symbolic-link ${managedPath} must be rejected before smoke`);
+    assert.equal(readFileSync(outsideFile, 'utf8'), 'outside-must-not-change', `symbolic-link ${managedPath} must not modify its outside referent`);
+  }
+
   const existingRoot = join(fixtureDir, 'existing-root');
   const existingTarget = join(existingRoot, 'vendor', 'ripgrep', 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg');
   mkdirSync(join(existingRoot, 'vendor', 'ripgrep', 'bin'), { recursive: true });
@@ -267,6 +404,18 @@ try {
   });
   assert.equal(existingResult, existingTarget, 'a valid existing managed binary must be reused');
   assert.deepEqual(validated, [[existingTarget, '--version']], 'existing managed ripgrep must be version-smoked before reuse');
+
+  const realRoot = join(fixtureDir, 'ordinary-real-root');
+  const rootAlias = join(fixtureDir, 'ordinary-root-alias');
+  const aliasTarget = join(rootAlias, 'vendor', 'ripgrep', 'bin', managedLeaf);
+  mkdirSync(join(realRoot, 'vendor', 'ripgrep', 'bin'), { recursive: true });
+  writeFileSync(join(realRoot, 'vendor', 'ripgrep', 'bin', managedLeaf), 'already managed');
+  symlinkSync(realRoot, rootAlias, 'dir');
+  const aliasResult = await ensureRipgrep(rootAlias, {
+    fetchImpl: async () => { throw new Error('valid managed ripgrep under an ordinary root symlink must not download'); },
+    spawnImpl: () => ({ exitCode: 0, stdout: Buffer.from('ripgrep 15.2.0\n') }),
+  });
+  assert.equal(aliasResult, aliasTarget, 'an ordinary symlinked root must remain supported when managed children are not symlinks');
 
   const mismatchRoot = join(fixtureDir, 'hash-mismatch');
   const mismatchCalls = [];
@@ -436,15 +585,26 @@ try {
     chmodSync(managedRg, 0o755);
     chmodSync(systemRg, 0o755);
     writeFileSync(join(clawDir, 'cli.cjs'), wrapper);
+    const loadCounter = join(clawDir, 'upstream-load-count');
     writeFileSync(join(clawDir, 'cli.original.cjs'), `
+const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
+const counterFile = ${JSON.stringify(loadCounter)};
+let loads = 0;
+try { loads = Number(fs.readFileSync(counterFile, 'utf8')); } catch {}
+fs.writeFileSync(counterFile, String(loads + 1));
+if (process.env.CLAWGOD_FIXTURE_EXIT_CODE) process.exit(Number(process.env.CLAWGOD_FIXTURE_EXIT_CODE));
 console.log(JSON.stringify({
   path: process.env.PATH,
   builtin: process.env.USE_BUILTIN_RIPGREP,
-  rg: spawnSync('rg', ['--version'], { encoding: 'utf8', env: process.env }).stdout.trim(),
+  argv: process.argv.slice(2),
+  which: Bun.which('rg'),
+  bunRg: Buffer.from(Bun.spawnSync(['rg', '--version']).stdout).toString().trim(),
+  nodeRg: spawnSync('rg', ['--version'], { encoding: 'utf8' }).stdout.trim(),
 }));
 `);
-    const child = Bun.spawn([process.execPath, join(clawDir, 'cli.cjs')], {
+    const fixtureArgs = ['value with spaces', 'quote"fixture'];
+    const child = Bun.spawn([process.execPath, join(clawDir, 'cli.cjs'), ...fixtureArgs], {
       stdout: 'pipe',
       stderr: 'pipe',
       env: { ...process.env, HOME: home, PATH: `${fakeSystemBin}${delimiter}${process.env.PATH || ''}` },
@@ -454,7 +614,25 @@ console.log(JSON.stringify({
     const inherited = JSON.parse(stdout.trim());
     assert.equal(inherited.path.split(delimiter)[0], managedBin, `${name} must prepend the managed ripgrep directory to PATH`);
     assert.equal(inherited.builtin, '1', `${name} must preserve the built-in ripgrep selection flag`);
-    assert.equal(inherited.rg, 'managed-ripgrep', `${name} children must resolve managed ripgrep before a system rg`);
+    assert.deepEqual(inherited.argv, fixtureArgs, `${name} re-exec must preserve argument boundaries`);
+    assert.equal(inherited.which, managedRg, `${name} default Bun.which must resolve managed ripgrep`);
+    assert.equal(inherited.bunRg, 'managed-ripgrep', `${name} default Bun.spawnSync must resolve managed ripgrep`);
+    assert.equal(inherited.nodeRg, 'managed-ripgrep', `${name} default child_process spawn must resolve managed ripgrep`);
+    assert.equal(readFileSync(loadCounter, 'utf8'), '1', `${name} must load upstream exactly once`);
+
+    const exitChild = Bun.spawn([process.execPath, join(clawDir, 'cli.cjs')], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${fakeSystemBin}${delimiter}${process.env.PATH || ''}`,
+        CLAWGOD_FIXTURE_EXIT_CODE: '23',
+      },
+    });
+    const exitStatus = await exitChild.exited;
+    assert.equal(exitStatus, 23, `${name} re-exec must propagate the upstream exit code`);
+    assert.equal(readFileSync(loadCounter, 'utf8'), '2', `${name} exit-code probe must also load upstream only once`);
   }
 } finally {
   rmSync(wrapperDir, { recursive: true, force: true });
