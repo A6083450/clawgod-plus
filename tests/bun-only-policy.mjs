@@ -216,8 +216,14 @@ assert.match(workflow, /tests\/\*\.mjs/, 'compat path filters must include every
 assert.match(workflow, /scripts\/rebuild-helper-zips\.mjs/, 'compat path filters must include the ZIP rebuild script');
 assert.equal(workflow.match(/claude-browser-1\.0\.77-patched\.zip/g)?.length, 2, 'browser extension ZIP changes must trigger both push and pull-request compat runs');
 assert.match(workflow, /Assert-PatchSummary/, 'Windows smoke must enforce patch summaries independently of child process exit codes');
+assert.match(workflow, /\$resultLines\s*=.*Result:/, 'Windows smoke must count every Result line before parsing the canonical summary');
+assert.match(workflow, /\$resultLines\.Count -ne 1/, 'Windows smoke must reject missing or additional Result lines');
+assert.match(workflow, /\$summaryMatch\s*=.*'\^\\s\*Result:/, 'Windows smoke must fully parse the sole Result line');
 assert.match(workflow, /patch summary windows initial:/, 'Windows smoke must emit a stable initial patch summary marker');
 assert.match(workflow, /patch summary windows no-upgrade:/, 'Windows smoke must emit a stable no-upgrade patch summary marker');
+assert.match(workflow, /\$sourceVersionMatch\s*=\s*\[regex\]::Match/, 'Windows smoke must validate the complete source-version file');
+assert.match(workflow, /\^\\s\*\(\\d\+\\\.\\d\+\\\.\\d\+\)\\s\*\$/, 'Windows source-version parser must accept exactly x.y.z with surrounding whitespace only');
+assert.match(workflow, /\(\?=\\s\|\$\)/, 'Windows wrapper version parser must require whitespace or end after x.y.z');
 assert.match(workflow, /\.local\\bin\\claude\.cmd/, 'Windows uninstall checks must cover the primary launcher');
 assert.match(workflow, /\.local\\bin\\claude\.exe/, 'Windows uninstall checks must cover a primary executable left by backup handling');
 assert.match(workflow, /\.local\\bin\\clawgod\.cmd/, 'Windows uninstall checks must cover the explicit alias');

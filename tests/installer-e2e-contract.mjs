@@ -24,19 +24,30 @@ const cleanSummary = runContract('patch-summary', {
 assert.equal(cleanSummary.status, 0, cleanSummary.stderr);
 assert.match(cleanSummary.stdout, /^patch summary initial: 42 applied, 7 skipped, 0 failed$/m);
 
+const whitespaceSummary = runContract('patch-summary', {
+  label: 'initial',
+  output: '\t Result: 42 applied, 7 skipped, 0 failed \t\n',
+});
+assert.equal(whitespaceSummary.status, 0, whitespaceSummary.stderr);
+assert.match(whitespaceSummary.stdout, /^patch summary initial: 42 applied, 7 skipped, 0 failed$/m);
+
 for (const [label, output] of [
   ['missing summary', 'patch complete without a summary\n'],
   ['failed summary', '  Result: 41 applied, 7 skipped, 1 failed\n'],
   ['ambiguous summaries', '  Result: 42 applied, 7 skipped, 0 failed\n  Result: 42 applied, 7 skipped, 0 failed\n'],
+  ['clean plus malformed summary', '  Result: 42 applied, 7 skipped, 0 failed\n  Result: patcher aborted\n'],
+  ['malformed summary only', '  Result: 42 applied, 7 skipped, zero failed\n'],
+  ['prefixed summary', 'patcher Result: 42 applied, 7 skipped, 0 failed\n'],
+  ['summary with trailing token', '  Result: 42 applied, 7 skipped, 0 failed unexpectedly\n'],
 ]) {
   const run = runContract('patch-summary', { label: 'no-upgrade', output });
   assert.notEqual(run.status, 0, `${label} must fail the E2E patch gate`);
-  assert.match(run.stderr, /patch summary|failed/i, `${label} must explain the patch gate failure`);
+  assert.match(run.stderr, /Result line|patch summary|failed/i, `${label} must explain the patch gate failure`);
 }
 
 const equalVersion = runContract('version-equality', {
   wrapperOutput: '2.1.220 (Claude Code)\n',
-  sourceVersion: '2.1.220',
+  sourceVersion: ' \n2.1.220\t',
 });
 assert.equal(equalVersion.status, 0, equalVersion.stderr);
 assert.match(equalVersion.stdout, /^version equality: wrapper=2\.1\.220 source=2\.1\.220$/m);
@@ -45,6 +56,11 @@ for (const fixture of [
   { wrapperOutput: '2.1.219 (Claude Code)\n', sourceVersion: '2.1.220' },
   { wrapperOutput: 'Claude Code version unknown\n', sourceVersion: '2.1.220' },
   { wrapperOutput: '2.1.220 and 9.9.9\n', sourceVersion: '2.1.220' },
+  { wrapperOutput: '2.1.220 2.1.220\n', sourceVersion: '2.1.220' },
+  { wrapperOutput: '2.1.220.9\n', sourceVersion: '2.1.220' },
+  { wrapperOutput: '2.1.220-beta.1\n', sourceVersion: '2.1.220' },
+  { wrapperOutput: '2.1.220-beta.1\n', sourceVersion: '2.1.220-beta.1' },
+  { wrapperOutput: '2.1.220\n', sourceVersion: '2.1.220.9' },
 ]) {
   const run = runContract('version-equality', fixture);
   assert.notEqual(run.status, 0, 'missing, ambiguous, or mismatched wrapper versions must fail');

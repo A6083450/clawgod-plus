@@ -228,11 +228,11 @@ jobs:
 
           function Assert-PatchSummary([string]$Label, [object[]]$Output) {
             $text = $Output | Out-String
-            $summaries = [regex]::Matches($text, '(?m)^\s*Result: (\d+) applied, (\d+) skipped, (\d+) failed\s*$')
-            if ($summaries.Count -ne 1) { throw "$Label expected exactly one patch summary, found $($summaries.Count)" }
-            $summary = $summaries[0]
-            if ($summary.Groups[3].Value -ne '0') { throw "$Label patch summary reported $($summary.Groups[3].Value) failed" }
-            return $summary
+            $resultLines = @($text -split '\r?\n' | Where-Object { $_.Contains('Result:') })
+            if ($resultLines.Count -ne 1) { throw "$Label expected exactly one Result line, found $($resultLines.Count)" }
+            $summaryMatch = [regex]::Match($resultLines[0], '^\s*Result: (\d+) applied, (\d+) skipped, 0 failed\s*$')
+            if (-not $summaryMatch.Success) { throw "$Label Result line must be a canonical patch summary with 0 failed" }
+            return $summaryMatch
           }
 
           $installer = Join-Path $env:GITHUB_WORKSPACE 'install.ps1'
@@ -250,11 +250,15 @@ jobs:
 
           $launcher = Join-Path $env:USERPROFILE '.local\bin\clawgod.cmd'
           $wrapperVersion = Invoke-Checked 'clawgod wrapper version smoke' $launcher @('--version')
-          $sourceVersion = (Get-Content (Join-Path $env:USERPROFILE '.clawgod\.source-version') -Raw).Trim()
-          $wrapperVersions = [regex]::Matches(($wrapperVersion | Out-String), '\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b')
+          $sourceVersionText = Get-Content (Join-Path $env:USERPROFILE '.clawgod\.source-version') -Raw
+          $sourceVersionMatch = [regex]::Match($sourceVersionText, '^\s*(\d+\.\d+\.\d+)\s*$')
+          if (-not $sourceVersionMatch.Success) { throw 'Source version must contain exactly one x.y.z token with optional surrounding whitespace' }
+          $sourceVersion = $sourceVersionMatch.Groups[1].Value
+          $wrapperVersions = [regex]::Matches(($wrapperVersion | Out-String), '(?m)(?:^|\s)(\d+\.\d+\.\d+)(?=\s|$)')
           if ($wrapperVersions.Count -ne 1) { throw "ClawGod wrapper printed $($wrapperVersions.Count) semantic versions" }
-          if ($wrapperVersions[0].Value -cne $sourceVersion) { throw "Wrapper version $($wrapperVersions[0].Value) differs from source version $sourceVersion" }
-          Write-Host "version equality windows: wrapper=$($wrapperVersions[0].Value) source=$sourceVersion"
+          $wrapperVersionToken = $wrapperVersions[0].Groups[1].Value
+          if ($wrapperVersionToken -cne $sourceVersion) { throw "Wrapper version $wrapperVersionToken differs from source version $sourceVersion" }
+          Write-Host "version equality windows: wrapper=$wrapperVersionToken source=$sourceVersion"
 
           $noUpgradeOutput = Invoke-Checked '-NoUpgrade -LeanOff install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-NoUpgrade', '-LeanOff')
           $noUpgradeSummary = Assert-PatchSummary 'no-upgrade' $noUpgradeOutput

@@ -19,19 +19,22 @@ import { spawnSync } from 'node:child_process';
 const forbiddenText = 'forbidden dependency invoked:';
 
 function validatePatchSummary(label, output) {
-  const summaries = [...output.matchAll(/^\s*Result: (\d+) applied, (\d+) skipped, (\d+) failed\s*$/gm)];
-  assert.equal(summaries.length, 1, `${label}: expected exactly one patch summary, found ${summaries.length}`);
-  const [, applied, skipped, failed] = summaries[0];
-  assert.equal(failed, '0', `${label}: patch summary reported ${failed} failed`);
+  const resultLines = output.split(/\r?\n/).filter(line => line.includes('Result:'));
+  assert.equal(resultLines.length, 1, `${label}: expected exactly one Result line, found ${resultLines.length}`);
+  const summary = /^\s*Result: (\d+) applied, (\d+) skipped, 0 failed\s*$/.exec(resultLines[0]);
+  assert.notEqual(summary, null, `${label}: Result line must be a canonical patch summary with 0 failed`);
+  const [, applied, skipped] = summary;
   return `patch summary ${label}: ${applied} applied, ${skipped} skipped, 0 failed`;
 }
 
 function validateVersionEquality(wrapperOutput, sourceVersion) {
-  assert.match(sourceVersion, /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/, 'source version must be an exact semantic version');
-  const wrapperVersions = wrapperOutput.match(/\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b/g) ?? [];
+  const sourceMatch = /^\s*(\d+\.\d+\.\d+)\s*$/.exec(sourceVersion);
+  assert.notEqual(sourceMatch, null, 'source version must contain exactly one x.y.z token with optional surrounding whitespace');
+  const normalizedSourceVersion = sourceMatch[1];
+  const wrapperVersions = [...wrapperOutput.matchAll(/(?:^|\s)(\d+\.\d+\.\d+)(?=\s|$)/g)].map(match => match[1]);
   assert.equal(wrapperVersions.length, 1, `wrapper output must contain exactly one semantic version, found ${wrapperVersions.length}`);
-  assert.equal(wrapperVersions[0], sourceVersion, `wrapper version ${wrapperVersions[0]} must equal source version ${sourceVersion}`);
-  return `version equality: wrapper=${wrapperVersions[0]} source=${sourceVersion}`;
+  assert.equal(wrapperVersions[0], normalizedSourceVersion, `wrapper version ${wrapperVersions[0]} must equal source version ${normalizedSourceVersion}`);
+  return `version equality: wrapper=${wrapperVersions[0]} source=${normalizedSourceVersion}`;
 }
 
 function validateWorkerResolver(source) {

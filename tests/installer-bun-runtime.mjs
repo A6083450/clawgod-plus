@@ -65,6 +65,23 @@ for (const [name, source] of [['install.sh', unix], ['install.ps1', windows]]) {
   assert.match(source, /Bun:|Bun version/, `${name}: Bun preflight must remain visible`);
 }
 
+const unixUninstall = unix.slice(
+  unix.indexOf('if [ "$UNINSTALL" = "1" ]; then'),
+  unix.indexOf('# ─── Bun prerequisite'),
+);
+const windowsUninstall = windows.slice(
+  windows.indexOf('if ($Uninstall) {'),
+  windows.indexOf('# ─── Bun prerequisite'),
+);
+for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', windowsUninstall]]) {
+  for (const artifact of ['.clawgod-version', '.update-check']) {
+    assert.ok(uninstall.includes(artifact), `${name}: uninstall must remove ${artifact}`);
+  }
+  for (const preserved of ['provider.json', 'features.json', '.lean-disabled', '.lean-max']) {
+    assert.doesNotMatch(uninstall, new RegExp(preserved.replace('.', '\\\.')), `${name}: uninstall must preserve ${preserved}`);
+  }
+}
+
 assert.doesNotMatch(unix, /\$\(\$BUN_BIN\s+--version/, 'Unix Bun version probes must quote paths containing spaces');
 
 const resolveBunStart = unix.indexOf('resolve_bun() {');
