@@ -281,15 +281,31 @@ is_valid_claude_original() {
 
 is_unstable_claude_path() {
   local candidate="$1"
-  local candidate_dir candidate_path temp_root
+  local candidate_dir candidate_path link_target temp_root
+  local link_depth=0
   [ -n "$candidate" ] || return 1
   case "$candidate" in
     */cmux-cli-shims|*/cmux-cli-shims/*) return 0 ;;
   esac
   candidate_dir=$(dirname "$candidate")
-  candidate_dir=$(cd "$candidate_dir" 2>/dev/null && pwd -P) || return 1
+  candidate_dir=$(cd "$candidate_dir" 2>/dev/null && pwd -P) || return 0
   candidate_path="$candidate_dir/$(basename "$candidate")"
-  temp_root=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P) || return 1
+  while [ -L "$candidate_path" ]; do
+    link_depth=$((link_depth + 1))
+    [ "$link_depth" -le 40 ] || return 0
+    link_target=$(readlink "$candidate_path") || return 0
+    case "$link_target" in
+      /*) candidate_path="$link_target" ;;
+      *) candidate_path="$(dirname "$candidate_path")/$link_target" ;;
+    esac
+    candidate_dir=$(dirname "$candidate_path")
+    candidate_dir=$(cd "$candidate_dir" 2>/dev/null && pwd -P) || return 0
+    candidate_path="$candidate_dir/$(basename "$candidate_path")"
+  done
+  case "$candidate_path" in
+    */cmux-cli-shims|*/cmux-cli-shims/*) return 0 ;;
+  esac
+  temp_root=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P) || return 0
   case "$candidate_path" in
     "$temp_root"|"$temp_root"/*) return 0 ;;
   esac
@@ -2924,7 +2940,7 @@ const patches = [
         `if(__clawgodUpdateArgs.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";` +
         `process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");` +
         `const _w=process.platform==='win32';` +
-        `const __clawgodUpdateStatus=(()=>{const __fs=require('fs'),__path=require('path'),__os=require('os'),__cp=require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh');if(!__fs.existsSync(__installer)){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:process.env});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();` +
+        `const __clawgodUpdateStatus=(()=>{const __fs=require('fs'),__path=require('path'),__os=require('os'),__cp=require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh');if(!__fs.existsSync(__installer)){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:process.env});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();` +
         `process.exit(__clawgodUpdateStatus);`
       );
     },

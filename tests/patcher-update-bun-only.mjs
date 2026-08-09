@@ -112,7 +112,12 @@ copyFileSync(process.env.INSTALLER_FIXTURE,destination);
   const runnerName = options.windows ? 'powershell' : 'bash';
   if (!options.spawnFailure) {
     makeExecutable(join(bin, runnerName), `
-await Bun.write(process.env.RUN_CAPTURE,JSON.stringify(process.argv.slice(2)));
+const args=process.argv.slice(2);
+await Bun.write(process.env.RUN_CAPTURE,JSON.stringify(args));
+if(process.env.REQUIRE_POWERSHELL_BYPASS==='1'){
+  const expected=['-NoProfile','-ExecutionPolicy','Bypass','-File',args[4]];
+  if(args.length!==expected.length||args.some((value,index)=>value!==expected[index]))process.exit(91);
+}
 process.exit(Number(process.env.RUN_EXIT||0));
 `);
   }
@@ -138,6 +143,7 @@ process.exit(Number(process.env.RUN_EXIT||0));
         FETCH_EXIT: options.fetchExit ? String(options.fetchExit) : '',
         RUN_EXIT: options.runExit ? String(options.runExit) : '',
         INSTALLER_FIXTURE: installerFixture,
+        REQUIRE_POWERSHELL_BYPASS: options.windows ? '1' : '',
       },
     });
     assert.doesNotMatch(`${run.stdout}${run.stderr}`, /forbidden downloader invoked/, `${label} must never execute a forbidden downloader`);
@@ -155,8 +161,28 @@ process.exit(Number(process.env.RUN_EXIT||0));
   }
 }
 
-for (const [label, patcher] of [['install.sh', extractUnixPatcher()], ['install.ps1', extractWindowsPatcher()]]) {
-  const code = patchUpdateBranch(label, patcher);
+const patchedUpdateBranches = [
+  ['install.sh', patchUpdateBranch('install.sh', extractUnixPatcher())],
+  ['install.ps1', patchUpdateBranch('install.ps1', extractWindowsPatcher())],
+];
+
+function windowsUpdateCommandSource(code) {
+  const match = code.match(/const __command=_w\?\[([^\]]+)\]:\['bash',__installer\]/);
+  assert.ok(match, 'generated update branch must retain the Windows and Unix argument-array command selection');
+  return match[1];
+}
+
+const expectedWindowsCommand = "'powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',__installer";
+for (const [label, code] of patchedUpdateBranches) {
+  assert.equal(windowsUpdateCommandSource(code), expectedWindowsCommand, `${label} must generate the complete PowerShell execution-policy argv in exact order`);
+}
+assert.equal(
+  windowsUpdateCommandSource(patchedUpdateBranches[0][1]),
+  windowsUpdateCommandSource(patchedUpdateBranches[1][1]),
+  'Unix and PowerShell installers must generate identical Windows update argv',
+);
+
+for (const [label, code] of patchedUpdateBranches) {
 
   for (const windows of [false, true]) {
     const platform = windows ? 'Windows' : 'Unix';
@@ -165,12 +191,20 @@ for (const [label, patcher] of [['install.sh', extractUnixPatcher()], ['install.
     assert.ok(remote.fetch, `${label} ${platform} remote update must download through managed fetch-file.mjs`);
     assert.match(remote.fetch.url, windows ? /install\.ps1$/ : /install\.sh$/, `${label} ${platform} must fetch the fixed platform installer URL`);
     assert.ok(remote.fetch.destination.includes('clawgod-update-'), `${label} ${platform} must download inside a private temporary directory`);
-    assert.deepEqual(remote.invoked, ['-NoProfile', '-File', remote.fetch.destination].filter((_, index) => windows || index > 1), `${label} ${platform} must invoke the downloaded installer with an argument array`);
+    assert.deepEqual(
+      remote.invoked,
+      windows ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', remote.fetch.destination] : [remote.fetch.destination],
+      `${label} ${platform} must invoke the downloaded installer with the complete argument array`,
+    );
 
     const local = runUpdateCase(`${label} ${platform} local update`, code, { windows, localInstaller: true });
     assert.equal(local.run.status, 0, `${label} ${platform} local update must succeed`);
     assert.equal(local.fetch, null, `${label} ${platform} local update must skip remote fetching`);
-    assert.deepEqual(local.invoked, windows ? ['-NoProfile', '-File', join(local.clawgod, 'install.ps1')] : [join(local.clawgod, 'install.sh')], `${label} ${platform} must retain the managed local-installer path`);
+    assert.deepEqual(
+      local.invoked,
+      windows ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(local.clawgod, 'install.ps1')] : [join(local.clawgod, 'install.sh')],
+      `${label} ${platform} must retain the managed local-installer path`,
+    );
 
     const nonzero = runUpdateCase(`${label} ${platform} installer nonzero`, code, { windows, runExit: 23 });
     assert.equal(nonzero.run.status, 23, `${label} ${platform} must propagate installer exit status`);
@@ -181,6 +215,10 @@ for (const [label, patcher] of [['install.sh', extractUnixPatcher()], ['install.
     const fetchFailure = runUpdateCase(`${label} ${platform} fetch nonzero`, code, { windows, fetchExit: 29 });
     assert.equal(fetchFailure.run.status, 29, `${label} ${platform} must propagate managed fetch failure`);
   }
+
+  const wrongPolicyCode = code.replace("'Bypass'", "'RemoteSigned'");
+  const wrongPolicy = runUpdateCase(`${label} Windows wrong execution policy`, wrongPolicyCode, { windows: true });
+  assert.equal(wrongPolicy.run.status, 91, `${label} fixture must reject an incorrect PowerShell execution policy`);
 }
 
 console.log('patcher Bun-only update checks passed');

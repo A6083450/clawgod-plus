@@ -523,6 +523,48 @@ for (const shimKind of ['system-temp', 'cmux']) {
 }
 }
 
+if (process.env.CLAWGOD_INSTALLER_FOCUS !== 'windows-cross-slot') {
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-stable-link-to-temp-'));
+  assertTemporaryPath(home, 'stable-link-to-temp discovery fixture');
+  try {
+    const stableBin = join(home, '.local', 'bin');
+    const pathBin = join(home, 'path-bin');
+    const systemTemp = join(home, 'resolved-system-temp');
+    const temporaryTarget = join(systemTemp, 'runtime-shims', 'claude');
+    const linkedCandidate = join(pathBin, 'claude');
+    const stable = join(stableBin, 'claude');
+    const utilityBin = isolatedUnixPath(home);
+    const fakeBun = join(home, 'fake bun');
+    mkdirSync(dirname(temporaryTarget), { recursive: true });
+    mkdirSync(pathBin, { recursive: true });
+    mkdirSync(stableBin, { recursive: true });
+    writeFileSync(temporaryTarget, '#!/bin/sh\necho temporary target\n', 'utf8');
+    chmodSync(temporaryTarget, 0o755);
+    symlinkSync(temporaryTarget, linkedCandidate);
+    writeFileSync(stable, '#!/bin/sh\necho stable user command\n', 'utf8');
+    writeFileSync(fakeBun, '#!/bin/sh\nexit 0\n', 'utf8');
+    chmodSync(fakeBun, 0o755);
+
+    const discovery = spawnSync('/bin/bash', ['-c', `dim() { :; }\n${unixLauncherHelpers()}\n${unixDiscovery}\n${unixLauncherAssignment}\nprintf 'SELECTED=%s\\n' "$CLAUDE_BIN"\nprintf '%s' "$LAUNCHER_CONTENT"`], {
+      encoding: 'utf8',
+      env: {
+        HOME: home,
+        PATH: `${pathBin}:${utilityBin}`,
+        TMPDIR: systemTemp,
+        BIN_DIR: stableBin,
+        CLAWGOD_DIR: join(home, '.clawgod'),
+        BUN_BIN: fakeBun,
+      },
+    });
+    assert.equal(discovery.status, 0, discovery.stderr);
+    assert.match(discovery.stdout, new RegExp(`^SELECTED=${stable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'), 'a stable-directory symlink to a temporary target must be rejected');
+    assert.equal(lstatSync(linkedCandidate).isSymbolicLink(), true, 'rejected candidate must remain a symlink');
+    assert.equal(readlinkSync(linkedCandidate), temporaryTarget, 'rejected candidate must retain its temporary target');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 const windowsOwnershipContent = powerShellFunction('Test-ClawGodLauncherContent');
 const windowsEntryOwnership = powerShellFunction('Test-ClawGodLauncher');
 const windowsOwnership = windowsOwnershipContent + windowsEntryOwnership;
@@ -536,8 +578,18 @@ assert.match(windowsConflict, /Test-ClaudePathPresent \$Original/, 'Windows conf
 assert.match(windowsConflict, /Test-ClaudePathPresent \$Current/, 'Windows conflicts must detect current path entries through the reparse-aware helper');
 assert.doesNotMatch(windows, /Get-ChildItem\s+\$BinDir\s+-Filter\s+"claude\.\*\.exe"/, 'install.ps1 must not broadly delete timestamped or third-party claude executables');
 const windowsUninstallConflict = windowsUninstall.indexOf('Test-ClaudeLauncherConflict');
+const windowsCrossSlotConflict = windowsUninstall.indexOf('Test-ClaudeUninstallConflict');
 const windowsUninstallCompat = windowsUninstall.indexOf('$claudeMemCompat');
 assert.ok(windowsUninstallConflict >= 0 && windowsUninstallConflict < windowsUninstallCompat, 'Windows uninstall must reject launcher conflicts before managed compatibility cleanup');
+if (process.env.CLAWGOD_INSTALLER_FOCUS !== 'unix-symlink') {
+  assert.ok(windowsCrossSlotConflict >= 0 && windowsCrossSlotConflict < windowsUninstallCompat, 'Windows uninstall must reject cross-slot conflicts before managed compatibility cleanup');
+
+  const windowsUninstallGuard = powerShellFunction('Test-ClaudeUninstallConflict');
+  assert.match(windowsUninstallGuard, /Test-ValidClaudeOriginal \$OriginalCmd/, 'Windows uninstall guard must consider a valid cmd original');
+  assert.match(windowsUninstallGuard, /Test-ValidClaudeOriginal \$OriginalExe/, 'Windows uninstall guard must consider a valid exe original');
+  assert.match(windowsUninstallGuard, /Test-ClaudePathPresent \$CurrentCmd/, 'Windows uninstall guard must consider the current cmd slot');
+  assert.match(windowsUninstallGuard, /Test-ClaudePathPresent \$CurrentExe/, 'Windows uninstall guard must consider the current exe slot');
+}
 
 function modelWindowsLifecycle(current, original, operation) {
   if (original !== 'missing' && current === 'third-party') return { status: 'conflict', current, original };
@@ -565,6 +617,41 @@ for (const operation of ['install', 'uninstall']) {
 assert.deepEqual(modelWindowsLifecycle('owned', 'owned', 'uninstall'), { status: 'ok', current: 'missing', original: 'missing' }, 'uninstall must never restore an owned polluted backup');
 assert.deepEqual(modelWindowsLifecycle('missing', 'valid', 'uninstall'), { status: 'ok', current: 'third-party', original: 'missing' }, 'uninstall must restore a valid original when current is missing');
 assert.deepEqual(modelWindowsLifecycle('owned', 'valid', 'uninstall'), { status: 'ok', current: 'third-party', original: 'missing' }, 'uninstall must replace only an owned current with a valid original');
+
+function modelWindowsCrossSlotUninstall(state) {
+  const hasValidOriginal = state.originalCmd === 'valid' || state.originalExe === 'valid';
+  const hasThirdPartyCurrent = state.currentCmd === 'third-party' || state.currentExe === 'third-party';
+  if (hasValidOriginal && hasThirdPartyCurrent) return { status: 'conflict', ...state };
+  return {
+    status: 'ok',
+    currentCmd: state.originalCmd === 'valid' ? 'third-party' : 'missing',
+    currentExe: state.originalExe === 'valid' ? 'third-party' : 'missing',
+    originalCmd: 'missing',
+    originalExe: 'missing',
+  };
+}
+
+for (const state of [
+  { currentCmd: 'third-party', currentExe: 'missing', originalCmd: 'missing', originalExe: 'valid' },
+  { currentCmd: 'missing', currentExe: 'third-party', originalCmd: 'valid', originalExe: 'missing' },
+]) {
+  assert.deepEqual(
+    modelWindowsCrossSlotUninstall(state),
+    { status: 'conflict', ...state },
+    'Windows uninstall must preserve all cmd/exe slots when any third-party current could conflict with any valid original',
+  );
+}
+
+assert.deepEqual(
+  modelWindowsCrossSlotUninstall({ currentCmd: 'owned', currentExe: 'missing', originalCmd: 'missing', originalExe: 'valid' }),
+  { status: 'ok', currentCmd: 'missing', currentExe: 'third-party', originalCmd: 'missing', originalExe: 'missing' },
+  'Windows uninstall may remove an owned cmd and restore a valid exe original',
+);
+assert.deepEqual(
+  modelWindowsCrossSlotUninstall({ currentCmd: 'missing', currentExe: 'owned', originalCmd: 'valid', originalExe: 'missing' }),
+  { status: 'ok', currentCmd: 'third-party', currentExe: 'missing', originalCmd: 'missing', originalExe: 'missing' },
+  'Windows uninstall may remove an owned exe and restore a valid cmd original',
+);
 
 const windowsLauncherStart = windows.indexOf('$launcherContent = @"');
 const windowsLauncherEnd = windows.indexOf('"@', windowsLauncherStart);
