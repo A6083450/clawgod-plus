@@ -47,7 +47,7 @@ dim()   { echo -e "  ${DIM}$1${NC}"; }
 
 install_claude_mem_compat_helper() {
   cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << 'CLAUDE_MEM_COMPAT_EOF'
-#!/usr/bin/env node
+#!/usr/bin/env bun
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -244,6 +244,17 @@ CLAUDE_MEM_COMPAT_EOF
   chmod 700 "$CLAWGOD_DIR/claude-mem-compat.cjs"
 }
 
+resolve_bun() {
+  if command -v bun >/dev/null 2>&1; then
+    BUN_BIN=$(command -v bun)
+  elif [ -x "$HOME/.bun/bin/bun" ]; then
+    BUN_BIN="$HOME/.bun/bin/bun"
+  else
+    warn "Bun is required. Install Bun first: https://bun.sh/install"
+    return 1
+  fi
+}
+
 echo ""
 echo -e "${BOLD}  ClawGod Plus Installer${NC}"
 echo ""
@@ -251,12 +262,11 @@ echo ""
 # ─── Uninstall ─────────────────────────────────────────
 
 if [ "$UNINSTALL" = "1" ]; then
+  if ! resolve_bun; then
+    exit 1
+  fi
   if [ -f "$CLAWGOD_DIR/claude-mem-compat.cjs" ]; then
-    if ! command -v node >/dev/null 2>&1; then
-      warn "Node.js is required to restore claude-mem settings; ClawGod Plus was not uninstalled"
-      exit 1
-    fi
-    if ! node "$CLAWGOD_DIR/claude-mem-compat.cjs" uninstall; then
+    if ! CLAWGOD_BUN_BIN="$BUN_BIN" "$BUN_BIN" "$CLAWGOD_DIR/claude-mem-compat.cjs" uninstall; then
       warn "Could not restore claude-mem compatibility settings; ClawGod Plus was not uninstalled"
       exit 1
     fi
@@ -279,7 +289,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/install.sh"
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/install.sh"
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -288,34 +298,10 @@ if [ "$UNINSTALL" = "1" ]; then
   exit 0
 fi
 
-# ─── Prerequisites ─────────────────────────────────────
+# ─── Bun prerequisite ──────────────────────────────────
 
-if ! command -v node &>/dev/null; then
-  warn "Node.js is required (>= 18) for the patcher. Install from https://nodejs.org"
+if ! resolve_bun; then
   exit 1
-fi
-
-NODE_VERSION=$(node -e "console.log(process.versions.node.split('.')[0])")
-if [ "$NODE_VERSION" -lt 18 ]; then
-  warn "Node.js >= 18 required (found v$NODE_VERSION)"
-  exit 1
-fi
-
-# ─── Ensure Bun (runtime that executes the patched cli.js) ─────────────
-
-BUN_BIN=""
-if command -v bun &>/dev/null; then
-  BUN_BIN=$(command -v bun)
-elif [ -x "$HOME/.bun/bin/bun" ]; then
-  BUN_BIN="$HOME/.bun/bin/bun"
-else
-  dim "Installing Bun (required runtime for v2.1.113+ cli.js) ..."
-  curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1 || true
-  BUN_BIN="$HOME/.bun/bin/bun"
-  if [ ! -x "$BUN_BIN" ]; then
-    warn "Bun installation failed. Install manually: https://bun.sh/install"
-    exit 1
-  fi
 fi
 info "Bun: $($BUN_BIN --version)"
 
@@ -348,6 +334,58 @@ if [ -z "$BUN_VERSION_NUM" ] \
   warn "  Then re-run this installer."
   exit 1
 fi
+
+mkdir -p "$CLAWGOD_DIR"
+cat > "$CLAWGOD_DIR/fetch-file.mjs" << 'FETCH_FILE_EOF'
+#!/usr/bin/env bun
+import { existsSync, renameSync, rmSync } from 'node:fs';
+
+const [url, destination] = process.argv.slice(2);
+if (!url || !destination) throw new Error('usage: fetch-file.mjs <url> <destination>');
+
+function bypassesProxy(hostname) {
+  const entries = (process.env.NO_PROXY || process.env.no_proxy || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+  const host = hostname.toLowerCase();
+  return entries.some(entry => {
+    const candidate = entry.replace(/^\*\./, '.').replace(/:\d+$/, '');
+    return candidate === '*' || candidate === host || (candidate.startsWith('.') && host.endsWith(candidate)) || host.endsWith(`.${candidate.replace(/^\./, '')}`);
+  });
+}
+
+function proxyFor(urlValue) {
+  const parsed = new URL(urlValue);
+  if (bypassesProxy(parsed.hostname)) return undefined;
+  return parsed.protocol === 'https:'
+    ? process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy
+    : process.env.HTTP_PROXY || process.env.http_proxy;
+}
+
+async function fetchWithProxy(initialUrl) {
+  let nextUrl = initialUrl;
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    const proxy = proxyFor(nextUrl);
+    const response = await fetch(nextUrl, { redirect: 'manual', signal: AbortSignal.timeout(300000), ...(proxy ? { proxy } : {}) });
+    if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
+      if (redirects === 5) throw new Error('too many redirects');
+      nextUrl = new URL(response.headers.get('location'), nextUrl).href;
+      continue;
+    }
+    if (response.status !== 200) throw new Error(`download failed with HTTP ${response.status}`);
+    return response;
+  }
+  throw new Error('too many redirects');
+}
+
+const temporary = `${destination}.${process.pid}.tmp`;
+try {
+  const response = await fetchWithProxy(url);
+  await Bun.write(temporary, response);
+  renameSync(temporary, destination);
+} finally {
+  if (existsSync(temporary)) rmSync(temporary, { force: true });
+}
+FETCH_FILE_EOF
+chmod 700 "$CLAWGOD_DIR/fetch-file.mjs"
 
 # ─── ripgrep prerequisite (search/grep tool) ──────────────────────────
 # Without rg the Grep tool inside Claude Code fails. Bun-bundled ripgrep
@@ -383,8 +421,8 @@ install_chrome_fix_script() {
 
   if [ -n "$local_src" ] && [ -f "$local_src" ]; then
     cp "$local_src" "$dst"
-  elif command -v curl >/dev/null 2>&1; then
-    curl -fsSL "https://raw.githubusercontent.com/A6083450/clawgod-plus/main/apply-claude-code-chrome-fix.sh" -o "$dst" || return 1
+  elif "$BUN_BIN" "$CLAWGOD_DIR/fetch-file.mjs" "https://raw.githubusercontent.com/A6083450/clawgod-plus/main/apply-claude-code-chrome-fix.sh" "$dst"; then
+    :
   else
     return 1
   fi
@@ -505,7 +543,7 @@ if [ -z "$NATIVE_BIN" ]; then
         sz=$(stat -f%z "$cand" 2>/dev/null || stat -c%s "$cand" 2>/dev/null || echo 0)
         if [ "$sz" -gt 10000000 ]; then
           NATIVE_BIN="$cand"
-          NATIVE_BIN_LABEL=$(node -e "console.log(require('$NATIVE_BIN_TMPDIR/package/package.json').version)" 2>/dev/null || echo "npm-latest")
+          NATIVE_BIN_LABEL=$("$BUN_BIN" -e "console.log(require('$NATIVE_BIN_TMPDIR/package/package.json').version)" 2>/dev/null || echo "npm-latest")
         fi
       fi
     fi
@@ -530,7 +568,7 @@ fi
 
 # Write extractor to a temp file (used both for cli.js and .node modules)
 cat > "$CLAWGOD_DIR/extract-natives.mjs" << 'EXTRACTOR_EOF'
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * ClawGod Plus Bun section extractor
  *
@@ -546,10 +584,10 @@ cat > "$CLAWGOD_DIR/extract-natives.mjs" << 'EXTRACTOR_EOF'
  * Adapted from /home/kaiju/code/python/parse-bun/main.js (which itself
  * implements the format documented in docs/bun-section-format.md). Lazy
  * Bun.file reads were replaced with readFileSync so the script runs under
- * the existing `node` invocation in install.sh / install.ps1.
+ * the existing Bun invocation in install.sh / install.ps1.
  *
  * Usage:
- *   node extract-natives.mjs <binary-path> <output-dir>
+ *   bun extract-natives.mjs <binary-path> <output-dir>
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -900,7 +938,7 @@ EXTRACTOR_EOF
 rm -rf "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/cli.original.js" 2>/dev/null
 
 dim "Extracting cli.js + napi modules from $(echo "$NATIVE_BIN_LABEL") ..."
-if ! node "$CLAWGOD_DIR/extract-natives.mjs" "$NATIVE_BIN" "$CLAWGOD_DIR" 2>&1 | while IFS= read -r line; do echo "  $line"; done; then
+if ! "$BUN_BIN" "$CLAWGOD_DIR/extract-natives.mjs" "$NATIVE_BIN" "$CLAWGOD_DIR" 2>&1 | while IFS= read -r line; do echo "  $line"; done; then
   err "Failed to extract from native binary"
   exit 1
 fi
@@ -917,6 +955,7 @@ fi
 
 dim "Rewriting bunfs paths and IIFE invocation ..."
 cat > "$CLAWGOD_DIR/post-process.mjs" << 'POSTPROC_EOF'
+#!/usr/bin/env bun
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -952,7 +991,7 @@ writeFileSync(dst, code);
 unlinkSync(src);
 console.log(`cli.original.cjs: ${code.length} bytes`);
 POSTPROC_EOF
-node "$CLAWGOD_DIR/post-process.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
+"$BUN_BIN" "$CLAWGOD_DIR/post-process.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
 [ -f "$CLAWGOD_DIR/cli.original.cjs" ] || { err "Post-process failed"; exit 1; }
 
 # Stamp the source version so the wrapper can detect drift on next launch
@@ -1570,7 +1609,7 @@ fi
 # ─── Write universal patcher ───────────────────────────
 
 cat > "$CLAWGOD_DIR/patch.mjs" << 'PATCHER_EOF'
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * ClawGod Plus Universal Patcher — 正则模式匹配, 跨版本兼容
  */
@@ -2787,7 +2826,7 @@ info "Patcher created (patch.mjs)"
 # ─── Apply patches ─────────────────────────────────────
 
 dim "Applying patches ..."
-node "$CLAWGOD_DIR/patch.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
+"$BUN_BIN" "$CLAWGOD_DIR/patch.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
 run_claude_code_chrome_fix
 
 # ─── Create default configs ───────────────────────────
@@ -2830,7 +2869,7 @@ if [ "$LEAN_OFF" = "1" ]; then
   touch "$LEAN_OFF_FLAG"; rm -f "$LEAN_MAX_FLAG"
   CLAUDE_SETTINGS="$HOME/.claude/settings.json"
   if [ -f "$CLAUDE_SETTINGS" ]; then
-    node -e '
+    "$BUN_BIN" -e '
 const fs=require("fs"),p=process.argv[1];
 const allDeny=new Set(["DesignSync","NotebookEdit","PushNotification","RemoteTrigger","CronCreate","CronDelete","CronList","EnterPlanMode","ExitPlanMode","SendMessage","ScheduleWakeup","AskUserQuestion","ReportFindings"]);
 const allFlags=["disableWorkflows","disableRemoteControl","disableClaudeAiConnectors","disableArtifact","disableBundledSkills"];
@@ -2854,7 +2893,7 @@ if [ ! -f "$LEAN_OFF_FLAG" ]; then
   LEAN_IS_MAX="false"
   [ -f "$LEAN_MAX_FLAG" ] && LEAN_IS_MAX="true"
 
-  node -e '
+  "$BUN_BIN" -e '
 const fs = require("fs");
 const settingsPath = process.argv[1];
 const isMax = process.argv[2] === "true";
@@ -2948,7 +2987,7 @@ if [ ! -x "$IMPORT_BIN" ]; then
   esac
   if [ -n "$IMPORT_SUFFIX" ]; then
     IMPORT_URL="https://github.com/0Chencc/clawgod/releases/latest/download/clawgod-import-$IMPORT_SUFFIX"
-    if curl -fsSL -o "$IMPORT_BIN" "$IMPORT_URL" 2>/dev/null; then
+    if "$BUN_BIN" "$CLAWGOD_DIR/fetch-file.mjs" "$IMPORT_URL" "$IMPORT_BIN"; then
       chmod +x "$IMPORT_BIN"
       info "Provider import tool installed (clawgod-import)"
     else
@@ -3075,7 +3114,7 @@ write_launcher "$BIN_DIR/clawgod"
 info "Command 'clawgod' → patched ($BIN_DIR/clawgod)"
 
 install_claude_mem_compat_helper
-if CLAWGOD_BUN_BIN="$BUN_BIN" CLAWGOD_CLAUDE_BIN="$CLAUDE_BIN" node "$CLAWGOD_DIR/claude-mem-compat.cjs" install; then
+if CLAWGOD_BUN_BIN="$BUN_BIN" CLAWGOD_CLAUDE_BIN="$CLAUDE_BIN" "$BUN_BIN" "$CLAWGOD_DIR/claude-mem-compat.cjs" install; then
   [ -f "$HOME/.claude-mem/clawgod-settings-backup.json" ] && info "claude-mem compatibility configured"
 else
   warn "claude-mem compatibility setup failed; ClawGod Plus core install will continue"

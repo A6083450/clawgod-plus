@@ -35,7 +35,7 @@ $BinDir  = Join-Path $env:USERPROFILE ".local\bin"
 $ClawSelfVersion = "0.0.0-dev"  # injected by release workflow from git tag
 
 $ClaudeMemCompatSource = @'
-#!/usr/bin/env node
+#!/usr/bin/env bun
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -236,6 +236,62 @@ function Install-ClaudeMemCompatHelper {
     [System.IO.File]::WriteAllText($helper, $ClaudeMemCompatSource + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding $false))
 }
 
+$FetchFileSource = @'
+#!/usr/bin/env bun
+import { existsSync, renameSync, rmSync } from 'node:fs';
+
+const [url, destination] = process.argv.slice(2);
+if (!url || !destination) throw new Error('usage: fetch-file.mjs <url> <destination>');
+
+function bypassesProxy(hostname) {
+  const entries = (process.env.NO_PROXY || process.env.no_proxy || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+  const host = hostname.toLowerCase();
+  return entries.some(entry => {
+    const candidate = entry.replace(/^\*\./, '.').replace(/:\d+$/, '');
+    return candidate === '*' || candidate === host || (candidate.startsWith('.') && host.endsWith(candidate)) || host.endsWith(`.${candidate.replace(/^\./, '')}`);
+  });
+}
+
+function proxyFor(urlValue) {
+  const parsed = new URL(urlValue);
+  if (bypassesProxy(parsed.hostname)) return undefined;
+  return parsed.protocol === 'https:'
+    ? process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy
+    : process.env.HTTP_PROXY || process.env.http_proxy;
+}
+
+async function fetchWithProxy(initialUrl) {
+  let nextUrl = initialUrl;
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    const proxy = proxyFor(nextUrl);
+    const response = await fetch(nextUrl, { redirect: 'manual', signal: AbortSignal.timeout(300000), ...(proxy ? { proxy } : {}) });
+    if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
+      if (redirects === 5) throw new Error('too many redirects');
+      nextUrl = new URL(response.headers.get('location'), nextUrl).href;
+      continue;
+    }
+    if (response.status !== 200) throw new Error(`download failed with HTTP ${response.status}`);
+    return response;
+  }
+  throw new Error('too many redirects');
+}
+
+const temporary = `${destination}.${process.pid}.tmp`;
+try {
+  const response = await fetchWithProxy(url);
+  await Bun.write(temporary, response);
+  renameSync(temporary, destination);
+} finally {
+  if (existsSync(temporary)) rmSync(temporary, { force: true });
+}
+'@
+
+function Install-FetchFileHelper {
+    New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
+    $helper = Join-Path $ClawDir "fetch-file.mjs"
+    [System.IO.File]::WriteAllText($helper, $FetchFileSource + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding $false))
+}
+
 function Install-ChromeFixScript {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
     $dst = Join-Path $ClawDir "apply-claude-code-chrome-fix.ps1"
@@ -251,7 +307,8 @@ function Install-ChromeFixScript {
     }
 
     try {
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/A6083450/clawgod-plus/main/apply-claude-code-chrome-fix.ps1" -OutFile $dst -UseBasicParsing
+        & $BunBin (Join-Path $ClawDir "fetch-file.mjs") "https://raw.githubusercontent.com/A6083450/clawgod-plus/main/apply-claude-code-chrome-fix.ps1" $dst
+        if ($LASTEXITCODE -ne 0) { return $false }
         return $true
     } catch {
         return $false
@@ -288,6 +345,31 @@ function Write-Err($msg)  { Write-Host "  ✗ $msg" -ForegroundColor Red }
 function Write-Warn($msg) { Write-Host "  ! $msg" -ForegroundColor Yellow }
 function Write-Dim($msg)  { Write-Host "  $msg" -ForegroundColor DarkGray }
 
+function Resolve-Bun {
+    $candidates = @()
+    try {
+        $command = Get-Command bun -ErrorAction Stop
+        if ($command.Source) { $candidates += $command.Source }
+    } catch {}
+    $candidates += @(
+        (Join-Path $env:USERPROFILE ".bun\bin\bun.exe"),
+        (Join-Path $env:APPDATA "npm\node_modules\bun\bin\bun.exe"),
+        (Join-Path $env:USERPROFILE "scoop\shims\bun.exe"),
+        (Join-Path $env:ProgramData "chocolatey\bin\bun.exe")
+    )
+    foreach ($candidate in $candidates | Select-Object -Unique) {
+        if (-not $candidate) { continue }
+        if ($candidate -match '\.ps1$') {
+            $native = Join-Path (Split-Path $candidate) "node_modules\bun\bin\bun.exe"
+            if (Test-Path $native) { return $native }
+            continue
+        }
+        if (Test-Path $candidate) { return $candidate }
+    }
+    Write-Err "Bun is required. Install Bun first: https://bun.sh/install"
+    return $null
+}
+
 Write-Host ""
 Write-Host "  ClawGod Plus Installer" -ForegroundColor White -NoNewline
 Write-Host " (Windows)" -ForegroundColor DarkGray
@@ -296,11 +378,13 @@ Write-Host ""
 # ─── Uninstall ────────────────────────────────────────
 
 if ($Uninstall) {
+    $BunBin = Resolve-Bun
+    if (-not $BunBin) { exit 1 }
     $claudeMemCompat = Join-Path $ClawDir "claude-mem-compat.cjs"
     if (Test-Path $claudeMemCompat) {
         try {
-            $null = Get-Command node -ErrorAction Stop
-            & node $claudeMemCompat uninstall
+            $env:CLAWGOD_BUN_BIN = $BunBin
+            & $BunBin "$ClawDir\claude-mem-compat.cjs" uninstall
             if ($LASTEXITCODE -ne 0) { throw "claude-mem compatibility helper exited $LASTEXITCODE" }
         } catch {
             Write-Warn "Could not restore claude-mem compatibility settings; ClawGod Plus was not uninstalled"
@@ -331,7 +415,7 @@ if ($Uninstall) {
         Write-OK "Removed clawgod alias"
     }
 
-    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","openai-proxy.cjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd",".source-version","node_modules","bun-runtime","vendor")) {
+    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","openai-proxy.cjs","fetch-file.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd",".source-version","node_modules","bun-runtime","vendor")) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
@@ -342,73 +426,10 @@ if ($Uninstall) {
     exit 0
 }
 
-# ─── Prerequisites ────────────────────────────────────
+# ─── Bun prerequisite ──────────────────────────────────
 
-try { $null = Get-Command node -ErrorAction Stop }
-catch {
-    Write-Err "Node.js is required (>= 18) for the patcher. Install from https://nodejs.org"
-    exit 1
-}
-
-$nodeVer = [int](node -e "console.log(process.versions.node.split('.')[0])")
-if ($nodeVer -lt 18) {
-    Write-Err "Node.js >= 18 required (found v$nodeVer)"
-    exit 1
-}
-
-# ─── Ensure Bun (runtime that executes the patched cli.js) ────────────
-
-$BunBin = $null
-try { $BunBin = (Get-Command bun -ErrorAction Stop).Source } catch {}
-if (-not $BunBin) {
-    $homeBun = Join-Path $env:USERPROFILE ".bun\bin\bun.exe"
-    if (Test-Path $homeBun) { $BunBin = $homeBun }
-}
-if (-not $BunBin) {
-    Write-Dim "Installing Bun (required runtime for v2.1.113+ cli.js) ..."
-    try {
-        Invoke-Expression "$(Invoke-RestMethod https://bun.sh/install.ps1)" 2>$null | Out-Null
-    } catch {}
-    $BunBin = Join-Path $env:USERPROFILE ".bun\bin\bun.exe"
-    if (-not (Test-Path $BunBin)) {
-        Write-Err "Bun installation failed. Install manually: https://bun.sh/install"
-        exit 1
-    }
-}
-
-# Resolve bun.ps1 → bun.exe. When Bun is installed via `npm install -g bun`,
-# Get-Command returns a .ps1 wrapper script. A .cmd launcher cannot invoke .ps1
-# directly — Windows opens the file association dialog instead of executing it.
-# Probe known install paths instead of parsing wrapper scripts.
-if ($BunBin -and $BunBin -match '\.ps1$') {
-    $resolved = $null
-    $bunDir = Split-Path $BunBin
-    # 1. npm global: bun.ps1 sits next to node_modules/bun/bin/bun.exe
-    $cand = Join-Path $bunDir "node_modules\bun\bin\bun.exe"
-    if (Test-Path $cand) { $resolved = $cand }
-    # 2. bun.sh official install
-    if (-not $resolved) {
-        $cand = Join-Path $env:USERPROFILE ".bun\bin\bun.exe"
-        if (Test-Path $cand) { $resolved = $cand }
-    }
-    # 3. Scoop: shim exe lives in ~/scoop/shims/
-    if (-not $resolved) {
-        $cand = Join-Path $env:USERPROFILE "scoop\shims\bun.exe"
-        if (Test-Path $cand) { $resolved = $cand }
-    }
-    # 4. Chocolatey: typically in C:\ProgramData\chocolatey\bin\
-    if (-not $resolved) {
-        $chocoBin = Join-Path $env:ProgramData "chocolatey\bin\bun.exe"
-        if (Test-Path $chocoBin) { $resolved = $chocoBin }
-    }
-    if ($resolved) {
-        Write-Dim "Resolved bun.ps1 → $resolved"
-        $BunBin = $resolved
-    } else {
-        Write-Warn "Bun resolved to .ps1 wrapper ($BunBin). The launcher may not work."
-        Write-Warn "Consider installing Bun via bun.sh/install.ps1 for a native bun.exe."
-    }
-}
+$BunBin = Resolve-Bun
+if (-not $BunBin) { exit 1 }
 Write-OK "Bun: $(& $BunBin --version)"
 
 # ─── Bun version pre-flight ───────────────────────────────────────────
@@ -454,6 +475,8 @@ if (-not $BunVersionOk) {
     Write-Err "  Then re-run this installer."
     exit 1
 }
+
+Install-FetchFileHelper
 
 # ─── ripgrep prerequisite (search/grep tool) ──────────────────────────
 # Hard prerequisite — without rg the Grep tool inside Claude Code fails.
@@ -529,10 +552,10 @@ $platformSuffix = "win32-$arch"
 # detection entirely; the npm tarball is ~60-90 MB compressed, fetched
 # once per upgrade.
 
-# npm registry — pull the platform tarball directly via Node.
+# npm registry — pull the platform tarball directly via Bun.
 #    Avoids depending on `npm` and `tar` being on PATH (older Windows 10
-#    builds lack tar.exe; some PowerShell shims mangle `& npm`). Node is
-#    already a hard prerequisite for the patcher, so reuse it.
+#    builds lack tar.exe; some PowerShell shims mangle `& npm`). Bun runs
+#    the compatible extractor without requiring a separate Node runtime.
 if (-not $NativeBin) {
     $npmPkg = "@anthropic-ai/claude-code-$platformSuffix"
     Write-Dim "Fetching $npmPkg@$Version from npm registry ..."
@@ -642,14 +665,14 @@ console.log(`Extracted ${files} files`);
 console.log(`VERSION=${meta.version}`);
 '@ | Set-Content $fetchScript -Encoding UTF8
 
-        $output = & node $fetchScript "$npmPkg@$Version" $NativeBinTmpDir 2>&1
+        $output = & $BunBin $fetchScript "$npmPkg@$Version" $NativeBinTmpDir 2>&1
         $exitCode = $LASTEXITCODE
         $output | ForEach-Object { Write-Host "  $_" }
         Remove-Item -Force $fetchScript -ErrorAction SilentlyContinue
 
         if ($exitCode -ne 0) {
             Remove-Item -Recurse -Force $NativeBinTmpDir -ErrorAction SilentlyContinue
-            Write-Err "Fetch failed (node exit $exitCode). Install the official binary manually:"
+            Write-Err "Fetch failed (Bun exit $exitCode). Install the official binary manually:"
             Write-Err "    irm https://claude.ai/install.ps1 | iex"
             exit 1
         }
@@ -681,7 +704,7 @@ if (-not $NativeBin) {
 # Always write the extractor (used for cli.js and/or .node modules)
 $extractorPath = Join-Path $ClawDir "extract-natives.mjs"
 @'
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * ClawGod Plus Bun section extractor
  *
@@ -697,10 +720,10 @@ $extractorPath = Join-Path $ClawDir "extract-natives.mjs"
  * Adapted from /home/kaiju/code/python/parse-bun/main.js (which itself
  * implements the format documented in docs/bun-section-format.md). Lazy
  * Bun.file reads were replaced with readFileSync so the script runs under
- * the existing `node` invocation in install.sh / install.ps1.
+ * the existing Bun invocation in install.sh / install.ps1.
  *
  * Usage:
- *   node extract-natives.mjs <binary-path> <output-dir>
+ *   bun extract-natives.mjs <binary-path> <output-dir>
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -1052,7 +1075,7 @@ $dstCli = Join-Path $ClawDir "cli.original.js"
 if (Test-Path $dstCli) { Remove-Item -Force $dstCli }
 
 Write-Dim "Extracting cli.js + napi modules from $NativeBinLabel ..."
-& node $extractorPath $NativeBin $ClawDir 2>&1 | ForEach-Object { Write-Host "  $_" }
+& $BunBin $extractorPath $NativeBin $ClawDir 2>&1 | ForEach-Object { Write-Host "  $_" }
 if (-not (Test-Path $dstCli)) {
     Write-Err "Failed to extract cli.js from native binary"
     exit 1
@@ -1065,6 +1088,7 @@ if (-not (Test-Path $dstCli)) {
 Write-Dim "Rewriting bunfs paths and IIFE invocation ..."
 $postProc = Join-Path $ClawDir "post-process.mjs"
 @'
+#!/usr/bin/env bun
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -1075,7 +1099,7 @@ const dst = `${here}/cli.original.cjs`;
 
 let code = readFileSync(src, 'utf8');
 
-// (0) Strip leading @bun pragma comments (e.g. "// @bun @bytecode @bun-cjs\n")
+// Strip leading @bun pragma comments (e.g. "// @bun @bytecode @bun-cjs\n")
 // Bun requires the file to start directly with "(function" to recognize
 // the CommonJS wrapper; any preceding comment breaks that detection.
 code = code.replace(/^(?:\/\/[^\n]*\n)+/, '');
@@ -1100,7 +1124,7 @@ writeFileSync(dst, code);
 unlinkSync(src);
 console.log(`cli.original.cjs: ${code.length} bytes`);
 '@ | Set-Content $postProc -Encoding UTF8
-& node $postProc 2>&1 | ForEach-Object { Write-Host "  $_" }
+& $BunBin $postProc 2>&1 | ForEach-Object { Write-Host "  $_" }
 if (-not (Test-Path (Join-Path $ClawDir "cli.original.cjs"))) {
     Write-Err "Post-process failed"
     exit 1
@@ -1123,6 +1147,9 @@ Write-OK "cli.original.cjs ready ($NativeBinLabel)"
 
 @'
 #!/usr/bin/env bun
+// Re-extract + post-process + patch the user's currently-installed
+// native Claude binary. Invoked by cli.cjs when it detects that
+// .source-version no longer matches the latest binary in versions/.
 import { spawnSync } from 'child_process';
 import { writeFileSync, existsSync, mkdirSync, rmSync } from 'fs';
 import { dirname, join, basename } from 'path';
@@ -1672,10 +1699,10 @@ Set-Content (Join-Path $ClawDir ".clawgod-version") $ClawSelfVersion
 Write-OK "Wrapper created (cli.cjs)"
 
 # ─── Write universal patcher ──────────────────────────
-# (Same Node.js patcher as bash version — inline to avoid extra download)
+# (Same Bun patcher as bash version — inline to avoid extra download)
 
 $patcherCode = @'
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * ClawGod Plus Universal Patcher
  */
@@ -2689,7 +2716,7 @@ Write-OK "Patcher created (patch.mjs)"
 # ─── Apply patches ────────────────────────────────────
 
 Write-Dim "Applying patches ..."
-node (Join-Path $ClawDir "patch.mjs")
+& $BunBin (Join-Path $ClawDir "patch.mjs")
 Invoke-ChromePostInstallFix
 
 # ─── Create default configs ───────────────────────────
@@ -2741,7 +2768,7 @@ if(Array.isArray(s.permissions?.deny))s.permissions.deny=s.permissions.deny.filt
 fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");
 '@
     if (Test-Path $claudeSettings) {
-        try { node -e $leanRemoveScript "$claudeSettings" 2>$null } catch {}
+        try { & $BunBin -e $leanRemoveScript "$claudeSettings" 2>$null } catch {}
     }
     Write-OK "Lean mode disabled (all tools restored)"
 } elseif ($LeanOn) {
@@ -2775,7 +2802,7 @@ for (const t of deny) { if (!ex.has(t)) { s.permissions.deny.push(t); changed = 
 if (changed) fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + "\n");
 '@
     try {
-        node -e $leanApplyScript "$claudeSettings" "$leanIsMax" 2>$null
+        & $BunBin -e $leanApplyScript "$claudeSettings" "$leanIsMax" 2>$null
         if ($leanIsMax) { Write-OK "Lean settings applied: max (~/.claude/settings.json)" }
         else { Write-OK "Lean settings applied: on (~/.claude/settings.json)" }
     } catch {}
@@ -2858,7 +2885,8 @@ $importBin = Join-Path $ClawDir "clawgod-import.exe"
 if (-not (Test-Path $importBin)) {
     $importUrl = "https://github.com/0Chencc/clawgod/releases/latest/download/clawgod-import-windows-x64.exe"
     try {
-        Invoke-WebRequest -Uri $importUrl -OutFile $importBin -UseBasicParsing -ErrorAction Stop
+        & $BunBin (Join-Path $ClawDir "fetch-file.mjs") $importUrl $importBin
+        if ($LASTEXITCODE -ne 0) { throw "fetch-file.mjs exited $LASTEXITCODE" }
         Write-OK "Provider import tool installed (clawgod-import.exe)"
     } catch {
         Write-Dim "Provider import tool not yet available (build pending)"
@@ -2985,7 +3013,7 @@ Install-ClaudeMemCompatHelper
 try {
     $env:CLAWGOD_BUN_BIN = $BunBin
     $env:CLAWGOD_CLAUDE_BIN = $claudeCmd
-    node (Join-Path $ClawDir "claude-mem-compat.cjs") install
+    & $BunBin (Join-Path $ClawDir "claude-mem-compat.cjs") install
     if (Test-Path (Join-Path $env:USERPROFILE ".claude-mem\clawgod-settings-backup.json")) {
         Write-OK "claude-mem compatibility configured"
     }

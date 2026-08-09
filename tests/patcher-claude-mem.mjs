@@ -31,6 +31,7 @@ function extractPowerShellHelper() {
 const unixHelper = extractUnixHelper();
 const powerShellHelper = extractPowerShellHelper();
 assert.equal(powerShellHelper, unixHelper, 'Unix and Windows installers must ship the same helper');
+assert.match(unixHelper, /^#!\/usr\/bin\/env bun\n/, 'claude-mem compatibility helper must run with Bun');
 assert.match(powerShellInstaller, /if \(\$LASTEXITCODE -ne 0\) \{ throw "claude-mem compatibility helper exited \$LASTEXITCODE" \}/, 'Windows uninstall must stop on helper failure');
 
 function makeHome(helper) {
