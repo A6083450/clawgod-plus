@@ -96,24 +96,23 @@ done
 # Find Claude Code cli.js path
 # ============================================================
 find_cli_path() {
-    local locations=(
-        "$HOME/.claude/local/node_modules/@cometix/claude-code/cli.js"
-        "/usr/local/lib/node_modules/@cometix/claude-code/cli.js"
-        "/usr/lib/node_modules/@cometix/claude-code/cli.js"
-    )
-    if command -v npm &> /dev/null; then
-        local npm_root
-        npm_root=$(npm root -g 2>/dev/null || true)
-        if [[ -n "$npm_root" ]]; then
-            locations+=("$npm_root/@cometix/claude-code/cli.js")
-        fi
+    local path="$HOME/.clawgod/cli.original.cjs"
+    if [[ -f "$path" ]]; then
+        echo "$path"
+        return 0
     fi
-    for path in "${locations[@]}"; do
-        if [[ -f "$path" ]]; then
-            echo "$path"
-            return 0
-        fi
-    done
+    return 1
+}
+
+resolve_bun() {
+    if command -v bun >/dev/null 2>&1; then
+        command -v bun
+        return 0
+    fi
+    if [[ -x "$HOME/.bun/bin/bun" ]]; then
+        echo "$HOME/.bun/bin/bun"
+        return 0
+    fi
     return 1
 }
 
@@ -133,9 +132,7 @@ else
         error "Claude Code cli.js not found"
         echo ""
         echo "Searched locations:"
-        echo "  ~/.claude/local/node_modules/@cometix/claude-code/cli.js"
-        echo "  /usr/local/lib/node_modules/@cometix/claude-code/cli.js"
-        echo "  \$(npm root -g)/@cometix/claude-code/cli.js"
+        echo "  ~/.clawgod/cli.original.cjs"
         echo ""
         echo "Tip: You can specify the path directly:"
         echo "  $0 /path/to/cli.js"
@@ -145,12 +142,13 @@ else
 fi
 
 CLI_DIR=$(dirname "$CLI_PATH")
+CLI_BASE=$(basename "$CLI_PATH")
 
 # ============================================================
 # Restore backup
 # ============================================================
 if $RESTORE; then
-    LATEST_BACKUP=$(ls -t "$CLI_DIR"/cli.js.${BACKUP_SUFFIX}-* 2>/dev/null | head -1)
+    LATEST_BACKUP=$(ls -t "$CLI_DIR"/"$CLI_BASE".${BACKUP_SUFFIX}-* 2>/dev/null | head -1)
     if [[ -n "$LATEST_BACKUP" ]]; then
         cp "$LATEST_BACKUP" "$CLI_PATH"
         success "Restored from backup: $LATEST_BACKUP"
@@ -166,17 +164,124 @@ echo ""
 # ============================================================
 # Download acorn parser if needed
 # ============================================================
-ACORN_PATH="/tmp/acorn-claude-fix.js"
+BUN_BIN=$(resolve_bun) || {
+    error "Bun is required. Install Bun: https://bun.sh/docs/installation"
+    exit 1
+}
+
+ACORN_PATH="${TMPDIR:-/tmp}/acorn-8.16.0.cjs"
 if [[ ! -f "$ACORN_PATH" ]]; then
     info "Downloading acorn parser..."
-    curl -sL "https://unpkg.com/acorn@8.16.0/dist/acorn.js" -o "$ACORN_PATH" || {
+    FETCH_SCRIPT=$(mktemp "${TMPDIR:-/tmp}/acorn-fetch-XXXXXX.mjs")
+    cat > "$FETCH_SCRIPT" <<'FETCH_EOF'
+import { existsSync, renameSync, rmSync } from 'node:fs';
+
+const [url, destination] = process.argv.slice(2);
+if (!url || !destination) throw new Error('usage: acorn fetcher <url> <destination>');
+
+function noProxyRule(value) {
+  let entry = value.trim().toLowerCase();
+  if (entry === '*') return { all: true };
+  let host = entry;
+  let port = '';
+  if (entry.startsWith('[')) {
+    const close = entry.indexOf(']');
+    if (close === -1) return { host: entry, port };
+    host = entry.slice(1, close);
+    const suffix = entry.slice(close + 1);
+    if (/^:\d+$/.test(suffix)) port = suffix.slice(1);
+    else if (suffix) return { host: entry, port };
+  } else {
+    const colon = entry.lastIndexOf(':');
+    if (colon > 0 && colon === entry.indexOf(':') && /^\d+$/.test(entry.slice(colon + 1))) {
+      host = entry.slice(0, colon);
+      port = entry.slice(colon + 1);
+    }
+  }
+  return { host: host.replace(/^\*\./, '.'), port };
+}
+
+function bypassesProxy(urlValue) {
+  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
+  const entries = (process.env.NO_PROXY || process.env.no_proxy || '').split(',').filter(value => value.trim());
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
+  return entries.some(entry => {
+    const rule = noProxyRule(entry);
+    if (rule.all) return true;
+    const baseHost = rule.host.replace(/^\./, '');
+    return (host === baseHost || host.endsWith(`.${baseHost}`)) && (!rule.port || rule.port === port);
+  });
+}
+
+function proxyFor(urlValue) {
+  const parsed = new URL(urlValue);
+  if (bypassesProxy(parsed)) return undefined;
+  return parsed.protocol === 'https:'
+    ? process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy
+    : process.env.HTTP_PROXY || process.env.http_proxy;
+}
+
+async function fetchDirect(url, init, fetchImpl) {
+  const upper = Object.hasOwn(process.env, 'NO_PROXY') ? process.env.NO_PROXY : undefined;
+  const lower = Object.hasOwn(process.env, 'no_proxy') ? process.env.no_proxy : undefined;
+  try {
+    process.env.NO_PROXY = '*';
+    process.env.no_proxy = '*';
+    return await fetchImpl(url, init);
+  } finally {
+    if (upper === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = upper;
+    if (lower === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = lower;
+  }
+}
+
+async function fetchWithProxy(initialUrl) {
+  let nextUrl = initialUrl;
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    const bypass = bypassesProxy(nextUrl);
+    const proxy = proxyFor(nextUrl);
+    let response;
+    try {
+      const init = { redirect: 'manual', signal: AbortSignal.timeout(300000), ...(proxy ? { proxy } : {}) };
+      response = bypass ? await fetchDirect(nextUrl, init, fetch) : await fetch(nextUrl, init);
+    } catch (error) {
+      if (proxy) throw new Error('Request failed through configured proxy');
+      throw error;
+    }
+    if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
+      if (redirects === 5) throw new Error('Too many redirects');
+      nextUrl = new URL(response.headers.get('location'), nextUrl).href;
+      continue;
+    }
+    if (response.status !== 200) throw new Error(`Request failed with HTTP ${response.status}`);
+    return response;
+  }
+  throw new Error('Too many redirects');
+}
+
+const temporary = `${destination}.${process.pid}.tmp`;
+try {
+  await Bun.write(temporary, await fetchWithProxy(url));
+  renameSync(temporary, destination);
+} finally {
+  if (existsSync(temporary)) rmSync(temporary, { force: true });
+}
+FETCH_EOF
+    set +e
+    "$BUN_BIN" "$FETCH_SCRIPT" "https://unpkg.com/acorn@8.16.0/dist/acorn.js" "$ACORN_PATH"
+    FETCH_EXIT=$?
+    set -e
+    rm -f "$FETCH_SCRIPT"
+    if [[ $FETCH_EXIT -ne 0 ]]; then
         error "Failed to download acorn parser"
         exit 1
-    }
+    fi
 fi
 
 # ============================================================
-# Node.js AST patch script
+# Bun AST patch script
 # ============================================================
 PATCH_SCRIPT=$(mktemp)
 cat > "$PATCH_SCRIPT" << 'PATCH_EOF'
@@ -576,8 +681,10 @@ if $CHECK_ONLY; then
 fi
 
 export BACKUP_SUFFIX
-OUTPUT=$(node "$PATCH_SCRIPT" "$ACORN_PATH" "$CLI_PATH" "$CHECK_ARG" 2>&1) || true
+set +e
+OUTPUT=$("$BUN_BIN" "$PATCH_SCRIPT" "$ACORN_PATH" "$CLI_PATH" "$CHECK_ARG" 2>&1)
 EXIT_CODE=$?
+set -e
 
 rm -f "$PATCH_SCRIPT"
 

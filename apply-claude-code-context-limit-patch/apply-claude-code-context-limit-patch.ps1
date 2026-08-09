@@ -61,6 +61,14 @@ function Write-WarnMsg { param($Message) Write-Host "[!] " -ForegroundColor Yell
 function Write-FixError { param($Message) Write-Host "[X] " -ForegroundColor Red -NoNewline; Write-Host $Message }
 function Write-Info { param($Message) Write-Host "[>] " -ForegroundColor Blue -NoNewline; Write-Host $Message }
 
+function Resolve-Bun {
+    $command = Get-Command bun -CommandType Application -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+    $fallback = Join-Path $env:USERPROFILE ".bun\bin\bun.exe"
+    if (Test-Path -LiteralPath $fallback) { return $fallback }
+    return $null
+}
+
 function Invoke-ClaudeCodeContextLimitPatch {
     param(
         [switch]$Check,
@@ -97,32 +105,9 @@ Notes:
     }
 
     function Find-CliPath {
-        $locations = @(
-            (Join-Path $env:USERPROFILE ".clawgod\cli.original.cjs"),
-            (Join-Path $env:USERPROFILE ".claude\local\node_modules\@anthropic-ai\claude-code\cli.js"),
-            (Join-Path $env:USERPROFILE ".claude\local\node_modules\@cometix\claude-code\cli.js"),
-            (Join-Path $env:APPDATA "npm\node_modules\@anthropic-ai\claude-code\cli.js"),
-            (Join-Path $env:APPDATA "npm\node_modules\@cometix\claude-code\cli.js"),
-            (Join-Path $env:ProgramFiles "nodejs\node_modules\@anthropic-ai\claude-code\cli.js"),
-            (Join-Path $env:ProgramFiles "nodejs\node_modules\@cometix\claude-code\cli.js")
-        )
-
-        try {
-            $npmRoot = & npm root -g 2>$null
-            if ($npmRoot) {
-                $locations += Join-Path $npmRoot "@anthropic-ai\claude-code\cli.js"
-                $locations += Join-Path $npmRoot "@cometix\claude-code\cli.js"
-            }
-        } catch {}
-
-        # Prefer a real bundle (>1MB). Skip thin ClawGod Plus wrappers.
-        foreach ($path in $locations) {
-            if (Test-Path -LiteralPath $path) {
-                $item = Get-Item -LiteralPath $path
-                if ($item.Length -gt 1000000) {
-                    return $item.FullName
-                }
-            }
+        $path = Join-Path $env:USERPROFILE ".clawgod\cli.original.cjs"
+        if (Test-Path -LiteralPath $path) {
+            return (Get-Item -LiteralPath $path).FullName
         }
         return $null
     }
@@ -142,9 +127,6 @@ Notes:
             Write-Host ""
             Write-Host "Searched:"
             Write-Host "  %USERPROFILE%\.clawgod\cli.original.cjs"
-            Write-Host "  %USERPROFILE%\.claude\local\node_modules\@anthropic-ai\claude-code\cli.js"
-            Write-Host "  %APPDATA%\npm\node_modules\@anthropic-ai\claude-code\cli.js"
-            Write-Host "  `$(npm root -g)\@anthropic-ai\claude-code\cli.js"
             Write-Host ""
             Write-Host "Tip: .\$($MyInvocation.MyCommand.Name) -CliPath 'C:\path\to\cli.original.cjs'"
             return 1
@@ -178,29 +160,133 @@ Notes:
         return 1
     }
 
-    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-        Write-FixError "Node.js is required"
+    $bunBin = Resolve-Bun
+    if (-not $bunBin) {
+        Write-FixError "Bun is required. Install Bun: https://bun.sh/docs/installation"
         return 1
     }
 
     Write-Host ""
 
-    # Download acorn once (optional for env-loader injection; core replace works without it)
-    $acornPath = Join-Path $env:TEMP "acorn-claude-ctxlimit.js"
+    $acornPath = Join-Path $env:TEMP "acorn-8.16.0.cjs"
     if (-not (Test-Path -LiteralPath $acornPath)) {
         Write-Info "Downloading acorn parser..."
+        $fetchScript = Join-Path $env:TEMP "acorn-fetch-$PID.mjs"
+        $fetchCode = @'
+import { existsSync, renameSync, rmSync } from 'node:fs';
+
+const [url, destination] = process.argv.slice(2);
+if (!url || !destination) throw new Error('usage: acorn fetcher <url> <destination>');
+
+function noProxyRule(value) {
+  let entry = value.trim().toLowerCase();
+  if (entry === '*') return { all: true };
+  let host = entry;
+  let port = '';
+  if (entry.startsWith('[')) {
+    const close = entry.indexOf(']');
+    if (close === -1) return { host: entry, port };
+    host = entry.slice(1, close);
+    const suffix = entry.slice(close + 1);
+    if (/^:\d+$/.test(suffix)) port = suffix.slice(1);
+    else if (suffix) return { host: entry, port };
+  } else {
+    const colon = entry.lastIndexOf(':');
+    if (colon > 0 && colon === entry.indexOf(':') && /^\d+$/.test(entry.slice(colon + 1))) {
+      host = entry.slice(0, colon);
+      port = entry.slice(colon + 1);
+    }
+  }
+  return { host: host.replace(/^\*\./, '.'), port };
+}
+
+function bypassesProxy(urlValue) {
+  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
+  const entries = (process.env.NO_PROXY || process.env.no_proxy || '').split(',').filter(value => value.trim());
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
+  return entries.some(entry => {
+    const rule = noProxyRule(entry);
+    if (rule.all) return true;
+    const baseHost = rule.host.replace(/^\./, '');
+    return (host === baseHost || host.endsWith(`.${baseHost}`)) && (!rule.port || rule.port === port);
+  });
+}
+
+function proxyFor(urlValue) {
+  const parsed = new URL(urlValue);
+  if (bypassesProxy(parsed)) return undefined;
+  return parsed.protocol === 'https:'
+    ? process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy
+    : process.env.HTTP_PROXY || process.env.http_proxy;
+}
+
+async function fetchDirect(url, init, fetchImpl) {
+  const upper = Object.hasOwn(process.env, 'NO_PROXY') ? process.env.NO_PROXY : undefined;
+  const lower = Object.hasOwn(process.env, 'no_proxy') ? process.env.no_proxy : undefined;
+  try {
+    process.env.NO_PROXY = '*';
+    process.env.no_proxy = '*';
+    return await fetchImpl(url, init);
+  } finally {
+    if (upper === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = upper;
+    if (lower === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = lower;
+  }
+}
+
+async function fetchWithProxy(initialUrl) {
+  let nextUrl = initialUrl;
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    const bypass = bypassesProxy(nextUrl);
+    const proxy = proxyFor(nextUrl);
+    let response;
+    try {
+      const init = { redirect: 'manual', signal: AbortSignal.timeout(300000), ...(proxy ? { proxy } : {}) };
+      response = bypass ? await fetchDirect(nextUrl, init, fetch) : await fetch(nextUrl, init);
+    } catch (error) {
+      if (proxy) throw new Error('Request failed through configured proxy');
+      throw error;
+    }
+    if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
+      if (redirects === 5) throw new Error('Too many redirects');
+      nextUrl = new URL(response.headers.get('location'), nextUrl).href;
+      continue;
+    }
+    if (response.status !== 200) throw new Error(`Request failed with HTTP ${response.status}`);
+    return response;
+  }
+  throw new Error('Too many redirects');
+}
+
+const temporary = `${destination}.${process.pid}.tmp`;
+try {
+  await Bun.write(temporary, await fetchWithProxy(url));
+  renameSync(temporary, destination);
+} finally {
+  if (existsSync(temporary)) rmSync(temporary, { force: true });
+}
+'@
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($fetchScript, $fetchCode, $utf8NoBom)
         try {
-            Invoke-WebRequest -Uri "https://unpkg.com/acorn@8.16.0/dist/acorn.js" -OutFile $acornPath -UseBasicParsing
-        } catch {
-            Write-WarnMsg "Failed to download acorn — env-loader reassignment may be skipped"
-            $acornPath = ""
+            $fetchOutput = & $bunBin $fetchScript "https://unpkg.com/acorn@8.16.0/dist/acorn.js" $acornPath 2>&1
+            $fetchExitCode = $LASTEXITCODE
+        } finally {
+            Remove-Item -LiteralPath $fetchScript -ErrorAction SilentlyContinue
+        }
+        if ($fetchExitCode -ne 0) {
+            Write-FixError "Failed to download acorn parser"
+            if ($fetchOutput) { Write-Host ($fetchOutput | Out-String) }
+            return 1
         }
     }
 
     $patchScript = @'
 const fs = require('fs');
 
-// argv: node patch.js <acornPath|-- > <cliPath> [--check]
+// argv: bun patch.js <acornPath> <cliPath> [--check]
 const acornPath = process.argv[2] === '--' ? null : process.argv[2];
 const cliPath = process.argv[3];
 const checkOnly = process.argv.includes('--check');
@@ -525,7 +611,7 @@ console.log('SUCCESS:' + patchCount);
 '@
 
     $tempPatchScript = Join-Path $env:TEMP "claude-fix-context-limit-$PID.js"
-    # UTF-8 without BOM (Node is happier; BOM can break shebang-less scripts on some hosts)
+    # UTF-8 without BOM keeps the temporary script portable across Bun hosts.
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($tempPatchScript, $patchScript, $utf8NoBom)
 
@@ -533,15 +619,10 @@ console.log('SUCCESS:' + patchCount);
     $checkArg = @()
     if ($Check) { $checkArg = @('--check') }
 
-    $nodeArgs = @('--max-old-space-size=8192', $tempPatchScript)
-    if ($acornPath -and (Test-Path -LiteralPath $acornPath)) {
-        $nodeArgs += @($acornPath, $cliPath) + $checkArg
-    } else {
-        $nodeArgs += @('--', $cliPath) + $checkArg
-    }
+    $bunArgs = @($tempPatchScript, $acornPath, $cliPath) + $checkArg
 
     try {
-        $output = & node @nodeArgs 2>&1
+        $output = & $bunBin @bunArgs 2>&1
         $scriptExitCode = $LASTEXITCODE
     } finally {
         Remove-Item -LiteralPath $tempPatchScript -ErrorAction SilentlyContinue
@@ -601,7 +682,7 @@ console.log('SUCCESS:' + patchCount);
         }
     }
 
-    # Surface unexpected node failures that did not match known markers
+    # Surface unexpected patcher failures that did not match known markers
     if ($null -ne $scriptExitCode -and $scriptExitCode -ne 0 -and $scriptExitCode -ne 1) {
         Write-FixError "Patch script failed (exit $scriptExitCode)"
         Write-Host ($output | Out-String)
