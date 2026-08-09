@@ -61,7 +61,7 @@ ClawGod Plus 从 Claude Code 的 Bun standalone 二进制中提取内嵌 JavaScr
 
 | 领域 | 能力 |
 |---|---|
-| **功能解锁** | Internal User 模式和隐藏命令、GrowthBook 覆盖、Agent Teams、Computer Use、Auto-mode、Ultraplan 和 Ultrareview。 |
+| **功能解锁** | Internal User 模式和隐藏命令、GrowthBook 覆盖、Agent Teams、共享协作、Harbor Kite 设置和 `/peers`、Computer Use、Auto-mode、Ultraplan 和 Ultrareview。 |
 | **限制移除** | 移除 `CYBER_RISK_INSTRUCTION`、URL 猜测限制、强制谨慎操作确认，以及启动时的登录提醒。 |
 | **Provider 支持** | Anthropic API Key、OAuth、Anthropic 兼容端点、OpenAI 兼容网关、Provider 导入，以及第三方 Prompt Cache Header 处理。 |
 | **可靠性** | 恢复 Glob/Grep、1 小时 Prompt Cache Allowlist、Claude 升级后自动重打补丁、更新提示，以及三级 Lean Settings。 |
@@ -69,19 +69,11 @@ ClawGod Plus 从 Claude Code 的 Bun standalone 二进制中提取内嵌 JavaScr
 
 ## 前置依赖
 
-运行增强版安装器前，请先安装：
+ClawGod Plus 只需要一个已安装的 JavaScript 运行时：**Bun 1.3.14 或更高版本**。安装器与所有独立补丁工具都由 Bun 运行。
 
-| 工具 | 要求 | 用途 |
-|---|---|---|
-| **Claude Code 原生二进制** | 当前官方安装 | 提供 ClawGod Plus 要提取和修改的 Bun standalone 二进制。 |
-| **Node.js** | 18 或更高版本 | 运行提取与补丁脚本。 |
-| **Bun** | 当前版本 | 运行修改后的 CLI；缺失时安装器可以自动安装。 |
-| **ripgrep** | 当前版本 | Claude Code 的 Grep 工具依赖。 |
+macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行安装命令；Shell 和 PowerShell 是操作系统的命令入口，不是另一种 JavaScript 运行时。
 
-Claude Code 官方安装器：
-
-- macOS/Linux：[`https://claude.ai/install.sh`](https://claude.ai/install.sh)
-- Windows：[`https://claude.ai/install.ps1`](https://claude.ai/install.ps1)
+安装器会从 npm Registry 获取当前平台的官方 `@anthropic-ai/claude-code-<platform>` 包，并下载、校验和私有管理 **ripgrep 15.2.0**。无需预先安装 Claude Code、Node.js、npm 或系统 ripgrep。
 
 ## 安装 ClawGod Plus
 
@@ -325,7 +317,7 @@ hash -r
 
 ```bash
 for test_file in tests/*.mjs; do
-  node "$test_file" || exit 1
+  bun "$test_file" || exit 1
 done
 
 bash -n install.sh

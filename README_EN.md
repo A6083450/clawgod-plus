@@ -61,7 +61,7 @@ The enhanced branch retains the full upstream patch set:
 
 | Area | Capabilities |
 |---|---|
-| **Feature unlocks** | Internal User mode and hidden commands, GrowthBook overrides, Agent Teams, Computer Use, Auto-mode, Ultraplan, and Ultrareview. |
+| **Feature unlocks** | Internal User mode and hidden commands, GrowthBook overrides, Agent Teams, shared collaboration, Harbor Kite settings, and `/peers`, Computer Use, Auto-mode, Ultraplan, and Ultrareview. |
 | **Restriction removal** | Removes `CYBER_RISK_INSTRUCTION`, URL-guessing restrictions, forced cautious-action confirmation, and the startup login notice. |
 | **Provider support** | Anthropic API keys, OAuth, Anthropic-compatible endpoints, OpenAI-compatible gateways, provider import, and third-party prompt-cache header handling. |
 | **Reliability** | Restored Glob/Grep tools, 1-hour prompt-cache allowlisting, auto re-patch after Claude upgrades, update notices, and three-level Lean Settings. |
@@ -69,19 +69,11 @@ The enhanced branch retains the full upstream patch set:
 
 ## Prerequisites
 
-Install these before running the enhanced installer:
+ClawGod Plus has one installed JavaScript runtime prerequisite: **Bun 1.3.14 or newer**. The installer and every standalone patch tool run under Bun.
 
-| Tool | Requirement | Why it is needed |
-|---|---|---|
-| **Claude Code native binary** | Current official installation | Provides the Bun standalone binary ClawGod Plus extracts and patches. |
-| **Node.js** | 18 or newer | Runs extraction and patch scripts. |
-| **Bun** | Current release | Runs the patched CLI; the installer can install it when absent. |
-| **ripgrep** | Current release | Required by Claude Code's Grep tool. |
+Use Shell as the operating-system command entry point on macOS/Linux, and PowerShell on Windows. Shell and PowerShell are command entry points, not additional JavaScript runtimes.
 
-Official Claude Code installers:
-
-- macOS/Linux: [`https://claude.ai/install.sh`](https://claude.ai/install.sh)
-- Windows: [`https://claude.ai/install.ps1`](https://claude.ai/install.ps1)
+The installer fetches the current platform-specific official `@anthropic-ai/claude-code-<platform>` package from the npm Registry, then downloads and verifies its privately managed **ripgrep 15.2.0**. Do not install Claude Code, Node.js, npm, or a system ripgrep first.
 
 ## Install ClawGod Plus
 
@@ -325,7 +317,7 @@ Run them without installing ClawGod Plus:
 
 ```bash
 for test_file in tests/*.mjs; do
-  node "$test_file" || exit 1
+  bun "$test_file" || exit 1
 done
 
 bash -n install.sh

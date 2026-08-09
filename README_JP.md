@@ -61,7 +61,7 @@ ClawGod Plus は Claude Code の Bun standalone バイナリに埋め込まれ�
 
 | 分野 | 機能 |
 |---|---|
-| **機能アンロック** | Internal User モードと隠しコマンド、GrowthBook オーバーライド、Agent Teams、Computer Use、Auto-mode、Ultraplan、Ultrareview。 |
+| **機能アンロック** | Internal User モードと隠しコマンド、GrowthBook オーバーライド、Agent Teams、共有コラボレーション、Harbor Kite 設定、`/peers`、Computer Use、Auto-mode、Ultraplan、Ultrareview。 |
 | **制限解除** | `CYBER_RISK_INSTRUCTION`、URL 推測制限、慎重操作の強制確認、起動時ログイン通知を削除。 |
 | **Provider 対応** | Anthropic API キー、OAuth、Anthropic 互換エンドポイント、OpenAI 互換ゲートウェイ、Provider インポート、サードパーティ Prompt Cache Header 処理。 |
 | **信頼性** | Glob/Grep 復元、1 時間 Prompt Cache Allowlist、Claude 更新後の自動再パッチ、更新通知、3 段階 Lean Settings。 |
@@ -69,19 +69,11 @@ ClawGod Plus は Claude Code の Bun standalone バイナリに埋め込まれ�
 
 ## 必要条件
 
-拡張版インストーラを実行する前に、次をインストールしてください。
+ClawGod Plus でインストール済みの JavaScript ランタイムとして必要なのは **Bun 1.3.14 以上**だけです。インストーラとすべての独立パッチツールは Bun で実行されます。
 
-| ツール | 要件 | 用途 |
-|---|---|---|
-| **Claude Code ネイティブバイナリ** | 現行の公式インストール | ClawGod Plus が抽出・変更する Bun standalone バイナリを提供します。 |
-| **Node.js** | 18 以上 | 抽出とパッチスクリプトを実行します。 |
-| **Bun** | 現行リリース | 変更済み CLI を実行します。未導入ならインストーラが追加できます。 |
-| **ripgrep** | 現行リリース | Claude Code の Grep ツールに必要です。 |
+macOS/Linux では Shell、Windows では PowerShell を OS のコマンド入口として使用します。Shell と PowerShell は別の JavaScript ランタイムではありません。
 
-Claude Code 公式インストーラ：
-
-- macOS/Linux：[`https://claude.ai/install.sh`](https://claude.ai/install.sh)
-- Windows：[`https://claude.ai/install.ps1`](https://claude.ai/install.ps1)
+インストーラは npm Registry から現行プラットフォーム向け公式 `@anthropic-ai/claude-code-<platform>` パッケージを取得し、プライベート管理の **ripgrep 15.2.0** をダウンロードして検証します。Claude Code、Node.js、npm、システム ripgrep を事前に導入する必要はありません。
 
 ## ClawGod Plus をインストール
 
@@ -325,7 +317,7 @@ ClawGod Plus をインストールせずに実行できます。
 
 ```bash
 for test_file in tests/*.mjs; do
-  node "$test_file" || exit 1
+  bun "$test_file" || exit 1
 done
 
 bash -n install.sh

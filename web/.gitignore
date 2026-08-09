@@ -1,6 +1,0 @@
-# Vite / npm artifacts — checked-out, never committed.
-node_modules/
-dist/
-.vite/
-*.log
-.DS_Store
