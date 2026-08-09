@@ -59,6 +59,8 @@ claude-mem 13.14.0 的 `hooks/hooks.json` 与 `.mcp.json` 仍直接执行 `node`
 
 安装器只为这些公开归档使用代理，不在 URL、请求头或日志中附加用户凭据。下载失败不会回退到未经校验的镜像或动态 `latest`。
 
+Superpowers 源码标签内的开发 marketplace 名为 `superpowers-dev`，而用户当前 canonical ID 属于 `superpowers-marketplace`。安装器必须先校验归档内 `.claude-plugin/plugin.json` 的名称和版本，再为这份已校验源码生成只包含 `superpowers` 的本地 `superpowers-marketplace` 描述层。不得把 `superpowers-dev` 注册为用户依赖，也不得下载或启用该 marketplace 中的其他插件。
+
 ## 总体架构
 
 `install.sh` 与 `install.ps1` 生成语义相同的 Bun 插件依赖管理模块。模块负责：
@@ -66,14 +68,14 @@ claude-mem 13.14.0 的 `hooks/hooks.json` 与 `.mcp.json` 仍直接执行 `node`
 1. 读取 Claude 插件安装记录和启用状态。
 2. 严格比较已安装版本与基准版本。
 3. 下载、校验并安全解压需要安装的基准归档。
-4. 使用原版 Claude 可执行文件的插件命令安装本地 marketplace。
+4. 使用已验证的 Bun 执行 `~/.clawgod/cli.original.cjs` 的插件命令，安装本地 marketplace。
 5. 配置 claude-hud 并生成 Bun `statusLine` 入口。
 6. 对 claude-mem hooks 与 MCP 配置应用可恢复的 Bun 兼容修改。
 7. 写入所有权状态、输出插件汇总，并在卸载时恢复受管内容。
 
 该阶段在 ClawGod 核心 bundle、补丁、Bun smoke 与 launcher 全部成功后运行。插件阶段只能把自身结果标记为 installed、preserved、skipped 或 warning，不能把已经成功的核心安装改成失败。
 
-插件命令必须调用安装流程已验证的原版 Claude 可执行文件或其稳定备份，不能调用 PATH 中的 `claude`，以免递归进入 ClawGod launcher 或命中临时 shim。生成模块只能依赖 Bun 与操作系统已有的 Shell 或 PowerShell 入口。
+插件命令必须通过安装流程已验证的 Bun 直接执行 `~/.clawgod/cli.original.cjs`；不得调用 PATH 中的 `claude`，以免递归进入 ClawGod launcher 或命中临时 shim。生成模块只能依赖 Bun 与操作系统已有的 Shell 或 PowerShell 入口。
 
 ## 下载与本地 Marketplace
 
@@ -83,8 +85,8 @@ claude-mem 13.14.0 的 `hooks/hooks.json` 与 `.mcp.json` 仍直接执行 `node`
 2. 使用现有 Bun 下载器语义处理代理、`NO_PROXY`、最多五次重定向、超时、原子落盘与凭据脱敏。
 3. 对完整归档计算固定 SHA-256，并在解压前拒绝不匹配内容。
 4. 使用 Bun gzip/tar 处理逻辑安全解压，拒绝绝对路径、`..` 逃逸、符号链接、硬链接、设备条目、重复冲突路径与大小异常。
-5. 校验插件 manifest、插件名称、版本和必要入口与预期一致。
-6. 将完整本地 marketplace 持久化到 Claude 插件目录，再调用官方插件命令安装用户级插件。
+5. 校验归档 marketplace、其声明的插件源码目录、插件 manifest、插件名称、版本和必要入口与预期一致；不能只依赖 marketplace 条目中可能缺失的版本字段。
+6. 将完整本地 marketplace 持久化到 Claude 插件目录，再调用官方插件命令安装用户级插件。Superpowers 使用由 Bun 生成的 canonical `superpowers-marketplace` 描述层引用同一持久目录内已经校验的 6.2.0 源码。
 7. 验证安装记录、版本、安装目录和启用 ID 后才提交本次插件事务。
 
 必须保持 canonical ID：
