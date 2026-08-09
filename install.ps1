@@ -582,144 +582,192 @@ $platformSuffix = "win32-$arch"
 # once per upgrade.
 
 # npm registry — pull the platform tarball directly via Bun.
-#    Avoids depending on `npm` and `tar` being on PATH (older Windows 10
-#    builds lack tar.exe; some PowerShell shims mangle `& npm`). Bun runs
-#    the compatible extractor without requiring a separate Node runtime.
 if (-not $NativeBin) {
     $npmPkg = "@anthropic-ai/claude-code-$platformSuffix"
     Write-Dim "Fetching $npmPkg@$Version from npm registry ..."
     $NativeBinTmpDir = Join-Path $env:TEMP "clawgod-binary-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Force -Path $NativeBinTmpDir | Out-Null
-    $fetchScript = Join-Path $NativeBinTmpDir "fetch.mjs"
-    $useNpmFetch = $false
-    $noProxy = $env:NO_PROXY
-    if ($env:HTTPS_PROXY -or $env:HTTP_PROXY) {
-        if ($noProxy -match '(?i)npmjs\.org') {
-            Write-Dim "NO_PROXY includes npmjs.org — using direct fetch"
-        } elseif (Get-Command npm -ErrorAction SilentlyContinue) {
-            $useNpmFetch = $true
-        } else {
-            Write-Warn "HTTP proxy detected but npm not found. fetch.mjs may not work through your proxy."
-            Write-Warn "Install npm or set NO_PROXY=registry.npmjs.org to bypass."
-        }
-    }
-    if ($useNpmFetch) {
-        Push-Location $NativeBinTmpDir
-        try {
-            $npmOut = npm pack "$npmPkg@$Version" --silent 2>&1
-            $tarball = Get-ChildItem $NativeBinTmpDir -Filter "*.tgz" | Select-Object -First 1
-            if ($tarball) {
-                tar xzf $tarball.FullName 2>$null
-                $cand = Join-Path $NativeBinTmpDir "package\claude.exe"
-                if ((Test-Path $cand) -and (Get-Item $cand).Length -gt 10MB) {
-                    $NativeBin = $cand
-                    $pkgJson = Join-Path $NativeBinTmpDir "package\package.json"
-                    if (Test-Path $pkgJson) {
-                        $NativeBinLabel = (Get-Content $pkgJson -Raw | ConvertFrom-Json).version
-                    } else { $NativeBinLabel = "npm-latest" }
-                    Write-OK "Downloaded $npmPkg@$NativeBinLabel (via npm)"
-                }
-            }
-        } finally { Pop-Location }
-        if (-not $NativeBin) {
-            Remove-Item -Recurse -Force $NativeBinTmpDir -ErrorAction SilentlyContinue
-            Write-Err "npm pack failed. Output:"
-            Write-Dim ($npmOut -join "`n")
-            exit 1
-        }
-    } else {
+    $fetchScript = Join-Path $NativeBinTmpDir "fetch-package.mjs"
     @'
-// Download a scoped npm tarball (no npm CLI dependency) and extract it
-// using Node's built-in zlib + a minimal POSIX tar parser.
-import { request as httpsRequest } from 'node:https';
-import { request as httpRequest } from 'node:http';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { gunzipSync } from 'node:zlib';
-import { URL } from 'node:url';
+#!/usr/bin/env bun
+import { chmodSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 
-const [, , pkgSpec, outDir] = process.argv;
-const last = pkgSpec.lastIndexOf('@');
-const pkg = last > 0 ? pkgSpec.slice(0, last) : pkgSpec;
-const ver = last > 0 ? pkgSpec.slice(last + 1) : 'latest';
+const MIN_BINARY_BYTES = 10 * 1024 * 1024;
 
-function get(url, redirects = 0) {
-  return new Promise((resolve, reject) => {
-    if (redirects > 5) return reject(new Error(`Too many redirects`));
-    const parsed = new URL(url);
-    const reqMod = parsed.protocol === 'https:' ? httpsRequest : httpRequest;
-    const opts = { method: 'GET', hostname: parsed.hostname, port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80), path: parsed.pathname + parsed.search };
-    reqMod(opts, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        return get(res.headers.location, redirects + 1).then(resolve, reject);
-      }
-      if (res.statusCode !== 200) {
-        res.resume();
-        return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
-      }
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-      res.on('error', reject);
-    }).on('error', reject).end();
+function noProxyRule(value) {
+  let entry = value.trim().toLowerCase();
+  if (entry === '*') return { all: true };
+
+  let host = entry;
+  let port = '';
+  if (entry.startsWith('[')) {
+    const close = entry.indexOf(']');
+    if (close === -1) return { host: entry, port };
+    host = entry.slice(1, close);
+    const suffix = entry.slice(close + 1);
+    if (/^:\d+$/.test(suffix)) port = suffix.slice(1);
+    else if (suffix) return { host: entry, port };
+  } else {
+    const colon = entry.lastIndexOf(':');
+    if (colon > 0 && colon === entry.indexOf(':') && /^\d+$/.test(entry.slice(colon + 1))) {
+      host = entry.slice(0, colon);
+      port = entry.slice(colon + 1);
+    }
+  }
+  return { host: host.replace(/^\*\./, '.'), port };
+}
+
+function bypassesProxy(urlValue, env) {
+  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
+  const entries = (env.NO_PROXY || env.no_proxy || '').split(',').filter(value => value.trim());
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
+  return entries.some(entry => {
+    const rule = noProxyRule(entry);
+    if (rule.all) return true;
+    const baseHost = rule.host.replace(/^\./, '');
+    const matchesHost = host === baseHost || host.endsWith(`.${baseHost}`);
+    return matchesHost && (!rule.port || rule.port === port);
   });
 }
 
-const metaBuf = await get(`https://registry.npmjs.org/${pkg}/${ver}`);
-const meta = JSON.parse(metaBuf.toString('utf8'));
-console.log(`Resolved ${pkg}@${meta.version}`);
-const tgz = await get(meta.dist.tarball);
-console.log(`Downloaded ${(tgz.length / 1024 / 1024).toFixed(1)} MB`);
-
-const buf = gunzipSync(tgz);
-mkdirSync(outDir, { recursive: true });
-let off = 0, files = 0;
-while (off + 512 <= buf.length) {
-  const name = buf.slice(off, off + 100).toString('utf8').replace(/\0+$/, '');
-  if (!name) break;
-  const sizeOct = buf.slice(off + 124, off + 136).toString('utf8').replace(/[\0\s]+$/, '');
-  const size = parseInt(sizeOct, 8) || 0;
-  const typeflag = String.fromCharCode(buf[off + 156]);
-  off += 512;
-  if (typeflag === '0' || typeflag === '\0') {
-    const dest = join(outDir, name);
-    mkdirSync(dirname(dest), { recursive: true });
-    writeFileSync(dest, buf.slice(off, off + size));
-    files++;
-  }
-  off += Math.ceil(size / 512) * 512;
+export function proxyFor(urlValue, env = process.env) {
+  const parsed = new URL(urlValue);
+  if (bypassesProxy(parsed, env)) return undefined;
+  return parsed.protocol === 'https:'
+    ? env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy
+    : env.HTTP_PROXY || env.http_proxy;
 }
-console.log(`Extracted ${files} files`);
-console.log(`VERSION=${meta.version}`);
+
+export async function fetchWithProxy(initialUrl, init = {}, env = process.env, fetchImpl = fetch) {
+  let nextUrl = initialUrl;
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    const proxy = proxyFor(nextUrl, env);
+    let response;
+    try {
+      response = await fetchImpl(nextUrl, {
+        ...init,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(300000),
+        ...(proxy ? { proxy } : {}),
+      });
+    } catch (error) {
+      if (proxy) throw new Error('Request failed through configured proxy');
+      throw error;
+    }
+    if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
+      if (redirects === 5) throw new Error('Too many redirects');
+      nextUrl = new URL(response.headers.get('location'), nextUrl).href;
+      continue;
+    }
+    if (response.status !== 200) throw new Error(`Request failed with HTTP ${response.status}`);
+    return response;
+  }
+  throw new Error('Too many redirects');
+}
+
+async function checkedJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    throw new Error('Registry returned invalid JSON');
+  }
+}
+
+export async function resolvePackage(pkg, requested, options = {}) {
+  const fetchImpl = options.fetchImpl || fetch;
+  const env = options.env || process.env;
+  const metadataUrl = `https://registry.npmjs.org/${encodeURIComponent(pkg)}`;
+  const metadata = await checkedJson(await fetchWithProxy(metadataUrl, {}, env, fetchImpl));
+  const version = requested === 'latest' ? metadata['dist-tags']?.latest : requested;
+  const manifest = metadata.versions?.[version];
+  if (!version || !manifest?.dist) throw new Error(`Package version not found: ${pkg}@${requested}`);
+  return { version, dist: manifest.dist };
+}
+
+function parseSpec(spec) {
+  const separator = spec.lastIndexOf('@');
+  if (separator > 0) {
+    return { pkg: spec.slice(0, separator), requested: spec.slice(separator + 1) || 'latest' };
+  }
+  return { pkg: spec, requested: 'latest' };
+}
+
+function safeArchivePath(name) {
+  if (!name || name.startsWith('/') || name.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(name)) return false;
+  return !name.split(/[\\/]/).includes('..');
+}
+
+export async function installPackage(spec, outDir, options = {}) {
+  const { pkg, requested } = parseSpec(spec);
+  const fetchImpl = options.fetchImpl || fetch;
+  const env = options.env || process.env;
+  const { version, dist } = await resolvePackage(pkg, requested, { fetchImpl, env });
+  if (!dist.tarball || typeof dist.integrity !== 'string') throw new Error(`Missing distribution metadata for ${pkg}@${version}`);
+
+  const archiveResponse = await fetchWithProxy(dist.tarball, {}, env, fetchImpl);
+  const bytes = new Uint8Array(await archiveResponse.arrayBuffer());
+  const integrityMatch = /^sha512-([A-Za-z0-9+/]+={0,2})$/.exec(dist.integrity);
+  if (!integrityMatch) throw new Error(`Unsupported integrity for ${pkg}@${version}`);
+  const actual = new Bun.CryptoHasher('sha512').update(bytes).digest('base64');
+  if (actual !== integrityMatch[1]) throw new Error(`Integrity mismatch for ${pkg}@${version}`);
+
+  const files = await new Bun.Archive(bytes).files();
+  for (const name of files.keys()) {
+    if (!safeArchivePath(name)) throw new Error(`Unsafe archive path: ${name}`);
+  }
+
+  const packagePath = 'package/package.json';
+  const binaryName = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  const binaryEntryPath = `package/${binaryName}`;
+  const packageFile = files.get(packagePath);
+  const binaryFile = files.get(binaryEntryPath);
+  if (!packageFile) throw new Error(`Archive is missing ${packagePath}`);
+  if (!binaryFile) throw new Error(`Archive is missing ${binaryEntryPath}`);
+  if (binaryFile.size <= MIN_BINARY_BYTES) throw new Error(`Archive binary is too small: ${binaryEntryPath}`);
+
+  const packageDir = join(outDir, 'package');
+  const binaryPath = join(packageDir, binaryName);
+  mkdirSync(packageDir, { recursive: true });
+  await Bun.write(join(packageDir, 'package.json'), packageFile);
+  await Bun.write(binaryPath, binaryFile);
+  if (process.platform !== 'win32') chmodSync(binaryPath, 0o755);
+  return { version, binaryPath };
+}
+
+if (import.meta.main) {
+  const [spec, outDir] = process.argv.slice(2);
+  if (!spec || !outDir) throw new Error('usage: fetch-package.mjs <package@version> <output-directory>');
+  const result = await installPackage(spec, outDir);
+  console.log(`VERSION=${result.version}`);
+}
 '@ | Set-Content $fetchScript -Encoding UTF8
 
-        $output = & $BunBin $fetchScript "$npmPkg@$Version" $NativeBinTmpDir 2>&1
-        $exitCode = $LASTEXITCODE
-        $output | ForEach-Object { Write-Host "  $_" }
-        Remove-Item -Force $fetchScript -ErrorAction SilentlyContinue
+    $output = & $BunBin $fetchScript "$npmPkg@$Version" $NativeBinTmpDir 2>&1
+    $exitCode = $LASTEXITCODE
+    $output | ForEach-Object { Write-Host "  $_" }
+    Remove-Item -Force $fetchScript -ErrorAction SilentlyContinue
 
-        if ($exitCode -ne 0) {
-            Remove-Item -Recurse -Force $NativeBinTmpDir -ErrorAction SilentlyContinue
-            Write-Err "Fetch failed (Bun exit $exitCode). Install the official binary manually:"
-            Write-Err "    irm https://claude.ai/install.ps1 | iex"
-            exit 1
-        }
-
-        $cand = Join-Path $NativeBinTmpDir "package\claude.exe"
-        if ((Test-Path $cand) -and (Get-Item $cand).Length -gt 10MB) {
-            $NativeBin = $cand
-            $verLine = $output | Where-Object { $_ -match '^VERSION=' } | Select-Object -First 1
-            if ($verLine) { $NativeBinLabel = ($verLine -replace '^VERSION=', '').Trim() }
-            else { $NativeBinLabel = "npm-latest" }
-        } else {
-            Remove-Item -Recurse -Force $NativeBinTmpDir -ErrorAction SilentlyContinue
-            Write-Err "Tarball downloaded but expected package\claude.exe was missing or too small."
-            Write-Err "  Tempdir kept for inspection: $NativeBinTmpDir"
-            exit 1
-        }
-        Write-OK "Downloaded $npmPkg@$NativeBinLabel"
+    if ($exitCode -ne 0) {
+        Remove-Item -Recurse -Force $NativeBinTmpDir -ErrorAction SilentlyContinue
+        Write-Err "Fetch failed (Bun exit $exitCode). Install the official binary manually:"
+        Write-Err "    irm https://claude.ai/install.ps1 | iex"
+        exit 1
     }
+
+    $cand = Join-Path $NativeBinTmpDir "package\claude.exe"
+    if ((Test-Path $cand) -and (Get-Item $cand).Length -gt 10MB) {
+        $NativeBin = $cand
+        $verLine = $output | Where-Object { $_ -match '^VERSION=' } | Select-Object -First 1
+        if ($verLine) { $NativeBinLabel = ($verLine -replace '^VERSION=', '').Trim() }
+        else { $NativeBinLabel = "npm-latest" }
+    } else {
+        Remove-Item -Recurse -Force $NativeBinTmpDir -ErrorAction SilentlyContinue
+        Write-Err "Tarball downloaded but expected package\claude.exe was missing or too small."
+        exit 1
+    }
+    Write-OK "Downloaded $npmPkg@$NativeBinLabel"
 }
 
 if (-not $NativeBin) {

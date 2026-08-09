@@ -524,8 +524,7 @@ NATIVE_BIN_TMPDIR=""
 # was first installed, and `claude update` (which is now redirected here)
 # would re-detect that frozen binary forever — never reaching the
 # registry. See INCIDENT_LOG 2026-04-29 entry. The fix is to skip local
-# detection entirely; the npm tarball is ~60-90 MB compressed, fetched
-# once per upgrade, and npm's HTTP cache keeps repeats fast.
+# detection entirely; the registry tarball is fetched once per upgrade.
 
 # Detect platform suffix (used by the npm fetch below)
 case "$(uname -s)" in
@@ -548,13 +547,6 @@ fi
 # per-platform packages (e.g. claude-code-darwin-arm64); their tarball ships
 # the binary directly under package/.
 if [ -z "$NATIVE_BIN" ]; then
-  if ! command -v npm &>/dev/null; then
-    warn "No native Claude Code binary found locally, and npm is not installed."
-    warn "  Either install the official binary first:"
-    warn "    curl -fsSL https://claude.ai/install.sh | bash"
-    warn "  or install npm so we can fetch it from the registry."
-    exit 1
-  fi
   if [ -z "$os" ] || [ -z "$arch" ]; then
     warn "Unsupported platform: $(uname -s) $(uname -m)"
     exit 1
@@ -562,23 +554,179 @@ if [ -z "$NATIVE_BIN" ]; then
   NPM_PKG="@anthropic-ai/claude-code-${PLATFORM}"
   dim "Fetching $NPM_PKG@$VERSION from npm registry ..."
   NATIVE_BIN_TMPDIR=$(mktemp -d)
-  if ( cd "$NATIVE_BIN_TMPDIR" && npm pack "$NPM_PKG@$VERSION" --silent >/dev/null 2>&1 ); then
-    TARBALL=$(ls "$NATIVE_BIN_TMPDIR"/*.tgz 2>/dev/null | head -1)
-    if [ -n "$TARBALL" ]; then
-      ( cd "$NATIVE_BIN_TMPDIR" && tar xzf "$TARBALL" )
-      cand="$NATIVE_BIN_TMPDIR/package/claude"
-      if [ -f "$cand" ]; then
-        sz=$(stat -f%z "$cand" 2>/dev/null || stat -c%s "$cand" 2>/dev/null || echo 0)
-        if [ "$sz" -gt 10000000 ]; then
-          NATIVE_BIN="$cand"
-          NATIVE_BIN_LABEL=$("$BUN_BIN" -e "console.log(require('$NATIVE_BIN_TMPDIR/package/package.json').version)" 2>/dev/null || echo "npm-latest")
-        fi
+  FETCH_SCRIPT="$NATIVE_BIN_TMPDIR/fetch-package.mjs"
+  cat > "$FETCH_SCRIPT" << 'FETCH_PACKAGE_EOF'
+#!/usr/bin/env bun
+import { chmodSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+const MIN_BINARY_BYTES = 10 * 1024 * 1024;
+
+function noProxyRule(value) {
+  let entry = value.trim().toLowerCase();
+  if (entry === '*') return { all: true };
+
+  let host = entry;
+  let port = '';
+  if (entry.startsWith('[')) {
+    const close = entry.indexOf(']');
+    if (close === -1) return { host: entry, port };
+    host = entry.slice(1, close);
+    const suffix = entry.slice(close + 1);
+    if (/^:\d+$/.test(suffix)) port = suffix.slice(1);
+    else if (suffix) return { host: entry, port };
+  } else {
+    const colon = entry.lastIndexOf(':');
+    if (colon > 0 && colon === entry.indexOf(':') && /^\d+$/.test(entry.slice(colon + 1))) {
+      host = entry.slice(0, colon);
+      port = entry.slice(colon + 1);
+    }
+  }
+  return { host: host.replace(/^\*\./, '.'), port };
+}
+
+function bypassesProxy(urlValue, env) {
+  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
+  const entries = (env.NO_PROXY || env.no_proxy || '').split(',').filter(value => value.trim());
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
+  return entries.some(entry => {
+    const rule = noProxyRule(entry);
+    if (rule.all) return true;
+    const baseHost = rule.host.replace(/^\./, '');
+    const matchesHost = host === baseHost || host.endsWith(`.${baseHost}`);
+    return matchesHost && (!rule.port || rule.port === port);
+  });
+}
+
+export function proxyFor(urlValue, env = process.env) {
+  const parsed = new URL(urlValue);
+  if (bypassesProxy(parsed, env)) return undefined;
+  return parsed.protocol === 'https:'
+    ? env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy
+    : env.HTTP_PROXY || env.http_proxy;
+}
+
+export async function fetchWithProxy(initialUrl, init = {}, env = process.env, fetchImpl = fetch) {
+  let nextUrl = initialUrl;
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    const proxy = proxyFor(nextUrl, env);
+    let response;
+    try {
+      response = await fetchImpl(nextUrl, {
+        ...init,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(300000),
+        ...(proxy ? { proxy } : {}),
+      });
+    } catch (error) {
+      if (proxy) throw new Error('Request failed through configured proxy');
+      throw error;
+    }
+    if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
+      if (redirects === 5) throw new Error('Too many redirects');
+      nextUrl = new URL(response.headers.get('location'), nextUrl).href;
+      continue;
+    }
+    if (response.status !== 200) throw new Error(`Request failed with HTTP ${response.status}`);
+    return response;
+  }
+  throw new Error('Too many redirects');
+}
+
+async function checkedJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    throw new Error('Registry returned invalid JSON');
+  }
+}
+
+export async function resolvePackage(pkg, requested, options = {}) {
+  const fetchImpl = options.fetchImpl || fetch;
+  const env = options.env || process.env;
+  const metadataUrl = `https://registry.npmjs.org/${encodeURIComponent(pkg)}`;
+  const metadata = await checkedJson(await fetchWithProxy(metadataUrl, {}, env, fetchImpl));
+  const version = requested === 'latest' ? metadata['dist-tags']?.latest : requested;
+  const manifest = metadata.versions?.[version];
+  if (!version || !manifest?.dist) throw new Error(`Package version not found: ${pkg}@${requested}`);
+  return { version, dist: manifest.dist };
+}
+
+function parseSpec(spec) {
+  const separator = spec.lastIndexOf('@');
+  if (separator > 0) {
+    return { pkg: spec.slice(0, separator), requested: spec.slice(separator + 1) || 'latest' };
+  }
+  return { pkg: spec, requested: 'latest' };
+}
+
+function safeArchivePath(name) {
+  if (!name || name.startsWith('/') || name.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(name)) return false;
+  return !name.split(/[\\/]/).includes('..');
+}
+
+export async function installPackage(spec, outDir, options = {}) {
+  const { pkg, requested } = parseSpec(spec);
+  const fetchImpl = options.fetchImpl || fetch;
+  const env = options.env || process.env;
+  const { version, dist } = await resolvePackage(pkg, requested, { fetchImpl, env });
+  if (!dist.tarball || typeof dist.integrity !== 'string') throw new Error(`Missing distribution metadata for ${pkg}@${version}`);
+
+  const archiveResponse = await fetchWithProxy(dist.tarball, {}, env, fetchImpl);
+  const bytes = new Uint8Array(await archiveResponse.arrayBuffer());
+  const integrityMatch = /^sha512-([A-Za-z0-9+/]+={0,2})$/.exec(dist.integrity);
+  if (!integrityMatch) throw new Error(`Unsupported integrity for ${pkg}@${version}`);
+  const actual = new Bun.CryptoHasher('sha512').update(bytes).digest('base64');
+  if (actual !== integrityMatch[1]) throw new Error(`Integrity mismatch for ${pkg}@${version}`);
+
+  const files = await new Bun.Archive(bytes).files();
+  for (const name of files.keys()) {
+    if (!safeArchivePath(name)) throw new Error(`Unsafe archive path: ${name}`);
+  }
+
+  const packagePath = 'package/package.json';
+  const binaryName = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  const binaryEntryPath = `package/${binaryName}`;
+  const packageFile = files.get(packagePath);
+  const binaryFile = files.get(binaryEntryPath);
+  if (!packageFile) throw new Error(`Archive is missing ${packagePath}`);
+  if (!binaryFile) throw new Error(`Archive is missing ${binaryEntryPath}`);
+  if (binaryFile.size <= MIN_BINARY_BYTES) throw new Error(`Archive binary is too small: ${binaryEntryPath}`);
+
+  const packageDir = join(outDir, 'package');
+  const binaryPath = join(packageDir, binaryName);
+  mkdirSync(packageDir, { recursive: true });
+  await Bun.write(join(packageDir, 'package.json'), packageFile);
+  await Bun.write(binaryPath, binaryFile);
+  if (process.platform !== 'win32') chmodSync(binaryPath, 0o755);
+  return { version, binaryPath };
+}
+
+if (import.meta.main) {
+  const [spec, outDir] = process.argv.slice(2);
+  if (!spec || !outDir) throw new Error('usage: fetch-package.mjs <package@version> <output-directory>');
+  const result = await installPackage(spec, outDir);
+  console.log(`VERSION=${result.version}`);
+}
+FETCH_PACKAGE_EOF
+  chmod 700 "$FETCH_SCRIPT"
+
+  if FETCH_OUTPUT=$("$BUN_BIN" "$FETCH_SCRIPT" "$NPM_PKG@$VERSION" "$NATIVE_BIN_TMPDIR" 2>&1); then
+    printf '%s\n' "$FETCH_OUTPUT" | while IFS= read -r line; do dim "$line"; done
+    cand="$NATIVE_BIN_TMPDIR/package/claude"
+    if [ -f "$cand" ]; then
+      sz=$(stat -f%z "$cand" 2>/dev/null || stat -c%s "$cand" 2>/dev/null || echo 0)
+      if [ "$sz" -gt 10000000 ]; then
+        NATIVE_BIN="$cand"
+        NATIVE_BIN_LABEL=$(printf '%s\n' "$FETCH_OUTPUT" | sed -n 's/^VERSION=//p' | head -1)
       fi
     fi
   fi
   if [ -z "$NATIVE_BIN" ]; then
     rm -rf "$NATIVE_BIN_TMPDIR"
-    warn "Failed to download $NPM_PKG from npm."
+    warn "Failed to download $NPM_PKG from the npm registry."
+    [ -n "${FETCH_OUTPUT:-}" ] && warn "$FETCH_OUTPUT"
     warn "  Install the official Claude Code binary manually:"
     warn "    curl -fsSL https://claude.ai/install.sh | bash"
     exit 1
