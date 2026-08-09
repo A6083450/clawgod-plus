@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -15,6 +15,49 @@ function runContract(contract, input) {
   };
   delete env.CLAWGOD_E2E;
   return spawnSync(process.execPath, [e2e.pathname], { encoding: 'utf8', env });
+}
+
+for (const output of [
+  'ripgrep 15.2.0\n',
+  'ripgrep 15.2.0 (rev e89fff89ac)\n',
+  'ripgrep 15.2.0 (rev E89FFF89AC)\r\nfeatures:+pcre2\r\n',
+]) {
+  const run = runContract('ripgrep-version', output);
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^private ripgrep version: 15\.2\.0$/m);
+}
+for (const output of [
+  'ripgrep 15.2.00\n',
+  'ripgrep 15.2.1\n',
+  'prefix ripgrep 15.2.0\n',
+  'ripgrep 15.2.0suffix\n',
+  'ripgrep 15.2.0 (rev not-hex)\n',
+]) {
+  const run = runContract('ripgrep-version', output);
+  assert.notEqual(run.status, 0, `invalid ripgrep output must fail: ${JSON.stringify(output)}`);
+  assert.match(run.stderr, /ripgrep|version/i);
+}
+
+const isolationRoot = mkdtempSync(join(realpathSync(tmpdir()), 'clawgod-e2e-path-contract-'));
+try {
+  const isolationHome = join(isolationRoot, 'home');
+  const hostBunDir = join(isolationRoot, 'host-bun');
+  const hostBun = join(hostBunDir, 'bun');
+  mkdirSync(isolationHome);
+  mkdirSync(hostBunDir);
+  symlinkSync(process.execPath, hostBun);
+  const hostClaude = join(hostBunDir, 'claude');
+  writeFileSync(hostClaude, '#!/bin/sh\nexit 97\n', 'utf8');
+  chmodSync(hostClaude, 0o700);
+  const run = runContract('environment-isolation', {
+    fixtureRoot: isolationRoot,
+    tempHome: isolationHome,
+    bunExecutable: hostBun,
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^environment isolation: bun=sandboxed claude=(?:unresolved|sandboxed)$/m);
+} finally {
+  rmSync(isolationRoot, { recursive: true, force: true });
 }
 
 const cleanSummary = runContract('patch-summary', {

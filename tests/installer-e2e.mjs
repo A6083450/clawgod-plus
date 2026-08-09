@@ -9,14 +9,72 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const forbiddenText = 'forbidden dependency invoked:';
+
+function createIsolatedRuntime(tempHome, bunExecutable = process.execPath) {
+  const shimDir = join(tempHome, 'forbidden-bin');
+  const markerPath = join(tempHome, 'forbidden-dependency.log');
+  const bunDir = join(tempHome, 'bun-bin');
+  const bunPath = join(bunDir, 'bun');
+  mkdirSync(bunDir, { recursive: true });
+  symlinkSync(bunExecutable, bunPath);
+  return {
+    shimDir,
+    markerPath,
+    bunPath,
+    env: {
+      HOME: tempHome,
+      PATH: [shimDir, bunDir, '/usr/bin', '/bin'].join(':'),
+      CLAWGOD_BUN_BIN: bunPath,
+      CLAWGOD_FORBIDDEN_MARKER: markerPath,
+      CI: 'true',
+      LANG: 'C.UTF-8',
+    },
+  };
+}
+
+function resolveCommand(command, env) {
+  return spawnSync('/bin/sh', ['-c', 'command -v "$1"', 'clawgod-e2e-resolve', command], {
+    encoding: 'utf8',
+    env,
+  });
+}
+
+function pathIsInside(root, path) {
+  const offset = relative(root, path);
+  return offset === '' || (!offset.startsWith(`..${sep}`) && offset !== '..' && !isAbsolute(offset));
+}
+
+function validateEnvironmentIsolation(tempHome, runtime, bunExecutable = process.execPath) {
+  const bunResolution = resolveCommand('bun', runtime.env);
+  assert.equal(bunResolution.status, 0, `sandbox PATH must resolve Bun: ${bunResolution.stderr}`);
+  const resolvedBun = bunResolution.stdout.trim();
+  assert.equal(pathIsInside(tempHome, resolvedBun), true, `sandbox PATH exposed Bun outside temporary HOME: ${resolvedBun}`);
+  assert.equal(realpathSync(resolvedBun), realpathSync(bunExecutable), 'sandbox Bun entry must run the selected Bun executable');
+  const claudeResolution = resolveCommand('claude', runtime.env);
+  if (claudeResolution.status === 0) {
+    const resolvedClaude = claudeResolution.stdout.trim();
+    assert.equal(pathIsInside(tempHome, resolvedClaude), true, `sandbox PATH exposed claude outside temporary HOME: ${resolvedClaude}`);
+  }
+  return `environment isolation: bun=sandboxed claude=${claudeResolution.status === 0 ? 'sandboxed' : 'unresolved'}`;
+}
+
+function validateRipgrepVersion(output) {
+  assert.match(
+    output,
+    /^ripgrep 15\.2\.0(?: \(rev [0-9A-Fa-f]+\))?(?:\r?\n|$)/,
+    'private ripgrep must report version 15.2.0 with only an optional official revision',
+  );
+  return 'private ripgrep version: 15.2.0';
+}
 
 function validatePatchSummary(label, output) {
   const resultLines = output.split(/\r?\n/).filter(line => line.includes('Result:'));
@@ -82,6 +140,20 @@ if (process.env.CLAWGOD_E2E_CONTRACT) {
       marker = validateWorkerResolver(input);
     } else if (process.env.CLAWGOD_E2E_CONTRACT === 'uninstall-cleanup') {
       marker = validateUninstallCleanup(JSON.parse(input));
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'ripgrep-version') {
+      marker = validateRipgrepVersion(input);
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'environment-isolation') {
+      const fixture = JSON.parse(input);
+      const contractParent = realpathSync(tmpdir());
+      assert.equal(dirname(fixture.fixtureRoot), contractParent, 'environment isolation fixture must be an immediate child of the system temp directory');
+      assert.match(basename(fixture.fixtureRoot), /^clawgod-e2e-path-contract-[A-Za-z0-9]+$/, 'environment isolation fixture must be the exact mkdtempSync result');
+      assert.equal(realpathSync(fixture.fixtureRoot), fixture.fixtureRoot, 'environment isolation fixture must not be replaced by a symlink');
+      assert.equal(dirname(fixture.tempHome), fixture.fixtureRoot, 'contract HOME must be an immediate child of the validated fixture root');
+      assert.equal(realpathSync(fixture.tempHome), fixture.tempHome, 'contract HOME must not be replaced by a symlink');
+      assert.equal(pathIsInside(fixture.fixtureRoot, fixture.bunExecutable), true, 'contract Bun entry must be lexically contained by the fixture');
+      assert.equal(realpathSync(fixture.bunExecutable), realpathSync(process.execPath), 'contract Bun entry must target the current Bun executable');
+      const runtime = createIsolatedRuntime(fixture.tempHome, fixture.bunExecutable);
+      marker = validateEnvironmentIsolation(fixture.tempHome, runtime, fixture.bunExecutable);
     } else {
       throw new Error(`unknown E2E contract: ${process.env.CLAWGOD_E2E_CONTRACT}`);
     }
@@ -163,18 +235,16 @@ function assertLeanOff() {
   assert.equal(existsSync(join(clawgodDir, '.lean-disabled')), true, '--lean-off must create the lean-disabled marker');
 }
 
-const isolatedEnv = {
-  HOME: tempHome,
-  PATH: [shimDir, dirname(process.execPath), '/usr/bin', '/bin'].join(':'),
-  CLAWGOD_BUN_BIN: process.execPath,
-  CLAWGOD_FORBIDDEN_MARKER: markerPath,
-  CI: 'true',
-  LANG: 'C.UTF-8',
-};
-
 assertExactTemporaryHome(tempHome);
+let isolatedEnv;
 
 try {
+  const isolatedRuntime = createIsolatedRuntime(tempHome);
+  assert.equal(isolatedRuntime.shimDir, shimDir);
+  assert.equal(isolatedRuntime.markerPath, markerPath);
+  isolatedEnv = isolatedRuntime.env;
+  console.log(validateEnvironmentIsolation(tempHome, isolatedRuntime));
+
   mkdirSync(shimDir, { recursive: true });
   for (const name of ['node', 'npm', 'rg', 'tar', 'unzip']) {
     const shimPath = join(shimDir, name);
@@ -201,7 +271,7 @@ try {
 
   assert.equal(existsSync(ripgrepPath), true, 'initial install must create the private ripgrep binary');
   const rgVersion = run('private ripgrep version smoke', ripgrepPath, ['--version']);
-  assert.match(rgVersion, /^ripgrep 15\.2\.0(?:\r?\n|$)/, 'private ripgrep must report exactly version 15.2.0');
+  console.log(validateRipgrepVersion(rgVersion));
   const searchFixture = join(tempHome, 'ripgrep-fixture.txt');
   writeFileSync(searchFixture, 'private ripgrep finds Harbor Kite\n', 'utf8');
   const searchOutput = run('private ripgrep search smoke', ripgrepPath, ['--fixed-strings', 'Harbor Kite', searchFixture]);
