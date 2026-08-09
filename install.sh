@@ -302,6 +302,7 @@ is_unstable_claude_path() {
     candidate_dir=$(cd "$candidate_dir" 2>/dev/null && pwd -P) || return 0
     candidate_path="$candidate_dir/$(basename "$candidate_path")"
   done
+  [ -e "$candidate_path" ] || return 0
   case "$candidate_path" in
     */cmux-cli-shims|*/cmux-cli-shims/*) return 0 ;;
   esac

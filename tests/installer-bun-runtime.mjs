@@ -565,6 +565,88 @@ if (process.env.CLAWGOD_INSTALLER_FOCUS !== 'windows-cross-slot') {
   }
 }
 
+if (process.env.CLAWGOD_INSTALLER_FOCUS !== 'windows-cross-slot') {
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-dangling-discovery-'));
+  assertTemporaryPath(home, 'dangling discovery fixture');
+  try {
+    const stableBin = join(home, '.local', 'bin');
+    const pathBin = join(home, 'path-bin');
+    const targetParent = join(home, 'stable-targets');
+    const systemTemp = join(home, 'resolved-system-temp');
+    const linkedCandidate = join(pathBin, 'claude');
+    const intermediate = join(pathBin, 'claude-hop');
+    const missingTarget = join(targetParent, 'missing-claude');
+    const stable = join(stableBin, 'claude');
+    const fakeBun = join(home, 'fake bun');
+    mkdirSync(stableBin, { recursive: true });
+    mkdirSync(pathBin, { recursive: true });
+    mkdirSync(targetParent, { recursive: true });
+    mkdirSync(systemTemp, { recursive: true });
+    symlinkSync(intermediate, linkedCandidate);
+    symlinkSync(missingTarget, intermediate);
+    writeFileSync(stable, '#!/bin/sh\necho stable user command\n', 'utf8');
+    writeFileSync(fakeBun, '#!/bin/sh\nexit 0\n', 'utf8');
+    chmodSync(fakeBun, 0o755);
+    assert.equal(existsSync(targetParent), true, 'dangling target parent must exist');
+    assert.equal(existsSync(missingTarget), false, 'dangling target leaf must be absent');
+
+    const discovery = spawnSync('/bin/bash', ['-c', `command() {
+  if [ "$1" = "-v" ] && [ "$2" = "claude" ]; then
+    printf '%s\\n' "$CANDIDATE"
+    return 0
+  fi
+  builtin command "$@"
+}
+dim() { :; }
+${unixLauncherHelpers()}
+${unixDiscovery}
+${unixLauncherAssignment}
+printf 'SELECTED=%s\\n' "$CLAUDE_BIN"`], {
+      encoding: 'utf8',
+      env: {
+        HOME: home,
+        PATH: isolatedUnixPath(home),
+        TMPDIR: systemTemp,
+        BIN_DIR: stableBin,
+        CLAWGOD_DIR: join(home, '.clawgod'),
+        BUN_BIN: fakeBun,
+        CANDIDATE: linkedCandidate,
+      },
+    });
+    assert.equal(discovery.status, 0, discovery.stderr);
+    assert.match(discovery.stdout, new RegExp(`^SELECTED=${stable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'), 'a multi-hop symlink with a missing final leaf must fail closed to the stable launcher');
+    assert.equal(lstatSync(linkedCandidate).isSymbolicLink(), true, 'dangling candidate must retain its symlink type');
+    assert.equal(readlinkSync(linkedCandidate), intermediate, 'dangling candidate must retain its first-hop target');
+    assert.equal(lstatSync(intermediate).isSymbolicLink(), true, 'dangling intermediate must retain its symlink type');
+    assert.equal(readlinkSync(intermediate), missingTarget, 'dangling intermediate must retain its missing final target');
+
+    const cycleA = join(pathBin, 'cycle-a');
+    const cycleB = join(pathBin, 'cycle-b');
+    symlinkSync(cycleB, cycleA);
+    symlinkSync(cycleA, cycleB);
+    const cycleProbe = spawnSync('/bin/bash', ['-c', `${unixLauncherHelpers()}\nis_unstable_claude_path "$CANDIDATE"`], {
+      encoding: 'utf8',
+      env: { HOME: home, PATH: isolatedUnixPath(home), TMPDIR: systemTemp, CANDIDATE: cycleA },
+    });
+    assert.equal(cycleProbe.status, 0, 'a symlink cycle must fail closed as unstable');
+
+    const officialTarget = join(targetParent, 'official-claude');
+    const officialLink = join(pathBin, 'official-claude');
+    writeFileSync(officialTarget, '#!/bin/sh\necho official\n', 'utf8');
+    chmodSync(officialTarget, 0o755);
+    symlinkSync(officialTarget, officialLink);
+    const stableProbe = spawnSync('/bin/bash', ['-c', `${unixLauncherHelpers()}\nis_unstable_claude_path "$CANDIDATE"`], {
+      encoding: 'utf8',
+      env: { HOME: home, PATH: isolatedUnixPath(home), TMPDIR: systemTemp, CANDIDATE: officialLink },
+    });
+    assert.equal(stableProbe.status, 1, 'a resolvable official symlink outside temporary paths must remain stable');
+    assert.equal(lstatSync(officialLink).isSymbolicLink(), true, 'stable official candidate must remain a symlink');
+    assert.equal(readlinkSync(officialLink), officialTarget, 'stable official candidate must retain its target');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 const windowsOwnershipContent = powerShellFunction('Test-ClawGodLauncherContent');
 const windowsEntryOwnership = powerShellFunction('Test-ClawGodLauncher');
 const windowsOwnership = windowsOwnershipContent + windowsEntryOwnership;
