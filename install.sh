@@ -255,16 +255,45 @@ resolve_bun() {
   fi
 }
 
-is_clawgod_launcher() {
+has_clawgod_launcher_content() {
   local launcher="$1"
   [ -f "$launcher" ] || return 1
-  [ -L "$launcher" ] && return 1
   # The marker identifies newer launchers, but never grants ownership alone.
   # Every launcher, including pre-marker versions, must match this structure.
   [ "$(sed -n '1p' "$launcher" 2>/dev/null)" = '#!/bin/bash' ] \
     && [ "$(sed -n '2p' "$launcher" 2>/dev/null)" = '# clawgod launcher' ] \
     && grep -Eq '^CLAWGOD_CLI=".*\/\.clawgod\/cli\.cjs"$' "$launcher" 2>/dev/null \
     && grep -Eq '^export CLAUDE_CODE_EXECPATH=".*\/claude\.orig"$' "$launcher" 2>/dev/null
+}
+
+is_clawgod_launcher() {
+  local launcher="$1"
+  [ -L "$launcher" ] && return 1
+  has_clawgod_launcher_content "$launcher"
+}
+
+is_valid_claude_original() {
+  local original="$1"
+  [ -e "$original" ] || return 1
+  [ -f "$original" ] || return 1
+  ! has_clawgod_launcher_content "$original"
+}
+
+is_unstable_claude_path() {
+  local candidate="$1"
+  local candidate_dir candidate_path temp_root
+  [ -n "$candidate" ] || return 1
+  case "$candidate" in
+    */cmux-cli-shims|*/cmux-cli-shims/*) return 0 ;;
+  esac
+  candidate_dir=$(dirname "$candidate")
+  candidate_dir=$(cd "$candidate_dir" 2>/dev/null && pwd -P) || return 1
+  candidate_path="$candidate_dir/$(basename "$candidate")"
+  temp_root=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P) || return 1
+  case "$candidate_path" in
+    "$temp_root"|"$temp_root"/*) return 0 ;;
+  esac
+  return 1
 }
 
 echo ""
@@ -277,19 +306,42 @@ if [ "$UNINSTALL" = "1" ]; then
   if ! resolve_bun; then
     exit 1
   fi
+  CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
+  if [ -n "$CLAUDE_BIN" ] && is_unstable_claude_path "$CLAUDE_BIN"; then
+    CLAUDE_BIN=""
+  fi
+  for DIR in "${CLAUDE_BIN:+$(dirname "$CLAUDE_BIN")}" "$BIN_DIR"; do
+    [ -z "$DIR" ] && continue
+    if { [ -e "$DIR/claude.orig" ] || [ -L "$DIR/claude.orig" ]; } \
+      && { [ -e "$DIR/claude" ] || [ -L "$DIR/claude" ]; } \
+      && ! is_clawgod_launcher "$DIR/claude"; then
+      err "Claude launcher conflict at $DIR/claude; current command and claude.orig were preserved."
+      err "Move or remove the third-party current command, then rerun --uninstall."
+      exit 1
+    fi
+    if { [ -e "$DIR/claude.orig" ] || [ -L "$DIR/claude.orig" ]; } \
+      && ! is_valid_claude_original "$DIR/claude.orig" \
+      && ! has_clawgod_launcher_content "$DIR/claude.orig"; then
+      err "Invalid claude.orig at $DIR/claude.orig; uninstall stopped without cleanup."
+      exit 1
+    fi
+  done
   if [ -f "$CLAWGOD_DIR/claude-mem-compat.cjs" ]; then
     if ! CLAWGOD_BUN_BIN="$BUN_BIN" "$BUN_BIN" "$CLAWGOD_DIR/claude-mem-compat.cjs" uninstall; then
       warn "Could not restore claude-mem compatibility settings; ClawGod Plus was not uninstalled"
       exit 1
     fi
   fi
-  CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
   for DIR in "${CLAUDE_BIN:+$(dirname "$CLAUDE_BIN")}" "$BIN_DIR"; do
     [ -z "$DIR" ] && continue
-    if [ -e "$DIR/claude.orig" ]; then
-      # Has backup — restore it
+    if is_valid_claude_original "$DIR/claude.orig"; then
+      if is_clawgod_launcher "$DIR/claude"; then rm -f "$DIR/claude"; fi
       mv "$DIR/claude.orig" "$DIR/claude"
       info "Original claude restored ($DIR/claude)"
+    elif has_clawgod_launcher_content "$DIR/claude.orig"; then
+      if is_clawgod_launcher "$DIR/claude"; then rm -f "$DIR/claude"; fi
+      rm -f "$DIR/claude.orig"
+      warn "Removed installer-owned polluted backup ($DIR/claude.orig)"
     elif is_clawgod_launcher "$DIR/claude"; then
       # Our launcher, no backup — remove it (otherwise it points to deleted cli.js)
       rm -f "$DIR/claude"
@@ -667,7 +719,7 @@ export async function extractRipgrep(bytes, asset) {
 export function validateRipgrepVersion(path, spawnImpl = Bun.spawnSync) {
   const result = spawnImpl([path, '--version'], { stdout: 'pipe', stderr: 'pipe' });
   const output = typeof result.stdout === 'string' ? result.stdout : Buffer.from(result.stdout || []).toString();
-  if (result.exitCode !== 0 || !output.startsWith(`ripgrep ${RIPGREP_VERSION}`)) {
+  if (result.exitCode !== 0 || !/^ripgrep 15\.2\.0(?: \(rev [0-9A-Fa-f]+\))?(?:\r?\n|$)/.test(output)) {
     throw new Error(`ripgrep ${RIPGREP_VERSION} version smoke failed`);
   }
 }
@@ -2860,37 +2912,20 @@ const patches = [
     name: "Redirect `claude update` to clawgod self-update",
     pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\(async\(\)=>\{)/g,
     replacer: (m, chain, action) => {
-      // PowerShell 5.1's Invoke-WebRequest ignores HTTP_PROXY/HTTPS_PROXY env
-      // (only reads IE system proxy). Read env explicitly and pass via -Proxy
-      // so it works on both PS 5.1 and PS 7. Use Invoke-RestMethod (irm) not
-      // Invoke-WebRequest (iwr): under -UseBasicParsing on PS 5.1, iwr's
-      // .Content is byte[] not string, so `iex (iwr -useb ...).Content`
-      // throws "Cannot convert System.Byte[] to System.String". irm always
-      // returns string in both versions. -EncodedCommand bypasses CLI
-      // arg-quoting; payload must be UTF-16LE base64.
-      const psScript =
-        "$p=if($env:HTTPS_PROXY){$env:HTTPS_PROXY}elseif($env:HTTP_PROXY){$env:HTTP_PROXY}else{$null};" +
-        "$u='https://github.com/A6083450/clawgod-plus/releases/latest/download/install.ps1';" +
-        "if($p){iex(irm -Proxy $p $u)}else{iex(irm $u)}";
-      const psB64 = Buffer.from(psScript, 'utf16le').toString('base64');
       return (
         chain + '.allowUnknownOption()' + action +
-        `const _ui=process.argv.findIndex(a=>a==="update"||a==="upgrade");` +
-        `const _ua=_ui>=0?process.argv.slice(_ui+1):[];` +
-        `const _vi=_ua.indexOf("--version");` +
-        `if(_vi>=0&&_ua[_vi+1])process.env.CLAWGOD_VERSION=_ua[_vi+1];` +
-        `if(_ua.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";` +
-        `if(_ua.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";` +
-        `if(_ua.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";` +
-        `if(_ua.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";` +
+        `const __clawgodUpdateIndex=process.argv.findIndex(a=>a==="update"||a==="upgrade");` +
+        `const __clawgodUpdateArgs=__clawgodUpdateIndex>=0?process.argv.slice(__clawgodUpdateIndex+1):[];` +
+        `const __clawgodVersionIndex=__clawgodUpdateArgs.indexOf("--version");` +
+        `if(__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1])process.env.CLAWGOD_VERSION=__clawgodUpdateArgs[__clawgodVersionIndex+1];` +
+        `if(__clawgodUpdateArgs.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";` +
+        `if(__clawgodUpdateArgs.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";` +
+        `if(__clawgodUpdateArgs.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";` +
+        `if(__clawgodUpdateArgs.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";` +
         `process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");` +
         `const _w=process.platform==='win32';` +
-        `const _li=require('path').join(require('os').homedir(),'.clawgod','install.sh');` +
-        `const _hasLocal=!_w&&require('fs').existsSync(_li);` +
-        `if(_hasLocal)process.stderr.write('[clawgod] using local installer (remote skipped): '+_li+'\\n');` +
-        `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:(_hasLocal?['bash',_li]:['bash','-c','curl -fsSL https://github.com/A6083450/clawgod-plus/releases/latest/download/install.sh | bash']);` +
-        `const _r=require('child_process').spawnSync(_c[0],_c.slice(1),{stdio:'inherit',env:process.env});` +
-        `process.exit(_r.status||0);`
+        `const __clawgodUpdateStatus=(()=>{const __fs=require('fs'),__path=require('path'),__os=require('os'),__cp=require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh');if(!__fs.existsSync(__installer)){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:process.env});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();` +
+        `process.exit(__clawgodUpdateStatus);`
       );
     },
     sentinel: '.command("update").alias("upgrade")',
@@ -3421,7 +3456,7 @@ if (chromePatch.status === 'applied') {
 console.log(`\n${'─'.repeat(55)}`);
 console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed`);
 
-if (!dryRun && !verify && applied > 0) {
+if (failed === 0 && !dryRun && !verify && applied > 0) {
   if (!existsSync(BACKUP)) {
     copyFileSync(TARGET, BACKUP);
     console.log(`  📦 Backup: ${BACKUP}`);
@@ -3432,13 +3467,20 @@ if (!dryRun && !verify && applied > 0) {
 }
 
 console.log(`${'═'.repeat(55)}\n`);
+if (failed > 0) process.exit(1);
 PATCHER_EOF
 info "Patcher created (patch.mjs)"
 
 # ─── Apply patches ─────────────────────────────────────
 
 dim "Applying patches ..."
-"$BUN_BIN" "$CLAWGOD_DIR/patch.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
+patch_status=0
+patch_output=$("$BUN_BIN" "$CLAWGOD_DIR/patch.mjs" 2>&1) || patch_status=$?
+while IFS= read -r line; do echo "  $line"; done <<< "$patch_output"
+if [ "$patch_status" -ne 0 ]; then
+  err "Mandatory patching failed; installation stopped before launcher replacement."
+  exit "$patch_status"
+fi
 run_claude_code_chrome_fix
 
 # ─── Create default configs ───────────────────────────
@@ -3544,7 +3586,11 @@ fi
 # first invocation.
 
 dim "Verifying Bun can load patched cli.original.cjs ..."
-sanity_out=$("$BUN_BIN" "$CLAWGOD_DIR/cli.cjs" --version 2>&1 || true)
+sanity_status=0
+set +e
+sanity_out=$("$BUN_BIN" "$CLAWGOD_DIR/cli.cjs" --version 2>&1)
+sanity_status=$?
+set -e
 if echo "$sanity_out" | grep -q "Expected CommonJS module to have a function wrapper"; then
   echo ""
   warn "Bun $("$BUN_BIN" --version) cannot load Anthropic's cli.original.cjs."
@@ -3565,7 +3611,13 @@ if echo "$sanity_out" | grep -q "Expected CommonJS module to have a function wra
   warn "    bun upgrade --canary"
   warn ""
   warn "  Then re-run install.sh — this sanity check will pass."
-  exit 1
+  if [ "$sanity_status" -eq 0 ]; then sanity_status=1; fi
+  exit "$sanity_status"
+fi
+if [ "$sanity_status" -ne 0 ]; then
+  [ -n "$sanity_out" ] && printf '%s\n' "$sanity_out" >&2
+  err "Bun failed to load patched cli.original.cjs (exit $sanity_status)."
+  exit "$sanity_status"
 fi
 info "Bun loads cli.original.cjs"
 
@@ -3576,7 +3628,10 @@ info "Bun loads cli.original.cjs"
 # longer ship `which`); `|| true` keeps a clean miss from tripping
 # `set -e` via the assignment's exit status under bash 5+.
 CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
-if [ -z "$CLAUDE_BIN" ]; then
+if [ -n "$CLAUDE_BIN" ] && is_unstable_claude_path "$CLAUDE_BIN"; then
+  dim "Ignoring temporary Claude shim at $CLAUDE_BIN"
+  CLAUDE_BIN="$BIN_DIR/claude"
+elif [ -z "$CLAUDE_BIN" ]; then
   # No claude in PATH — use default location
   CLAUDE_BIN="$BIN_DIR/claude"
   dim "No existing claude found, installing to $BIN_DIR"
@@ -3669,15 +3724,32 @@ exec \"\$BUN_BIN\" \"\$CLAWGOD_CLI\" \"\$@\""
 
 
 # Back up original claude (only once)
-if [ ! -e "$CLAUDE_BIN.orig" ] && ! is_clawgod_launcher "$CLAUDE_BIN"; then
+CLAUDE_ORIG="$CLAUDE_BIN.orig"
+if { [ -e "$CLAUDE_ORIG" ] || [ -L "$CLAUDE_ORIG" ]; } \
+  && { [ -e "$CLAUDE_BIN" ] || [ -L "$CLAUDE_BIN" ]; } \
+  && ! is_clawgod_launcher "$CLAUDE_BIN"; then
+  err "Claude launcher conflict at $CLAUDE_BIN; current command and $CLAUDE_ORIG were preserved."
+  err "Move or remove the third-party current command, then rerun the installer."
+  exit 1
+fi
+if [ -e "$CLAUDE_ORIG" ] || [ -L "$CLAUDE_ORIG" ]; then
+  if has_clawgod_launcher_content "$CLAUDE_ORIG"; then
+    rm -f "$CLAUDE_ORIG"
+    warn "Removed installer-owned polluted backup ($CLAUDE_ORIG)"
+  elif ! is_valid_claude_original "$CLAUDE_ORIG"; then
+    err "Invalid original backup at $CLAUDE_ORIG; installation stopped without launcher changes."
+    exit 1
+  fi
+fi
+if [ ! -e "$CLAUDE_ORIG" ] && [ ! -L "$CLAUDE_ORIG" ] && ! is_clawgod_launcher "$CLAUDE_BIN"; then
   if [ -L "$CLAUDE_BIN" ]; then
     # Symlink (native install) — preserve target
     NATIVE_BIN="$(readlink "$CLAUDE_BIN")"
-    ln -sf "$NATIVE_BIN" "$CLAUDE_BIN.orig"
+    ln -sf "$NATIVE_BIN" "$CLAUDE_ORIG"
     info "Original claude backed up → claude.orig (→ $NATIVE_BIN)"
   elif [ -f "$CLAUDE_BIN" ] && file "$CLAUDE_BIN" 2>/dev/null | grep -q "Mach-O\|ELF\|script"; then
     # Binary or script (pnpm/npm global install)
-    cp "$CLAUDE_BIN" "$CLAUDE_BIN.orig"
+    cp "$CLAUDE_BIN" "$CLAUDE_ORIG"
     info "Original claude backed up → claude.orig"
   else
     # Try versions dir as fallback
@@ -3687,7 +3759,7 @@ if [ ! -e "$CLAUDE_BIN.orig" ] && ! is_clawgod_launcher "$CLAUDE_BIN"; then
         file "$f" 2>/dev/null | grep -q "Mach-O\|ELF" && echo "$f" && break
       done)" || true
       if [ -n "$NATIVE_BIN" ]; then
-        ln -sf "$NATIVE_BIN" "$CLAUDE_BIN.orig"
+        ln -sf "$NATIVE_BIN" "$CLAUDE_ORIG"
         info "Original claude backed up → claude.orig (→ $NATIVE_BIN)"
       fi
     fi

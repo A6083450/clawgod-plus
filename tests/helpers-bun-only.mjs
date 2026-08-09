@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
@@ -24,11 +24,20 @@ const helpers = [
     backup: 'backup-ctxlimit',
   },
 ].map(helper => ({ ...helper, source: readFileSync(new URL(helper.name, root), 'utf8') }));
+const ACORN_SHA512 = 'd883627a2de353f34bc25ffb7bbe277c84186720619fe3cbecc3c5885b379635e67019c8d8db7a24e21e8f82e1486e8038b4d13d642b40a684995d0867ed55b3';
 
 const failures = [];
 function check(label, fn) {
   try {
     fn();
+  } catch (error) {
+    failures.push(`${label}: ${error.message}`);
+  }
+}
+
+async function checkAsync(label, fn) {
+  try {
+    await fn();
   } catch (error) {
     failures.push(`${label}: ${error.message}`);
   }
@@ -50,6 +59,12 @@ for (const helper of helpers) {
   });
   check(`${helper.name} pins the Acorn cache`, () => {
     assert.ok(/acorn-8\.16\.0\.cjs/i.test(helper.source), 'missing acorn-8.16.0.cjs cache');
+    assert.ok(helper.source.includes(ACORN_SHA512), 'missing pinned Acorn 8.16.0 SHA-512');
+    assert.match(helper.source, /clawgod-plus[\\/]acorn/i, 'Acorn must live in a user-private ClawGod cache');
+    assert.doesNotMatch(helper.source, /TMPDIR[^\r\n]*acorn-8\.16\.0|Join-Path\s+\$env:TEMP\s+["']acorn-8\.16\.0/i, 'Acorn must not use a shared temporary cache');
+    assert.ok((helper.source.match(new RegExp(ACORN_SHA512, 'g'))?.length || 0) >= 2, 'cache manager and patcher must independently verify Acorn before execution');
+    assert.match(helper.source, /CryptoHasher\(['"]sha512['"]\)/, 'Acorn cache must be hash-verified');
+    assert.match(helper.source, /lstatSync[\s\S]*isSymbolicLink[\s\S]*isFile/, 'Acorn cache must reject links and non-files');
   });
   check(`${helper.name} resolves Bun`, () => {
     assert.ok(
@@ -60,7 +75,7 @@ for (const helper of helpers) {
   check(`${helper.name} auto-discovers only the ClawGod original bundle`, () => {
     assert.ok(/\.clawgod[\\/]cli\.original\.cjs/.test(helper.source), 'missing ClawGod original bundle path');
     assert.ok(
-      !/\.claude[\\/]local[\\/]node_modules|ProgramFiles|APPDATA|usr\/local\/lib\/node_modules|usr\/lib\/node_modules/i.test(helper.source),
+      !/\.claude[\\/]local[\\/]node_modules|ProgramFiles|\$env:APPDATA|usr\/local\/lib\/node_modules|usr\/lib\/node_modules/i.test(helper.source),
       'found a non-ClawGod automatic discovery path',
     );
   });
@@ -76,6 +91,116 @@ for (const helper of helpers) {
       assert.match(helper.source, /\$exitCode\s*=\s*Invoke-[^\r\n]+[\s\S]*exit\s+\$exitCode/i);
     });
   }
+}
+
+function extractUnixChromePatcher() {
+  const helper = helpers.find(entry => entry.name === 'apply-claude-code-chrome-fix.sh').source;
+  const marker = 'cat > "$PATCH_SCRIPT" << \'PATCH_EOF\'';
+  const start = helper.indexOf(marker);
+  assert.notEqual(start, -1, 'Chrome helper must embed its patcher');
+  const bodyStart = helper.indexOf('\n', start) + 1;
+  const end = helper.indexOf('\nPATCH_EOF', bodyStart);
+  assert.notEqual(end, -1, 'Chrome helper patcher must end');
+  return helper.slice(bodyStart, end);
+}
+
+check('standalone patcher rejects malicious Acorn before require', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'clawgod malicious acorn '));
+  assert.equal(realpathSync(dirname(fixtureRoot)), realpathSync(tmpdir()), 'malicious Acorn fixture must be under the system temporary directory');
+  try {
+    const patcher = join(fixtureRoot, 'patch.mjs');
+    const acorn = join(fixtureRoot, 'acorn-8.16.0.cjs');
+    const cli = join(fixtureRoot, 'cli.original.cjs');
+    const sentinel = join(fixtureRoot, 'outside-sentinel');
+    writeFileSync(patcher, extractUnixChromePatcher(), 'utf8');
+    writeFileSync(acorn, 'require("fs").writeFileSync(process.env.OUTSIDE_SENTINEL,"executed");exports.parse=()=>({});\n', 'utf8');
+    writeFileSync(cli, 'fixture bundle\n', 'utf8');
+    const run = spawnSync(process.execPath, [patcher, acorn, cli], {
+      cwd: fixtureRoot,
+      encoding: 'utf8',
+      env: { HOME: fixtureRoot, PATH: fixtureRoot, OUTSIDE_SENTINEL: sentinel },
+    });
+    assert.notEqual(run.status, 0, 'a malicious Acorn artifact must fail closed');
+    assert.equal(existsSync(sentinel), false, 'a malicious Acorn artifact must never execute');
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+function extractCacheManager(helper) {
+  if (helper.kind === 'sh') {
+    const marker = 'cat > "$ACORN_CACHE_SCRIPT" <<\'ACORN_CACHE_EOF\'';
+    const start = helper.source.indexOf(marker);
+    assert.notEqual(start, -1, `${helper.name} must embed the Acorn cache manager`);
+    const bodyStart = helper.source.indexOf('\n', start) + 1;
+    const end = helper.source.indexOf('\nACORN_CACHE_EOF', bodyStart);
+    assert.notEqual(end, -1, `${helper.name} Acorn cache manager must end`);
+    return helper.source.slice(bodyStart, end);
+  }
+  const marker = "$acornCacheCode = @'\n";
+  const start = helper.source.indexOf(marker);
+  assert.notEqual(start, -1, `${helper.name} must embed the Acorn cache manager`);
+  const bodyStart = start + marker.length;
+  const end = helper.source.indexOf("\n'@", bodyStart);
+  assert.notEqual(end, -1, `${helper.name} Acorn cache manager must end`);
+  return helper.source.slice(bodyStart, end);
+}
+
+let cacheManagers = [];
+check('all helpers embed one paired Acorn cache manager', () => {
+  cacheManagers = helpers.map(helper => [helper.name, extractCacheManager(helper)]);
+  const normalized = cacheManagers.map(([, source]) => source.replace(/\r\n/g, '\n').trim());
+  for (let index = 1; index < normalized.length; index++) {
+    assert.equal(normalized[index], normalized[0], `${cacheManagers[index][0]} cache manager must match ${cacheManagers[0][0]}`);
+  }
+});
+
+if (cacheManagers.length > 0) {
+  await checkAsync('Acorn cache manager replaces wrong files and rejects links without touching sentinels', async () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'clawgod acorn cache '));
+    assert.equal(realpathSync(dirname(fixtureRoot)), realpathSync(tmpdir()), 'Acorn cache fixture must be under the system temporary directory');
+    const fixtureBytes = Buffer.from('exports.parse=function(){return {type:"Program",body:[]}};\n');
+    const fixtureHash = new Bun.CryptoHasher('sha512').update(fixtureBytes).digest('hex');
+    try {
+      const base = join(fixtureRoot, 'cache base');
+      const manager = join(fixtureRoot, 'manager.mjs');
+      mkdirSync(base);
+      const managerSource = cacheManagers[0][1]
+        .replace('https://unpkg.com/acorn@8.16.0/dist/acorn.js', `data:text/javascript;base64,${fixtureBytes.toString('base64')}`)
+        .replaceAll(ACORN_SHA512, fixtureHash);
+      writeFileSync(manager, managerSource, 'utf8');
+      const cacheDir = join(base, 'clawgod-plus', 'acorn');
+      mkdirSync(cacheDir, { recursive: true });
+      const cache = join(cacheDir, 'acorn-8.16.0.cjs');
+      const sentinel = join(fixtureRoot, 'outside-sentinel');
+      writeFileSync(sentinel, 'outside-must-not-change', 'utf8');
+      writeFileSync(cache, 'require("fs").writeFileSync(process.env.OUTSIDE_SENTINEL,"executed");', 'utf8');
+
+      const runManager = () => spawnSync(process.execPath, [manager, base], {
+        cwd: fixtureRoot,
+        encoding: 'utf8',
+        env: { HOME: fixtureRoot, PATH: fixtureRoot, OUTSIDE_SENTINEL: sentinel },
+      });
+      const replaced = runManager();
+      assert.equal(replaced.status, 0, replaced.stdout + replaced.stderr);
+      assert.deepEqual(readFileSync(cache), fixtureBytes, 'a wrong regular cache file must be atomically replaced with verified bytes');
+      assert.equal(readFileSync(sentinel, 'utf8'), 'outside-must-not-change', 'wrong cache content must never execute');
+
+      writeFileSync(manager, managerSource.replace(/data:text\/javascript;base64,[^']+/, 'clawgod-test://download-must-not-run'), 'utf8');
+
+      const reused = runManager();
+      assert.equal(reused.status, 0, reused.stdout + reused.stderr);
+
+      rmSync(cache);
+      symlinkSync(sentinel, cache);
+      const linked = runManager();
+      assert.notEqual(linked.status, 0, 'a cache-file symlink must fail closed');
+      assert.equal(readFileSync(sentinel, 'utf8'), 'outside-must-not-change', 'a cache-file symlink must not touch its target');
+      assert.match(linked.stderr, /Unsafe Acorn cache file/, 'a cache-file symlink must be rejected before fetching');
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
 }
 
 const chromePowerShell = helpers.find(helper => helper.name === 'apply-claude-code-chrome-fix.ps1');
@@ -187,12 +312,40 @@ if (failures.length > 0) {
 
 const unixHelpers = helpers.filter(helper => helper.kind === 'sh');
 const fixtureRoot = mkdtempSync(join(tmpdir(), 'clawgod-helper-bun-only-'));
+assert.equal(realpathSync(dirname(fixtureRoot)), realpathSync(tmpdir()), 'helper behavior fixture must be under the system temporary directory');
 try {
   const fakeBin = join(fixtureRoot, 'bin');
+  const fakeBunBin = join(fixtureRoot, 'bun-bin');
   mkdirSync(fakeBin);
-  const fakeBun = join(fakeBin, 'bun');
+  mkdirSync(fakeBunBin);
+  for (const [name, target] of Object.entries({
+    basename: '/usr/bin/basename',
+    bash: '/bin/bash',
+    cat: '/bin/cat',
+    chmod: '/bin/chmod',
+    cp: '/bin/cp',
+    date: '/bin/date',
+    dirname: '/usr/bin/dirname',
+    find: '/usr/bin/find',
+    head: '/usr/bin/head',
+    ls: '/bin/ls',
+    mkdir: '/bin/mkdir',
+    mktemp: '/usr/bin/mktemp',
+    mv: '/bin/mv',
+    rm: '/bin/rm',
+    sed: '/usr/bin/sed',
+    sort: '/usr/bin/sort',
+    tail: '/usr/bin/tail',
+    tr: '/usr/bin/tr',
+    uname: '/usr/bin/uname',
+    wc: '/usr/bin/wc',
+  })) symlinkSync(target, join(fakeBin, name));
+  const fakeBun = join(fakeBunBin, 'bun');
   writeFileSync(fakeBun, `#!/bin/sh
 printf '%s\\n' "$@" >> "$FAKE_BUN_LOG"
+case "$1" in
+  *clawgod-acorn-cache-*.mjs) exit 0 ;;
+esac
 case "$FAKE_BUN_MODE" in
   already) printf '%s\\n' ALREADY_PATCHED; exit 0 ;;
   check) printf '%s\\n' NEEDS_PATCH; exit 1 ;;
@@ -216,7 +369,7 @@ exit 9
         ...process.env,
         HOME: home,
         TMPDIR: temp,
-        PATH: includeBun ? `${fakeBin}:/usr/bin:/bin` : '/usr/bin:/bin',
+        PATH: includeBun ? `${fakeBunBin}:${fakeBin}` : fakeBin,
         FAKE_BUN_LOG: join(fixtureRoot, label, 'bun.log'),
         FAKE_BUN_MODE: mode,
       },
@@ -229,7 +382,7 @@ exit 9
     const auto = makeEnvironment(`auto-${index}`);
     const autoBundle = join(auto.home, '.clawgod', 'cli.original.cjs');
     writeFileSync(autoBundle, 'automatic fixture\n', 'utf8');
-    const autoRun = spawnSync('bash', [script.pathname], { encoding: 'utf8', env: auto.env });
+    const autoRun = spawnSync('/bin/bash', [script.pathname], { encoding: 'utf8', env: auto.env });
     assert.equal(autoRun.status, 0, `${helper.name} auto discovery: ${autoRun.stdout}${autoRun.stderr}`);
     assert.match(autoRun.stdout, new RegExp(autoBundle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.match(readFileSync(auto.log, 'utf8'), new RegExp(autoBundle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -237,21 +390,21 @@ exit 9
     const explicit = makeEnvironment(`explicit-${index}`);
     const explicitBundle = join(fixtureRoot, `arbitrary bundle ${index}.custom`);
     writeFileSync(explicitBundle, 'explicit fixture\n', 'utf8');
-    const explicitRun = spawnSync('bash', [script.pathname, ...helper.explicit(explicitBundle)], { encoding: 'utf8', env: explicit.env });
+    const explicitRun = spawnSync('/bin/bash', [script.pathname, ...helper.explicit(explicitBundle)], { encoding: 'utf8', env: explicit.env });
     assert.equal(explicitRun.status, 0, `${helper.name} explicit path: ${explicitRun.stdout}${explicitRun.stderr}`);
     assert.match(readFileSync(explicit.log, 'utf8'), new RegExp(explicitBundle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
     const checking = makeEnvironment(`check-${index}`, 'check');
     const checkBundle = join(fixtureRoot, `check bundle ${index}.custom`);
     writeFileSync(checkBundle, 'unchanged\n', 'utf8');
-    const checkRun = spawnSync('bash', [script.pathname, '--check', ...helper.explicit(checkBundle)], { encoding: 'utf8', env: checking.env });
+    const checkRun = spawnSync('/bin/bash', [script.pathname, '--check', ...helper.explicit(checkBundle)], { encoding: 'utf8', env: checking.env });
     assert.equal(checkRun.status, 1, `${helper.name} --check must preserve patch-needed exit 1`);
     assert.equal(readFileSync(checkBundle, 'utf8'), 'unchanged\n', `${helper.name} --check must not change the bundle`);
 
     const failing = makeEnvironment(`failure-${index}`, 'fail');
     const failureBundle = join(fixtureRoot, `failure bundle ${index}.custom`);
     writeFileSync(failureBundle, 'unchanged\n', 'utf8');
-    const failureRun = spawnSync('bash', [script.pathname, ...helper.explicit(failureBundle)], { encoding: 'utf8', env: failing.env });
+    const failureRun = spawnSync('/bin/bash', [script.pathname, ...helper.explicit(failureBundle)], { encoding: 'utf8', env: failing.env });
     assert.equal(failureRun.status, 7, `${helper.name} must propagate an unhandled Bun patcher failure`);
 
     const restore = makeEnvironment(`restore-${index}`, 'already');
@@ -259,14 +412,14 @@ exit 9
     const restoreBackup = `${restoreBundle}.${helper.backup}-2099-01-01T00-00-00`;
     writeFileSync(restoreBundle, 'patched\n', 'utf8');
     writeFileSync(restoreBackup, 'original\n', 'utf8');
-    const restoreRun = spawnSync('bash', [script.pathname, '--restore', ...helper.explicit(restoreBundle)], { encoding: 'utf8', env: restore.env });
+    const restoreRun = spawnSync('/bin/bash', [script.pathname, '--restore', ...helper.explicit(restoreBundle)], { encoding: 'utf8', env: restore.env });
     assert.equal(restoreRun.status, 0, `${helper.name} restore: ${restoreRun.stdout}${restoreRun.stderr}`);
     assert.equal(readFileSync(restoreBundle, 'utf8'), 'original\n', `${helper.name} must restore an arbitrary explicit filename`);
 
     const noBun = makeEnvironment(`no-bun-${index}`, 'already', false);
     const noBunBundle = join(fixtureRoot, `no bun bundle ${index}.custom`);
     writeFileSync(noBunBundle, 'fixture\n', 'utf8');
-    const noBunRun = spawnSync('bash', [script.pathname, ...helper.explicit(noBunBundle)], { encoding: 'utf8', env: noBun.env });
+    const noBunRun = spawnSync('/bin/bash', [script.pathname, ...helper.explicit(noBunBundle)], { encoding: 'utf8', env: noBun.env });
     assert.notEqual(noBunRun.status, 0, `${helper.name} must fail when Bun is unavailable`);
     assert.match(noBunRun.stdout + noBunRun.stderr, /Bun.*required|Install Bun/i, `${helper.name} must explain how to resolve missing Bun`);
   }

@@ -169,15 +169,63 @@ BUN_BIN=$(resolve_bun) || {
     exit 1
 }
 
-ACORN_PATH="${TMPDIR:-/tmp}/acorn-8.16.0.cjs"
-if [[ ! -f "$ACORN_PATH" ]]; then
-    info "Downloading acorn parser..."
-    FETCH_SCRIPT=$(mktemp "${TMPDIR:-/tmp}/acorn-fetch-XXXXXX.mjs")
-    cat > "$FETCH_SCRIPT" <<'FETCH_EOF'
-import { existsSync, renameSync, rmSync } from 'node:fs';
+ACORN_CACHE_BASE="$HOME/.cache"
+ACORN_PATH="$ACORN_CACHE_BASE/clawgod-plus/acorn/acorn-8.16.0.cjs"
+ACORN_CACHE_SCRIPT=$(mktemp "${TMPDIR:-/tmp}/clawgod-acorn-cache-XXXXXX.mjs")
+cat > "$ACORN_CACHE_SCRIPT" <<'ACORN_CACHE_EOF'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
-const [url, destination] = process.argv.slice(2);
-if (!url || !destination) throw new Error('usage: acorn fetcher <url> <destination>');
+const cacheBase = process.argv[2];
+if (!cacheBase) throw new Error('usage: acorn cache manager <cache-base>');
+const ACORN_URL = 'https://unpkg.com/acorn@8.16.0/dist/acorn.js';
+const ACORN_SHA512 = 'd883627a2de353f34bc25ffb7bbe277c84186720619fe3cbecc3c5885b379635e67019c8d8db7a24e21e8f82e1486e8038b4d13d642b40a684995d0867ed55b3';
+
+function lstatIfPresent(path) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function assertDirectory(path, create = false) {
+  let stat = lstatIfPresent(path);
+  if (!stat) {
+    if (!create) throw new Error(`Acorn cache parent is missing: ${path}`);
+    mkdirSync(path, { mode: 0o700 });
+    stat = lstatSync(path);
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Unsafe Acorn cache directory: ${path}`);
+  if (process.platform !== 'win32') chmodSync(path, 0o700);
+}
+
+function sha512(bytes) {
+  return new Bun.CryptoHasher('sha512').update(bytes).digest('hex');
+}
+
+function verifiedRegularFile(path) {
+  const stat = lstatIfPresent(path);
+  if (!stat) return false;
+  if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`Unsafe Acorn cache file: ${path}`);
+  return sha512(readFileSync(path)) === ACORN_SHA512;
+}
+
+const base = resolve(cacheBase);
+assertDirectory(dirname(base));
+assertDirectory(base, true);
+const managed = join(base, 'clawgod-plus');
+const acornDir = join(managed, 'acorn');
+assertDirectory(managed, true);
+assertDirectory(acornDir, true);
+const destination = join(acornDir, 'acorn-8.16.0.cjs');
+
+if (verifiedRegularFile(destination)) {
+  if (process.platform !== 'win32') chmodSync(destination, 0o600);
+  process.exit(0);
+}
 
 function noProxyRule(value) {
   let entry = value.trim().toLowerCase();
@@ -261,23 +309,48 @@ async function fetchWithProxy(initialUrl) {
   throw new Error('Too many redirects');
 }
 
-const temporary = `${destination}.${process.pid}.tmp`;
+const response = await fetchWithProxy(ACORN_URL);
+const bytes = new Uint8Array(await response.arrayBuffer());
+if (sha512(bytes) !== ACORN_SHA512) throw new Error('Acorn 8.16.0 SHA-512 mismatch');
+
+const transaction = randomUUID();
+const temporary = join(acornDir, `.acorn-${transaction}.tmp`);
+const displaced = join(acornDir, `.acorn-${transaction}.previous`);
+let movedExisting = false;
 try {
-  await Bun.write(temporary, await fetchWithProxy(url));
+  await Bun.write(temporary, bytes);
+  const temporaryStat = lstatSync(temporary);
+  if (temporaryStat.isSymbolicLink() || !temporaryStat.isFile()) throw new Error('Unsafe staged Acorn cache file');
+  if (process.platform !== 'win32') chmodSync(temporary, 0o600);
+  const destinationStat = lstatIfPresent(destination);
+  if (destinationStat) {
+    if (destinationStat.isSymbolicLink() || !destinationStat.isFile()) throw new Error(`Unsafe Acorn cache file: ${destination}`);
+    renameSync(destination, displaced);
+    movedExisting = true;
+  }
   renameSync(temporary, destination);
+  if (!verifiedRegularFile(destination)) throw new Error('Installed Acorn cache failed verification');
+  if (movedExisting) rmSync(displaced, { force: true });
+  movedExisting = false;
+} catch (error) {
+  if (movedExisting) {
+    if (lstatIfPresent(destination)) rmSync(destination, { force: true });
+    if (lstatIfPresent(displaced)) renameSync(displaced, destination);
+  }
+  throw error;
 } finally {
   if (existsSync(temporary)) rmSync(temporary, { force: true });
+  if (existsSync(displaced)) rmSync(displaced, { force: true });
 }
-FETCH_EOF
-    set +e
-    "$BUN_BIN" "$FETCH_SCRIPT" "https://unpkg.com/acorn@8.16.0/dist/acorn.js" "$ACORN_PATH"
-    FETCH_EXIT=$?
-    set -e
-    rm -f "$FETCH_SCRIPT"
-    if [[ $FETCH_EXIT -ne 0 ]]; then
-        error "Failed to download acorn parser"
-        exit 1
-    fi
+ACORN_CACHE_EOF
+set +e
+"$BUN_BIN" "$ACORN_CACHE_SCRIPT" "$ACORN_CACHE_BASE"
+ACORN_CACHE_EXIT=$?
+set -e
+rm -f "$ACORN_CACHE_SCRIPT"
+if [[ $ACORN_CACHE_EXIT -ne 0 ]]; then
+    error "Failed to prepare verified Acorn cache"
+    exit 1
 fi
 
 # ============================================================
@@ -286,7 +359,19 @@ fi
 PATCH_SCRIPT=$(mktemp)
 cat > "$PATCH_SCRIPT" << 'PATCH_EOF'
 const fs = require('fs');
-const acorn = require(process.argv[2]);
+const ACORN_SHA512 = 'd883627a2de353f34bc25ffb7bbe277c84186720619fe3cbecc3c5885b379635e67019c8d8db7a24e21e8f82e1486e8038b4d13d642b40a684995d0867ed55b3';
+const acornPath = process.argv[2];
+let acorn;
+try {
+    const stat = fs.lstatSync(acornPath);
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('Acorn cache is not a regular file');
+    const actual = new Bun.CryptoHasher('sha512').update(fs.readFileSync(acornPath)).digest('hex');
+    if (actual !== ACORN_SHA512) throw new Error('Acorn cache SHA-512 mismatch');
+    acorn = require(acornPath);
+} catch (error) {
+    console.error('PARSE_ERROR:' + error.message);
+    process.exit(1);
+}
 const cliPath = process.argv[3];
 const checkOnly = process.argv[4] === '--check';
 const backupSuffix = process.env.BACKUP_SUFFIX || 'backup';

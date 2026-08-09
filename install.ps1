@@ -399,13 +399,24 @@ function Resolve-Bun {
     return $null
 }
 
-function Test-ClawGodLauncher {
+function Test-ClaudePathPresent {
+    param([string]$Path)
+
+    try {
+        $null = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Test-ClawGodLauncherContent {
     param([string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     try {
         $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
-        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+        if ($item.Length -gt 1048576) { return $false }
         $content = [System.IO.File]::ReadAllText($Path)
     } catch {
         return $false
@@ -425,6 +436,45 @@ function Test-ClawGodLauncher {
     return $hasStableStructure
 }
 
+function Test-ClawGodLauncher {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+    } catch {
+        return $false
+    }
+    return (Test-ClawGodLauncherContent $Path)
+}
+
+function Test-ValidClaudeOriginal {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    return (-not (Test-ClawGodLauncherContent $Path))
+}
+
+function Test-ClaudeLauncherConflict {
+    param(
+        [string]$Current,
+        [string]$Original
+    )
+
+    if (-not (Test-ClaudePathPresent $Original)) { return $false }
+    if ((Test-ClaudePathPresent $Current) -and -not (Test-ClawGodLauncher $Current)) {
+        Write-Err "Claude launcher conflict at $Current; current command and $Original were preserved."
+        Write-Err "Move or remove the third-party current command, then rerun the installer."
+        return $true
+    }
+    if (-not (Test-ValidClaudeOriginal $Original) -and -not (Test-ClawGodLauncherContent $Original)) {
+        Write-Err "Invalid original backup at $Original; operation stopped without launcher changes."
+        return $true
+    }
+    return $false
+}
+
 Write-Host ""
 Write-Host "  ClawGod Plus Installer" -ForegroundColor White -NoNewline
 Write-Host " (Windows)" -ForegroundColor DarkGray
@@ -435,6 +485,14 @@ Write-Host ""
 if ($Uninstall) {
     $BunBin = Resolve-Bun
     if (-not $BunBin) { exit 1 }
+    $claudeOrig = Join-Path $BinDir "claude.orig.cmd"
+    $claudeCmd  = Join-Path $BinDir "claude.cmd"
+    $claudeExeOrig = Join-Path $BinDir "claude.orig.exe"
+    $claudeExe = Join-Path $BinDir "claude.exe"
+    if ((Test-ClaudeLauncherConflict -Current $claudeCmd -Original $claudeOrig) -or
+        (Test-ClaudeLauncherConflict -Current $claudeExe -Original $claudeExeOrig)) {
+        exit 1
+    }
     $claudeMemCompat = Join-Path $ClawDir "claude-mem-compat.cjs"
     if (Test-Path $claudeMemCompat) {
         try {
@@ -447,21 +505,30 @@ if ($Uninstall) {
         }
     }
     # Restore original claude
-    $claudeOrig = Join-Path $BinDir "claude.orig.cmd"
-    $claudeCmd  = Join-Path $BinDir "claude.cmd"
-    if (Test-Path $claudeOrig) {
+    if (Test-ValidClaudeOriginal $claudeOrig) {
+        if (Test-ClawGodLauncher $claudeCmd) { Remove-Item -LiteralPath $claudeCmd -Force }
         Move-Item -Force $claudeOrig $claudeCmd
         Write-OK "Original claude restored"
-    } elseif ((Test-Path $claudeCmd) -and (Test-ClawGodLauncher $claudeCmd)) {
+    } elseif (Test-ClawGodLauncherContent $claudeOrig) {
+        if (Test-ClawGodLauncher $claudeCmd) { Remove-Item -LiteralPath $claudeCmd -Force }
+        Remove-Item -LiteralPath $claudeOrig -Force
+        Write-Warn "Removed installer-owned polluted backup ($claudeOrig)"
+    } elseif ((Test-ClaudePathPresent $claudeCmd) -and (Test-ClawGodLauncher $claudeCmd)) {
         Remove-Item -Force $claudeCmd
         Write-OK "Removed ClawGod Plus launcher ($claudeCmd)"
     }
     # Also check for .exe backup
-    $claudeExeOrig = Join-Path $BinDir "claude.orig.exe"
-    $claudeExe     = Join-Path $BinDir "claude.exe"
-    if (Test-Path $claudeExeOrig) {
+    if (Test-ValidClaudeOriginal $claudeExeOrig) {
+        if (Test-ClawGodLauncher $claudeExe) { Remove-Item -LiteralPath $claudeExe -Force }
         Move-Item -Force $claudeExeOrig $claudeExe
         Write-OK "Original claude.exe restored"
+    } elseif (Test-ClawGodLauncherContent $claudeExeOrig) {
+        if (Test-ClawGodLauncher $claudeExe) { Remove-Item -LiteralPath $claudeExe -Force }
+        Remove-Item -LiteralPath $claudeExeOrig -Force
+        Write-Warn "Removed installer-owned polluted backup ($claudeExeOrig)"
+    } elseif ((Test-ClaudePathPresent $claudeExe) -and (Test-ClawGodLauncher $claudeExe)) {
+        Remove-Item -LiteralPath $claudeExe -Force
+        Write-OK "Removed ClawGod Plus launcher ($claudeExe)"
     }
     # Remove explicit clawgod alias
     $clawgodCmd = Join-Path $BinDir "clawgod.cmd"
@@ -773,7 +840,7 @@ export async function extractRipgrep(bytes, asset) {
 export function validateRipgrepVersion(path, spawnImpl = Bun.spawnSync) {
   const result = spawnImpl([path, '--version'], { stdout: 'pipe', stderr: 'pipe' });
   const output = typeof result.stdout === 'string' ? result.stdout : Buffer.from(result.stdout || []).toString();
-  if (result.exitCode !== 0 || !output.startsWith(`ripgrep ${RIPGREP_VERSION}`)) {
+  if (result.exitCode !== 0 || !/^ripgrep 15\.2\.0(?: \(rev [0-9A-Fa-f]+\))?(?:\r?\n|$)/.test(output)) {
     throw new Error(`ripgrep ${RIPGREP_VERSION} version smoke failed`);
   }
 }
@@ -2874,34 +2941,20 @@ const patches = [
     name: "Redirect `claude update` to clawgod self-update",
     pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\(async\(\)=>\{)/g,
     replacer: (m, chain, action) => {
-      // PowerShell 5.1's Invoke-WebRequest ignores HTTP_PROXY/HTTPS_PROXY env
-      // (only reads IE system proxy). Read env explicitly and pass via -Proxy
-      // so it works on both PS 5.1 and PS 7. Use Invoke-RestMethod (irm) not
-      // Invoke-WebRequest (iwr): under -UseBasicParsing on PS 5.1, iwr's
-      // .Content is byte[] not string, so `iex (iwr -useb ...).Content`
-      // throws "Cannot convert System.Byte[] to System.String". irm always
-      // returns string in both versions. -EncodedCommand bypasses CLI
-      // arg-quoting; payload must be UTF-16LE base64.
-      const psScript =
-        "$p=if($env:HTTPS_PROXY){$env:HTTPS_PROXY}elseif($env:HTTP_PROXY){$env:HTTP_PROXY}else{$null};" +
-        "$u='https://github.com/A6083450/clawgod-plus/releases/latest/download/install.ps1';" +
-        "if($p){iex(irm -Proxy $p $u)}else{iex(irm $u)}";
-      const psB64 = Buffer.from(psScript, 'utf16le').toString('base64');
       return (
         chain + '.allowUnknownOption()' + action +
-        `const _ui=process.argv.findIndex(a=>a==="update"||a==="upgrade");` +
-        `const _ua=_ui>=0?process.argv.slice(_ui+1):[];` +
-        `const _vi=_ua.indexOf("--version");` +
-        `if(_vi>=0&&_ua[_vi+1])process.env.CLAWGOD_VERSION=_ua[_vi+1];` +
-        `if(_ua.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";` +
-        `if(_ua.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";` +
-        `if(_ua.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";` +
-        `if(_ua.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";` +
+        `const __clawgodUpdateIndex=process.argv.findIndex(a=>a==="update"||a==="upgrade");` +
+        `const __clawgodUpdateArgs=__clawgodUpdateIndex>=0?process.argv.slice(__clawgodUpdateIndex+1):[];` +
+        `const __clawgodVersionIndex=__clawgodUpdateArgs.indexOf("--version");` +
+        `if(__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1])process.env.CLAWGOD_VERSION=__clawgodUpdateArgs[__clawgodVersionIndex+1];` +
+        `if(__clawgodUpdateArgs.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";` +
+        `if(__clawgodUpdateArgs.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";` +
+        `if(__clawgodUpdateArgs.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";` +
+        `if(__clawgodUpdateArgs.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";` +
         `process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");` +
         `const _w=process.platform==='win32';` +
-        `const _c=_w?['powershell','-NoProfile','-EncodedCommand','${psB64}']:['bash','-c','curl -fsSL https://github.com/A6083450/clawgod-plus/releases/latest/download/install.sh | bash'];` +
-        `const _r=require('child_process').spawnSync(_c[0],_c.slice(1),{stdio:'inherit',env:process.env});` +
-        `process.exit(_r.status||0);`
+        `const __clawgodUpdateStatus=(()=>{const __fs=require('fs'),__path=require('path'),__os=require('os'),__cp=require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh');if(!__fs.existsSync(__installer)){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:process.env});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();` +
+        `process.exit(__clawgodUpdateStatus);`
       );
     },
     sentinel: '.command("update").alias("upgrade")',
@@ -3227,12 +3280,13 @@ if (chromePatch.status === 'applied') {
 console.log(`\n${'-'.repeat(55)}`);
 console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed`);
 
-if (!dryRun && !verify && applied > 0) {
+if (failed === 0 && !dryRun && !verify && applied > 0) {
   if (!existsSync(BACKUP)) { copyFileSync(TARGET, BACKUP); console.log(`  Backup: ${BACKUP}`); }
   writeFileSync(TARGET, code, 'utf8');
   console.log(`  Written: cli.original.cjs (${code.length - origSize} bytes)`);
 }
 console.log(`${'='.repeat(55)}\n`);
+if (failed > 0) process.exit(1);
 '@
 
 Set-Content (Join-Path $ClawDir "patch.mjs") $patcherCode -Encoding UTF8
@@ -3241,7 +3295,13 @@ Write-OK "Patcher created (patch.mjs)"
 # ─── Apply patches ────────────────────────────────────
 
 Write-Dim "Applying patches ..."
-& $BunBin (Join-Path $ClawDir "patch.mjs")
+$patchOutput = & $BunBin (Join-Path $ClawDir "patch.mjs") 2>&1
+$patchStatus = $LASTEXITCODE
+$patchOutput | ForEach-Object { Write-Host "  $_" }
+if ($patchStatus -ne 0) {
+    Write-Err "Mandatory patching failed; installation stopped before launcher replacement."
+    exit $patchStatus
+}
 Invoke-ChromePostInstallFix
 
 # ─── Create default configs ───────────────────────────
@@ -3353,12 +3413,15 @@ $sanityCli = Join-Path $ClawDir "cli.cjs"
 # block runs. Defense-in-depth — pre-flight already blocks Bun < $MinBunVersion;
 # this remains for the day Anthropic bumps embedded Bun past our constant.
 $sanityOut = $null
+$sanityStatus = 1
 try {
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $sanityOut = (& $BunBin $sanityCli --version 2>&1 | Out-String)
+    $sanityStatus = $LASTEXITCODE
 } catch {
     $sanityOut = "$_"
+    $sanityStatus = 1
 } finally {
     $ErrorActionPreference = $prevEAP
 }
@@ -3382,7 +3445,13 @@ if ($sanityOut -match "Expected CommonJS module to have a function wrapper") {
     Write-Err "    bun upgrade --canary"
     Write-Err ""
     Write-Err "  Then re-run .\install.ps1 — this sanity check will pass."
-    exit 1
+    if ($sanityStatus -eq 0) { $sanityStatus = 1 }
+    exit $sanityStatus
+}
+if ($sanityStatus -ne 0) {
+    if ($sanityOut) { Write-Host $sanityOut.TrimEnd() }
+    Write-Err "Bun failed to load patched cli.original.cjs (exit $sanityStatus)."
+    exit $sanityStatus
 }
 Write-OK "Bun loads cli.original.cjs"
 
@@ -3465,8 +3534,19 @@ $claudeExe = Join-Path $BinDir "claude.exe"
 $claudeOrigCmd = Join-Path $BinDir "claude.orig.cmd"
 $claudeOrigExe = Join-Path $BinDir "claude.orig.exe"
 
+# Validate both launcher slots before any backup, removal, or replacement.
+if ((Test-ClaudeLauncherConflict -Current $claudeCmd -Original $claudeOrigCmd) -or
+    (Test-ClaudeLauncherConflict -Current $claudeExe -Original $claudeOrigExe)) {
+    exit 1
+}
+foreach ($original in @($claudeOrigCmd, $claudeOrigExe)) {
+    if (Test-ClawGodLauncherContent $original) {
+        Remove-Item -LiteralPath $original -Force
+        Write-Warn "Removed installer-owned polluted backup ($original)"
+    }
+}
+
 # Check multiple locations for original claude
-$originalFound = $false
 foreach ($loc in @(
     (Join-Path $BinDir "claude.exe"),
     (Join-Path $BinDir "claude.cmd"),
@@ -3474,50 +3554,43 @@ foreach ($loc in @(
     (Join-Path $env:LOCALAPPDATA "Programs\claude-code")
 )) {
     if (-not (Test-Path $loc)) { continue }
-    if ($loc -like "*.cmd" -and (Test-ClawGodLauncher $loc)) { continue }
+    if ((Test-Path $loc -PathType Leaf) -and (Test-ClawGodLauncher $loc)) { continue }
     # Back up .exe if exists and not already backed up
-    if ($loc -like "*.exe" -and -not (Test-Path $claudeOrigExe)) {
+    if ($loc -like "*.exe" -and -not (Test-ClaudePathPresent $claudeOrigExe)) {
         Copy-Item $loc $claudeOrigExe -Force
         Write-OK "Original claude.exe backed up → claude.orig.exe"
-        $originalFound = $true
     }
     # Back up .cmd if exists and not already backed up
-    if ($loc -like "*.cmd" -and -not (Test-Path $claudeOrigCmd)) {
+    if ($loc -like "*.cmd" -and -not (Test-ClaudePathPresent $claudeOrigCmd)) {
         Copy-Item $loc $claudeOrigCmd -Force
         Write-OK "Original claude.cmd backed up → claude.orig.cmd"
-        $originalFound = $true
     }
     # If it's a versions directory, find the latest exe
     if (Test-Path $loc -PathType Container) {
         $latestExe = Get-ChildItem $loc -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if ($latestExe -and -not (Test-Path $claudeOrigExe)) {
+        if ($latestExe -and -not (Test-ClaudePathPresent $claudeOrigExe)) {
             Copy-Item $latestExe.FullName $claudeOrigExe -Force
             Write-OK "Original claude backed up → claude.orig.exe ($($latestExe.Name))"
-            $originalFound = $true
         }
     }
-    if ($originalFound) { break }
 }
 
-# Clean up leftover timestamped/old exes from previous installs
-Get-ChildItem $BinDir -Filter "claude.*.exe" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -ne "claude.orig.exe" } |
-    ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
-
 # Remove claude.exe so .cmd takes precedence
-# Keep one backup as claude.orig.exe, discard the rest
-if (Test-Path $claudeExe) {
-    if (-not (Test-Path $claudeOrigExe)) {
+# The exact current executable is removed only after it has a valid backup.
+if (Test-ClaudePathPresent $claudeExe) {
+    if (Test-ClawGodLauncher $claudeExe) {
+        Remove-Item -LiteralPath $claudeExe -Force
+        Write-OK "Removed owned claude.exe launcher (.cmd now takes priority)"
+    } elseif (-not (Test-ClaudePathPresent $claudeOrigExe)) {
         Rename-Item $claudeExe $claudeOrigExe -Force
         Write-OK "Renamed claude.exe → claude.orig.exe"
     } else {
-        # Backup already exists — just remove the new claude.exe
+        # Conflict preflight plus backup search proved this exact current path is preserved.
         try {
-            Remove-Item -Force $claudeExe
+            Remove-Item -LiteralPath $claudeExe -Force
         } catch {
-            # File locked (running process) — rename aside with timestamp
-            $ts = Get-Date -Format "yyyyMMddHHmmss"
-            Rename-Item $claudeExe "claude.$ts.exe" -Force -ErrorAction SilentlyContinue
+            Write-Err "Could not remove owned launcher $claudeExe`: $($_.Exception.Message)"
+            exit 1
         }
         Write-OK "Removed claude.exe (.cmd now takes priority)"
     }

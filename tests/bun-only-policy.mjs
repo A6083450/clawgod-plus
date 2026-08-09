@@ -37,29 +37,44 @@ const allowedReferences = [
 
 function findForbiddenDependencies(source) {
   const matches = [];
+  let inPowerShellBlockComment = false;
   const add = (kind, lineNumber, line) => matches.push({ kind, lineNumber, line: line.trim() });
   const kindForProgram = program => {
     const normalized = program.toLowerCase();
     if (normalized.startsWith('node')) return 'node';
     if (normalized.startsWith('npm') || normalized.startsWith('npx')) return 'npm';
+    if (normalized === 'curl' || normalized === 'wget') return 'external-downloader';
+    if (normalized === 'invoke-webrequest' || normalized === 'irm') return 'external-downloader';
     return 'system-ripgrep';
   };
 
   for (const [offset, line] of source.split(/\r?\n/).entries()) {
     const lineNumber = offset + 1;
+    if (inPowerShellBlockComment) {
+      if (/#>/.test(line)) inPowerShellBlockComment = false;
+      continue;
+    }
+    if (/^\s*<#/.test(line)) {
+      if (!/#>/.test(line)) inPowerShellBlockComment = true;
+      continue;
+    }
     if (/^#!.*\bnode(?:\.exe)?\b/i.test(line)) {
       add('node', lineNumber, line);
       continue;
     }
     if (/^\s*(?:#|\/\/|\*)/.test(line)) continue;
+    if (/^\s*(?:Write-(?:Err|Dim|Host)|warn|dim|info)\s+["']/.test(line)) continue;
 
     if (/^\s*uses:\s*actions\/setup-node@\S+/i.test(line)) add('node-setup', lineNumber, line);
     if (/^\s*node-version:\s*\S+/i.test(line)) add('node-version', lineNumber, line);
     if (/^\s*path:\s*~\/\.npm\s*$/i.test(line)) add('npm-cache', lineNumber, line);
 
-    const command = /(?:^|&&|\|\||;|\||\$\(|\{)\s*(?:(?:if|then|do|while|until|sudo|command|exec|time|nohup|cmd(?:\.exe)?\s+\/c)\s+|env(?:\s+[A-Za-z_][\w]*=(?:"[^"]*"|'[^']*'|\S+))*\s+)*(?:&\s*)?(node(?:\.exe)?|npm(?:\.cmd)?|npx(?:\.cmd)?|rg(?:\.exe)?|ripgrep(?:\.exe)?)(?=\s|$)/g;
+    const command = /(?:^|&&|\|\||;|\||\$\(|\{)\s*(?:(?:if|then|do|while|until|sudo|command|exec|time|nohup|cmd(?:\.exe)?\s+\/c)\s+|env(?:\s+[A-Za-z_][\w]*=(?:"[^"]*"|'[^']*'|\S+))*\s+)*(?:&\s*)?(node(?:\.exe)?|node\.exe|npm(?:\.cmd)?|npx(?:\.cmd)?|rg(?:\.exe)?|ripgrep(?:\.exe)?|curl|wget|Invoke-WebRequest|irm)(?=\s|$)/g;
     for (const match of line.matchAll(command)) {
       add(kindForProgram(match[1]), lineNumber, line);
+    }
+    if (/\[['"]bash['"],['"]-c['"],['"](?:curl|wget)\b/.test(line) || /\biex\(irm\b/i.test(line)) {
+      add('external-downloader', lineNumber, line);
     }
 
     if (/\bStart-Process\s+(?:-FilePath\s+)?node(?:\.exe)?\b/i.test(line) || /&\s+\$Node(?:Bin|Path|Exe)?\b/i.test(line)) {
@@ -126,6 +141,11 @@ const executableDependencyFixtures = [
   ['PowerShell ripgrep lookup', 'Get-Command ripgrep', ['system-ripgrep']],
   ['Windows ripgrep lookup', 'where.exe rg', ['system-ripgrep']],
   ['system ripgrep package', 'sudo apt-get install -y ripgrep', ['system-ripgrep']],
+  ['curl installer pipe', 'curl -fsSL https://example.test/install.sh | bash', ['external-downloader']],
+  ['wget installer pipe', 'wget -qO- https://example.test/install.sh | bash', ['external-downloader']],
+  ['PowerShell downloader', 'Invoke-WebRequest https://example.test/install.ps1', ['external-downloader']],
+  ['PowerShell downloader alias', 'irm https://example.test/install.ps1', ['external-downloader']],
+  ['nested curl downloader', 'bash -c "curl -fsSL https://example.test/install.sh | bash"', ['external-downloader']],
 ];
 const allowedDependencyFixtures = [
   "import { readFileSync } from 'node:fs';",
@@ -158,7 +178,11 @@ for (const path of testFiles) {
 for (const path of paths.docs) {
   const source = read(path);
   assert.doesNotMatch(source, /\|\s*\*\*Node\.js\*\*\s*\|/i, `${path} must not list Node.js as a prerequisite`);
-  assert.deepEqual(findForbiddenDependencies(source), [], `${path} must not document executable Node, npm, or system ripgrep dependencies`);
+  assert.deepEqual(
+    findForbiddenDependencies(source).filter(match => match.kind !== 'external-downloader'),
+    [],
+    `${path} must not document executable Node, npm, or system ripgrep dependencies`,
+  );
 }
 
 const readmeFeatureMarkers = {
@@ -181,6 +205,7 @@ for (const path of ['README.md', 'README_EN.md', 'README_JP.md']) {
   assert.match(source, /claude update/, `${path} must retain update documentation`);
   assert.match(source, /uninstall|Uninstall|卸载|アンインストール/, `${path} must retain uninstall documentation`);
   assert.match(source, /bun "\$test_file"/, `${path} must show Bun test commands`);
+  assert.doesNotMatch(source, /包含 8 个针对性回归脚本|includes eight focused regression scripts|8 本の回帰スクリプト/, `${path} must not hard-code the stale focused-test count`);
   for (const marker of readmeFeatureMarkers[path]) {
     assert.ok(source.includes(marker), `${path} must retain ${marker}`);
   }
@@ -190,7 +215,8 @@ const agents = read('AGENTS.md');
 assert.match(agents, /two parts|两部分/i, 'AGENTS.md must describe the two-part repository');
 assert.match(agents, /@anthropic-ai\/claude-code-<platform>/, 'AGENTS.md must use the correct Claude Code package name');
 assert.match(agents, /Bun-only[\s\S]{0,100}CI|CI[\s\S]{0,100}Bun-only/i, 'AGENTS.md must document the Bun-only CI contract');
-assert.match(agents, /Task 7|temporary workflow exception/i, 'AGENTS.md must narrowly document the temporary workflow exception');
+assert.match(agents, /Linux[\s\S]{0,160}Windows|Windows[\s\S]{0,160}Linux/i, 'AGENTS.md must describe the current Bun-only Linux and Windows workflow');
+assert.doesNotMatch(agents, /Task 7|temporary workflow exception|cache-cleanup-weekly/i, 'AGENTS.md must reject completed-task exceptions and deleted workflow references');
 
 const workflow = read('.github/workflows/compat-daily.yml');
 assert.deepEqual(findForbiddenDependencies(workflow), [], 'compat-daily must not require an external Node, npm, or system ripgrep executable');

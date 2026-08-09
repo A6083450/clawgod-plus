@@ -27,7 +27,7 @@ git diff --check
 
 The compatibility workflow in `.github/workflows/compat-daily.yml` runs the Unix installer end-to-end and smoke-tests the generated command. Do not use `bash install.sh` as a casual local test: it writes to `~/.clawgod`, backs up and replaces the `claude` command, and creates `clawgod` launchers.
 
-Temporary workflow exception: until Task 7 migrates `compat-daily.yml`, its bootstrap still contains Node, npm, and system-ripgrep setup. That exception is limited to the CI workflow; product installers and helper scripts must remain Bun-only. GitHub Actions' `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` is an internal action setting, not a product runtime dependency.
+The Bun-only CI compatibility workflow runs project commands with Bun canary only: Linux runs on schedule and relevant changes, while Windows runs on relevant changes. GitHub Actions' `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` controls GitHub-hosted action internals and is not a product runtime dependency.
 
 ### Installer usage
 
@@ -122,9 +122,8 @@ Important variables used by the installer or launchers:
 
 ## GitHub Workflows
 
-- `.github/workflows/compat-daily.yml` is the primary compatibility smoke workflow. It is scheduled to become Bun-only in Task 7; see the temporary exception above.
+- `.github/workflows/compat-daily.yml` is the Bun-only compatibility smoke workflow for Linux and Windows. Linux also runs daily; Windows is intentionally change-driven.
 - `.github/workflows/release.yml` runs on tags matching `v*`, creates or updates a GitHub Release, and uploads `install.sh` and `install.ps1`.
-- `.github/workflows/cache-cleanup-weekly.yml` clears GitHub Actions caches so compatibility jobs eventually re-fetch upstream artifacts.
 
 ## Existing Project Instructions
 

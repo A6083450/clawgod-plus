@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -147,6 +148,7 @@ const normalize = source => source.replace(/\r\n/g, '\n').trim();
 assert.equal(normalize(windowsModule), normalize(unixModule), 'Unix and Windows install-ripgrep.mjs bodies must be identical');
 
 const fixtureDir = mkdtempSync(join(tmpdir(), 'clawgod-ripgrep-'));
+assert.equal(realpathSync(dirname(fixtureDir)), realpathSync(tmpdir()), 'ripgrep fixture must be created directly under the system temporary directory');
 try {
   const modulePath = join(fixtureDir, 'install-ripgrep.mjs');
   await Bun.write(modulePath, unixModule);
@@ -221,17 +223,75 @@ try {
     await assert.rejects(extractRipgrep(archive, windowsAsset), expected, `${label} must be rejected`);
   }
 
-  assert.doesNotThrow(
-    () => validateRipgrepVersion('/staged/rg', () => ({ exitCode: 0, stdout: Buffer.from('ripgrep 15.2.0\n-SIMD -AVX') })),
-    'the pinned version smoke output must pass',
-  );
+  const validRipgrepVersions = [
+    'ripgrep 15.2.0\n',
+    'ripgrep 15.2.0 (rev e89fff89ac)\n',
+    'ripgrep 15.2.0 (rev E89FFF89AC)\r\nfeatures:+pcre2\r\n',
+  ];
+  const invalidRipgrepVersions = [
+    'ripgrep 15.2.00\n',
+    'ripgrep 15.2.0.9\n',
+    'ripgrep 15.2.0-malicious\n',
+    'ripgrep 15.2.0suffix\n',
+    'prefix ripgrep 15.2.0\n',
+    'ripgrep 15.2.0 (rev not-hex)\n',
+    'ripgrep 15.2.0 trailing\n',
+  ];
+  for (const output of validRipgrepVersions) {
+    assert.doesNotThrow(
+      () => validateRipgrepVersion('/staged/rg', () => ({ exitCode: 0, stdout: Buffer.from(output) })),
+      `the pinned version smoke output must pass: ${JSON.stringify(output)}`,
+    );
+  }
   for (const result of [
     { exitCode: 1, stdout: Buffer.from('ripgrep 15.2.0') },
     { exitCode: 0, stdout: Buffer.from('ripgrep 15.1.0') },
-    { exitCode: 0, stdout: Buffer.from('not ripgrep 15.2.0') },
+    ...invalidRipgrepVersions.map(output => ({ exitCode: 0, stdout: Buffer.from(output) })),
   ]) {
-    assert.throws(() => validateRipgrepVersion('/staged/rg', () => result), /ripgrep 15\.2\.0|version smoke/i, 'failed or wrong-version smoke output must fail');
+    assert.throws(() => validateRipgrepVersion('/staged/rg', () => result), /ripgrep 15\.2\.0|version smoke/i, 'failed or malformed-version smoke output must fail');
   }
+
+  const malformedReuseRoot = join(fixtureDir, 'malformed-version-reuse');
+  const malformedReuseTarget = join(malformedReuseRoot, 'vendor', 'ripgrep', 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg');
+  mkdirSync(dirname(malformedReuseTarget), { recursive: true });
+  writeFileSync(malformedReuseTarget, 'malformed managed candidate');
+  let malformedReuseFetched = false;
+  await assert.rejects(
+    ensureRipgrep(malformedReuseRoot, {
+      fetchImpl: async () => {
+        malformedReuseFetched = true;
+        throw new Error('malformed reuse correctly reached offline fetch sentinel');
+      },
+      spawnImpl: () => ({ exitCode: 0, stdout: Buffer.from('ripgrep 15.2.00\n') }),
+    }),
+    /offline fetch sentinel/,
+    'a malformed existing version must not be reused',
+  );
+  assert.equal(malformedReuseFetched, true, 'malformed reuse candidate must proceed to replacement download');
+
+  const malformedRollbackDir = join(fixtureDir, 'malformed-version-rollback');
+  const malformedRollbackTarget = join(malformedRollbackDir, 'rg');
+  const malformedRollbackBackup = `${malformedRollbackTarget}.previous`;
+  const malformedRollbackStaged = `${malformedRollbackTarget}.staged`;
+  mkdirSync(malformedRollbackDir);
+  writeFileSync(malformedRollbackTarget, 'malformed current');
+  writeFileSync(malformedRollbackBackup, 'malformed previous');
+  writeFileSync(malformedRollbackStaged, 'new candidate');
+  assert.throws(
+    () => replaceManagedBinary(malformedRollbackStaged, malformedRollbackTarget, {
+      existsSync,
+      renameSync(from, to) {
+        if (from === malformedRollbackStaged && to === malformedRollbackTarget) throw new Error('injected malformed rollback failure');
+        renameSync(from, to);
+      },
+      rmSync,
+    }, args => args[0] === malformedRollbackTarget
+      ? { exitCode: 0, stdout: Buffer.from('ripgrep 15.2.0-malicious\n') }
+      : { exitCode: 0, stdout: Buffer.from('ripgrep 15.2.00\n') }),
+    /injected malformed rollback failure/,
+  );
+  assert.equal(existsSync(malformedRollbackTarget), false, 'malformed current must not be selected for rollback');
+  assert.equal(existsSync(malformedRollbackBackup), false, 'malformed .previous must not be selected for rollback');
 
   const replacementDir = join(fixtureDir, 'replacement');
   mkdirSync(replacementDir);
@@ -588,6 +648,7 @@ assert.match(unix, /install-ripgrep\.mjs"/, 'install.sh generated-artifact clean
 assert.match(windows, /"install-ripgrep\.mjs"/, 'install.ps1 generated-artifact cleanup must include install-ripgrep.mjs');
 
 const repatchDir = mkdtempSync(join(tmpdir(), 'clawgod-ripgrep-repatch-'));
+assert.equal(realpathSync(dirname(repatchDir)), realpathSync(tmpdir()), 'ripgrep repatch fixture must be created directly under the system temporary directory');
 try {
   for (const [name, repatch] of [['install.sh', unixRepatch()], ['install.ps1', powerShellRepatch()]]) {
     const fixture = join(repatchDir, name.replace('.', '-'));
@@ -601,7 +662,11 @@ try {
       writeFileSync(join(fixture, helper), '#!/usr/bin/env bun\n');
     }
     writeFileSync(join(fixture, 'repatch.mjs'), repatch);
-    const child = Bun.spawn([process.execPath, join(fixture, 'repatch.mjs'), join(fixture, 'native')], { stdout: 'pipe', stderr: 'pipe' });
+    const child = Bun.spawn([process.execPath, join(fixture, 'repatch.mjs'), join(fixture, 'native')], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { HOME: fixture, PATH: fixture },
+    });
     const [status, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
     assert.equal(status, 0, `${name} repatch fixture must execute: ${stderr}`);
     assert.equal(readFileSync(managed, 'utf8'), 'managed ripgrep', `${name} repatch must preserve the private ripgrep binary`);
@@ -612,6 +677,7 @@ try {
 }
 
 const wrapperDir = mkdtempSync(join(tmpdir(), 'clawgod-ripgrep-wrapper-'));
+assert.equal(realpathSync(dirname(wrapperDir)), realpathSync(tmpdir()), 'ripgrep wrapper fixture must be created directly under the system temporary directory');
 try {
   for (const [name, wrapper] of [['install.sh', unixWrapper()], ['install.ps1', powerShellWrapper()]]) {
     const home = join(wrapperDir, name.replace('.', '-'));
@@ -649,7 +715,7 @@ console.log(JSON.stringify({
     const child = Bun.spawn([process.execPath, join(clawDir, 'cli.cjs'), ...fixtureArgs], {
       stdout: 'pipe',
       stderr: 'pipe',
-      env: { ...process.env, HOME: home, PATH: `${fakeSystemBin}${delimiter}${process.env.PATH || ''}` },
+      env: { HOME: home, PATH: fakeSystemBin },
     });
     const [status, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     assert.equal(status, 0, `${name} wrapper must execute: ${stderr}`);
@@ -666,9 +732,8 @@ console.log(JSON.stringify({
       stdout: 'pipe',
       stderr: 'pipe',
       env: {
-        ...process.env,
         HOME: home,
-        PATH: `${fakeSystemBin}${delimiter}${process.env.PATH || ''}`,
+        PATH: fakeSystemBin,
         CLAWGOD_FIXTURE_EXIT_CODE: '23',
       },
     });

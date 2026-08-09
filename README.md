@@ -311,7 +311,7 @@ hash -r
 
 ## 验证
 
-本分支包含 8 个针对性回归脚本，覆盖 Claude Code 2.1.215 补丁形态、Chrome Agent 参数传递、异步 socket fallback、claude-mem 设置归属与清理、上下文上限、`--no-upgrade` 控制流、macOS 粘贴处理，以及 Worker/Computer Use 启动行为。
+本分支包含完整的针对性回归脚本，覆盖 Claude Code 补丁形态、Chrome Agent 参数传递、异步 socket fallback、claude-mem 设置归属与清理、上下文上限、`--no-upgrade` 控制流、macOS 粘贴处理、Worker/Computer Use 启动行为，以及安装器的 Bun-only 依赖与安全回滚契约。
 
 无需安装 ClawGod Plus 即可运行：
 

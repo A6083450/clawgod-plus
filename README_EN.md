@@ -311,7 +311,7 @@ Uninstall restores the original Claude launcher, removes the ClawGod Plus alias 
 
 ## Verification
 
-This branch includes eight focused regression scripts covering Claude Code 2.1.215 patch shapes, Chrome agent propagation, async socket fallback, claude-mem ownership and cleanup, context limits, `--no-upgrade` control flow, macOS paste handling, and worker/Computer Use launch behavior.
+This branch includes a complete focused regression suite covering Claude Code patch shapes, Chrome agent propagation, async socket fallback, claude-mem ownership and cleanup, context limits, `--no-upgrade` control flow, macOS paste handling, worker/Computer Use launch behavior, and the installer's Bun-only dependency and safe-rollback contracts.
 
 Run them without installing ClawGod Plus:
 

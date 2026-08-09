@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -172,24 +172,27 @@ for (const [name, patcher] of [
   ['install.sh', extractUnixPatcher()],
   ['install.ps1', extractPowerShellPatcher()],
 ]) {
-  const dir = mkdtempSync(join(tmpdir(), 'clawgod-worker-launch-stale-'));
-  try {
-    writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
-    writeFileSync(
-      join(dir, 'cli.original.cjs'),
-      'function WE(){return Bun.isStandaloneExecutable===!0}function W1t(){if(WE())return{cmd:process.execPath,prefixArgs:[]};let t=process.argv[1];if(!t)return{cmd:process.execPath,prefixArgs:[]};return{cmd:process.execPath,prefixArgs:[t],env:{}}}',
-      'utf8',
-    );
-    const run = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
-    const output = run.stdout + run.stderr;
-    assert.match(
-      output,
-      /Worker resolver for plain Bun cli\.cjs \(legacy shape\).*known resolver shape did not match/s,
-      `${name}: a shifted known legacy resolver shape must not be silently skipped`,
-    );
-    assert.match(output, /Result: \d+ applied, \d+ skipped, 1 failed/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+  for (const args of [[], ['--dry-run'], ['--verify']]) {
+    const mode = args[0] || 'normal';
+    const dir = mkdtempSync(join(tmpdir(), 'clawgod-worker-launch-stale-'));
+    try {
+      const original = 'function WE(){return Bun.isStandaloneExecutable===!0}function W1t(){if(WE())return{cmd:process.execPath,prefixArgs:[]};let t=process.argv[1];if(!t)return{cmd:process.execPath,prefixArgs:[]};return{cmd:process.execPath,prefixArgs:[t],env:{}}}';
+      writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
+      writeFileSync(join(dir, 'cli.original.cjs'), original, 'utf8');
+      const run = spawnSync(process.execPath, ['patch.mjs', ...args], { cwd: dir, encoding: 'utf8' });
+      const output = run.stdout + run.stderr;
+      assert.match(
+        output,
+        /Worker resolver for plain Bun cli\.cjs \(legacy shape\).*known resolver shape did not match/s,
+        `${name} ${mode}: a shifted known legacy resolver shape must not be silently skipped`,
+      );
+      assert.match(output, /Result: \d+ applied, \d+ skipped, 1 failed/);
+      assert.notEqual(run.status, 0, `${name} ${mode}: mandatory patch failures must exit nonzero`);
+      assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), original, `${name} ${mode}: mandatory patch failures must leave the target byte-identical`);
+      assert.equal(existsSync(join(dir, 'cli.original.cjs.bak')), false, `${name} ${mode}: mandatory patch failures must not create a backup`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 }
 

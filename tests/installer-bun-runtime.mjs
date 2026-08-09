@@ -1,12 +1,47 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+
+function assertTemporaryPath(path, label) {
+  const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];
+  const resolvedPath = resolve(path);
+  assert.ok(temporaryRoots.some(root => resolvedPath.startsWith(`${root}/`)), `${label} must stay under the system temporary directory`);
+}
+
+function isolatedUnixPath(root) {
+  assertTemporaryPath(root, 'Unix behavior fixture');
+  const bin = join(root, '.test-bin');
+  mkdirSync(bin, { recursive: true });
+  for (const [name, target] of Object.entries({
+    basename: '/usr/bin/basename',
+    cat: '/bin/cat',
+    chmod: '/bin/chmod',
+    cp: '/bin/cp',
+    date: '/bin/date',
+    dirname: '/usr/bin/dirname',
+    file: '/usr/bin/file',
+    grep: '/usr/bin/grep',
+    head: '/usr/bin/head',
+    ln: '/bin/ln',
+    ls: '/bin/ls',
+    mkdir: '/bin/mkdir',
+    mv: '/bin/mv',
+    readlink: '/usr/bin/readlink',
+    rm: '/bin/rm',
+    sed: '/usr/bin/sed',
+    tr: '/usr/bin/tr',
+  })) {
+    const destination = join(bin, name);
+    if (!existsSync(destination)) symlinkSync(target, destination);
+  }
+  return bin;
+}
 
 function unixTemplate(name, marker) {
   const start = unix.indexOf(marker);
@@ -92,56 +127,66 @@ const unixBackupDecision = unix.slice(unixBackupStart, unixBackupEnd);
 const unixWriteLauncher = unix.slice(unixWriteLauncherStart, unixWriteLauncherEnd + 3);
 const unixCleanup = unixUninstall.slice(unixCleanupStart, unixCleanupEnd);
 
-function unixOwnershipHelper() {
-  const start = unix.indexOf('is_clawgod_launcher() {');
+function unixLauncherHelpers() {
+  const start = Math.max(0, unix.indexOf('has_clawgod_launcher_content() {')) || unix.indexOf('is_clawgod_launcher() {');
   if (start < 0) return '';
-  const end = unix.indexOf('\n}\n', start);
-  assert.notEqual(end, -1, 'install.sh must close is_clawgod_launcher');
-  return unix.slice(start, end + 3);
+  const end = unix.indexOf('\necho ""', start);
+  assert.notEqual(end, -1, 'install.sh must close launcher helper definitions');
+  return unix.slice(start, end);
 }
 
 function renderUnixLauncher(home, bin, primary) {
   const fakeBun = join(home, 'fake-bun');
   writeFileSync(fakeBun, '#!/bin/sh\nexit 0\n', 'utf8');
   chmodSync(fakeBun, 0o755);
-  const rendered = spawnSync('bash', ['-c', `${unixLauncherAssignment}\nprintf '%s' "$LAUNCHER_CONTENT"`], {
+  const rendered = spawnSync('/bin/bash', ['-c', `${unixLauncherAssignment}\nprintf '%s' "$LAUNCHER_CONTENT"`], {
     encoding: 'utf8',
-    env: { ...process.env, HOME: home, CLAWGOD_DIR: join(home, '.clawgod'), BUN_BIN: fakeBun, CLAUDE_BIN: primary },
+    env: { HOME: home, PATH: isolatedUnixPath(home), CLAWGOD_DIR: join(home, '.clawgod'), BUN_BIN: fakeBun, CLAUDE_BIN: primary },
   });
   assert.equal(rendered.status, 0, rendered.stderr);
   return rendered.stdout;
 }
 
 function writeUnixLauncher(primary, content) {
-  const written = spawnSync('bash', ['-c', `${unixWriteLauncher}\nwrite_launcher "$TARGET"`], {
+  const root = dirname(dirname(primary));
+  const written = spawnSync('/bin/bash', ['-c', `${unixWriteLauncher}\nwrite_launcher "$TARGET"`], {
     encoding: 'utf8',
-    env: { ...process.env, TARGET: primary, LAUNCHER_CONTENT: content },
+    env: { HOME: root, PATH: isolatedUnixPath(root), TARGET: primary, LAUNCHER_CONTENT: content },
   });
   assert.equal(written.status, 0, written.stderr);
 }
 
-function runUnixBackup(home, bin, primary) {
-  const backup = spawnSync('bash', ['-c', `info() { :; }\n${unixOwnershipHelper()}\n${unixBackupDecision}`], {
+function invokeUnixBackup(home, bin, primary) {
+  return spawnSync('/bin/bash', ['-c', `info() { :; }\nwarn() { printf '%s\\n' "$*" >&2; }\nerr() { printf '%s\\n' "$*" >&2; }\n${unixLauncherHelpers()}\n${unixBackupDecision}`], {
     encoding: 'utf8',
-    env: { ...process.env, HOME: home, BIN_DIR: bin, CLAUDE_BIN: primary, PATH: '/usr/bin:/bin' },
+    env: { HOME: home, BIN_DIR: bin, CLAUDE_BIN: primary, PATH: isolatedUnixPath(home) },
   });
+}
+
+function runUnixBackup(home, bin, primary) {
+  const backup = invokeUnixBackup(home, bin, primary);
   assert.equal(backup.status, 0, backup.stderr);
 }
 
-function runUnixLauncherCleanup(home, bin) {
-  const cleanup = spawnSync('bash', ['-c', `info() { :; }\n${unixOwnershipHelper()}\n${unixCleanup}`], {
+function invokeUnixLauncherCleanup(home, bin, managedSentinel = '') {
+  return spawnSync('/bin/bash', ['-c', `info() { :; }\nwarn() { printf '%s\\n' "$*" >&2; }\nerr() { printf '%s\\n' "$*" >&2; }\n${unixLauncherHelpers()}\n${unixCleanup}\nif [ -n "$MANAGED_SENTINEL" ]; then rm -f "$MANAGED_SENTINEL"; fi`], {
     encoding: 'utf8',
-    env: { ...process.env, HOME: home, BIN_DIR: bin, PATH: '/usr/bin:/bin' },
+    env: { HOME: home, BIN_DIR: bin, PATH: isolatedUnixPath(home), MANAGED_SENTINEL: managedSentinel },
   });
+}
+
+function runUnixLauncherCleanup(home, bin) {
+  const cleanup = invokeUnixLauncherCleanup(home, bin);
   assert.equal(cleanup.status, 0, cleanup.stderr);
 }
 
 function unixLauncherIsOwned(path) {
-  const ownership = unixOwnershipHelper();
+  const ownership = unixLauncherHelpers();
   assert.notEqual(ownership, '', 'install.sh must define a ClawGod launcher ownership check');
-  return spawnSync('bash', ['-c', `${ownership}\nis_clawgod_launcher "$TARGET"`], {
+  const root = dirname(path);
+  return spawnSync('/bin/bash', ['-c', `${ownership}\nis_clawgod_launcher "$TARGET"`], {
     encoding: 'utf8',
-    env: { ...process.env, TARGET: path },
+    env: { HOME: root, PATH: isolatedUnixPath(root), TARGET: path },
   }).status === 0;
 }
 
@@ -207,6 +252,7 @@ function unixLauncherIsOwned(path) {
     writeFileSync(alias, thirdParty, 'utf8');
 
     runUnixBackup(home, bin, primary);
+    writeUnixLauncher(primary, renderUnixLauncher(home, bin, primary));
     runUnixLauncherCleanup(home, bin);
 
     assert.equal(readFileSync(primary, 'utf8'), thirdParty, 'a marker-only primary must be backed up and restored, not deleted');
@@ -283,12 +329,248 @@ for (const [name, createOriginal] of [
   }
 }
 
-const windowsOwnership = powerShellFunction('Test-ClawGodLauncher');
+{
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-launcher-install-conflict-'));
+  assertTemporaryPath(home, 'launcher install conflict fixture');
+  try {
+    const bin = join(home, '.local', 'bin');
+    const primary = join(bin, 'claude');
+    const original = join(bin, 'claude.orig');
+    const thirdParty = Buffer.from('#!/bin/sh\necho user replacement\n');
+    const official = Buffer.from('#!/bin/sh\necho preserved original\n');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(primary, thirdParty);
+    writeFileSync(original, official);
+
+    const install = invokeUnixBackup(home, bin, primary);
+    assert.notEqual(install.status, 0, 'install must fail when a third-party current command and valid original backup both exist');
+    assert.match(install.stderr, /conflict/i, 'install conflict must be actionable');
+    assert.deepEqual(readFileSync(primary), thirdParty, 'install conflict must preserve the third-party current command byte-for-byte');
+    assert.deepEqual(readFileSync(original), official, 'install conflict must preserve the valid original backup byte-for-byte');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+for (const originalState of ['valid', 'owned']) {
+  const home = mkdtempSync(join(tmpdir(), `clawgod-launcher-symlink-conflict-${originalState}-`));
+  assertTemporaryPath(home, 'launcher symlink conflict fixture');
+  try {
+    const bin = join(home, '.local', 'bin');
+    const primary = join(bin, 'claude');
+    const original = join(bin, 'claude.orig');
+    const target = join(home, 'replacement target');
+    const launcher = renderUnixLauncher(home, bin, primary);
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(target, '#!/bin/sh\necho replacement\n', 'utf8');
+    symlinkSync(target, primary);
+    writeFileSync(original, originalState === 'valid' ? '#!/bin/sh\necho original\n' : launcher, 'utf8');
+    const originalBefore = readFileSync(original);
+
+    for (const operation of ['install', 'uninstall']) {
+      const result = operation === 'install'
+        ? invokeUnixBackup(home, bin, primary)
+        : invokeUnixLauncherCleanup(home, bin);
+      assert.notEqual(result.status, 0, `${operation} must reject a symlink current plus ${originalState} original conflict`);
+      assert.equal(lstatSync(primary).isSymbolicLink(), true, `${operation} conflict must preserve current symlink type`);
+      assert.equal(readlinkSync(primary), target, `${operation} conflict must preserve current symlink target`);
+      assert.deepEqual(readFileSync(original), originalBefore, `${operation} conflict must preserve original bytes`);
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+{
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-launcher-polluted-repeat-'));
+  assertTemporaryPath(home, 'polluted repeat fixture');
+  try {
+    const bin = join(home, '.local', 'bin');
+    const primary = join(bin, 'claude');
+    const original = join(bin, 'claude.orig');
+    const launcher = renderUnixLauncher(home, bin, primary);
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(primary, launcher, 'utf8');
+    writeFileSync(original, launcher, 'utf8');
+
+    const repeat = invokeUnixBackup(home, bin, primary);
+    assert.equal(repeat.status, 0, repeat.stderr);
+    assert.equal(existsSync(original), false, 'repeat install must discard an installer-owned polluted original backup');
+    assert.equal(readFileSync(primary, 'utf8'), launcher, 'repeat install cleanup must preserve the owned current launcher');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+{
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-launcher-uninstall-conflict-'));
+  assertTemporaryPath(home, 'launcher uninstall conflict fixture');
+  try {
+    const bin = join(home, '.local', 'bin');
+    const primary = join(bin, 'claude');
+    const alias = join(bin, 'clawgod');
+    const original = join(bin, 'claude.orig');
+    const sentinel = join(home, '.clawgod', 'managed-sentinel');
+    const thirdParty = Buffer.from('#!/bin/sh\necho replacement after install\n');
+    const official = Buffer.from('#!/bin/sh\necho original before install\n');
+    const launcher = renderUnixLauncher(home, bin, primary);
+    mkdirSync(dirname(sentinel), { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(primary, thirdParty);
+    writeFileSync(original, official);
+    writeFileSync(alias, launcher, 'utf8');
+    writeFileSync(sentinel, 'managed state\n', 'utf8');
+
+    const uninstall = invokeUnixLauncherCleanup(home, bin, sentinel);
+    assert.notEqual(uninstall.status, 0, 'uninstall must fail before cleanup when the current command is third-party');
+    assert.match(uninstall.stderr, /conflict/i, 'uninstall conflict must be actionable');
+    assert.deepEqual(readFileSync(primary), thirdParty, 'uninstall conflict must preserve the current third-party command');
+    assert.deepEqual(readFileSync(original), official, 'uninstall conflict must preserve the original backup');
+    assert.equal(readFileSync(alias, 'utf8'), launcher, 'uninstall conflict must preserve the managed alias before cleanup');
+    assert.equal(existsSync(sentinel), true, 'uninstall conflict must stop before managed runtime cleanup');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+{
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-launcher-missing-current-'));
+  assertTemporaryPath(home, 'missing-current restore fixture');
+  try {
+    const bin = join(home, '.local', 'bin');
+    const primary = join(bin, 'claude');
+    const original = join(bin, 'claude.orig');
+    const target = join(home, 'official target');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(target, '#!/bin/sh\necho official\n', 'utf8');
+    symlinkSync(target, original);
+
+    runUnixLauncherCleanup(home, bin);
+    assert.equal(lstatSync(primary).isSymbolicLink(), true, 'missing current command must restore a valid original symlink as a symlink');
+    assert.equal(readlinkSync(primary), target, 'restored original symlink must preserve its exact target');
+    assert.equal(existsSync(original), false, 'successful restoration must consume the original backup');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+for (const currentState of ['owned', 'missing']) {
+  const home = mkdtempSync(join(tmpdir(), `clawgod-launcher-polluted-uninstall-${currentState}-`));
+  assertTemporaryPath(home, 'polluted uninstall fixture');
+  try {
+    const bin = join(home, '.local', 'bin');
+    const primary = join(bin, 'claude');
+    const original = join(bin, 'claude.orig');
+    const launcher = renderUnixLauncher(home, bin, primary);
+    mkdirSync(bin, { recursive: true });
+    if (currentState === 'owned') writeFileSync(primary, launcher, 'utf8');
+    writeFileSync(original, launcher, 'utf8');
+
+    runUnixLauncherCleanup(home, bin);
+    assert.equal(existsSync(primary), false, `${currentState} current must never be replaced by an installer-owned polluted backup`);
+    assert.equal(existsSync(original), false, 'polluted original backup must be removed during successful managed cleanup');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+const unixDiscoveryStart = unix.indexOf('# Detect where claude is actually installed');
+const unixDiscoveryEnd = unix.indexOf('\n# ─── Download clawgod-import binary', unixDiscoveryStart);
+assert.ok(unixDiscoveryStart >= 0 && unixDiscoveryEnd > unixDiscoveryStart, 'install.sh must retain stable Claude command discovery');
+const unixDiscovery = unix.slice(unixDiscoveryStart, unixDiscoveryEnd);
+assert.match(unix, /is_unstable_claude_path\(\)/, 'install.sh must define unstable Claude path detection');
+
+for (const stableExists of [true, false]) {
+for (const shimKind of ['system-temp', 'cmux']) {
+  const home = mkdtempSync(join(tmpdir(), `clawgod-shim-first-${stableExists ? 'existing' : 'missing'}-${shimKind}-`));
+  assertTemporaryPath(home, 'shim-first discovery fixture');
+  try {
+    const stableBin = join(home, '.local', 'bin');
+    const stable = join(stableBin, 'claude');
+    const systemTemp = join(home, 'resolved-system-temp');
+    const shimDir = shimKind === 'system-temp' ? join(systemTemp, 'ordinary-shims') : join(home, 'cmux-cli-shims');
+    const shim = join(shimDir, 'claude');
+    const utilityBin = isolatedUnixPath(home);
+    const fakeBun = join(home, 'fake bun');
+    mkdirSync(stableBin, { recursive: true });
+    mkdirSync(shimDir, { recursive: true });
+    writeFileSync(shim, '#!/bin/sh\necho temporary shim\n', 'utf8');
+    chmodSync(shim, 0o755);
+    if (stableExists) writeFileSync(stable, '#!/bin/sh\necho stable user command\n', 'utf8');
+    writeFileSync(fakeBun, '#!/bin/sh\nexit 0\n', 'utf8');
+    chmodSync(fakeBun, 0o755);
+    const beforeShim = readFileSync(shim);
+
+    const discovery = spawnSync('/bin/bash', ['-c', `dim() { :; }\n${unixLauncherHelpers()}\n${unixDiscovery}\n${unixLauncherAssignment}\nprintf 'SELECTED=%s\\n' "$CLAUDE_BIN"\nprintf '%s' "$LAUNCHER_CONTENT"`], {
+      encoding: 'utf8',
+      env: {
+        HOME: home,
+        PATH: `${shimDir}:${utilityBin}`,
+        TMPDIR: systemTemp,
+        BIN_DIR: stableBin,
+        CLAWGOD_DIR: join(home, '.clawgod'),
+        BUN_BIN: fakeBun,
+      },
+    });
+    assert.equal(discovery.status, 0, discovery.stderr);
+    assert.match(discovery.stdout, new RegExp(`^SELECTED=${stable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'), 'temporary shim must resolve to the stable bin target');
+    assert.doesNotMatch(discovery.stdout, new RegExp(shimDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'persistent launcher must not embed an unstable shim path');
+    assert.deepEqual(readFileSync(shim), beforeShim, 'temporary PATH shim must remain byte-identical');
+    assert.equal(existsSync(stable), stableExists, 'discovery alone must not create or overwrite the stable launcher');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+}
+
+const windowsOwnershipContent = powerShellFunction('Test-ClawGodLauncherContent');
+const windowsEntryOwnership = powerShellFunction('Test-ClawGodLauncher');
+const windowsOwnership = windowsOwnershipContent + windowsEntryOwnership;
+const windowsPathPresent = powerShellFunction('Test-ClaudePathPresent');
+assert.match(windows, /function Test-ValidClaudeOriginal \{/, 'install.ps1 must distinguish valid original backups from owned polluted launchers');
+assert.match(windows, /function Test-ClaudeLauncherConflict \{/, 'install.ps1 must centralize lossless launcher conflict detection');
+assert.match(windowsPathPresent, /Get-Item\s+-LiteralPath\s+\$Path\s+-Force\s+-ErrorAction\s+Stop/, 'install.ps1 must detect path entries, including reparse points, without wildcard interpretation');
+assert.match(windowsOwnershipContent, /Length\s+-gt\s+1048576[\s\S]*return \$false/, 'install.ps1 must reject binary-sized launcher ownership candidates before reading them as text');
+const windowsConflict = powerShellFunction('Test-ClaudeLauncherConflict');
+assert.match(windowsConflict, /Test-ClaudePathPresent \$Original/, 'Windows conflicts must detect original path entries through the reparse-aware helper');
+assert.match(windowsConflict, /Test-ClaudePathPresent \$Current/, 'Windows conflicts must detect current path entries through the reparse-aware helper');
+assert.doesNotMatch(windows, /Get-ChildItem\s+\$BinDir\s+-Filter\s+"claude\.\*\.exe"/, 'install.ps1 must not broadly delete timestamped or third-party claude executables');
+const windowsUninstallConflict = windowsUninstall.indexOf('Test-ClaudeLauncherConflict');
+const windowsUninstallCompat = windowsUninstall.indexOf('$claudeMemCompat');
+assert.ok(windowsUninstallConflict >= 0 && windowsUninstallConflict < windowsUninstallCompat, 'Windows uninstall must reject launcher conflicts before managed compatibility cleanup');
+
+function modelWindowsLifecycle(current, original, operation) {
+  if (original !== 'missing' && current === 'third-party') return { status: 'conflict', current, original };
+  if (operation === 'install') {
+    if (original === 'owned') original = 'missing';
+    if (current === 'third-party') original = 'valid';
+    return { status: 'ok', current: 'owned', original };
+  }
+  if (original === 'valid') return { status: 'ok', current: 'third-party', original: 'missing' };
+  return { status: 'ok', current: 'missing', original: 'missing' };
+}
+
+for (const operation of ['install', 'uninstall']) {
+  assert.deepEqual(
+    modelWindowsLifecycle('third-party', 'valid', operation),
+    { status: 'conflict', current: 'third-party', original: 'valid' },
+    `${operation}: third-party current plus valid original must be preserved as a conflict`,
+  );
+  assert.deepEqual(
+    modelWindowsLifecycle('third-party', 'owned', operation),
+    { status: 'conflict', current: 'third-party', original: 'owned' },
+    `${operation}: third-party current plus polluted original must be preserved as a conflict`,
+  );
+}
+assert.deepEqual(modelWindowsLifecycle('owned', 'owned', 'uninstall'), { status: 'ok', current: 'missing', original: 'missing' }, 'uninstall must never restore an owned polluted backup');
+assert.deepEqual(modelWindowsLifecycle('missing', 'valid', 'uninstall'), { status: 'ok', current: 'third-party', original: 'missing' }, 'uninstall must restore a valid original when current is missing');
+assert.deepEqual(modelWindowsLifecycle('owned', 'valid', 'uninstall'), { status: 'ok', current: 'third-party', original: 'missing' }, 'uninstall must replace only an owned current with a valid original');
+
 const windowsLauncherStart = windows.indexOf('$launcherContent = @"');
 const windowsLauncherEnd = windows.indexOf('"@', windowsLauncherStart);
 const windowsLauncher = windows.slice(windowsLauncherStart, windowsLauncherEnd + 2);
 const windowsBackupStart = windows.indexOf('# Find and back up original claude');
-const windowsBackupEnd = windows.indexOf('# Clean up leftover timestamped/old exes', windowsBackupStart);
+const windowsBackupEnd = windows.indexOf('# Remove claude.exe so .cmd takes precedence', windowsBackupStart);
 const windowsBackup = windows.slice(windowsBackupStart, windowsBackupEnd);
 assert.match(windowsLauncher, /^\$launcherContent = @"\n@echo off\nrem CLAWGOD_LAUNCHER_V1\nsetlocal/m, 'install.ps1 must mark newly written launchers explicitly');
 for (const legacySignal of [
@@ -302,7 +584,7 @@ for (const legacySignal of [
   assert.ok(windowsOwnership.includes(legacySignal), `install.ps1 legacy ownership contract must require ${legacySignal}`);
 }
 assert.match(windowsOwnership, /rem CLAWGOD_LAUNCHER_V1/, 'install.ps1 ownership contract must recognize the explicit marker');
-assert.match(windowsUninstall, /\(Test-Path \$claudeCmd\) -and \(Test-ClawGodLauncher \$claudeCmd\)/, 'install.ps1 must only remove a verified primary launcher');
+assert.match(windowsUninstall, /\(Test-ClaudePathPresent \$claudeCmd\) -and \(Test-ClawGodLauncher \$claudeCmd\)/, 'install.ps1 must only remove a verified primary launcher');
 assert.match(windowsUninstall, /\(Test-Path \$clawgodCmd\) -and \(Test-ClawGodLauncher \$clawgodCmd\)/, 'install.ps1 must only remove a verified alias launcher');
 
 function modelWindowsLauncherOwnership({ reparsePoint, content }) {
@@ -333,7 +615,7 @@ assert.equal(modelWindowsLauncherOwnership({ reparsePoint: false, content: windo
 assert.match(windowsOwnership, /\$hasStableStructure = \(/, 'install.ps1 must model ownership as full structure');
 assert.match(windowsOwnership, /\$hasExplicitMarker -and -not \$hasStableStructure/, 'install.ps1 marker must not authorize incomplete launcher content');
 assert.match(windowsOwnership, /return \$hasStableStructure/, 'install.ps1 must require complete launcher structure after marker handling');
-assert.ok(windowsOwnership.indexOf('FileAttributes]::ReparsePoint') < windowsOwnership.indexOf('ReadAllText'), 'install.ps1 must reject reparse points before ReadAllText');
+assert.match(windowsEntryOwnership, /FileAttributes]::ReparsePoint/, 'install.ps1 entry ownership must reject reparse points');
 
 function selectWindowsOriginal(candidates) {
   for (const candidate of candidates) {
@@ -352,11 +634,11 @@ assert.deepEqual(
   { kind: 'exe', name: 'versions/claude.exe' },
   'owned claude.cmd must not stop Windows original search before a versions executable is backed up',
 );
-assert.match(windowsOwnership, /FileAttributes]::ReparsePoint/, 'install.ps1 ownership check must reject reparse points before reading their content');
-assert.match(windowsBackup, /\$loc -like "\*\.cmd" -and \(Test-ClawGodLauncher \$loc\)\) \{ continue \}/, 'owned claude.cmd must continue Windows original search');
-assert.match(windowsBackup, /if \(\$originalFound\) \{ break \}/, 'Windows original search must stop only after a real original was backed up');
-assert.match(windowsBackup, /\$loc -like "\*\.exe" -and -not \(Test-Path \$claudeOrigExe\)/, 'Windows original exe backup must not overwrite an existing claude.orig.exe');
-assert.match(windowsBackup, /\$loc -like "\*\.cmd" -and -not \(Test-Path \$claudeOrigCmd\)/, 'Windows original cmd backup must not overwrite an existing claude.orig.cmd');
+assert.match(windowsEntryOwnership, /FileAttributes]::ReparsePoint/, 'install.ps1 ownership check must reject reparse points before launcher entry ownership');
+assert.match(windowsBackup, /\(Test-Path \$loc -PathType Leaf\) -and \(Test-ClawGodLauncher \$loc\)\) \{ continue \}/, 'owned current launchers must be skipped while Windows searches for real originals');
+assert.doesNotMatch(windowsBackup, /\$originalFound|break/, 'Windows original search must independently preserve cmd and exe candidates');
+assert.match(windowsBackup, /\$loc -like "\*\.exe" -and -not \(Test-ClaudePathPresent \$claudeOrigExe\)/, 'Windows original exe backup must not overwrite an existing claude.orig.exe entry');
+assert.match(windowsBackup, /\$loc -like "\*\.cmd" -and -not \(Test-ClaudePathPresent \$claudeOrigCmd\)/, 'Windows original cmd backup must not overwrite an existing claude.orig.cmd entry');
 assert.match(windowsBackup, /Copy-Item \$latestExe\.FullName \$claudeOrigExe -Force/, 'versions executable must be backed up as claude.orig.exe after owned cmd is skipped');
 assert.match(windowsUninstall, /Move-Item -Force \$claudeExeOrig \$claudeExe/, 'Windows uninstall must restore the backed-up versions executable');
 
@@ -440,6 +722,86 @@ const windowsTemplates = {
 for (const [name, body] of Object.entries(unixTemplates)) {
   assert.match(body, /^#!\/usr\/bin\/env bun\n/, `install.sh ${name} must run with Bun`);
   assert.match(windowsTemplates[name], /^#!\/usr\/bin\/env bun\n/, `install.ps1 ${name} must run with Bun`);
+}
+
+const unixApplyStart = unix.indexOf('dim "Applying patches ..."');
+const unixApplyEnd = unix.indexOf('\n# ─── Create default configs', unixApplyStart);
+assert.ok(unixApplyStart >= 0 && unixApplyEnd > unixApplyStart, 'install.sh must retain the patch application gate');
+const unixApplyBlock = unix.slice(unixApplyStart, unixApplyEnd);
+const patchGateRoot = mkdtempSync(join(tmpdir(), 'clawgod patch gate '));
+assert.equal(realpathSync(dirname(patchGateRoot)), realpathSync(tmpdir()), 'patch gate fixture must be created directly under the system temporary directory');
+try {
+  const home = join(patchGateRoot, 'home');
+  const fixtureBin = join(patchGateRoot, 'bin');
+  const fakeBun = join(fixtureBin, 'bun');
+  const script = join(patchGateRoot, 'gate.sh');
+  const continued = join(patchGateRoot, 'continued');
+  const success = join(patchGateRoot, 'success');
+  mkdirSync(home);
+  mkdirSync(fixtureBin);
+  writeFileSync(fakeBun, `#!${process.execPath}\nconsole.log('fixture patch output');process.exit(Number(process.env.PATCH_EXIT||0));\n`, 'utf8');
+  chmodSync(fakeBun, 0o700);
+  writeFileSync(script, `#!/bin/bash
+set -e
+BUN_BIN=${JSON.stringify(fakeBun)}
+CLAWGOD_DIR=${JSON.stringify(home)}
+dim() { :; }
+warn() { printf '%s\n' "$*" >&2; }
+run_claude_code_chrome_fix() { : > ${JSON.stringify(continued)}; }
+${unixApplyBlock}
+: > ${JSON.stringify(success)}
+`, 'utf8');
+  chmodSync(script, 0o700);
+
+  const runGate = patchExit => spawnSync('/bin/bash', [script], {
+    encoding: 'utf8',
+    env: { HOME: home, PATH: fixtureBin, PATCH_EXIT: String(patchExit) },
+  });
+  const failed = runGate(41);
+  assert.notEqual(failed.status, 0, 'install.sh must stop when patch.mjs exits nonzero');
+  assert.equal(existsSync(continued), false, 'install.sh must stop before the Chrome/post-processing continuation on patch failure');
+  assert.equal(existsSync(success), false, 'install.sh must not reach success continuation on patch failure');
+
+  const passed = runGate(0);
+  assert.equal(passed.status, 0, passed.stderr);
+  assert.equal(existsSync(continued), true, 'install.sh must retain Chrome continuation after a successful patch');
+  assert.equal(existsSync(success), true, 'install.sh must retain normal continuation after a successful patch');
+} finally {
+  rmSync(patchGateRoot, { recursive: true, force: true });
+}
+
+const windowsApplyStart = windows.indexOf('Write-Dim "Applying patches ..."');
+const windowsApplyEnd = windows.indexOf('\n# ─── Create default configs', windowsApplyStart);
+assert.ok(windowsApplyStart >= 0 && windowsApplyEnd > windowsApplyStart, 'install.ps1 must retain the patch application gate');
+const windowsApplyBlock = windows.slice(windowsApplyStart, windowsApplyEnd);
+assert.match(windowsApplyBlock, /\$patchOutput\s*=\s*&\s*\$BunBin/, 'install.ps1 must capture patch output');
+assert.match(windowsApplyBlock, /\$patchStatus\s*=\s*\$LASTEXITCODE/, 'install.ps1 must preserve patch.mjs native exit status');
+assert.match(windowsApplyBlock, /if\s*\(\$patchStatus\s*-ne\s*0\)/, 'install.ps1 must stop on patch.mjs failure');
+assert.ok(windowsApplyBlock.indexOf('$patchStatus -ne 0') < windowsApplyBlock.indexOf('Invoke-ChromePostInstallFix'), 'install.ps1 must check patch status before Chrome/post-processing continuation');
+
+const repatchRoot = mkdtempSync(join(tmpdir(), 'clawgod repatch gate '));
+assert.equal(realpathSync(dirname(repatchRoot)), realpathSync(tmpdir()), 'repatch fixture must be created directly under the system temporary directory');
+try {
+  const native = join(repatchRoot, '2.1.226');
+  const repatch = join(repatchRoot, 'repatch.mjs');
+  writeFileSync(native, 'fixture native', 'utf8');
+  writeFileSync(repatch, unixTemplates['repatch.mjs'], 'utf8');
+  writeFileSync(join(repatchRoot, 'extract-natives.mjs'), 'process.exit(0);\n', 'utf8');
+  writeFileSync(join(repatchRoot, 'post-process.mjs'), 'process.exit(0);\n', 'utf8');
+  writeFileSync(join(repatchRoot, 'patch.mjs'), 'process.exit(Number(process.env.PATCH_EXIT||0));\n', 'utf8');
+  const runRepatch = patchExit => spawnSync(process.execPath, [repatch, native], {
+    cwd: repatchRoot,
+    encoding: 'utf8',
+    env: { HOME: repatchRoot, PATH: repatchRoot, PATCH_EXIT: String(patchExit) },
+  });
+  const failed = runRepatch(41);
+  assert.notEqual(failed.status, 0, 'repatch.mjs must propagate a mandatory patch failure');
+  assert.equal(existsSync(join(repatchRoot, '.source-version')), false, 'repatch.mjs must not record success after a mandatory patch failure');
+  const passed = runRepatch(0);
+  assert.equal(passed.status, 0, passed.stderr);
+  assert.equal(readFileSync(join(repatchRoot, '.source-version'), 'utf8'), '2.1.226\n', 'repatch.mjs must retain its success marker after a zero-failure patch');
+} finally {
+  rmSync(repatchRoot, { recursive: true, force: true });
 }
 
 for (const [installerName, fetchFile] of [['install.sh', unixTemplates['fetch-file.mjs']], ['install.ps1', windowsTemplates['fetch-file.mjs']]]) {
