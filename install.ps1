@@ -1679,31 +1679,29 @@ $patcherCode = @'
 /**
  * ClawGod Plus Universal Patcher
  */
-import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TARGET = join(__dirname, 'cli.original.cjs');
 const BACKUP = TARGET + '.bak';
-const require = createRequire(import.meta.url);
-const ACORN_CACHE = join(__dirname, 'vendor', 'acorn.js');
+const ACORN_CACHE = join(__dirname, 'vendor', 'acorn.cjs');
+const ACORN_URL = 'https://unpkg.com/acorn@8.16.0/dist/acorn.js';
 
 async function loadAcorn() {
   try {
-    if (existsSync(ACORN_CACHE)) return require(ACORN_CACHE);
-  } catch {}
-  try {
-    return require('acorn');
-  } catch {}
-  if (typeof fetch !== 'function') return null;
-  try {
-    mkdirSync(dirname(ACORN_CACHE), { recursive: true });
-    const res = await fetch('https://unpkg.com/acorn@8.16.0/dist/acorn.js');
-    if (!res.ok) return null;
-    writeFileSync(ACORN_CACHE, await res.text(), 'utf8');
-    return require(ACORN_CACHE);
+    if (!existsSync(ACORN_CACHE)) {
+      mkdirSync(dirname(ACORN_CACHE), { recursive: true });
+      const response = await fetch(ACORN_URL);
+      if (!response.ok) return null;
+      const temp = `${ACORN_CACHE}.${process.pid}.tmp`;
+      writeFileSync(temp, await response.text(), 'utf8');
+      renameSync(temp, ACORN_CACHE);
+    }
+    const module = await import(pathToFileURL(ACORN_CACHE).href);
+    const acorn = typeof module.parse === 'function' ? module : module.default;
+    return acorn && typeof acorn.parse === 'function' ? acorn : null;
   } catch {
     return null;
   }

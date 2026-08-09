@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -89,7 +89,7 @@ for (const [name, patcher] of [
     const firstOutput = first.stdout + first.stderr;
     assert.equal(first.status, 0, `${name}: ${firstOutput}`);
 
-    const cachedAcorn = join(dir, 'vendor', 'acorn.js');
+    const cachedAcorn = join(dir, 'vendor', 'acorn.cjs');
     assert.equal(readFileSync(cachedAcorn, 'utf8').length > 0, true, `${name}: Acorn must be available for recovery`);
     acornSource = readFileSync(cachedAcorn, 'utf8');
 
@@ -194,7 +194,7 @@ for (const [name, patcher] of [
     );
 
     rmSync(join(noAcornDir, 'node_modules', 'acorn'), { recursive: true, force: true });
-    const recoveredAcorn = join(noAcornDir, 'vendor', 'acorn.js');
+    const recoveredAcorn = join(noAcornDir, 'vendor', 'acorn.cjs');
     mkdirSync(join(noAcornDir, 'vendor'), { recursive: true });
     writeFileSync(recoveredAcorn, acornSource, 'utf8');
     const recovery = spawnSync(process.execPath, ['patch.mjs'], { cwd: noAcornDir, encoding: 'utf8' });

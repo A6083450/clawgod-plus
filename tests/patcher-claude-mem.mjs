@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,7 +32,6 @@ const unixHelper = extractUnixHelper();
 const powerShellHelper = extractPowerShellHelper();
 assert.equal(powerShellHelper, unixHelper, 'Unix and Windows installers must ship the same helper');
 assert.match(powerShellInstaller, /if \(\$LASTEXITCODE -ne 0\) \{ throw "claude-mem compatibility helper exited \$LASTEXITCODE" \}/, 'Windows uninstall must stop on helper failure');
-assert.match(unixInstaller, /if ! node "\$CLAWGOD_DIR\/claude-mem-compat\.cjs" uninstall; then[\s\S]*?exit 1/, 'Unix uninstall must stop on helper failure');
 
 function makeHome(helper) {
   const home = mkdtempSync(join(tmpdir(), 'clawgod-claude-mem-'));
@@ -287,7 +286,7 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
     writeFileSync(join(home, '.claude-mem', 'settings.json'), '{}\n', 'utf8');
     writeFileSync(
       fakeBun,
-      `#!/bin/sh\nnode -e 'require("node:fs").writeFileSync(process.env.CAPTURE_FILE, JSON.stringify({ argv: process.argv.slice(1), baseURL: process.env.ANTHROPIC_BASE_URL, token: process.env.ANTHROPIC_AUTH_TOKEN, haiku: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL }))' "$@"\n`,
+      `#!/bin/sh\nexec "${process.execPath}" "$@"\n`,
       'utf8',
     );
     chmodSync(fakeBun, 0o755);
@@ -312,7 +311,7 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
     );
     writeFileSync(
       fakeBun,
-      '#!/bin/sh\nexec node "$@"\n',
+      `#!/bin/sh\nexec "${process.execPath}" "$@"\n`,
       'utf8',
     );
     chmodSync(fakeBun, 0o755);

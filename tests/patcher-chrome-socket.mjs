@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -123,6 +123,7 @@ for (const [name, patcher] of [
       const label = `${name} ${mode} ${fixtureName}`;
       const dir = mkdtempSync(join(tmpdir(), 'clawgod-chrome-socket-'));
       try {
+        assert.doesNotMatch(patcher, /require\(['"]acorn['"]\)/, `${label}: ambient package caches must not select Acorn`);
         if (noAcorn) disableAcorn(dir);
         writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
         writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
@@ -133,7 +134,8 @@ for (const [name, patcher] of [
         assert.equal(run.status, 0, `${label}: ${output}`);
 
         const patched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
-        helperAcornSource ??= readFileSync(join(dir, 'vendor', 'acorn.js'), 'utf8');
+        helperAcornSource ??= readFileSync(join(dir, 'vendor', 'acorn.cjs'), 'utf8');
+        assert.match(helperAcornSource, /acorn\.version|exports\.parse/);
         new Function(patched);
         assert.match(patched, /__ccpp_bridge_fallback/, `${label}: Chrome factory must be patched`);
         assert.doesNotMatch(patched, /var __paths=.*\.getSocketPaths\(\)/, `${label}: legacy synchronous probe must be removed`);
