@@ -62,9 +62,17 @@ function findForbiddenDependencies(source) {
       add(kindForProgram(match[1]), lineNumber, line);
     }
 
-    const powerShellCommand = /\b(?:pwsh|powershell(?:\.exe)?)\s+(?:-[A-Za-z]+\s+)*(?:-c|-command)\s+["']?(node(?:\.exe)?|npm(?:\.cmd)?|npx(?:\.cmd)?|rg(?:\.exe)?|ripgrep(?:\.exe)?)(?=\s|$)/ig;
-    for (const match of line.matchAll(powerShellCommand)) {
-      add(kindForProgram(match[1]), lineNumber, line);
+    if (/\bStart-Process\s+(?:-FilePath\s+)?node(?:\.exe)?\b/i.test(line) || /&\s+\$Node(?:Bin|Path|Exe)?\b/i.test(line)) {
+      add('node', lineNumber, line);
+    }
+
+    // Shell wrappers hide another command string; scan that payload recursively.
+    const commandWrapper = /\b(?:bash|sh|zsh|pwsh|powershell(?:\.exe)?|cmd(?:\.exe)?)\b.*?\s(?:-c|-command|\/c)\s+(?:"([^"]*)"|'([^']*)'|([^\r\n;|&]+))/ig;
+    for (const match of line.matchAll(commandWrapper)) {
+      const payload = match[1] ?? match[2] ?? match[3];
+      for (const nested of findForbiddenDependencies(payload)) {
+        add(nested.kind, lineNumber, line);
+      }
     }
 
     if (/(?:^|&&|\|\||;|\||\$\(|\{)\s*(?:if\s+)?(?:command\s+-v|which|where(?:\.exe)?|Get-Command)\s+(?:rg|ripgrep)(?:\.exe)?\b/i.test(line)) {
@@ -79,7 +87,11 @@ function findForbiddenDependencies(source) {
     }
   }
 
-  return matches;
+  return matches.filter((match, index) =>
+    matches.findIndex(candidate =>
+      candidate.kind === match.kind && candidate.lineNumber === match.lineNumber && candidate.line === match.line,
+    ) === index,
+  );
 }
 
 const executableDependencyFixtures = [
@@ -96,10 +108,18 @@ const executableDependencyFixtures = [
   ['npm run command', 'npm run build', ['npm']],
   ['npm version', 'npm --version', ['npm']],
   ['PowerShell call operator', '& node.exe --version', ['node']],
+  ['PowerShell Start-Process node', 'Start-Process node -ArgumentList "--version"', ['node']],
+  ['PowerShell Start-Process node executable', 'Start-Process -FilePath node.exe -ArgumentList "--version"', ['node']],
+  ['PowerShell variable call operator', '& $NodeBin ./helper.mjs', ['node']],
   ['PowerShell command wrapper', 'pwsh -NoProfile -c "node ./helper.mjs"', ['node']],
   ['PowerShell npm wrapper', 'powershell.exe -Command "npm ci"', ['npm']],
+  ['Bash node wrapper', 'bash -c "node --version"', ['node']],
+  ['Shell npm wrapper', 'sh -c "npm test"', ['npm']],
+  ['Zsh ripgrep wrapper', 'zsh -c "rg --version"', ['system-ripgrep']],
+  ['Cmd node wrapper', 'cmd /c "node --version"', ['node']],
   ['YAML node command', 'run: node ./helper.mjs', ['node']],
   ['YAML npm command', 'run: npm test', ['npm']],
+  ['YAML nested shell node command', 'run: bash -c "node --version"', ['node']],
   ['ripgrep command', 'rg --version', ['system-ripgrep']],
   ['ripgrep executable', 'ripgrep.exe --version', ['system-ripgrep']],
   ['ripgrep lookup', 'if command -v rg >/dev/null; then true; fi', ['system-ripgrep']],
@@ -174,19 +194,30 @@ assert.match(agents, /Task 7|temporary workflow exception/i, 'AGENTS.md must nar
 
 const workflow = read('.github/workflows/compat-daily.yml');
 assert.match(workflow, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/, 'workflow internal GitHub Actions setting remains allowed during migration');
-assert.deepEqual(
-  findForbiddenDependencies(workflow).map(({ kind, line }) => ({ kind, line })),
-  [
-    { kind: 'node-setup', line: 'uses: actions/setup-node@v4' },
-    { kind: 'node-version', line: 'node-version: 24' },
-    { kind: 'npm-cache', line: 'path: ~/.npm' },
-    { kind: 'system-ripgrep', line: 'sudo apt-get update -qq && sudo apt-get install -y ripgrep' },
-    { kind: 'system-ripgrep', line: 'rg --version | head -1' },
-    { kind: 'node', line: 'node --version' },
-    { kind: 'node', line: 'node "$test"' },
-  ],
-  'compat-daily may contain only the current Task 7 legacy dependency occurrences',
-);
+const compatLegacyDependencies = [
+  { kind: 'node-setup', line: 'uses: actions/setup-node@v4' },
+  { kind: 'node-version', line: 'node-version: 24' },
+  { kind: 'npm-cache', line: 'path: ~/.npm' },
+  { kind: 'system-ripgrep', line: 'sudo apt-get update -qq && sudo apt-get install -y ripgrep' },
+  { kind: 'system-ripgrep', line: 'rg --version | head -1' },
+  { kind: 'node', line: 'node --version' },
+  { kind: 'node', line: 'node "$test"' },
+];
+function assertCompatLegacyDependencies(source) {
+  assert.deepEqual(
+    findForbiddenDependencies(source).map(({ kind, line }) => ({ kind, line })),
+    compatLegacyDependencies,
+    'compat-daily may contain only the current Task 7 legacy dependency occurrences',
+  );
+}
+assertCompatLegacyDependencies(workflow);
+for (const nestedCommand of ['run: bash -c "node --version"', 'run: sh -c "npm test"', 'run: zsh -c "rg --version"']) {
+  assert.throws(
+    () => assertCompatLegacyDependencies(`${workflow}\n${nestedCommand}`),
+    /compat-daily may contain only the current Task 7 legacy dependency occurrences/,
+    `${nestedCommand} must invalidate the compat legacy allowance`,
+  );
+}
 for (const path of readdirSync(join(root, '.github/workflows')).filter(path => /\.ya?ml$/.test(path))) {
   if (path === 'compat-daily.yml') continue;
   const source = read(`.github/workflows/${path}`);
