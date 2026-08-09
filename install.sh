@@ -255,6 +255,20 @@ resolve_bun() {
   fi
 }
 
+is_clawgod_launcher() {
+  local launcher="$1"
+  [ -f "$launcher" ] || return 1
+  [ -L "$launcher" ] && return 1
+  if grep -Fqx '# CLAWGOD_LAUNCHER_V1' "$launcher" 2>/dev/null; then
+    return 0
+  fi
+  # Launchers written before the explicit marker have this fixed structure.
+  [ "$(sed -n '1p' "$launcher" 2>/dev/null)" = '#!/bin/bash' ] \
+    && [ "$(sed -n '2p' "$launcher" 2>/dev/null)" = '# clawgod launcher' ] \
+    && grep -Eq '^CLAWGOD_CLI=".*\/\.clawgod\/cli\.cjs"$' "$launcher" 2>/dev/null \
+    && grep -Eq '^export CLAUDE_CODE_EXECPATH=".*\/claude\.orig"$' "$launcher" 2>/dev/null
+}
+
 echo ""
 echo -e "${BOLD}  ClawGod Plus Installer${NC}"
 echo ""
@@ -278,13 +292,13 @@ if [ "$UNINSTALL" = "1" ]; then
       # Has backup — restore it
       mv "$DIR/claude.orig" "$DIR/claude"
       info "Original claude restored ($DIR/claude)"
-    elif [ -f "$DIR/claude" ] && grep -q "clawgod" "$DIR/claude" 2>/dev/null; then
+    elif is_clawgod_launcher "$DIR/claude"; then
       # Our launcher, no backup — remove it (otherwise it points to deleted cli.js)
       rm -f "$DIR/claude"
       info "Removed ClawGod Plus launcher ($DIR/claude)"
     fi
     # Always remove the explicit clawgod alias if it's ours
-    if [ -f "$DIR/clawgod" ] && grep -q "clawgod" "$DIR/clawgod" 2>/dev/null; then
+    if is_clawgod_launcher "$DIR/clawgod"; then
       rm -f "$DIR/clawgod"
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
@@ -3598,6 +3612,7 @@ fi
 
 LAUNCHER_CONTENT="#!/bin/bash
 # clawgod launcher
+# CLAWGOD_LAUNCHER_V1
 CLAWGOD_CLI=\"$CLAWGOD_DIR/cli.cjs\"
 CLAWGOD_IMPORT=\"$CLAWGOD_DIR/clawgod-import\"
 BUN_BIN=\"$BUN_BIN\"
@@ -3656,7 +3671,7 @@ exec \"\$BUN_BIN\" \"\$CLAWGOD_CLI\" \"\$@\""
 
 
 # Back up original claude (only once)
-if [ ! -e "$CLAUDE_BIN.orig" ]; then
+if [ ! -e "$CLAUDE_BIN.orig" ] && ! is_clawgod_launcher "$CLAUDE_BIN"; then
   if [ -L "$CLAUDE_BIN" ]; then
     # Symlink (native install) — preserve target
     NATIVE_BIN="$(readlink "$CLAUDE_BIN")"

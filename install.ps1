@@ -399,6 +399,28 @@ function Resolve-Bun {
     return $null
 }
 
+function Test-ClawGodLauncher {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    try {
+        $content = [System.IO.File]::ReadAllText($Path)
+    } catch {
+        return $false
+    }
+    if ($content -match '(?m)^rem CLAWGOD_LAUNCHER_V1\r?$') { return $true }
+
+    # Launchers written before the explicit marker have this fixed structure.
+    return (
+        ($content -match '(?m)^@echo off\r?$') -and
+        ($content -match '(?m)^setlocal\r?$') -and
+        ($content -match '(?m)^if not exist ".*[\\/]\.clawgod[\\/]cli\.cjs" \(\r?$') -and
+        ($content -match '(?m)^set "CLAUDE_CODE_EXECPATH=%~dp0claude\.orig\.exe"\r?$') -and
+        ($content -match '(?m)^set "CLAWGOD_AUTO_CHROME=1"\r?$') -and
+        ($content -match '(?m)^exit /b %ERRORLEVEL%\r?$')
+    )
+}
+
 Write-Host ""
 Write-Host "  ClawGod Plus Installer" -ForegroundColor White -NoNewline
 Write-Host " (Windows)" -ForegroundColor DarkGray
@@ -426,7 +448,7 @@ if ($Uninstall) {
     if (Test-Path $claudeOrig) {
         Move-Item -Force $claudeOrig $claudeCmd
         Write-OK "Original claude restored"
-    } elseif ((Test-Path $claudeCmd) -and (Select-String -Path $claudeCmd -Pattern "clawgod" -Quiet -ErrorAction SilentlyContinue)) {
+    } elseif ((Test-Path $claudeCmd) -and (Test-ClawGodLauncher $claudeCmd)) {
         Remove-Item -Force $claudeCmd
         Write-OK "Removed ClawGod Plus launcher ($claudeCmd)"
     }
@@ -439,7 +461,7 @@ if ($Uninstall) {
     }
     # Remove explicit clawgod alias
     $clawgodCmd = Join-Path $BinDir "clawgod.cmd"
-    if (Test-Path $clawgodCmd) {
+    if ((Test-Path $clawgodCmd) -and (Test-ClawGodLauncher $clawgodCmd)) {
         Remove-Item -Force $clawgodCmd
         Write-OK "Removed clawgod alias"
     }
@@ -3395,6 +3417,7 @@ if (-not (Test-Path $importBin)) {
 $importPathInCmd = "%USERPROFILE%\.clawgod\clawgod-import.exe"
 $launcherContent = @"
 @echo off
+rem CLAWGOD_LAUNCHER_V1
 setlocal
 if /I "%~1"=="import" (
   if exist "$importPathInCmd" (
@@ -3454,7 +3477,7 @@ foreach ($loc in @(
             $originalFound = $true
         }
         # Back up .cmd if exists and not already backed up
-        if ($loc -like "*.cmd" -and -not (Test-Path $claudeOrigCmd)) {
+        if ($loc -like "*.cmd" -and -not (Test-Path $claudeOrigCmd) -and -not (Test-ClawGodLauncher $loc)) {
             Copy-Item $loc $claudeOrigCmd -Force
             Write-OK "Original claude.cmd backed up → claude.orig.cmd"
             $originalFound = $true

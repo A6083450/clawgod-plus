@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -73,6 +73,199 @@ const windowsUninstall = windows.slice(
   windows.indexOf('if ($Uninstall) {'),
   windows.indexOf('# ─── Bun prerequisite'),
 );
+
+const unixLauncherStart = unix.indexOf('LAUNCHER_CONTENT="');
+const unixLauncherEnd = unix.indexOf('"\n\n\n# Back up original claude', unixLauncherStart);
+const unixBackupStart = unix.indexOf('# Back up original claude (only once)');
+const unixBackupEnd = unix.indexOf('# Write launcher to the SAME directory', unixBackupStart);
+const unixWriteLauncherStart = unix.indexOf('write_launcher() {', unixBackupEnd);
+const unixWriteLauncherEnd = unix.indexOf('\n}\n\nwrite_launcher "$CLAUDE_BIN"', unixWriteLauncherStart);
+const unixCleanupStart = unixUninstall.indexOf('  CLAUDE_BIN=$(command -v claude 2>/dev/null || true)');
+const unixCleanupEnd = unixUninstall.indexOf('  rm -rf "$CLAWGOD_DIR/node_modules"', unixCleanupStart);
+assert.ok(unixLauncherStart >= 0 && unixLauncherEnd > unixLauncherStart, 'install.sh must retain the Unix launcher template');
+assert.ok(unixBackupStart >= 0 && unixBackupEnd > unixBackupStart, 'install.sh must retain the Unix backup decision');
+assert.ok(unixWriteLauncherStart >= 0 && unixWriteLauncherEnd > unixWriteLauncherStart, 'install.sh must retain the Unix launcher writer');
+assert.ok(unixCleanupStart >= 0 && unixCleanupEnd > unixCleanupStart, 'install.sh must retain the Unix launcher cleanup');
+
+const unixLauncherAssignment = unix.slice(unixLauncherStart, unixLauncherEnd + 1);
+const unixBackupDecision = unix.slice(unixBackupStart, unixBackupEnd);
+const unixWriteLauncher = unix.slice(unixWriteLauncherStart, unixWriteLauncherEnd + 3);
+const unixCleanup = unixUninstall.slice(unixCleanupStart, unixCleanupEnd);
+
+function unixOwnershipHelper() {
+  const start = unix.indexOf('is_clawgod_launcher() {');
+  if (start < 0) return '';
+  const end = unix.indexOf('\n}\n', start);
+  assert.notEqual(end, -1, 'install.sh must close is_clawgod_launcher');
+  return unix.slice(start, end + 3);
+}
+
+function renderUnixLauncher(home, bin, primary) {
+  const fakeBun = join(home, 'fake-bun');
+  writeFileSync(fakeBun, '#!/bin/sh\nexit 0\n', 'utf8');
+  chmodSync(fakeBun, 0o755);
+  const rendered = spawnSync('bash', ['-c', `${unixLauncherAssignment}\nprintf '%s' "$LAUNCHER_CONTENT"`], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, CLAWGOD_DIR: join(home, '.clawgod'), BUN_BIN: fakeBun, CLAUDE_BIN: primary },
+  });
+  assert.equal(rendered.status, 0, rendered.stderr);
+  return rendered.stdout;
+}
+
+function writeUnixLauncher(primary, content) {
+  const written = spawnSync('bash', ['-c', `${unixWriteLauncher}\nwrite_launcher "$TARGET"`], {
+    encoding: 'utf8',
+    env: { ...process.env, TARGET: primary, LAUNCHER_CONTENT: content },
+  });
+  assert.equal(written.status, 0, written.stderr);
+}
+
+function runUnixBackup(home, bin, primary) {
+  const backup = spawnSync('bash', ['-c', `info() { :; }\n${unixOwnershipHelper()}\n${unixBackupDecision}`], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, BIN_DIR: bin, CLAUDE_BIN: primary, PATH: '/usr/bin:/bin' },
+  });
+  assert.equal(backup.status, 0, backup.stderr);
+}
+
+function runUnixLauncherCleanup(home, bin) {
+  const cleanup = spawnSync('bash', ['-c', `info() { :; }\n${unixOwnershipHelper()}\n${unixCleanup}`], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, BIN_DIR: bin, PATH: '/usr/bin:/bin' },
+  });
+  assert.equal(cleanup.status, 0, cleanup.stderr);
+}
+
+function unixLauncherIsOwned(path) {
+  const ownership = unixOwnershipHelper();
+  assert.notEqual(ownership, '', 'install.sh must define a ClawGod launcher ownership check');
+  return spawnSync('bash', ['-c', `${ownership}\nis_clawgod_launcher "$TARGET"`], {
+    encoding: 'utf8',
+    env: { ...process.env, TARGET: path },
+  }).status === 0;
+}
+
+{
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-launcher-fresh-'));
+  try {
+    const bin = join(home, '.local', 'bin');
+    const primary = join(bin, 'claude');
+    const alias = join(bin, 'clawgod');
+    const original = join(bin, 'claude.orig');
+    const launcher = renderUnixLauncher(home, bin, primary);
+    writeUnixLauncher(primary, launcher);
+    writeUnixLauncher(alias, launcher);
+
+    runUnixBackup(home, bin, primary);
+    runUnixLauncherCleanup(home, bin);
+
+    assert.equal(existsSync(primary), false, 'fresh install, repeat install, then uninstall must not restore the ClawGod launcher as claude');
+    assert.equal(existsSync(alias), false, 'fresh install uninstall must remove the ClawGod alias');
+    assert.equal(existsSync(original), false, 'fresh install uninstall must leave no fabricated original backup');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+{
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-launcher-ownership-'));
+  try {
+    const bin = join(home, 'custom-bin');
+    const primary = join(bin, 'claude');
+    const legacy = join(bin, 'legacy-claude');
+    const generic = join(bin, 'generic-claude');
+    const symlink = join(bin, 'symlinked-claude');
+    const launcher = renderUnixLauncher(home, bin, primary);
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(primary, launcher, 'utf8');
+    writeFileSync(legacy, launcher.replace('# CLAWGOD_LAUNCHER_V1\n', ''), 'utf8');
+    writeFileSync(generic, '#!/bin/sh\necho clawgod is mentioned here\n', 'utf8');
+    symlinkSync(primary, symlink);
+
+    assert.equal(unixLauncherIsOwned(primary), true, 'new marker must identify the current ClawGod launcher');
+    assert.equal(unixLauncherIsOwned(legacy), true, 'the stable pre-marker launcher structure must remain compatible');
+    assert.equal(unixLauncherIsOwned(generic), false, 'ordinary scripts mentioning clawgod must not be treated as launchers');
+    assert.equal(unixLauncherIsOwned(symlink), false, 'symlinks must remain eligible for original-command backup');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+for (const [name, createOriginal] of [
+  ['official binary', (path) => copyFileSync('/bin/sh', path)],
+  ['ordinary script containing clawgod text', (path) => writeFileSync(path, '#!/bin/sh\necho clawgod documentation\n', 'utf8')],
+  ['symlink', (path, home) => {
+    const target = join(home, 'official-claude');
+    writeFileSync(target, '#!/bin/sh\necho official\n', 'utf8');
+    symlinkSync(target, path);
+    return target;
+  }],
+]) {
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-launcher-original-'));
+  try {
+    const bin = join(home, '.local', 'bin');
+    const primary = join(bin, 'claude');
+    mkdirSync(bin, { recursive: true });
+    const target = createOriginal(primary, home);
+    runUnixBackup(home, bin, primary);
+    const backup = join(bin, 'claude.orig');
+    assert.equal(existsSync(backup), true, `${name} must be backed up instead of treated as a ClawGod launcher`);
+    if (name === 'symlink') {
+      assert.equal(lstatSync(backup).isSymbolicLink(), true, 'official symlink backup must remain a symlink');
+      assert.equal(readlinkSync(backup), target, 'official symlink backup must preserve its target');
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+{
+  const home = mkdtempSync(join(tmpdir(), 'clawgod-launcher-restore-'));
+  try {
+    const bin = join(home, '.local', 'bin');
+    const primary = join(bin, 'claude');
+    const alias = join(bin, 'clawgod');
+    const original = join(bin, 'claude.orig');
+    const official = '#!/bin/sh\necho official claude\n';
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(primary, official, 'utf8');
+    runUnixBackup(home, bin, primary);
+    const launcher = renderUnixLauncher(home, bin, primary);
+    writeUnixLauncher(primary, launcher);
+    writeUnixLauncher(alias, launcher);
+    runUnixLauncherCleanup(home, bin);
+
+    assert.equal(readFileSync(primary, 'utf8'), official, 'uninstall must restore a real original claude command');
+    assert.equal(existsSync(alias), false, 'uninstall must remove the ClawGod alias after restoring an original');
+    assert.equal(existsSync(original), false, 'uninstall must consume the restored original backup');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+const windowsOwnership = powerShellFunction('Test-ClawGodLauncher');
+const windowsLauncherStart = windows.indexOf('$launcherContent = @"');
+const windowsLauncherEnd = windows.indexOf('"@', windowsLauncherStart);
+const windowsLauncher = windows.slice(windowsLauncherStart, windowsLauncherEnd + 2);
+const windowsBackupStart = windows.indexOf('# Find and back up original claude');
+const windowsBackupEnd = windows.indexOf('# Clean up leftover timestamped/old exes', windowsBackupStart);
+const windowsBackup = windows.slice(windowsBackupStart, windowsBackupEnd);
+assert.match(windowsLauncher, /^\$launcherContent = @"\n@echo off\nrem CLAWGOD_LAUNCHER_V1\nsetlocal/m, 'install.ps1 must mark newly written launchers explicitly');
+for (const legacySignal of [
+  '@echo off',
+  'setlocal',
+  '.clawgod',
+  'CLAUDE_CODE_EXECPATH=%~dp0claude\\.orig\\.exe',
+  'CLAWGOD_AUTO_CHROME=1',
+  'exit /b %ERRORLEVEL%',
+]) {
+  assert.ok(windowsOwnership.includes(legacySignal), `install.ps1 legacy ownership contract must require ${legacySignal}`);
+}
+assert.match(windowsOwnership, /rem CLAWGOD_LAUNCHER_V1/, 'install.ps1 ownership contract must recognize the explicit marker');
+assert.match(windowsBackup, /\$loc -like "\*\.cmd".*-not \(Test-ClawGodLauncher \$loc\)/, 'install.ps1 must not back up its own cmd launcher');
+assert.match(windowsUninstall, /\(Test-Path \$claudeCmd\) -and \(Test-ClawGodLauncher \$claudeCmd\)/, 'install.ps1 must only remove a verified primary launcher');
+assert.match(windowsUninstall, /\(Test-Path \$clawgodCmd\) -and \(Test-ClawGodLauncher \$clawgodCmd\)/, 'install.ps1 must only remove a verified alias launcher');
+
 for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', windowsUninstall]]) {
   for (const artifact of ['.clawgod-version', '.update-check']) {
     assert.ok(uninstall.includes(artifact), `${name}: uninstall must remove ${artifact}`);
