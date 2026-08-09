@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -65,12 +65,29 @@ const expected = {
   },
 };
 
-const fixtureDir = mkdtempSync(join(tmpdir(), 'clawgod-plugin-deps-'));
+const fixtureRoot = mkdtempSync(join(tmpdir(), 'clawgod-plugin-deps-'));
+const fixtureHome = join(fixtureRoot, 'home');
+const fixtureClaudeConfig = join(fixtureRoot, 'claude-config');
+const fixtureBin = join(fixtureRoot, 'bin');
+const environmentKeys = ['HOME', 'CLAUDE_CONFIG_DIR', 'PATH'];
+const savedEnvironment = new Map(environmentKeys.map(key => [key, Object.hasOwn(process.env, key) ? process.env[key] : undefined]));
 try {
-  const modulePath = join(fixtureDir, 'plugin-dependencies.mjs');
+  mkdirSync(fixtureHome, { recursive: true });
+  mkdirSync(fixtureClaudeConfig, { recursive: true });
+  mkdirSync(fixtureBin, { recursive: true });
+  process.env.HOME = fixtureHome;
+  process.env.CLAUDE_CONFIG_DIR = fixtureClaudeConfig;
+  process.env.PATH = fixtureBin;
+
+  const modulePath = join(fixtureRoot, 'plugin-dependencies.mjs');
   await Bun.write(modulePath, unixModule);
   chmodSync(modulePath, 0o700);
   const pluginDependencies = await import(`${pathToFileURL(modulePath).href}?test=${Date.now()}`);
+  assert.deepEqual(
+    Object.fromEntries(environmentKeys.map(key => [key, process.env[key]])),
+    { HOME: fixtureHome, CLAUDE_CONFIG_DIR: fixtureClaudeConfig, PATH: fixtureBin },
+    'plugin-dependencies.mjs must be imported with only fixture environment paths',
+  );
   const {
     PLUGIN_BASELINES,
     classifyPlugin,
@@ -120,7 +137,16 @@ try {
   assert.equal(classifyPlugin(duplicateSuperpowers, PLUGIN_BASELINES.superpowers), 'older', 'only the configured Superpowers plugin id may satisfy the dependency');
   assert.equal(JSON.stringify(duplicateSuperpowers.plugins['superpowers@claude-plugins-official']), officialBefore, 'the official Superpowers record must remain byte-identical');
 } finally {
-  rmSync(fixtureDir, { recursive: true, force: true });
+  for (const [key, value] of savedEnvironment) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  rmSync(fixtureRoot, { recursive: true, force: true });
+}
+
+for (const [key, value] of savedEnvironment) {
+  const actual = Object.hasOwn(process.env, key) ? process.env[key] : undefined;
+  assert.equal(actual, value, `${key} must be restored after the fixture import`);
 }
 
 console.log('installer plugin dependency tests passed');
