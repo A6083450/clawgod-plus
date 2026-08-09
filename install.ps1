@@ -3506,7 +3506,7 @@ $importBin = Join-Path $ClawDir "clawgod-import.exe"
 if (-not (Test-Path $importBin)) {
     $importUrl = "https://github.com/0Chencc/clawgod/releases/latest/download/clawgod-import-windows-x64.exe"
     try {
-        & $BunBin (Join-Path $ClawDir "fetch-file.mjs") $importUrl $importBin
+        & $BunBin (Join-Path $ClawDir "fetch-file.mjs") $importUrl $importBin 2>$null
         if ($LASTEXITCODE -ne 0) { throw "fetch-file.mjs exited $LASTEXITCODE" }
         Write-OK "Provider import tool installed (clawgod-import.exe)"
     } catch {

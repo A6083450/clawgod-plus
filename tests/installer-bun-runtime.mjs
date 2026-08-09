@@ -1051,6 +1051,39 @@ for (const [name, source] of [['install.sh', unix], ['install.ps1', windows]]) {
   const importDownload = source.slice(importStart, importStart + 1200);
   assert.match(importDownload, /fetch-file\.mjs/, `${name}: clawgod-import download must use fetch-file.mjs`);
   assert.doesNotMatch(importDownload, /curl|Invoke-WebRequest/, `${name}: clawgod-import download must use fetch-file.mjs`);
+  if (name === 'install.sh') {
+    assert.match(importDownload, /fetch-file\.mjs[^\n]+2>\/dev\/null/, 'install.sh must suppress the optional import downloader stack trace');
+  } else {
+    assert.match(importDownload, /fetch-file\.mjs[^\r\n]+2>\$null/, 'install.ps1 must suppress the optional import downloader stack trace');
+  }
+}
+
+const unixImportStart = unix.indexOf('# ─── Download clawgod-import binary');
+const unixImportEnd = unix.indexOf('\nLAUNCHER_CONTENT="', unixImportStart);
+assert.ok(unixImportStart >= 0 && unixImportEnd > unixImportStart, 'install.sh must retain the optional import download block');
+const unixImportBlock = unix.slice(unixImportStart, unixImportEnd);
+const optionalImportRoot = mkdtempSync(join(tmpdir(), 'clawgod optional import '));
+assertTemporaryPath(optionalImportRoot, 'optional import fixture');
+try {
+  const home = join(optionalImportRoot, 'home');
+  const clawgod = join(home, '.clawgod');
+  const fixtureBin = join(optionalImportRoot, 'bin');
+  const fakeBun = join(fixtureBin, 'bun');
+  mkdirSync(clawgod, { recursive: true });
+  mkdirSync(fixtureBin, { recursive: true });
+  writeFileSync(join(clawgod, 'fetch-file.mjs'), '// optional downloader fixture\n', 'utf8');
+  writeFileSync(fakeBun, '#!/bin/sh\nprintf "%s\\n" "synthetic optional download stack" >&2\nexit 42\n', 'utf8');
+  chmodSync(fakeBun, 0o700);
+  const optionalFailure = spawnSync('/bin/bash', ['-c', `set -e\ninfo() { printf '%s\\n' "$*"; }\ndim() { printf '%s\\n' "$*"; }\n${unixImportBlock}`], {
+    encoding: 'utf8',
+    env: { HOME: home, PATH: '/usr/bin:/bin', CLAWGOD_DIR: clawgod, BIN_DIR: join(home, '.local', 'bin'), BUN_BIN: fakeBun },
+  });
+  assert.equal(optionalFailure.status, 0, 'an unavailable optional import tool must not fail installation');
+  assert.equal(optionalFailure.stderr, '', 'an unavailable optional import tool must not print the Bun stack trace');
+  assert.match(optionalFailure.stdout, /Provider import tool not yet available \(build pending\)/, 'an unavailable optional import tool must retain the concise status message');
+  assert.equal(existsSync(join(clawgod, 'clawgod-import')), false, 'an unavailable optional import tool must not leave a destination');
+} finally {
+  rmSync(optionalImportRoot, { recursive: true, force: true });
 }
 
 const dir = mkdtempSync(join(tmpdir(), 'clawgod-fetch-file-'));
