@@ -82,7 +82,7 @@ ClawGod 固定管理 ripgrep 15.2.0，不读取或依赖系统 `rg`。版本只�
 
 ### Acorn 加载
 
-补丁器优先加载 `~/.clawgod/vendor/acorn.js`，不存在时由 Bun 下载固定版本并缓存。加载方式必须兼容 Bun 的 CommonJS/ESM 解析，不能依赖 Node 专属的 `createRequire` 行为。下载失败时保留现有正则回退，但安装结果仍必须准确报告未匹配的必选补丁。
+补丁器优先加载 `~/.clawgod/vendor/acorn.cjs`，不存在时由 Bun 下载固定版本并缓存。加载方式必须兼容 Bun 的 CommonJS/ESM 解析，不能依赖 Node 专属的 `createRequire` 行为。下载失败时保留现有正则回退，但安装结果仍必须准确报告未匹配的必选补丁。
 
 ### 独立辅助补丁
 
