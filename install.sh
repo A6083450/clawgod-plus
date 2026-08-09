@@ -496,6 +496,112 @@ try {
 FETCH_FILE_EOF
 chmod 700 "$CLAWGOD_DIR/fetch-file.mjs"
 
+# --- Optional Claude plugin dependencies -----------------------------
+
+cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << 'PLUGIN_DEPENDENCIES_EOF'
+#!/usr/bin/env bun
+/**
+ * @typedef {{
+ *   home: string,
+ *   claudeConfigDir: string,
+ *   clawgodDir: string,
+ *   bunPath: string,
+ *   claudeCliPath: string,
+ *   fetchFilePath: string,
+ *   env: Record<string, string | undefined>,
+ *   spawnSyncImpl: typeof Bun.spawnSync,
+ * }} PluginContext
+ */
+
+export const PLUGIN_BASELINES = Object.freeze({
+  hud: Object.freeze({
+    key: 'hud', id: 'claude-hud@claude-hud', marketplace: 'claude-hud', plugin: 'claude-hud',
+    version: '0.7.0', bytes: 754443,
+    sha256: '59bd3ec17e7b9181d8069c93cc7c5e1db8b1d33e6a94e4041f6589dd8b87c912',
+    url: 'https://hub.211107.xyz/https://github.com/jarrodwatts/claude-hud/archive/refs/tags/v0.7.0.tar.gz',
+  }),
+  memory: Object.freeze({
+    key: 'memory', id: 'claude-mem@thedotmack', marketplace: 'thedotmack', plugin: 'claude-mem',
+    version: '13.14.0', bytes: 11817347,
+    sha256: 'a64f7dd038308da0db52f10d8f4fc2b3b3acfec5d9ddfdcfea9f6e473e54bed0',
+    url: 'https://hub.211107.xyz/https://github.com/thedotmack/claude-mem/archive/refs/tags/v13.14.0.tar.gz',
+  }),
+  superpowers: Object.freeze({
+    key: 'superpowers', id: 'superpowers@superpowers-marketplace', marketplace: 'superpowers-marketplace', plugin: 'superpowers',
+    archiveMarketplace: 'superpowers-dev',
+    version: '6.2.0', bytes: 516401,
+    sha256: '468246a7b4981d4c014c2b58d9ee538700ffded075279d5810059cdc1abeb5f3',
+    url: 'https://hub.211107.xyz/https://github.com/obra/superpowers/archive/refs/tags/v6.2.0.tar.gz',
+  }),
+});
+
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+
+export function parseSemver(value) {
+  if (typeof value !== 'string') return null;
+  const match = SEMVER.exec(value);
+  if (!match) return null;
+  const [major, minor, patch, prereleaseText] = match.slice(1);
+  const prerelease = prereleaseText ? prereleaseText.split('.').map(identifier => {
+    if (!/^\d+$/.test(identifier)) return identifier;
+    if (!/^(0|[1-9]\d*)$/.test(identifier)) return null;
+    const numeric = Number(identifier);
+    return Number.isSafeInteger(numeric) ? numeric : null;
+  }) : [];
+  if (prerelease.includes(null)) return null;
+  const core = [major, minor, patch].map(Number);
+  if (!core.every(Number.isSafeInteger)) return null;
+  return { major: core[0], minor: core[1], patch: core[2], prerelease };
+}
+
+export function compareSemver(left, right) {
+  const leftVersion = parseSemver(left);
+  const rightVersion = parseSemver(right);
+  if (!leftVersion || !rightVersion) return null;
+  for (const key of ['major', 'minor', 'patch']) {
+    if (leftVersion[key] !== rightVersion[key]) return leftVersion[key] < rightVersion[key] ? -1 : 1;
+  }
+  if (leftVersion.prerelease.length === 0 || rightVersion.prerelease.length === 0) {
+    if (leftVersion.prerelease.length === rightVersion.prerelease.length) return 0;
+    return leftVersion.prerelease.length === 0 ? 1 : -1;
+  }
+  const length = Math.min(leftVersion.prerelease.length, rightVersion.prerelease.length);
+  for (let index = 0; index < length; index++) {
+    const leftIdentifier = leftVersion.prerelease[index];
+    const rightIdentifier = rightVersion.prerelease[index];
+    if (leftIdentifier === rightIdentifier) continue;
+    if (typeof leftIdentifier === 'number' && typeof rightIdentifier === 'number') return leftIdentifier < rightIdentifier ? -1 : 1;
+    if (typeof leftIdentifier === 'number') return -1;
+    if (typeof rightIdentifier === 'number') return 1;
+    return leftIdentifier < rightIdentifier ? -1 : 1;
+  }
+  if (leftVersion.prerelease.length === rightVersion.prerelease.length) return 0;
+  return leftVersion.prerelease.length < rightVersion.prerelease.length ? -1 : 1;
+}
+
+export function selectInstalledRecord(installed, id) {
+  const records = Array.isArray(installed?.plugins?.[id]) ? installed.plugins[id] : [];
+  let selected = null;
+  for (const record of records) {
+    if (record?.scope !== 'user' || !parseSemver(record.version)) continue;
+    if (!selected || compareSemver(record.version, selected.version) > 0) selected = record;
+  }
+  return selected;
+}
+
+export function classifyPlugin(installed, spec) {
+  const records = Array.isArray(installed?.plugins?.[spec.id]) ? installed.plugins[spec.id] : [];
+  const userRecords = records.filter(record => record?.scope === 'user');
+  if (userRecords.length === 0) return 'missing';
+  const selected = selectInstalledRecord(installed, spec.id);
+  if (!selected || !parseSemver(selected.version)) return 'invalid';
+  const comparison = compareSemver(selected.version, spec.version);
+  if (comparison === null) return 'invalid';
+  return comparison < 0 ? 'older' : 'satisfied';
+}
+PLUGIN_DEPENDENCIES_EOF
+chmod 700 "$CLAWGOD_DIR/plugin-dependencies.mjs"
+
 # --- Managed ripgrep -------------------------------------------------
 
 cat > "$CLAWGOD_DIR/install-ripgrep.mjs" << 'INSTALL_RIPGREP_EOF'

@@ -878,6 +878,7 @@ const unixTemplates = {
   'repatch.mjs': unixTemplate('repatch.mjs', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''),
   'patch.mjs': unixTemplate('patch.mjs', 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\''),
   'fetch-file.mjs': unixTemplate('fetch-file.mjs', 'cat > "$CLAWGOD_DIR/fetch-file.mjs" << \'FETCH_FILE_EOF\''),
+  'plugin-dependencies.mjs': unixTemplate('plugin-dependencies.mjs', 'cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << \'PLUGIN_DEPENDENCIES_EOF\''),
 };
 const windowsTemplates = {
   'claude-mem-compat.cjs': powerShellTemplate('claude-mem-compat.cjs', '#!/usr/bin/env bun\nconst fs = require'),
@@ -886,6 +887,7 @@ const windowsTemplates = {
   'repatch.mjs': powerShellTemplate('repatch.mjs', "#!/usr/bin/env bun\n// Re-extract + post-process + patch the user's currently-installed"),
   'patch.mjs': powerShellTemplate('patch.mjs', '#!/usr/bin/env bun\n/**\n * ClawGod Plus Universal Patcher'),
   'fetch-file.mjs': powerShellTemplate('fetch-file.mjs', "#!/usr/bin/env bun\nimport { existsSync, renameSync, rmSync } from 'node:fs';"),
+  'plugin-dependencies.mjs': powerShellTemplate('plugin-dependencies.mjs', '#!/usr/bin/env bun\n/**\n * @typedef {{'),
 };
 
 for (const [name, body] of Object.entries(unixTemplates)) {
