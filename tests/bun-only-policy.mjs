@@ -193,33 +193,29 @@ assert.match(agents, /Bun-only[\s\S]{0,100}CI|CI[\s\S]{0,100}Bun-only/i, 'AGENTS
 assert.match(agents, /Task 7|temporary workflow exception/i, 'AGENTS.md must narrowly document the temporary workflow exception');
 
 const workflow = read('.github/workflows/compat-daily.yml');
-assert.match(workflow, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/, 'workflow internal GitHub Actions setting remains allowed during migration');
-const compatLegacyDependencies = [
-  { kind: 'node-setup', line: 'uses: actions/setup-node@v4' },
-  { kind: 'node-version', line: 'node-version: 24' },
-  { kind: 'npm-cache', line: 'path: ~/.npm' },
-  { kind: 'system-ripgrep', line: 'sudo apt-get update -qq && sudo apt-get install -y ripgrep' },
-  { kind: 'system-ripgrep', line: 'rg --version | head -1' },
-  { kind: 'node', line: 'node --version' },
-  { kind: 'node', line: 'node "$test"' },
-];
-function assertCompatLegacyDependencies(source) {
-  assert.deepEqual(
-    findForbiddenDependencies(source).map(({ kind, line }) => ({ kind, line })),
-    compatLegacyDependencies,
-    'compat-daily may contain only the current Task 7 legacy dependency occurrences',
-  );
+assert.deepEqual(findForbiddenDependencies(workflow), [], 'compat-daily must not require an external Node, npm, or system ripgrep executable');
+assert.equal(workflow.match(/FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/g)?.length, 1, 'compat-daily must retain exactly one GitHub Actions runtime setting');
+assert.match(workflow, /^\s*FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*["']true["']\s*$/m, 'compat-daily must keep the exact GitHub Actions Node 24 opt-in');
+assert.match(workflow, /GitHub-hosted Actions[^\n]*internals|internals[^\n]*GitHub-hosted Actions/i, 'compat-daily must explain that the Node 24 setting applies only to GitHub-hosted Actions internals');
+assert.match(workflow, /uses:\s*oven-sh\/setup-bun@v2[\s\S]{0,160}bun-version:\s*canary/, 'compat-daily must use Bun canary');
+assert.match(workflow, /CLAWGOD_E2E=1\s+bun\s+tests\/installer-e2e\.mjs/, 'Linux smoke must run the isolated installer E2E with Bun');
+assert.match(workflow, /^\s*windows-smoke:\s*$/m, 'compat-daily must include a Windows smoke job');
+assert.match(workflow, /windows-smoke:[\s\S]*github\.event_name\s*!=\s*'schedule'/, 'Windows smoke must skip scheduled daily runs');
+for (const variable of ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) {
+  assert.match(workflow, new RegExp(`\\$env:${variable}\\s*=\\s*\\$sandbox`), `Windows smoke must sandbox ${variable}`);
 }
-assertCompatLegacyDependencies(workflow);
-for (const nestedCommand of ['run: bash -c "node --version"', 'run: sh -c "npm test"', 'run: zsh -c "rg --version"']) {
-  assert.throws(
-    () => assertCompatLegacyDependencies(`${workflow}\n${nestedCommand}`),
-    /compat-daily may contain only the current Task 7 legacy dependency occurrences/,
-    `${nestedCommand} must invalidate the compat legacy allowance`,
-  );
+for (const command of ['-LeanOn', '-NoUpgrade -LeanOff', '-Uninstall']) {
+  assert.ok(workflow.includes(command), `Windows smoke must exercise install.ps1 ${command}`);
 }
+for (const dependency of ['node', 'npm', 'rg', 'tar', 'unzip']) {
+  assert.match(workflow, new RegExp(`['"]${dependency}['"]`), `Windows smoke must trap ${dependency} with a command shim`);
+}
+assert.match(workflow, /\.clawgod\\vendor\\ripgrep\\bin\\rg\.exe/, 'Windows smoke must execute the private ripgrep binary');
+assert.match(workflow, /forbidden dependency invoked:/, 'compat smoke must fail on the forbidden dependency marker');
+assert.match(workflow, /tests\/\*\.mjs/, 'compat path filters must include every Bun test');
+assert.match(workflow, /scripts\/rebuild-helper-zips\.mjs/, 'compat path filters must include the ZIP rebuild script');
+assert.equal(existsSync(join(root, '.github/workflows/cache-cleanup-weekly.yml')), false, 'obsolete npm cache cleanup workflow must not return');
 for (const path of readdirSync(join(root, '.github/workflows')).filter(path => /\.ya?ml$/.test(path))) {
-  if (path === 'compat-daily.yml') continue;
   const source = read(`.github/workflows/${path}`);
   assert.deepEqual(findForbiddenDependencies(source), [], `.github/workflows/${path} must not add an executable Node, npm, or system ripgrep dependency`);
 }

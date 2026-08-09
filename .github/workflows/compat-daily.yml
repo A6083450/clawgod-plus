@@ -1,256 +1,105 @@
 name: Compat Daily
 
-# Runs install.sh end-to-end on every supported platform against the current
-# latest Claude Code from npm. Catches the kind of regression we hit when
-# Anthropic bumps the embedded Bun runtime ahead of Bun's stable release.
+# Runs the Bun-only installer end-to-end against the current Claude Code release.
+# Linux runs daily and on source changes; Windows is bounded to change-driven runs.
 
 on:
   schedule:
-    - cron: '17 7 * * *'   # ~07:17 UTC daily
+    - cron: '17 7 * * *'
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - install.sh
       - install.ps1
-      - apply-claude-code-chrome-fix.sh
-      - apply-claude-code-chrome-fix.ps1
-      - tests/patcher-*.mjs
+      - 'apply-claude-code-*.sh'
+      - 'apply-claude-code-*.ps1'
+      - 'apply-claude-code-*.zip'
+      - 'apply-claude-code-context-limit-patch/**'
+      - 'tests/*.mjs'
+      - scripts/rebuild-helper-zips.mjs
       - .github/workflows/compat-daily.yml
   pull_request:
     paths:
       - install.sh
       - install.ps1
-      - apply-claude-code-chrome-fix.sh
-      - apply-claude-code-chrome-fix.ps1
-      - tests/patcher-*.mjs
+      - 'apply-claude-code-*.sh'
+      - 'apply-claude-code-*.ps1'
+      - 'apply-claude-code-*.zip'
+      - 'apply-claude-code-context-limit-patch/**'
+      - 'tests/*.mjs'
+      - scripts/rebuild-helper-zips.mjs
       - .github/workflows/compat-daily.yml
 
 permissions:
-  contents: write   # write needed to push the version-badge JSON to `badges` branch
+  contents: write
   issues: write
 
-# Opt every JS-based action (e.g. actions/checkout, actions/cache,
-# actions/github-script) onto Node 24, ahead of GitHub forcing it on
-# 2026-06-02. Silences the deprecation warning and keeps us aligned
-# with the Node version we use to run patch.mjs / extract-natives.mjs.
 env:
+  # Controls GitHub-hosted Actions internals only; the project runtime remains Bun-only.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   smoke:
-    # Single Linux runner — a Linux failure almost always means cross-platform
-    # breakage upstream. macOS / Windows runners are 10x / 2x more expensive
-    # than Linux on shared-tier accounting, so we don't burn them on a daily
-    # signal.
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js 24
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
       - name: Set up Bun (canary)
-        # Anthropic ships claude-code with bleeding-edge Bun (e.g. 1.3.14
-        # before it leaves the canary channel). Stable Bun panics with
-        # "Expected CommonJS module to have a function wrapper" when loading
-        # cli.original.cjs extracted from a newer-Bun-built native binary.
-        # setup-bun caches the canary binary by commit hash — same canary
-        # build is restored from cache, new build re-downloads.
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: canary
-
-      - name: Cache ~/.npm (claude-code-<plat> tarball)
-        # install.sh runs `npm pack @anthropic-ai/claude-code-linux-x64@latest`,
-        # which lands the ~80 MB tarball in ~/.npm/_cacache. Reusing the cache
-        # lets npm short-circuit the download when @latest hasn't bumped since
-        # the last run; it still re-validates registry metadata, so we never
-        # serve a stale binary on a real upgrade day.
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: npm-claude-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            npm-claude-${{ runner.os }}-
-
-      - name: Install ripgrep
-        shell: bash
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y ripgrep
-          rg --version | head -1
-
-      - name: Add ~/.local/bin to PATH (clawgod launcher install target)
-        shell: bash
-        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Print runtime versions
         shell: bash
         run: |
           bun --version
-          node --version
           uname -a
 
-      - name: Run install.sh (npm-fallback path)
-        # No official Claude binary pre-installed → install.sh exercises
-        # its npm-registry fallback to fetch @anthropic-ai/claude-code-<plat>.
-        # Capture output so the patch-result line can be asserted on; we
-        # don't trust `patch.mjs --verify` because some patches have no
-        # post-state sentinel (they use a regex-stale heuristic that
-        # false-positives once the source survives a partial replacement).
+      - name: Run Bun regression suite
         shell: bash
         run: |
-          set -o pipefail
-          bash install.sh --lean-on 2>&1 | tee /tmp/install.log
-
-      - name: Verify install artifacts
-        shell: bash
-        run: |
-          ls -la "$HOME/.clawgod/" || true
-          for f in cli.cjs cli.original.cjs patch.mjs extract-natives.mjs post-process.mjs .source-version; do
-            test -e "$HOME/.clawgod/$f" || { echo "::error::missing ~/.clawgod/$f"; exit 1; }
+          set -euo pipefail
+          bash -n install.sh
+          bun scripts/rebuild-helper-zips.mjs --check
+          for test in tests/*.mjs; do
+            bun "$test"
           done
-          echo "Source: $(cat "$HOME/.clawgod/.source-version")"
 
-      - name: Assert all patches applied (parse install log)
-        # patch.mjs prints "Result: A applied, S skipped, F failed".
-        # F must be 0 — otherwise upstream has shifted enough that one of
-        # our regex patches no longer matches and a feature is silently broken.
+      - name: Run isolated Bun-only installer E2E
         shell: bash
         run: |
-          line=$(grep -E 'Result: [0-9]+ applied, [0-9]+ skipped, [0-9]+ failed' /tmp/install.log | tail -1 || true)
-          echo "Patch summary: ${line:-<not found>}"
-          [[ -n "$line" ]] || { echo "::error::patch.mjs result line missing from install.sh output"; exit 1; }
-          failed=$(echo "$line" | sed -E 's/.*skipped, ([0-9]+) failed.*/\1/')
-          [[ "$failed" -eq 0 ]] || { echo "::error::patch.mjs reported $failed failed patches"; exit 1; }
-
-      - name: Verify lean settings applied
-        shell: bash
-        run: |
-          settings="$HOME/.claude/settings.json"
-          [[ -f "$settings" ]] || { echo "::error::~/.claude/settings.json not created"; exit 1; }
-          # Check that lean keys are present
-          for key in disableWorkflows disableRemoteControl disableClaudeAiConnectors disableArtifact; do
-            if ! grep -q "\"$key\"" "$settings"; then
-              echo "::error::lean key $key missing from settings.json"
-              cat "$settings"
-              exit 1
-            fi
-          done
-          for tool in DesignSync NotebookEdit CronCreate; do
-            if ! grep -q "\"$tool\"" "$settings"; then
-              echo "::error::deny tool $tool missing from settings.json"
-              cat "$settings"
-              exit 1
-            fi
-          done
-          echo "Lean settings verified:"
-          cat "$settings"
-
-      - name: Verify lean-off / lean-on toggle
-        shell: bash
-        run: |
-          # --lean-off should remove lean keys and create flag
-          bash install.sh --no-upgrade --lean-off 2>&1 | tail -3
-          [[ -f "$HOME/.clawgod/.lean-disabled" ]] || { echo "::error::.lean-disabled flag not created"; exit 1; }
-          settings="$HOME/.claude/settings.json"
-          if grep -q '"disableWorkflows"' "$settings"; then
-            echo "::error::lean-off failed to remove disableWorkflows"
-            cat "$settings"
+          set -euo pipefail
+          log="$RUNNER_TEMP/installer-e2e.log"
+          CLAWGOD_E2E=1 bun tests/installer-e2e.mjs 2>&1 | tee "$log"
+          if grep -q 'forbidden dependency invoked:' "$log"; then
+            echo '::error::installer invoked a forbidden system dependency'
             exit 1
           fi
-          # --lean-on should restore
-          bash install.sh --no-upgrade --lean-on 2>&1 | tail -3
-          [[ ! -f "$HOME/.clawgod/.lean-disabled" ]] || { echo "::error::.lean-disabled flag not removed"; exit 1; }
-          if ! grep -q '"disableWorkflows"' "$settings"; then
-            echo "::error::lean-on failed to restore disableWorkflows"
-            cat "$settings"
-            exit 1
-          fi
-          echo "Lean toggle verified"
-
-      - name: Smoke test — claude --version
-        # Exercises the wrapper path:
-        #   launcher → bun cli.cjs → require('./cli.original.cjs')
-        # The Bun CJS-wrapper panic surfaces here, not at install time.
-        shell: bash
-        run: |
-          set +e
-          out=$(claude --version 2>&1)
-          rc=$?
-          set -e
-          echo "$out"
-          if echo "$out" | grep -q "Expected CommonJS module to have a function wrapper"; then
-            echo "::error::Bun CJS-wrapper panic — local Bun lags the embedded Bun"
-            exit 1
-          fi
-          [[ $rc -eq 0 ]] || { echo "::error::claude --version exited $rc"; exit 1; }
-
-      - name: Regression checks — embedded patchers
-        shell: bash
-        run: |
-          for test in tests/patcher-*.mjs; do
-            node "$test"
-          done
-
-      - name: Functional checks — runtime invariants
-        # Verify that ClawGod Plus preserves the plain Bun runtime model. Background
-        # workers must launch `bun cli.cjs …`, not treat Bun as a standalone CLI.
-        shell: bash
-        run: |
-          exec_path="$HOME/.local/bin/claude.orig"
-
-          echo "── Checking worker resolver patched for plain Bun ──"
-          grep -q '__clawgod_plain_bun_worker__' "$HOME/.clawgod/cli.original.cjs" || {
-            echo "::error::worker resolver was not patched for cli.cjs"
+          grep -q '^ripgrep 15\.2\.0' "$log" || {
+            echo '::error::private ripgrep version smoke was not observed'
             exit 1
           }
-          grep -q 'Bun\.isStandaloneExecutable===!0' "$HOME/.clawgod/cli.original.cjs" || {
-            echo "::error::shared Bun.isStandaloneExecutable predicate was rewritten"
+          grep -q '^worker resolver patched for plain Bun$' "$log" || {
+            echo '::error::plain Bun worker resolver invariant was not observed'
             exit 1
           }
-          echo "  worker resolver: OK"
-
-          echo "── Checking wrapper preserves Bun process.execPath ──"
-          grep -q 'Keep process.execPath as the Bun runtime' "$HOME/.clawgod/cli.cjs" || {
-            echo "::error::cli.cjs does not preserve the Bun runtime strategy"
+          grep -q '^installer source version: ' "$log" || {
+            echo '::error::installed Claude source version was not observed'
             exit 1
           }
-          echo "  Bun process.execPath: OK"
-
-          echo "── Checking multitool dispatch (ugrep, bfs, rg) ──"
-          for tool in ugrep bfs rg; do
-            if ARGV0="$tool" "$exec_path" --version >/dev/null 2>&1; then
-              echo "  $tool dispatch: OK"
-            else
-              echo "::error::multitool dispatch failed for $tool via $exec_path"
-              exit 1
-            fi
-          done
-
-          echo "── Checking openai-proxy.cjs exists ──"
-          test -f "$HOME/.clawgod/openai-proxy.cjs" || { echo "::error::openai-proxy.cjs missing"; exit 1; }
-          echo "  openai-proxy.cjs: OK ($(wc -c < "$HOME/.clawgod/openai-proxy.cjs") bytes)"
-
-          echo "── All functional checks passed ──"
 
       - name: Publish supported-Claude-version badge
-        # Write the version we just verified end-to-end to a JSON file on the
-        # `badges` branch (force-pushed; that branch holds nothing else and is
-        # never read as source). README links to it via shields.io endpoint.
-        # PRs from forks can't push, so skip them.
         if: success() && github.event_name != 'pull_request'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          version=$(cat "$HOME/.clawgod/.source-version")
-          [[ -n "$version" ]] || { echo "::error::source-version missing"; exit 1; }
-          tmp=$(mktemp -d)
-          cd "$tmp"
+          version=$(sed -n 's/^installer source version: //p' "$RUNNER_TEMP/installer-e2e.log" | tail -1)
+          [[ -n "$version" ]] || { echo '::error::source version missing from E2E log'; exit 1; }
+          badge_dir=$(mktemp -d)
+          cd "$badge_dir"
           cat > claude-version.json <<EOF
           {
             "schemaVersion": 1,
@@ -265,19 +114,17 @@ jobs:
           git add claude-version.json
           git commit -q -m "compat-daily: claude $version verified"
           git push -fq "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:badges
-          echo "Published badge: claude $version"
 
-      - name: Open / update issue on scheduled failure
+      - name: Open or update issue on scheduled failure
         if: failure() && github.event_name == 'schedule'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const stamp = path.join(process.env.HOME, '.clawgod', '.source-version');
-            const claudeVersion = fs.existsSync(stamp)
-              ? fs.readFileSync(stamp, 'utf8').trim()
-              : 'unknown';
+            const log = path.join(process.env.RUNNER_TEMP, 'installer-e2e.log');
+            const output = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+            const claudeVersion = output.match(/^installer source version: (.+)$/m)?.[1] ?? 'unknown';
             const title = `compat-daily: broke (claude ${claudeVersion})`;
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const { data: open } = await github.rest.issues.listForRepo({
@@ -287,13 +134,13 @@ jobs:
               labels: 'compat-broken',
               per_page: 100,
             });
-            const dup = open.find(i => i.title === title);
-            if (dup) {
+            const duplicate = open.find(issue => issue.title === title);
+            if (duplicate) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: dup.number,
-                body: `Re-failed ${new Date().toISOString().slice(0,10)} — ${runUrl}`,
+                issue_number: duplicate.number,
+                body: `Re-failed ${new Date().toISOString().slice(0, 10)} - ${runUrl}`,
               });
             } else {
               await github.rest.issues.create({
@@ -301,13 +148,90 @@ jobs:
                 repo: context.repo.repo,
                 title,
                 labels: ['compat-broken', 'bug'],
-                body: [
-                  `Daily compatibility run failed on \`ubuntu-latest\`.`,
-                  ``,
-                  `- Claude binary: \`${claudeVersion}\``,
-                  `- Run: ${runUrl}`,
-                  ``,
-                  `Auto-opened by \`.github/workflows/compat-daily.yml\`.`,
-                ].join('\n'),
+                body: `Daily Bun-only compatibility run failed on ubuntu-latest.\n\n- Claude binary: \`${claudeVersion}\`\n- Run: ${runUrl}`,
               });
             }
+
+  windows-smoke:
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun (canary)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: canary
+
+      - name: Run isolated Bun-only Windows install lifecycle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bunBin = (Get-Command bun.exe -ErrorAction Stop).Source
+          $pwshBin = (Get-Command pwsh.exe -ErrorAction Stop).Source
+          $sandbox = Join-Path $env:RUNNER_TEMP 'clawgod-windows-smoke'
+          $shimDir = Join-Path $sandbox 'forbidden-bin'
+          $marker = Join-Path $sandbox 'forbidden-dependency.log'
+          $log = Join-Path $sandbox 'install.log'
+          New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
+
+          $env:USERPROFILE = $sandbox
+          $env:APPDATA = $sandbox
+          $env:LOCALAPPDATA = $sandbox
+          $env:CLAWGOD_BUN_BIN = $bunBin
+          $env:CLAWGOD_FORBIDDEN_MARKER = $marker
+          $env:PATH = "$shimDir;$(Split-Path -Parent $bunBin);$env:SystemRoot\System32;$env:SystemRoot"
+          Get-ChildItem Env: | Where-Object { $_.Name -like 'ANTHROPIC_*' } | Remove-Item
+          Remove-Item Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue
+
+          foreach ($name in @('node', 'npm', 'rg', 'tar', 'unzip')) {
+            $shim = @"
+          @echo off
+          echo forbidden dependency invoked: $name 1>&2
+          echo forbidden dependency invoked: $name>>"%CLAWGOD_FORBIDDEN_MARKER%"
+          exit /b 97
+          "@
+            [System.IO.File]::WriteAllText((Join-Path $shimDir "$name.cmd"), $shim, [System.Text.Encoding]::ASCII)
+          }
+
+          function Assert-NoForbiddenDependency([object[]]$Output) {
+            $text = $Output | Out-String
+            if ($text -match 'forbidden dependency invoked:' -or (Test-Path $marker)) {
+              throw 'Installer invoked a forbidden system dependency'
+            }
+          }
+
+          function Invoke-Checked([string]$Label, [string]$Executable, [string[]]$Arguments) {
+            $output = & $Executable @Arguments 2>&1
+            $exitCode = $LASTEXITCODE
+            $output | Tee-Object -FilePath $log -Append | Out-Host
+            Assert-NoForbiddenDependency $output
+            if ($exitCode -ne 0) { throw "$Label exited $exitCode" }
+            return ,$output
+          }
+
+          $installer = Join-Path $env:GITHUB_WORKSPACE 'install.ps1'
+          $null = Invoke-Checked 'initial -LeanOn install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-LeanOn')
+
+          $settingsPath = Join-Path $env:USERPROFILE '.claude\settings.json'
+          $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+          if ($settings.disableWorkflows -ne $true) { throw '-LeanOn did not apply lean settings' }
+
+          $privateRg = Join-Path $env:USERPROFILE '.clawgod\vendor\ripgrep\bin\rg.exe'
+          $rgVersion = Invoke-Checked 'private ripgrep version smoke' $privateRg @('--version')
+          if (($rgVersion | Out-String) -notmatch '^ripgrep 15\.2\.0') { throw 'Private ripgrep did not report version 15.2.0' }
+
+          $launcher = Join-Path $env:USERPROFILE '.local\bin\clawgod.cmd'
+          $wrapperVersion = Invoke-Checked 'clawgod wrapper version smoke' $launcher @('--version')
+          if (($wrapperVersion | Out-String) -notmatch '\b\d+\.\d+\.\d+\b') { throw 'ClawGod wrapper did not print a semantic version' }
+
+          $null = Invoke-Checked '-NoUpgrade -LeanOff install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-NoUpgrade', '-LeanOff')
+          $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+          if ($null -ne $settings.disableWorkflows) { throw '-LeanOff did not remove lean settings' }
+          if (-not (Test-Path (Join-Path $env:USERPROFILE '.clawgod\.lean-disabled'))) { throw '-LeanOff did not create its state marker' }
+
+          $null = Invoke-Checked '-Uninstall' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-Uninstall')
+          if (Test-Path (Join-Path $env:USERPROFILE '.clawgod\vendor\ripgrep')) { throw 'Uninstall retained the private ripgrep directory' }
+          if (Test-Path $launcher) { throw 'Uninstall retained the clawgod launcher' }
+          Assert-NoForbiddenDependency @()
