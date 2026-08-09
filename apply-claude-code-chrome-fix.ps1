@@ -124,9 +124,14 @@ Options:
                    Sort-Object LastWriteTime -Descending
         if ($backups.Count -gt 0) {
             $latestBackup = $backups[0].FullName
-            Copy-Item $latestBackup $cliPath -Force
-            Write-Success "Restored from backup: $latestBackup"
-            return 0
+            try {
+                Copy-Item -LiteralPath $latestBackup -Destination $cliPath -Force -ErrorAction Stop
+                Write-Success "Restored from backup: $latestBackup"
+                return 0
+            } catch {
+                Write-FixError "Failed to restore backup: $($_.Exception.Message)"
+                return 1
+            }
         } else {
             Write-FixError "No backup file found ($base.$BACKUP_SUFFIX-*)"
             return 1

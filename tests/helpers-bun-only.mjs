@@ -78,6 +78,28 @@ for (const helper of helpers) {
   }
 }
 
+const chromePowerShell = helpers.find(helper => helper.name === 'apply-claude-code-chrome-fix.ps1');
+check('Chrome PowerShell restore treats bracketed explicit basenames literally and cannot report false success', () => {
+  const restoreStart = chromePowerShell.source.indexOf('    if ($Restore) {');
+  const restoreEnd = chromePowerShell.source.indexOf('\n    Write-Host ""', restoreStart);
+  assert.notEqual(restoreStart, -1, 'restore branch must exist');
+  assert.notEqual(restoreEnd, -1, 'restore branch must end before normal patch setup');
+  const restore = chromePowerShell.source.slice(restoreStart, restoreEnd);
+  assert.ok(restore.includes('$base = Split-Path $cliPath -Leaf'), 'restore must retain the explicit basename, including [prod].cjs');
+
+  const copy = 'Copy-Item -LiteralPath $latestBackup -Destination $cliPath -Force -ErrorAction Stop';
+  const copyIndex = restore.indexOf(copy);
+  const successIndex = restore.indexOf('Write-Success "Restored from backup: $latestBackup"');
+  const catchIndex = restore.indexOf('} catch {');
+  assert.notEqual(copyIndex, -1, 'restore copy must use literal source, explicit destination, and terminating errors');
+  assert.ok(copyIndex < successIndex, 'success must be printed only after the literal copy completes');
+  assert.ok(successIndex < catchIndex, 'successful copy and success output must be inside the guarded try block');
+
+  const catchBlock = restore.slice(catchIndex);
+  assert.match(catchBlock, /Write-FixError\s+"Failed to restore backup:/);
+  assert.match(catchBlock, /return\s+1/);
+});
+
 function readZipEntries(zipPath) {
   if (zipPath instanceof URL) zipPath = fileURLToPath(zipPath);
   const bytes = readFileSync(zipPath);
