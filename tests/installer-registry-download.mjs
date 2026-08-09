@@ -113,6 +113,8 @@ try {
     env: {},
   });
   assert.equal(latest.version, version, 'latest must resolve through the Registry dist-tag');
+  assert.equal(typeof latest.dist, 'object', 'resolvePackage must preserve the dist object contract');
+  assert.equal(Array.isArray(latest.dist), false, 'resolvePackage dist must not be an array');
   assert.equal(latest.dist.tarball, tarballUrl, 'resolvePackage must return the selected manifest dist object');
 
   await assert.rejects(
@@ -127,8 +129,41 @@ try {
     'missing Registry versions must be rejected',
   );
 
+  const validMetadata = metadata(goodArchive);
+  const validManifest = validMetadata.versions[version];
+  const malformedRegistryCases = [
+    ['null metadata', null, version, /Registry metadata must be an object/],
+    ['array metadata', [], version, /Registry metadata must be an object/],
+    ['null versions', { ...validMetadata, versions: null }, version, /Registry versions must be an object/],
+    ['array versions', { ...validMetadata, versions: [] }, version, /Registry versions must be an object/],
+    ['array manifest', { ...validMetadata, versions: { [version]: [] } }, version, /Registry manifest must be an object/],
+    ['null dist', { ...validMetadata, versions: { [version]: { ...validManifest, dist: null } } }, version, /Registry dist must be an object/],
+    ['array dist', { ...validMetadata, versions: { [version]: { ...validManifest, dist: [] } } }, version, /Registry dist must be an object/],
+    ['empty resolved version', { ...validMetadata, 'dist-tags': { latest: '' } }, 'latest', /Resolved version must be a non-empty string/],
+    ['numeric resolved version', { ...validMetadata, 'dist-tags': { latest: 42 } }, 'latest', /Resolved version must be a non-empty string/],
+    ['wrong manifest name', { ...validMetadata, versions: { [version]: { ...validManifest, name: '@other/package' } } }, version, /Registry manifest name must match/],
+    ['missing manifest name', { ...validMetadata, versions: { [version]: { ...validManifest, name: undefined } } }, version, /Registry manifest name must match/],
+    ['wrong manifest version', { ...validMetadata, versions: { [version]: { ...validManifest, version: '2.1.998' } } }, version, /Registry manifest version must match/],
+    ['numeric manifest version', { ...validMetadata, versions: { [version]: { ...validManifest, version: 42 } } }, version, /Registry manifest version must match/],
+    ['missing integrity', { ...validMetadata, versions: { [version]: { ...validManifest, dist: { tarball: tarballUrl } } } }, version, /Registry integrity must be a supported SHA-512 string/],
+    ['unsupported integrity', { ...validMetadata, versions: { [version]: { ...validManifest, dist: { ...validManifest.dist, integrity: 'sha1-deadbeef' } } } }, version, /Registry integrity must be a supported SHA-512 string/],
+    ['short SHA-512 integrity', { ...validMetadata, versions: { [version]: { ...validManifest, dist: { ...validManifest.dist, integrity: 'sha512-ZGVhZGJlZWY=' } } } }, version, /Registry integrity must be a supported SHA-512 string/],
+    ['array integrity', { ...validMetadata, versions: { [version]: { ...validManifest, dist: { ...validManifest.dist, integrity: [] } } } }, version, /Registry integrity must be a supported SHA-512 string/],
+    ['missing tarball', { ...validMetadata, versions: { [version]: { ...validManifest, dist: { integrity: validManifest.dist.integrity } } } }, version, /Registry tarball must be an HTTP\(S\) URL/],
+    ['numeric tarball', { ...validMetadata, versions: { [version]: { ...validManifest, dist: { ...validManifest.dist, tarball: 42 } } } }, version, /Registry tarball must be an HTTP\(S\) URL/],
+    ['non-HTTP tarball', { ...validMetadata, versions: { [version]: { ...validManifest, dist: { ...validManifest.dist, tarball: 'ftp://cdn.example.test/package.tgz' } } } }, version, /Registry tarball must be an HTTP\(S\) URL/],
+    ['malformed tarball', { ...validMetadata, versions: { [version]: { ...validManifest, dist: { ...validManifest.dist, tarball: 'not a URL' } } } }, version, /Registry tarball must be an HTTP\(S\) URL/],
+  ];
+  for (const [label, registryMetadata, requested, expectedError] of malformedRegistryCases) {
+    await assert.rejects(
+      resolvePackage(packageName, requested, { fetchImpl: registryFetch(registryMetadata, goodArchive), env: {} }),
+      expectedError,
+      `${label} must fail with a Registry contract error`,
+    );
+  }
+
   const badIntegrityMeta = metadata(goodArchive);
-  badIntegrityMeta.versions[version].dist.integrity = `sha512-${'A'.repeat(88)}`;
+  badIntegrityMeta.versions[version].dist.integrity = `sha512-${'A'.repeat(86)}==`;
   await assert.rejects(
     installPackage(`${packageName}@${version}`, join(fixtureDir, 'bad-integrity'), {
       fetchImpl: registryFetch(badIntegrityMeta, goodArchive),
@@ -226,6 +261,56 @@ try {
   for (const [url, env, expected] of proxyCases) {
     assert.equal(proxyFor(url, env), expected, `proxyFor must select the expected proxy for ${url}`);
   }
+
+  const origin = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch() {
+      return new Response('direct origin');
+    },
+  });
+  const proxyEnvKeys = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NO_PROXY', 'no_proxy'];
+  const savedProxyEnv = new Map(proxyEnvKeys.map(key => [key, Object.hasOwn(process.env, key) ? process.env[key] : undefined]));
+  const deadProxy = 'http://user:secret@127.0.0.1:1';
+  try {
+    process.env.HTTP_PROXY = deadProxy;
+    process.env.HTTPS_PROXY = deadProxy;
+    delete process.env.http_proxy;
+    delete process.env.https_proxy;
+    process.env.NO_PROXY = '';
+    process.env.no_proxy = '';
+
+    const originUrl = `http://127.0.0.1:${origin.port}/payload`;
+    await assert.rejects(
+      fetch(originUrl, { signal: AbortSignal.timeout(1000) }),
+      'Bun 1.3.14 native fetch must empirically use the dead process proxy when no direct override is active',
+    );
+
+    const directResponse = await fetchWithProxy(originUrl, {}, {
+      HTTP_PROXY: deadProxy,
+      HTTPS_PROXY: deadProxy,
+      NO_PROXY: '127.0.0.1',
+    });
+    assert.equal(await directResponse.text(), 'direct origin', 'NO_PROXY must force a real direct native connection despite Bun process proxy variables');
+    assert.equal(process.env.NO_PROXY, '', 'direct fetch must restore the original uppercase NO_PROXY value');
+    assert.equal(process.env.no_proxy, '', 'direct fetch must restore the original lowercase no_proxy value');
+  } finally {
+    origin.stop(true);
+    for (const [key, value] of savedProxyEnv) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+
+  let bypassInit;
+  await fetchWithProxy('https://registry.npmjs.org/pkg', { proxy: 'http://user:secret@caller.proxy:8443' }, {
+    HTTPS_PROXY: 'http://environment.proxy:8443',
+    NO_PROXY: 'registry.npmjs.org',
+  }, async (_url, init) => {
+    bypassInit = init;
+    return new Response('direct');
+  });
+  assert.equal(Object.hasOwn(bypassInit, 'proxy'), false, 'NO_PROXY bypass must strip a caller-provided init.proxy option');
 
   let proxiedInit;
   const proxiedResponse = await fetchWithProxy('https://registry.npmjs.org/pkg', { headers: { accept: 'application/json' } }, {

@@ -640,18 +640,38 @@ export function proxyFor(urlValue, env = process.env) {
     : env.HTTP_PROXY || env.http_proxy;
 }
 
+async function fetchDirect(url, init, fetchImpl) {
+  const upper = Object.hasOwn(process.env, 'NO_PROXY') ? process.env.NO_PROXY : undefined;
+  const lower = Object.hasOwn(process.env, 'no_proxy') ? process.env.no_proxy : undefined;
+  try {
+    process.env.NO_PROXY = '*';
+    process.env.no_proxy = '*';
+    return await fetchImpl(url, init);
+  } finally {
+    if (upper === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = upper;
+    if (lower === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = lower;
+  }
+}
+
 export async function fetchWithProxy(initialUrl, init = {}, env = process.env, fetchImpl = fetch) {
   let nextUrl = initialUrl;
+  const { proxy: _callerProxy, ...baseInit } = init;
   for (let redirects = 0; redirects <= 5; redirects++) {
+    const bypass = bypassesProxy(nextUrl, env);
     const proxy = proxyFor(nextUrl, env);
     let response;
     try {
-      response = await fetchImpl(nextUrl, {
-        ...init,
+      const requestInit = {
+        ...baseInit,
         redirect: 'manual',
         signal: AbortSignal.timeout(300000),
         ...(proxy ? { proxy } : {}),
-      });
+      };
+      response = bypass
+        ? await fetchDirect(nextUrl, requestInit, fetchImpl)
+        : await fetchImpl(nextUrl, requestInit);
     } catch (error) {
       if (proxy) throw new Error('Request failed through configured proxy');
       throw error;
@@ -675,15 +695,43 @@ async function checkedJson(response) {
   }
 }
 
+function objectRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function supportedIntegrity(value) {
+  return typeof value === 'string' && /^sha512-[A-Za-z0-9+/]{86}==$/.test(value);
+}
+
+function httpTarball(value) {
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export async function resolvePackage(pkg, requested, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const env = options.env || process.env;
   const metadataUrl = `https://registry.npmjs.org/${encodeURIComponent(pkg)}`;
   const metadata = await checkedJson(await fetchWithProxy(metadataUrl, {}, env, fetchImpl));
+  if (!objectRecord(metadata)) throw new Error('Registry metadata must be an object');
+  if (!objectRecord(metadata.versions)) throw new Error('Registry versions must be an object');
   const version = requested === 'latest' ? metadata['dist-tags']?.latest : requested;
-  const manifest = metadata.versions?.[version];
-  if (!version || !manifest?.dist) throw new Error(`Package version not found: ${pkg}@${requested}`);
-  return { version, dist: manifest.dist };
+  if (typeof version !== 'string' || !version.trim()) throw new Error('Resolved version must be a non-empty string');
+  if (!Object.hasOwn(metadata.versions, version)) throw new Error(`Package version not found: ${pkg}@${version}`);
+  const manifest = metadata.versions[version];
+  if (!objectRecord(manifest)) throw new Error('Registry manifest must be an object');
+  if (manifest.name !== pkg) throw new Error('Registry manifest name must match the requested package');
+  if (manifest.version !== version) throw new Error('Registry manifest version must match the resolved version');
+  const dist = manifest.dist;
+  if (!objectRecord(dist)) throw new Error('Registry dist must be an object');
+  if (!supportedIntegrity(dist.integrity)) throw new Error('Registry integrity must be a supported SHA-512 string');
+  if (!httpTarball(dist.tarball)) throw new Error('Registry tarball must be an HTTP(S) URL');
+  return { version, dist };
 }
 
 function parseSpec(spec) {
