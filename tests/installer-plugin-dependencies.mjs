@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -33,6 +33,89 @@ function normalize(source) {
 
 function records(id, version) {
   return { plugins: { [id]: [{ scope: 'user', version }] } };
+}
+
+function archiveSpec(base, bytes, overrides = {}) {
+  return {
+    ...base,
+    bytes: bytes.byteLength,
+    sha256: new Bun.CryptoHasher('sha256').update(bytes).digest('hex'),
+    ...overrides,
+  };
+}
+
+async function pluginArchive(base, overrides = {}) {
+  const root = overrides.root || `fixture-${base.key}`;
+  const source = overrides.source ?? (base.key === 'memory' ? './plugin/' : './');
+  const pluginRoot = source.replace(/^\.\//, '').replace(/\/$/, '');
+  const pluginPrefix = pluginRoot ? `${root}/${pluginRoot}` : root;
+  const marketplace = {
+    name: overrides.marketplaceName ?? base.archiveMarketplace ?? base.marketplace,
+    plugins: [{ name: base.plugin, source }],
+  };
+  if (overrides.entryVersion !== undefined) marketplace.plugins[0].version = overrides.entryVersion;
+  const plugin = {
+    name: overrides.pluginName ?? base.plugin,
+    version: overrides.pluginVersion ?? base.version,
+  };
+  return new Bun.Archive({
+    [`${root}/.claude-plugin/marketplace.json`]: JSON.stringify(marketplace),
+    [`${pluginPrefix}/.claude-plugin/plugin.json`]: JSON.stringify(plugin),
+    [`${root}/README.md`]: 'fixture only\n',
+    ...(overrides.entries || {}),
+  }, { compress: 'gzip' }).bytes();
+}
+
+function writeTarString(header, offset, length, value) {
+  const bytes = Buffer.from(value);
+  assert.ok(bytes.length <= length, `tar fixture field is too long: ${value}`);
+  bytes.copy(header, offset);
+}
+
+function tarHeader({ name, type = '0', size = 0 }) {
+  const header = Buffer.alloc(512);
+  writeTarString(header, 0, 100, name);
+  writeTarString(header, 100, 8, '0000755\0');
+  writeTarString(header, 108, 8, '0000000\0');
+  writeTarString(header, 116, 8, '0000000\0');
+  writeTarString(header, 124, 12, `${size.toString(8).padStart(11, '0')}\0`);
+  writeTarString(header, 136, 12, '00000000000\0');
+  header.fill(0x20, 148, 156);
+  writeTarString(header, 156, 1, type);
+  writeTarString(header, 257, 6, 'ustar\0');
+  writeTarString(header, 263, 2, '00');
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  writeTarString(header, 148, 8, `${checksum.toString(8).padStart(6, '0')}\0 `);
+  return header;
+}
+
+function rawTar(entries) {
+  const chunks = [];
+  for (const entry of entries) {
+    const data = Buffer.from(entry.data || '');
+    chunks.push(tarHeader({ ...entry, size: entry.size ?? data.length }));
+    chunks.push(data);
+    const padding = (512 - (data.length % 512)) % 512;
+    if (padding) chunks.push(Buffer.alloc(padding));
+  }
+  chunks.push(Buffer.alloc(1024));
+  return Bun.gzipSync(Buffer.concat(chunks));
+}
+
+function paxRecord(key, value) {
+  const body = `${key}=${value}\n`;
+  let length = body.length + 2;
+  while (`${length} ${body}`.length !== length) length = `${length} ${body}`.length;
+  return `${length} ${body}`;
+}
+
+async function rejectsArchive(extractPluginArchive, bytes, base, fixtureRoot, label, expected) {
+  const destination = join(fixtureRoot, `reject-${label.replace(/[^a-z0-9]+/gi, '-')}`);
+  await assert.rejects(
+    extractPluginArchive(bytes, archiveSpec(base, bytes), destination),
+    expected,
+    `${label} must be rejected`,
+  );
 }
 
 const unixModule = unixTemplate('plugin-dependencies.mjs', 'PLUGIN_DEPENDENCIES_EOF');
@@ -92,9 +175,16 @@ try {
     PLUGIN_BASELINES,
     classifyPlugin,
     compareSemver,
+    downloadAndStage,
+    extractPluginArchive,
     parseSemver,
     selectInstalledRecord,
+    sha256,
+    validateArchive,
   } = pluginDependencies;
+
+  assert.equal(typeof extractPluginArchive, 'function', 'plugin-dependencies.mjs must export extractPluginArchive');
+  assert.equal(typeof downloadAndStage, 'function', 'plugin-dependencies.mjs must export downloadAndStage');
 
   assert.deepEqual(PLUGIN_BASELINES, expected, 'managed plugin baselines must retain their verified source metadata');
 
@@ -136,6 +226,186 @@ try {
   const officialBefore = JSON.stringify(duplicateSuperpowers.plugins['superpowers@claude-plugins-official']);
   assert.equal(classifyPlugin(duplicateSuperpowers, PLUGIN_BASELINES.superpowers), 'older', 'only the configured Superpowers plugin id may satisfy the dependency');
   assert.equal(JSON.stringify(duplicateSuperpowers.plugins['superpowers@claude-plugins-official']), officialBefore, 'the official Superpowers record must remain byte-identical');
+
+  const validArchives = {};
+  assert.equal(sha256(new TextEncoder().encode('abc')), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'SHA-256 must match the standard abc vector');
+  for (const key of ['hud', 'memory', 'superpowers']) {
+    const base = PLUGIN_BASELINES[key];
+    const bytes = await pluginArchive(base);
+    validArchives[key] = bytes;
+    const spec = archiveSpec(base, bytes);
+    assert.equal(sha256(bytes), spec.sha256, `${key} fixtures must use the exported SHA-256 implementation`);
+    validateArchive(bytes, spec);
+    const sourceRoot = await extractPluginArchive(bytes, spec, join(fixtureRoot, `valid-${key}`));
+    assert.equal(existsSync(join(sourceRoot, '.claude-plugin', 'marketplace.json')), true, `${key} must return its single repository root`);
+  }
+
+  const hudSpec = archiveSpec(PLUGIN_BASELINES.hud, validArchives.hud);
+  const outsideDestination = join(fixtureRoot, 'outside-destination');
+  const linkedDestination = join(fixtureRoot, 'linked-destination');
+  mkdirSync(outsideDestination);
+  symlinkSync(outsideDestination, linkedDestination, process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(
+    extractPluginArchive(validArchives.hud, hudSpec, linkedDestination),
+    /unsafe.*destination|destination.*link/i,
+    'an extraction destination symlink must be rejected before staging files',
+  );
+  assert.throws(() => validateArchive('not bytes', hudSpec), /archive bytes are invalid/i);
+  assert.throws(() => validateArchive(validArchives.hud, { ...hudSpec, bytes: hudSpec.bytes + 1 }), /archive size mismatch/i);
+  assert.throws(() => validateArchive(validArchives.hud, { ...hudSpec, sha256: '0'.repeat(64) }), /archive SHA-256 mismatch/i);
+  const oversizedArchive = new Uint8Array(64 * 1024 * 1024 + 1);
+  assert.throws(
+    () => validateArchive(oversizedArchive, archiveSpec(PLUGIN_BASELINES.hud, oversizedArchive)),
+    /archive exceeds safety limit/i,
+    'compressed archives over 64 MiB must be rejected before extraction',
+  );
+
+  const metadataMarketplace = JSON.stringify({ name: 'claude-hud', plugins: [{ name: 'claude-hud', source: './' }] });
+  const metadataPlugin = JSON.stringify({ name: 'claude-hud', version: '0.7.0' });
+  const validMetadataArchive = rawTar([
+    { name: 'global-pax', type: 'g', data: paxRecord('comment', 'fixture') },
+    { name: 'local-pax', type: 'x', data: paxRecord('path', 'metadata-repo/.claude-plugin/marketplace.json') },
+    { name: 'ignored-marketplace-name', data: metadataMarketplace },
+    { name: '././@LongLink', type: 'L', data: Buffer.from('metadata-repo/.claude-plugin/plugin.json\0') },
+    { name: 'ignored-plugin-name', data: metadataPlugin },
+    { name: 'metadata-repo/README.md', data: 'fixture only\n' },
+  ]);
+  const metadataRoot = await extractPluginArchive(
+    validMetadataArchive,
+    archiveSpec(PLUGIN_BASELINES.hud, validMetadataArchive),
+    join(fixtureRoot, 'valid-metadata'),
+  );
+  assert.equal(readFileSync(join(metadataRoot, 'README.md'), 'utf8'), 'fixture only\n', 'valid PAX and GNU long-name metadata must extract safely');
+
+  const invalidEntries = [
+    ['traversal', '../escape', '0'],
+    ['absolute', '/tmp/escape', '0'],
+    ['windows absolute', 'C:/escape', '0'],
+    ['symbolic link', 'repo/link', '2'],
+    ['hard link', 'repo/hard', '1'],
+    ['device', 'repo/device', '3'],
+  ];
+  const outsideSentinel = join(fixtureRoot, 'escape');
+  for (const [label, name, type] of invalidEntries) {
+    const bytes = rawTar([{ name, type }]);
+    await rejectsArchive(extractPluginArchive, bytes, PLUGIN_BASELINES.hud, fixtureRoot, label, /unsafe|unsupported|link|device/i);
+    assert.equal(existsSync(outsideSentinel), false, `${label} must not create an outside sentinel`);
+  }
+
+  const secondRoot = await pluginArchive(PLUGIN_BASELINES.hud, { entries: { 'other-root/README.md': 'second root' } });
+  await rejectsArchive(extractPluginArchive, secondRoot, PLUGIN_BASELINES.hud, fixtureRoot, 'second repository root', /single.*repository|top-level/i);
+
+  const duplicatePath = rawTar([
+    { name: 'repo/file.txt', data: 'first' },
+    { name: 'repo//file.txt', data: 'second' },
+  ]);
+  await rejectsArchive(extractPluginArchive, duplicatePath, PLUGIN_BASELINES.hud, fixtureRoot, 'duplicate normalized path', /duplicate.*path/i);
+
+  const tooManyEntries = rawTar(Array.from({ length: 50_001 }, (_, index) => ({ name: `repo/d${index}`, type: '5' })));
+  await rejectsArchive(extractPluginArchive, tooManyEntries, PLUGIN_BASELINES.hud, fixtureRoot, 'entry count limit', /too many.*entries|entry.*limit/i);
+
+  const oversizedEntry = rawTar([{ name: 'repo/large.bin', size: 64 * 1024 * 1024 + 1 }]);
+  await rejectsArchive(extractPluginArchive, oversizedEntry, PLUGIN_BASELINES.hud, fixtureRoot, 'single entry size limit', /entry.*safety limit|entry.*large/i);
+
+  const expandedLimitTar = Buffer.alloc(512 * 1024 * 1024 + 10 * 512);
+  for (let index = 0; index < 9; index++) {
+    const offset = index * (512 + 64 * 1024 * 1024);
+    tarHeader({ name: `repo/large-${index}.bin`, size: 64 * 1024 * 1024 }).copy(expandedLimitTar, offset);
+  }
+  const expandedLimitArchive = Bun.gzipSync(expandedLimitTar);
+  await rejectsArchive(extractPluginArchive, expandedLimitArchive, PLUGIN_BASELINES.hud, fixtureRoot, 'expanded data limit', /expanded.*safety limit|expanded.*large/i);
+
+  const malformedMetadata = [
+    ['malformed PAX metadata', rawTar([
+      { name: 'pax-header', type: 'x', data: 'not-a-pax-record\n' },
+      { name: 'repo/file', data: 'content' },
+    ])],
+    ['malformed GNU long-name metadata', rawTar([
+      { name: '././@LongLink', type: 'L', data: 'repo/file-without-nul' },
+      { name: 'ignored', data: 'content' },
+    ])],
+  ];
+  for (const [label, bytes] of malformedMetadata) {
+    await rejectsArchive(extractPluginArchive, bytes, PLUGIN_BASELINES.hud, fixtureRoot, label, /malformed.*metadata|metadata.*malformed/i);
+  }
+
+  for (const [label, overrides, expected] of [
+    ['marketplace name mismatch', { marketplaceName: 'wrong-marketplace' }, /marketplace name mismatch/i],
+    ['plugin name mismatch', { pluginName: 'wrong-plugin' }, /plugin manifest mismatch/i],
+    ['plugin version mismatch', { pluginVersion: '0.0.0' }, /plugin manifest mismatch/i],
+    ['claude-mem source mismatch', { source: './' }, /declared.*plugin.*source|plugin.*source/i],
+    ['Superpowers source mismatch', { source: './plugin/' }, /declared.*source|plugin.*source/i],
+    ['Superpowers empty source alias', { source: '' }, /declared.*source|plugin.*source/i],
+  ]) {
+    const base = label.startsWith('claude-mem') ? PLUGIN_BASELINES.memory
+      : label.startsWith('Superpowers') ? PLUGIN_BASELINES.superpowers
+        : PLUGIN_BASELINES.hud;
+    const bytes = await pluginArchive(base, overrides);
+    await rejectsArchive(extractPluginArchive, bytes, base, fixtureRoot, label, expected);
+  }
+
+  const clawgodDir = join(fixtureHome, '.clawgod');
+  const cacheDir = join(clawgodDir, 'cache', 'claude-plugins');
+  mkdirSync(cacheDir, { recursive: true });
+  const fetchFilePath = join(clawgodDir, 'fetch-file.mjs');
+  const fetchLog = join(fixtureRoot, 'fetch-log.json');
+  writeFileSync(fetchFilePath, `#!/usr/bin/env bun
+import { copyFileSync, writeFileSync } from 'node:fs';
+if (process.env.FIXTURE_FETCH_FAIL === '1') {
+  console.error('fixture downloader failure: https://secret.example.test/proxy?token=do-not-leak');
+  process.exit(23);
+}
+copyFileSync(process.env.FIXTURE_ARCHIVE, process.argv[3]);
+writeFileSync(process.env.FIXTURE_FETCH_LOG, JSON.stringify(process.env));
+`);
+  chmodSync(fetchFilePath, 0o700);
+  const context = {
+    home: fixtureHome,
+    claudeConfigDir: fixtureClaudeConfig,
+    clawgodDir,
+    bunPath: process.execPath,
+    claudeCliPath: join(fixtureBin, 'claude'),
+    fetchFilePath,
+    env: {
+      HOME: fixtureHome,
+      CLAUDE_CONFIG_DIR: fixtureClaudeConfig,
+      PATH: fixtureBin,
+      FIXTURE_ARCHIVE: join(fixtureRoot, 'download.tar.gz'),
+      FIXTURE_FETCH_LOG: fetchLog,
+    },
+    spawnSyncImpl: Bun.spawnSync,
+  };
+  const cachePath = join(cacheDir, `${hudSpec.key}-${hudSpec.version}.tar.gz`);
+  writeFileSync(cachePath, validArchives.hud);
+  const cached = await downloadAndStage(hudSpec, context);
+  assert.equal(cached.cached, true, 'a fully verified archive must be reused from cache');
+  assert.equal(cached.archivePath, cachePath, 'cache reuse must report the versioned archive path');
+  assert.equal(existsSync(fetchLog), false, 'a valid cached archive must not spawn the downloader');
+
+  writeFileSync(cachePath, 'corrupt cache');
+  writeFileSync(context.env.FIXTURE_ARCHIVE, validArchives.hud);
+  const replaced = await downloadAndStage(hudSpec, context);
+  assert.equal(replaced.cached, false, 'a corrupt cache must be downloaded again');
+  assert.deepEqual(readFileSync(cachePath), Buffer.from(validArchives.hud), 'a verified temporary download must atomically replace corrupt cache bytes');
+  const fetchedEnvironment = JSON.parse(readFileSync(fetchLog, 'utf8'));
+  for (const [key, value] of Object.entries(context.env)) {
+    assert.equal(fetchedEnvironment[key], value, `the managed fetcher must receive context.env ${key}`);
+  }
+
+  const previousArchive = await pluginArchive(PLUGIN_BASELINES.hud, { root: 'previous-valid-cache' });
+  writeFileSync(cachePath, previousArchive);
+  context.env.FIXTURE_FETCH_FAIL = '1';
+  await assert.rejects(
+    downloadAndStage(hudSpec, context),
+    error => {
+      assert.match(error.message, /hud: download failed/i);
+      assert.doesNotMatch(error.message, /secret|proxy|token|stack/i, 'downloader errors must be credential-free');
+      assert.equal(error.message.split('\n').length, 1, 'downloader errors must be one line');
+      return true;
+    },
+    'a failed downloader must report one sanitized line',
+  );
+  assert.deepEqual(readFileSync(cachePath), Buffer.from(previousArchive), 'a downloader failure must leave the previous cache bytes untouched');
 } finally {
   for (const [key, value] of savedEnvironment) {
     if (value === undefined) delete process.env[key];

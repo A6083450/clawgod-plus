@@ -513,6 +513,9 @@ cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << 'PLUGIN_DEPENDENCIES_EOF'
  * }} PluginContext
  */
 
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
 export const PLUGIN_BASELINES = Object.freeze({
   hud: Object.freeze({
     key: 'hud', id: 'claude-hud@claude-hud', marketplace: 'claude-hud', plugin: 'claude-hud',
@@ -534,6 +537,329 @@ export const PLUGIN_BASELINES = Object.freeze({
     url: 'https://hub.211107.xyz/https://github.com/obra/superpowers/archive/refs/tags/v6.2.0.tar.gz',
   }),
 });
+
+const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
+const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
+const MAX_EXPANDED_BYTES = 512 * 1024 * 1024;
+const MAX_ENTRIES = 50_000;
+const TAR_BLOCK_BYTES = 512;
+const textDecoder = new TextDecoder('utf-8', { fatal: true });
+
+export function sha256(bytes) {
+  return new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+}
+
+export function validateArchive(bytes, spec) {
+  if (!(bytes instanceof Uint8Array)) throw new Error(`${spec.key}: archive bytes are invalid`);
+  if (bytes.byteLength !== spec.bytes) throw new Error(`${spec.key}: archive size mismatch`);
+  if (bytes.byteLength > MAX_ARCHIVE_BYTES) throw new Error(`${spec.key}: archive exceeds safety limit`);
+  if (sha256(bytes) !== spec.sha256) throw new Error(`${spec.key}: archive SHA-256 mismatch`);
+}
+
+function decodeTarText(bytes, label, spec) {
+  const nul = bytes.indexOf(0);
+  const value = nul === -1 ? bytes : bytes.subarray(0, nul);
+  try {
+    return textDecoder.decode(value);
+  } catch {
+    throw new Error(`${spec.key}: malformed ${label} metadata`);
+  }
+}
+
+function parseTarNumber(bytes, label, spec) {
+  const value = decodeTarText(bytes, label, spec).trim();
+  if (!/^[0-7]+$/.test(value)) throw new Error(`${spec.key}: malformed tar ${label}`);
+  const parsed = Number.parseInt(value, 8);
+  if (!Number.isSafeInteger(parsed)) throw new Error(`${spec.key}: malformed tar ${label}`);
+  return parsed;
+}
+
+function verifyTarChecksum(header, spec) {
+  const expected = parseTarNumber(header.subarray(148, 156), 'checksum', spec);
+  let actual = 0;
+  for (let index = 0; index < header.length; index++) {
+    actual += index >= 148 && index < 156 ? 0x20 : header[index];
+  }
+  if (actual !== expected) throw new Error(`${spec.key}: tar header checksum mismatch`);
+}
+
+function parsePax(bytes, spec) {
+  const values = {};
+  let offset = 0;
+  while (offset < bytes.length) {
+    const space = bytes.indexOf(0x20, offset);
+    if (space <= offset) throw new Error(`${spec.key}: malformed PAX metadata`);
+    let lengthText;
+    try {
+      lengthText = textDecoder.decode(bytes.subarray(offset, space));
+    } catch {
+      throw new Error(`${spec.key}: malformed PAX metadata`);
+    }
+    if (!/^[1-9]\d*$/.test(lengthText)) throw new Error(`${spec.key}: malformed PAX metadata`);
+    const length = Number(lengthText);
+    const end = offset + length;
+    if (!Number.isSafeInteger(length) || end > bytes.length || bytes[end - 1] !== 0x0a) {
+      throw new Error(`${spec.key}: malformed PAX metadata`);
+    }
+    const bodyStart = space + 1;
+    const bodyEnd = end - 1;
+    const equals = bytes.indexOf(0x3d, bodyStart);
+    if (equals <= bodyStart || equals >= bodyEnd) throw new Error(`${spec.key}: malformed PAX metadata`);
+    let key;
+    let value;
+    try {
+      key = textDecoder.decode(bytes.subarray(bodyStart, equals));
+      value = textDecoder.decode(bytes.subarray(equals + 1, bodyEnd));
+    } catch {
+      throw new Error(`${spec.key}: malformed PAX metadata`);
+    }
+    if (Object.hasOwn(values, key)) throw new Error(`${spec.key}: malformed PAX metadata`);
+    values[key] = value;
+    offset = end;
+  }
+  return values;
+}
+
+function paxSize(value, fallback, spec) {
+  if (value === undefined) return fallback;
+  if (!/^(0|[1-9]\d*)$/.test(value)) throw new Error(`${spec.key}: malformed PAX metadata`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new Error(`${spec.key}: malformed PAX metadata`);
+  return parsed;
+}
+
+function normalizeArchivePath(value, spec) {
+  if (typeof value !== 'string' || value.includes('\0')) throw new Error(`${spec.key}: unsafe archive path`);
+  const portable = value.replace(/\\/g, '/');
+  if (!portable || portable.startsWith('/') || /^[A-Za-z]:/.test(portable)) {
+    throw new Error(`${spec.key}: unsafe archive path`);
+  }
+  const parts = portable.split('/');
+  if (parts.includes('..')) throw new Error(`${spec.key}: unsafe archive path`);
+  const normalized = parts.filter(part => part && part !== '.').join('/');
+  if (!normalized) throw new Error(`${spec.key}: unsafe archive path`);
+  return normalized;
+}
+
+function parseTar(bytes, spec) {
+  let tar;
+  try {
+    tar = Bun.gunzipSync(bytes);
+  } catch {
+    throw new Error(`${spec.key}: archive gzip is invalid`);
+  }
+  const entries = [];
+  const seenPaths = new Set();
+  const roots = new Set();
+  let entryCount = 0;
+  let expandedBytes = 0;
+  let offset = 0;
+  let globalPax = {};
+  let localPax = null;
+  let longName = null;
+  let terminated = false;
+
+  while (offset + TAR_BLOCK_BYTES <= tar.byteLength) {
+    const header = tar.subarray(offset, offset + TAR_BLOCK_BYTES);
+    if (header.every(byte => byte === 0)) {
+      terminated = true;
+      break;
+    }
+    verifyTarChecksum(header, spec);
+    offset += TAR_BLOCK_BYTES;
+    entryCount += 1;
+    if (entryCount > MAX_ENTRIES) throw new Error(`${spec.key}: archive has too many entries`);
+
+    const typeByte = header[156];
+    const type = typeByte === 0 ? '0' : String.fromCharCode(typeByte);
+    if (!['0', '5', 'x', 'g', 'L'].includes(type)) {
+      throw new Error(`${spec.key}: unsupported tar link or device entry`);
+    }
+    const headerSize = parseTarNumber(header.subarray(124, 136), 'size', spec);
+    const metadata = type === 'x' || type === 'g' || type === 'L';
+    const effectivePax = { ...globalPax, ...(localPax || {}) };
+    const size = metadata ? headerSize : paxSize(effectivePax.size, headerSize, spec);
+    if (size > MAX_ENTRY_BYTES) throw new Error(`${spec.key}: archive entry exceeds safety limit`);
+    expandedBytes += size;
+    if (!Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_EXPANDED_BYTES) {
+      throw new Error(`${spec.key}: archive expanded data exceeds safety limit`);
+    }
+    const dataEnd = offset + size;
+    const paddedEnd = offset + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+    if (dataEnd > tar.byteLength || paddedEnd > tar.byteLength) throw new Error(`${spec.key}: truncated tar entry`);
+    const data = tar.subarray(offset, dataEnd);
+    offset = paddedEnd;
+
+    if (type === 'x' || type === 'g') {
+      const pax = parsePax(data, spec);
+      if (type === 'g') globalPax = { ...globalPax, ...pax };
+      else localPax = pax;
+      continue;
+    }
+    if (type === 'L') {
+      if (data.length === 0 || data[data.length - 1] !== 0 || longName !== null) {
+        throw new Error(`${spec.key}: malformed GNU long-name metadata`);
+      }
+      longName = decodeTarText(data.subarray(0, -1), 'GNU long-name', spec);
+      continue;
+    }
+
+    const rawName = decodeTarText(header.subarray(0, 100), 'tar path', spec);
+    const prefix = decodeTarText(header.subarray(345, 500), 'tar prefix', spec);
+    const headerName = prefix ? `${prefix}/${rawName}` : rawName;
+    const paxPath = effectivePax.path;
+    if (longName !== null && paxPath !== undefined) throw new Error(`${spec.key}: malformed archive path metadata`);
+    const path = normalizeArchivePath(longName ?? paxPath ?? headerName, spec);
+    longName = null;
+    localPax = null;
+    if (seenPaths.has(path)) throw new Error(`${spec.key}: duplicate archive path`);
+    seenPaths.add(path);
+    roots.add(path.split('/')[0]);
+    entries.push({ path, type, data });
+  }
+
+  if (!terminated || tar.subarray(offset).some(byte => byte !== 0)) throw new Error(`${spec.key}: malformed tar terminator`);
+  if (localPax !== null || longName !== null) throw new Error(`${spec.key}: malformed archive metadata`);
+  if (roots.size !== 1) throw new Error(`${spec.key}: archive must contain a single top-level repository directory`);
+  return { entries, root: roots.values().next().value };
+}
+
+function ensureDirectory(root, relativePath, spec) {
+  let current = root;
+  for (const part of relativePath.split('/').filter(Boolean)) {
+    current = join(current, part);
+    if (existsSync(current)) {
+      const status = lstatSync(current);
+      if (status.isSymbolicLink() || !status.isDirectory()) {
+        throw new Error(`${spec.key}: unsafe extraction parent`);
+      }
+    } else {
+      mkdirSync(current);
+    }
+  }
+  return current;
+}
+
+function writeExclusive(path, bytes, spec) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, 'wx', 0o600);
+    let offset = 0;
+    while (offset < bytes.length) offset += writeSync(descriptor, bytes, offset);
+  } catch {
+    throw new Error(`${spec.key}: archive file could not be created safely`);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function readJson(path, spec) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    throw new Error(`${spec.key}: plugin metadata is invalid`);
+  }
+}
+
+function containedRelativeSource(sourceRoot, source, spec) {
+  if (typeof source !== 'string' || source.includes('\0')) throw new Error(`${spec.key}: plugin source is invalid`);
+  const portable = source.replace(/\\/g, '/');
+  if (portable.startsWith('/') || /^[A-Za-z]:/.test(portable)) throw new Error(`${spec.key}: plugin source is invalid`);
+  const parts = portable.split('/');
+  if (parts.includes('..')) throw new Error(`${spec.key}: plugin source is invalid`);
+  const normalized = parts.filter(part => part && part !== '.').join('/');
+  if (spec.key === 'memory' && normalized !== 'plugin') throw new Error(`${spec.key}: declared plugin source must be plugin/`);
+  if (spec.key === 'superpowers' && source !== './') throw new Error(`${spec.key}: declared plugin source must be ./`);
+  const pluginRoot = normalized ? join(sourceRoot, ...normalized.split('/')) : sourceRoot;
+  let status;
+  try {
+    status = lstatSync(pluginRoot);
+  } catch {
+    throw new Error(`${spec.key}: plugin source is missing`);
+  }
+  if (status.isSymbolicLink() || !status.isDirectory()) throw new Error(`${spec.key}: plugin source is invalid`);
+  return pluginRoot;
+}
+
+export async function extractPluginArchive(bytes, spec, destination) {
+  validateArchive(bytes, spec);
+  const archive = parseTar(bytes, spec);
+  mkdirSync(destination, { recursive: true });
+  const destinationStatus = lstatSync(destination);
+  if (destinationStatus.isSymbolicLink() || !destinationStatus.isDirectory()) {
+    throw new Error(`${spec.key}: unsafe extraction destination`);
+  }
+  const stagingRoot = mkdtempSync(join(destination, `.${spec.key}-${spec.version}-`));
+  try {
+    for (const entry of archive.entries) {
+      const parent = ensureDirectory(stagingRoot, dirname(entry.path).replace(/\\/g, '/'), spec);
+      const target = join(parent, entry.path.split('/').at(-1));
+      if (entry.type === '5') ensureDirectory(stagingRoot, entry.path, spec);
+      else writeExclusive(target, entry.data, spec);
+    }
+    const sourceRoot = join(stagingRoot, archive.root);
+    const manifest = readJson(join(sourceRoot, '.claude-plugin', 'marketplace.json'), spec);
+    const expectedArchiveMarketplace = spec.archiveMarketplace || spec.marketplace;
+    if (manifest.name !== expectedArchiveMarketplace) throw new Error(`${spec.key}: marketplace name mismatch`);
+    const entry = manifest.plugins?.find(plugin => plugin.name === spec.plugin);
+    if (!entry) throw new Error(`${spec.key}: plugin entry is missing`);
+    const pluginRoot = containedRelativeSource(sourceRoot, entry.source, spec);
+    const pluginManifest = readJson(join(pluginRoot, '.claude-plugin', 'plugin.json'), spec);
+    if (pluginManifest.name !== spec.plugin || pluginManifest.version !== spec.version) {
+      throw new Error(`${spec.key}: plugin manifest mismatch`);
+    }
+    return sourceRoot;
+  } catch (error) {
+    rmSync(stagingRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export async function downloadAndStage(spec, context) {
+  const cacheDirectory = join(context.clawgodDir, 'cache', 'claude-plugins');
+  const archivePath = join(cacheDirectory, `${spec.key}-${spec.version}.tar.gz`);
+  const stagingDirectory = join(context.clawgodDir, 'staging', 'claude-plugins');
+  mkdirSync(cacheDirectory, { recursive: true });
+  let archiveBytes = null;
+  if (existsSync(archivePath)) {
+    try {
+      archiveBytes = new Uint8Array(readFileSync(archivePath));
+      validateArchive(archiveBytes, spec);
+    } catch {
+      archiveBytes = null;
+    }
+  }
+  let cached = archiveBytes !== null;
+  if (!cached) {
+    const temporaryDirectory = mkdtempSync(join(cacheDirectory, `.${spec.key}-${spec.version}-`));
+    const temporaryArchive = join(temporaryDirectory, 'download.tar.gz');
+    try {
+      let result;
+      try {
+        result = Bun.spawnSync({
+          cmd: [context.bunPath, context.fetchFilePath, spec.url, temporaryArchive],
+          env: context.env,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+      } catch {
+        throw new Error(`${spec.key}: download failed`);
+      }
+      if (result.exitCode !== 0) throw new Error(`${spec.key}: download failed`);
+      try {
+        archiveBytes = new Uint8Array(readFileSync(temporaryArchive));
+      } catch {
+        throw new Error(`${spec.key}: download failed`);
+      }
+      validateArchive(archiveBytes, spec);
+      renameSync(temporaryArchive, archivePath);
+    } finally {
+      rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  }
+  const sourceRoot = await extractPluginArchive(archiveBytes, spec, stagingDirectory);
+  return { sourceRoot, archivePath, cached };
+}
 
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 
