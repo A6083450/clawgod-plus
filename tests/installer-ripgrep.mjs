@@ -247,7 +247,9 @@ try {
         renameSync(from, to);
       },
       rmSync,
-    }),
+    }, args => args[0] === target
+      ? { exitCode: 0, stdout: Buffer.from('ripgrep 15.2.0\n') }
+      : { exitCode: 1, stdout: Buffer.from('not managed ripgrep\n') }),
     /injected replace failure/,
     'replacement errors must escape after rollback',
   );
@@ -266,6 +268,7 @@ try {
     if (currentContent !== null) writeFileSync(interruptedTarget, currentContent);
     writeFileSync(interruptedBackup, 'known-good-backup');
     writeFileSync(interruptedStaged, 'new-binary');
+    const smokeCalls = [];
     assert.throws(
       () => replaceManagedBinary(interruptedStaged, interruptedTarget, {
         existsSync,
@@ -274,15 +277,54 @@ try {
           renameSync(from, to);
         },
         rmSync,
+      }, args => {
+        smokeCalls.push(args);
+        return args[0] === interruptedBackup
+          ? { exitCode: 0, stdout: Buffer.from('ripgrep 15.2.0\n') }
+          : { exitCode: 1, stdout: Buffer.from('not managed ripgrep\n') };
       }),
       /injected interrupted replacement/,
       `${label} must surface the staged rename failure`,
     );
     assert.equal(readFileSync(interruptedTarget, 'utf8'), 'known-good-backup', `${label} must restore the pre-existing known-good backup`);
+    assert.equal(smokeCalls.some(args => args[0] === interruptedBackup && args[1] === '--version'), true, `${label} must smoke-validate the backup before restoration`);
     assert.equal(existsSync(interruptedBackup), false, `${label} restoration must consume the backup path`);
     assert.equal(existsSync(interruptedStaged), false, `${label} failure must clean the staged artifact`);
     assert.equal(readdirSync(interruptedDir).some(name => name.includes('.current')), false, `${label} failure must clean displaced-current artifacts`);
   }
+
+  const invalidBackupDir = join(fixtureDir, 'invalid-backup-valid-current');
+  mkdirSync(invalidBackupDir);
+  const validCurrentTarget = join(invalidBackupDir, 'rg');
+  const invalidBackup = `${validCurrentTarget}.previous`;
+  const failedStaged = `${validCurrentTarget}.staged`;
+  writeFileSync(validCurrentTarget, 'validated-current');
+  writeFileSync(invalidBackup, 'invalid-backup');
+  writeFileSync(failedStaged, 'new-binary');
+  const invalidBackupSmokeCalls = [];
+  assert.throws(
+    () => replaceManagedBinary(failedStaged, validCurrentTarget, {
+      existsSync,
+      renameSync(from, to) {
+        if (from === failedStaged && to === validCurrentTarget) throw new Error('injected staged rename failure');
+        renameSync(from, to);
+      },
+      rmSync,
+    }, args => {
+      invalidBackupSmokeCalls.push(args);
+      return args[0] === validCurrentTarget
+        ? { exitCode: 0, stdout: Buffer.from('ripgrep 15.2.0\n') }
+        : { exitCode: 0, stdout: Buffer.from('ripgrep 15.1.0\n') };
+    }),
+    /injected staged rename failure/,
+    'a staged rename failure must escape after candidate validation',
+  );
+  assert.equal(readFileSync(validCurrentTarget, 'utf8'), 'validated-current', 'an invalid backup must not replace a smoke-valid current executable');
+  assert.equal(invalidBackupSmokeCalls.some(args => args[0] === invalidBackup && args[1] === '--version'), true, 'an existing backup must be smoke-validated before rollback selection');
+  assert.equal(invalidBackupSmokeCalls.some(args => args[0] === validCurrentTarget && args[1] === '--version'), true, 'the current executable must be smoke-validated before it is selected for rollback');
+  assert.equal(existsSync(invalidBackup), false, 'an invalid backup must not remain as stale transaction state');
+  assert.equal(existsSync(failedStaged), false, 'failed replacement must clean staging after restoring the validated current executable');
+  assert.equal(readdirSync(invalidBackupDir).some(name => name.includes('.current')), false, 'failed replacement must clean displaced-current state after restoring the validated current executable');
 
   const successfulDir = join(fixtureDir, 'successful-replacement');
   mkdirSync(successfulDir);

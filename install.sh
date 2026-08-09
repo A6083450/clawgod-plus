@@ -676,11 +676,23 @@ function assertNotSymbolicLink(path, fsOps = {}) {
   }
 }
 
-export function replaceManagedBinary(staged, target, fsOps = { existsSync, lstatSync, renameSync, rmSync }) {
+function isValidRipgrepCandidate(path, fsOps, spawnImpl) {
+  if (!fsOps.existsSync(path)) return false;
+  try {
+    validateRipgrepVersion(path, spawnImpl);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function replaceManagedBinary(staged, target, fsOps = { existsSync, lstatSync, renameSync, rmSync }, spawnImpl = Bun.spawnSync) {
   const backup = `${target}.previous`;
   const displaced = `${target}.${process.pid}.current`;
   for (const path of [staged, target, backup, displaced]) assertNotSymbolicLink(path, fsOps);
   if (fsOps.existsSync(displaced)) throw new Error(`Managed ripgrep transaction path already exists: ${displaced}`);
+  const currentValid = isValidRipgrepCandidate(target, fsOps, spawnImpl);
+  const backupValid = isValidRipgrepCandidate(backup, fsOps, spawnImpl);
   let movedCurrent = false;
   try {
     if (fsOps.existsSync(target)) {
@@ -691,8 +703,9 @@ export function replaceManagedBinary(staged, target, fsOps = { existsSync, lstat
       fsOps.renameSync(staged, target);
     } catch (error) {
       if (fsOps.existsSync(target)) fsOps.rmSync(target, { force: true });
-      if (fsOps.existsSync(backup)) fsOps.renameSync(backup, target);
-      else if (movedCurrent && fsOps.existsSync(displaced)) fsOps.renameSync(displaced, target);
+      if (currentValid && movedCurrent && fsOps.existsSync(displaced)) fsOps.renameSync(displaced, target);
+      else if (backupValid && fsOps.existsSync(backup)) fsOps.renameSync(backup, target);
+      if (fsOps.existsSync(backup)) fsOps.rmSync(backup, { force: true });
       if (fsOps.existsSync(displaced)) fsOps.rmSync(displaced, { force: true });
       throw error;
     }
@@ -743,7 +756,7 @@ export async function ensureRipgrep(root, options = {}) {
     await Bun.write(staged, executable);
     if (platform !== 'win32') chmodSync(staged, 0o755);
     validateRipgrepVersion(staged, spawnImpl);
-    replaceManagedBinary(staged, target, options.fsOps);
+    replaceManagedBinary(staged, target, options.fsOps, spawnImpl);
     return target;
   } finally {
     assertNotSymbolicLink(staged, options.fsOps);
