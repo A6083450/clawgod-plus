@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   cpSync,
@@ -452,6 +453,297 @@ await withHome('lock-release-after-commit', async home => {
   assert.equal(readdirSync(dirname(target)).some(name => name.endsWith('.failed')), false, 'a committed publication must not be moved to rollback evidence');
 });
 
+await withHome('lock-stale-unlink-evidence', async home => {
+  const target = prepareExisting(home);
+  let staleLockPath = null;
+  const fileSystem = proxyFileSystem({
+    unlink: async path => {
+      const name = basename(path);
+      if (!staleLockPath
+        && (name.includes('.enhancements.json.lock') || name.includes('.lock.stale'))
+        && name.includes('.stale')) {
+        staleLockPath = path;
+        const failure = new Error('injected stale lock unlink failure');
+        failure.code = 'EIO';
+        throw failure;
+      }
+      return fsPromises.unlink(path);
+    },
+  });
+  let failure;
+  try {
+    await writeEnhancementConfig({ homeDir: home, manifest, selection: CONFIG_CUSTOM, fileSystem });
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(typeof staleLockPath, 'string', 'the fixture must fail after the lock has moved to stale quarantine');
+  assert.equal(failure?.restorationIncomplete, true, 'stale lock cleanup failure must be marked incomplete');
+  assert.equal(failure?.evidencePaths?.includes(staleLockPath), true, 'the exact stale lock path must be disclosed');
+  assert.equal(readFileSync(target, 'utf8'), CUSTOM_BYTES, 'post-commit lock cleanup failure must retain canonical new bytes');
+  assert.equal(existsSync(staleLockPath), true, 'the stale lock must remain as recovery evidence');
+
+  let readFailure;
+  try {
+    await readEnhancementConfig({ homeDir: home, manifest, waitForUnlockMs: 0, isProcessAlive: () => false });
+  } catch (error) {
+    readFailure = error;
+  }
+  assert.equal(readFailure?.restorationIncomplete, true, 'later reads must fail closed while stale lock evidence remains');
+  assert.equal(readFailure?.evidencePaths?.includes(staleLockPath), true, 'later reads must disclose the exact stale lock evidence');
+  assert.equal(readFileSync(target, 'utf8'), CUSTOM_BYTES, 'later reads must not roll back a durable publication');
+});
+
+await withHome('live-lock-stale-reader', async home => {
+  prepareExisting(home);
+  let concurrentRead = null;
+  let readSettled = false;
+  const fileSystem = proxyFileSystem({
+    unlink: async path => {
+      if (!concurrentRead && basename(path).includes('.lock.stale')) {
+        concurrentRead = readEnhancementConfig({ homeDir: home, manifest })
+          .finally(() => { readSettled = true; });
+        await Bun.sleep(25);
+        assert.equal(readSettled, false, 'a reader must wait while a live writer removes stale lock quarantine');
+      }
+      return fsPromises.unlink(path);
+    },
+  });
+  await writeEnhancementConfig({ homeDir: home, manifest, selection: CONFIG_CUSTOM, fileSystem });
+  assert.deepEqual(await concurrentRead, CONFIG_CUSTOM, 'the waiting reader must return the committed config');
+});
+
+await withHome('lock-stale-marker-double-failure', async home => {
+  const target = prepareExisting(home);
+  const lockPath = join(dirname(target), '.enhancements.json.lock');
+  let staleLockPath = null;
+  let markerFailureInjected = false;
+  const fileSystem = proxyFileSystem({
+    unlink: async path => {
+      const name = basename(path);
+      if (!staleLockPath && name.includes('.lock.stale')) {
+        staleLockPath = path;
+        const failure = new Error('injected stale lock unlink failure');
+        failure.code = 'EIO';
+        throw failure;
+      }
+      return fsPromises.unlink(path);
+    },
+    open: async (path, flags, ...args) => {
+      if (staleLockPath && !markerFailureInjected && path === lockPath && flags === 'wx') {
+        markerFailureInjected = true;
+        const failure = new Error('injected lock marker restoration failure');
+        failure.code = 'EIO';
+        throw failure;
+      }
+      return fsPromises.open(path, flags, ...args);
+    },
+  });
+  let failure;
+  try {
+    await writeEnhancementConfig({ homeDir: home, manifest, selection: CONFIG_CUSTOM, fileSystem });
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(markerFailureInjected, true, 'the fixture must fail canonical marker restoration after stale unlink failure');
+  assert.equal(failure?.restorationIncomplete, true);
+  assert.equal(failure?.evidencePaths?.includes(staleLockPath), true);
+  assert.equal(existsSync(lockPath), false, 'the double failure must leave the canonical lock absent');
+  assert.equal(readFileSync(target, 'utf8'), CUSTOM_BYTES, 'the durable publication must remain canonical');
+
+  let readResult;
+  let readFailure;
+  try {
+    readResult = await readEnhancementConfig({ homeDir: home, manifest, waitForUnlockMs: 0, isProcessAlive: () => false });
+  } catch (error) {
+    readFailure = error;
+  }
+  assert.equal(readResult, undefined, 'orphan stale evidence must prevent a config return');
+  assert.equal(readFailure?.restorationIncomplete, true, 'an orphan stale namespace must fail later reads closed');
+  assert.equal(readFailure?.evidencePaths?.includes(staleLockPath), true, 'the orphan stale lock must be disclosed');
+});
+
+await withHome('backup-cleanup-replacement', async home => {
+  const target = prepareExisting(home);
+  const displacedOwnedBackup = join(home, 'owned-backup-evidence.json');
+  const foreignBytes = 'foreign backup replacement must survive\n';
+  let foreignPath = null;
+  let injected = false;
+  const fileSystem = proxyFileSystem({
+    rename: async (source, destination) => {
+      await fsPromises.rename(source, destination);
+      if (!injected && basename(source).endsWith('.backup')) {
+        injected = true;
+        foreignPath = source;
+        writeFileSync(source, foreignBytes, { mode: 0o600 });
+      }
+    },
+    unlink: async path => {
+      if (!injected && basename(path).endsWith('.backup')) {
+        injected = true;
+        foreignPath = path;
+        renameSync(path, displacedOwnedBackup);
+        writeFileSync(path, foreignBytes, { mode: 0o600 });
+      }
+      return fsPromises.unlink(path);
+    },
+  });
+  let failure;
+  try {
+    await writeEnhancementConfig({ homeDir: home, manifest, selection: CONFIG_CUSTOM, fileSystem });
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(injected, true, 'the fixture must replace the backup at the removal boundary');
+  assert.equal(failure?.restorationIncomplete, true, 'backup cleanup replacement must fail with retained evidence');
+  assert.equal(readFileSync(foreignPath, 'utf8'), foreignBytes, 'foreign backup replacement must not be deleted');
+  assert.equal(failure?.evidencePaths?.includes(foreignPath), true, 'the foreign replacement path must be disclosed');
+  if (existsSync(displacedOwnedBackup)) {
+    assert.equal(readFileSync(displacedOwnedBackup, 'utf8'), ALL_BYTES, 'the fixture-displaced owned backup remains intact');
+  }
+});
+
+await withHome('lock-quarantine-no-overwrite', async home => {
+  const target = prepareExisting(home);
+  const lockPath = join(dirname(target), '.enhancements.json.lock');
+  const foreignBytes = 'pre-existing quarantine destination\n';
+  let collisionRoot = null;
+  let collisionEvidence = null;
+  const fileSystem = proxyFileSystem({
+    mkdir: async (path, options) => {
+      const name = basename(path);
+      if (!collisionRoot
+        && (name.includes('.enhancements.json.lock') || name.includes('.lock.stale'))
+        && name.includes('.stale')) {
+        collisionRoot = path;
+        collisionEvidence = join(path, 'foreign.txt');
+        mkdirSync(path, { mode: 0o700 });
+        writeFileSync(collisionEvidence, foreignBytes, { mode: 0o600 });
+      }
+      return fsPromises.mkdir(path, options);
+    },
+    rename: async (source, destination) => {
+      if (!collisionRoot && source === lockPath && basename(destination).includes('.stale')) {
+        collisionRoot = destination;
+        collisionEvidence = destination;
+        writeFileSync(destination, foreignBytes, { mode: 0o600 });
+      }
+      return fsPromises.rename(source, destination);
+    },
+  });
+  let failure;
+  try {
+    await writeEnhancementConfig({ homeDir: home, manifest, selection: CONFIG_CUSTOM, fileSystem });
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(typeof collisionEvidence, 'string', 'the fixture must occupy the quarantine destination before publication');
+  assert.equal(failure?.restorationIncomplete, true, 'a quarantine collision must fail closed after durable publication');
+  assert.equal(readFileSync(collisionEvidence, 'utf8'), foreignBytes, 'an existing quarantine destination must never be overwritten');
+  assert.equal(readFileSync(target, 'utf8'), CUSTOM_BYTES, 'a post-commit quarantine collision must retain canonical new bytes');
+  assert.equal(
+    failure?.evidencePaths?.some(path => path === collisionRoot || path === collisionEvidence),
+    true,
+    'the quarantine collision must be disclosed as evidence',
+  );
+});
+
+await withHome('backup-publication-no-overwrite', async home => {
+  const target = prepareExisting(home);
+  const foreignBytes = 'pre-existing backup destination\n';
+  let collisionRoot = null;
+  let collisionEvidence = null;
+  const fileSystem = proxyFileSystem({
+    mkdir: async (path, options) => {
+      if (!collisionRoot && basename(path).endsWith('.backup')) {
+        collisionRoot = path;
+        collisionEvidence = join(path, 'foreign.txt');
+        mkdirSync(path, { mode: 0o700 });
+        writeFileSync(collisionEvidence, foreignBytes, { mode: 0o600 });
+      }
+      return fsPromises.mkdir(path, options);
+    },
+    rename: async (source, destination) => {
+      if (!collisionRoot && source === target && basename(destination).endsWith('.backup')) {
+        collisionRoot = destination;
+        collisionEvidence = destination;
+        writeFileSync(destination, foreignBytes, { mode: 0o600 });
+      }
+      return fsPromises.rename(source, destination);
+    },
+  });
+  let failure;
+  try {
+    await writeEnhancementConfig({ homeDir: home, manifest, selection: CONFIG_CUSTOM, fileSystem });
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(typeof collisionEvidence, 'string', 'the fixture must occupy the backup destination');
+  assert.equal(failure?.restorationIncomplete, true, 'an occupied backup destination must fail closed');
+  assert.equal(readFileSync(collisionEvidence, 'utf8'), foreignBytes, 'backup publication must not overwrite foreign evidence');
+  assert.equal(readFileSync(target, 'utf8'), ALL_BYTES, 'backup collision must preserve the original canonical config');
+  assert.equal(
+    failure?.evidencePaths?.some(path => path === collisionRoot || path === collisionEvidence),
+    true,
+    'backup collision evidence must be disclosed',
+  );
+});
+
+await withHome('failed-publication-no-overwrite', async home => {
+  const target = prepareExisting(home);
+  const configDirectory = dirname(target);
+  const foreignBytes = 'pre-existing failed destination\n';
+  let publicationLinked = false;
+  let commitSyncFailed = false;
+  let collisionRoot = null;
+  let collisionEvidence = null;
+  const fileSystem = proxyFileSystem({
+    link: async (source, destination) => {
+      await fsPromises.link(source, destination);
+      if (destination === target && basename(source).endsWith('.tmp')) publicationLinked = true;
+    },
+    open: async (path, flags, ...args) => {
+      if (publicationLinked && !commitSyncFailed && path === configDirectory && flags === 'r') {
+        commitSyncFailed = true;
+        throw new Error('injected commit directory sync failure');
+      }
+      return fsPromises.open(path, flags, ...args);
+    },
+    mkdir: async (path, options) => {
+      if (!collisionRoot && basename(path).endsWith('.failed')) {
+        collisionRoot = path;
+        collisionEvidence = join(path, 'foreign.txt');
+        mkdirSync(path, { mode: 0o700 });
+        writeFileSync(collisionEvidence, foreignBytes, { mode: 0o600 });
+      }
+      return fsPromises.mkdir(path, options);
+    },
+    rename: async (source, destination) => {
+      if (!collisionRoot && source === target && basename(destination).endsWith('.failed')) {
+        collisionRoot = destination;
+        collisionEvidence = destination;
+        writeFileSync(destination, foreignBytes, { mode: 0o600 });
+      }
+      return fsPromises.rename(source, destination);
+    },
+  });
+  let failure;
+  try {
+    await writeEnhancementConfig({ homeDir: home, manifest, selection: CONFIG_CUSTOM, fileSystem });
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(commitSyncFailed, true, 'the fixture must fail after canonical publication verification');
+  assert.equal(typeof collisionEvidence, 'string', 'the fixture must occupy the failed-publication destination');
+  assert.equal(failure?.restorationIncomplete, true, 'an occupied failed-publication destination must fail closed');
+  assert.equal(readFileSync(collisionEvidence, 'utf8'), foreignBytes, 'failed publication must not overwrite foreign evidence');
+  assert.equal(readFileSync(target, 'utf8'), CUSTOM_BYTES, 'a failed-evidence collision must preserve the verified canonical publication');
+  assert.equal(
+    failure?.evidencePaths?.some(path => path === collisionRoot || path === collisionEvidence),
+    true,
+    'failed-publication collision evidence must be disclosed',
+  );
+});
+
 await withHome('partial-stage-failure', async home => {
   const target = prepareExisting(home);
   let injected = false;
@@ -575,6 +867,35 @@ await withHome('unsafe-ancestor-mode', async home => {
   assert.equal(readFileSync(target, 'utf8'), ALL_BYTES);
 });
 
+if (process.platform !== 'win32') {
+  for (const mode of [0o755, 0o4700, 0o1700]) {
+    await withHome(`exact-config-directory-mode-${mode.toString(8)}`, async home => {
+      const target = prepareExisting(home);
+      const configDirectory = dirname(target);
+      if (mode > 0o777) {
+        const chmod = spawnSync('chmod', [mode.toString(8), configDirectory], { encoding: 'utf8' });
+        assert.equal(chmod.status, 0, chmod.stderr || `failed to create mode ${mode.toString(8)} fixture`);
+      } else {
+        chmodSync(configDirectory, mode);
+      }
+      assert.equal(lstatSync(configDirectory).mode & 0o7777, mode, 'the fixture must set the requested real filesystem mode');
+      let failure;
+      try {
+        await readEnhancementConfig({ homeDir: home, manifest });
+      } catch (error) {
+        failure = error;
+      }
+      assert.match(failure?.message || '', /unsafe.*directory ancestor/i, `existing mode ${mode.toString(8)} must fail closed`);
+      assert.equal(
+        lstatSync(configDirectory).mode & 0o7777,
+        mode,
+        `existing mode ${mode.toString(8)} must not be silently repaired`,
+      );
+      assert.equal(readFileSync(target, 'utf8'), ALL_BYTES);
+    });
+  }
+}
+
 await withHome('unsafe-ancestor-link', async home => {
   const outside = makeHome('ancestor-outside');
   try {
@@ -589,6 +910,81 @@ await withHome('unsafe-ancestor-link', async home => {
   } finally {
     rmSync(outside, { recursive: true, force: true });
   }
+});
+
+await withHome('read-directory-replacement', async home => {
+  const target = prepareExisting(home);
+  const configDirectory = dirname(target);
+  const displacedDirectory = join(home, 'displaced-clawgod-read');
+  const preparedReplacement = join(home, 'prepared-clawgod-read');
+  mkdirSync(preparedReplacement, { mode: 0o700 });
+  writeFileSync(join(preparedReplacement, 'enhancements.json'), CUSTOM_BYTES, { mode: 0o600 });
+  let parentReads = 0;
+  let swapped = false;
+  const fileSystem = proxyFileSystem({
+    lstat: async path => {
+      if (path === configDirectory && ++parentReads === 2) {
+        renameSync(configDirectory, displacedDirectory);
+        renameSync(preparedReplacement, configDirectory);
+        swapped = true;
+      }
+      return fsPromises.lstat(path);
+    },
+  });
+  let result;
+  let failure;
+  try {
+    result = await readEnhancementConfig({ homeDir: home, manifest, fileSystem });
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(swapped, true, 'the fixture must replace the config directory during lock observation');
+  assert.equal(result, undefined, 'a replacement directory config must never be accepted');
+  assert.equal(failure?.restorationIncomplete, true, 'directory replacement during read must fail closed');
+  assert.match(failure?.message || '', /ancestor changed during read/i);
+  assert.equal(failure?.evidencePaths?.includes(configDirectory), true, 'the replacement directory must be disclosed');
+  assert.equal(readFileSync(join(configDirectory, 'enhancements.json'), 'utf8'), CUSTOM_BYTES);
+  assert.equal(readFileSync(join(displacedDirectory, 'enhancements.json'), 'utf8'), ALL_BYTES);
+});
+
+await withHome('read-directory-replacement-dead-lock', async home => {
+  const target = prepareExisting(home);
+  const configDirectory = dirname(target);
+  const displacedDirectory = join(home, 'displaced-clawgod-dead-lock');
+  const preparedReplacement = join(home, 'prepared-clawgod-dead-lock');
+  const replacementLock = join(preparedReplacement, '.enhancements.json.lock');
+  const lockBytes = '99999999:00000000-0000-4000-8000-000000000010\n';
+  mkdirSync(preparedReplacement, { mode: 0o700 });
+  writeFileSync(join(preparedReplacement, 'enhancements.json'), CUSTOM_BYTES, { mode: 0o600 });
+  writeFileSync(replacementLock, lockBytes, { mode: 0o600 });
+  let parentReads = 0;
+  const fileSystem = proxyFileSystem({
+    lstat: async path => {
+      if (path === configDirectory && ++parentReads === 2) {
+        renameSync(configDirectory, displacedDirectory);
+        renameSync(preparedReplacement, configDirectory);
+      }
+      return fsPromises.lstat(path);
+    },
+  });
+  let failure;
+  try {
+    await readEnhancementConfig({
+      homeDir: home,
+      manifest,
+      fileSystem,
+      waitForUnlockMs: 0,
+      isProcessAlive: () => false,
+    });
+  } catch (error) {
+    failure = error;
+  }
+  const replacementLockAfterSwap = join(configDirectory, basename(replacementLock));
+  assert.equal(failure?.restorationIncomplete, true, 'directory replacement with a dead lock must fail closed');
+  assert.match(failure?.message || '', /ancestor changed during read/i);
+  assert.equal(readFileSync(replacementLockAfterSwap, 'utf8'), lockBytes, 'the replacement directory lock must not be reclaimed');
+  assert.equal(readFileSync(join(configDirectory, 'enhancements.json'), 'utf8'), CUSTOM_BYTES);
+  assert.equal(readFileSync(join(displacedDirectory, 'enhancements.json'), 'utf8'), ALL_BYTES);
 });
 
 await withHome('ancestor-replacement-race', async home => {

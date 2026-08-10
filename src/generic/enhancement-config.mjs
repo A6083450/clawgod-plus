@@ -218,6 +218,10 @@ function fileMode(status) {
   return status.mode & 0o777;
 }
 
+function permissionMode(status) {
+  return status.mode & 0o7777;
+}
+
 function fileIdentity(status) {
   return { dev: status.dev, ino: status.ino };
 }
@@ -235,14 +239,26 @@ async function lstatIfPresent(fileSystem, path) {
   }
 }
 
-function directoryStatusIsSafe(status, platform) {
+function homeDirectoryStatusIsSafe(status, platform) {
   if (status.isSymbolicLink() || !status.isDirectory()) return false;
   if (platform === 'win32') return (fileMode(status) & 0o200) !== 0;
   return (fileMode(status) & 0o022) === 0;
 }
 
-function assertSafeDirectoryStatus(status, label, platform) {
-  if (!directoryStatusIsSafe(status, platform)) {
+function configDirectoryStatusIsSafe(status, platform) {
+  if (status.isSymbolicLink() || !status.isDirectory()) return false;
+  if (platform === 'win32') return (fileMode(status) & 0o200) !== 0;
+  return permissionMode(status) === ENHANCEMENT_CONFIG_DIRECTORY_MODE;
+}
+
+function assertSafeHomeDirectoryStatus(status, platform) {
+  if (!homeDirectoryStatusIsSafe(status, platform)) {
+    throw new Error('Unsafe enhancement config HOME ancestor');
+  }
+}
+
+function assertSafeConfigDirectoryStatus(status, label, platform) {
+  if (!configDirectoryStatusIsSafe(status, platform)) {
     throw new Error(`Unsafe enhancement config ${label} ancestor`);
   }
 }
@@ -269,7 +285,7 @@ function assertSafeConfigStatus(status, label = 'leaf', platform = process.platf
 async function inspectHome(fileSystem, homeDir, platform) {
   const status = await lstatIfPresent(fileSystem, homeDir);
   if (!status) throw new Error('Unsafe enhancement config HOME ancestor: directory is missing');
-  assertSafeDirectoryStatus(status, 'HOME', platform);
+  assertSafeHomeDirectoryStatus(status, platform);
   return status;
 }
 
@@ -281,8 +297,27 @@ async function inspectConfigDirectory(fileSystem, homeDir, { missing = 'allow', 
     if (missing === 'reject') throw new Error('Enhancement config directory is missing');
     return { path, status: null, homeStatus };
   }
-  assertSafeDirectoryStatus(status, 'directory', platform);
+  assertSafeConfigDirectoryStatus(status, 'directory', platform);
   return { path, status, homeStatus };
+}
+
+async function assertReadDirectoryCurrent(fileSystem, homeDir, expected, platform) {
+  let current;
+  try {
+    current = await inspectConfigDirectory(fileSystem, homeDir, { platform });
+  } catch (error) {
+    throw markRestorationIncomplete(error, [homeDir, expected.path]);
+  }
+  const homeChanged = !sameIdentity(fileIdentity(current.homeStatus), fileIdentity(expected.homeStatus));
+  const directoryChanged = Boolean(current.status) !== Boolean(expected.status)
+    || (current.status && !sameIdentity(fileIdentity(current.status), fileIdentity(expected.status)));
+  if (homeChanged || directoryChanged) {
+    throw markRestorationIncomplete(
+      new Error('Enhancement config ancestor changed during read'),
+      homeChanged ? [homeDir, expected.path] : [expected.path],
+    );
+  }
+  return current;
 }
 
 async function readFileSnapshot(fileSystem, path, parentStatus, platform, expectedNlink = 1) {
@@ -346,6 +381,15 @@ function snapshotMatchesWithLinkCount(saved, current, expectedNlink) {
   return saved?.present === true
     && current?.present === true
     && sameIdentity(saved.parentIdentity, current.parentIdentity)
+    && sameIdentity(saved.identity, current.identity)
+    && saved.mode === current.mode
+    && current.nlink === expectedNlink
+    && Buffer.from(saved.bytes).equals(Buffer.from(current.bytes));
+}
+
+function snapshotMatchesIgnoringParent(saved, current, expectedNlink = saved?.nlink) {
+  return saved?.present === true
+    && current?.present === true
     && sameIdentity(saved.identity, current.identity)
     && saved.mode === current.mode
     && current.nlink === expectedNlink
@@ -416,6 +460,99 @@ async function syncDirectory(fileSystem, path, platform) {
   }
 }
 
+async function createPrivateDirectory(fileSystem, path, platform, label) {
+  try {
+    await fileSystem.mkdir(path, { mode: ENHANCEMENT_CONFIG_DIRECTORY_MODE });
+  } catch (error) {
+    throw markRestorationIncomplete(error, [path]);
+  }
+  const status = await fileSystem.lstat(path);
+  if (!configDirectoryStatusIsSafe(status, platform)) {
+    throw markRestorationIncomplete(new Error(`Unsafe ${label} directory`), [path]);
+  }
+  return { path, status, identity: fileIdentity(status) };
+}
+
+async function moveKnownFileToPrivateDirectory(fileSystem, snapshot, directoryPath, platform, label) {
+  const ownedDirectory = await createPrivateDirectory(fileSystem, directoryPath, platform, label);
+  const destination = join(directoryPath, basename(directoryPath));
+  try {
+    const sourceParent = await fileSystem.lstat(dirname(snapshot.path));
+    const current = await readFileSnapshot(fileSystem, snapshot.path, sourceParent, platform, snapshot.nlink);
+    if (!snapshotsEqual(snapshot, current)) {
+      throw new Error(`${label} source changed before quarantine`);
+    }
+    await fileSystem.rename(snapshot.path, destination);
+    const directoryAfter = await fileSystem.lstat(directoryPath);
+    if (!sameIdentity(ownedDirectory.identity, fileIdentity(directoryAfter))) {
+      throw new Error(`${label} directory changed during quarantine`);
+    }
+    const moved = await readFileSnapshot(fileSystem, destination, directoryAfter, platform, snapshot.nlink);
+    if (!snapshotMatchesIgnoringParent(snapshot, moved)) {
+      let replacementRestored = false;
+      try {
+        replacementRestored = await restoreSnapshotExclusively(fileSystem, moved, snapshot.path, platform);
+        if (replacementRestored) {
+          await removeOwnedPrivateDirectory(fileSystem, ownedDirectory, platform, label);
+        }
+      } catch (restoreError) {
+        throw markRestorationIncomplete(restoreError, [snapshot.path, destination, directoryPath]);
+      }
+      if (!replacementRestored) {
+        throw markRestorationIncomplete(
+          new Error(`${label} concurrent replacement could not be restored`),
+          [snapshot.path, destination, directoryPath],
+        );
+      }
+      throw markRestorationIncomplete(
+        new Error(`${label} concurrent replacement detected during quarantine`),
+        [snapshot.path],
+      );
+    }
+    if (await lstatIfPresent(fileSystem, snapshot.path)) {
+      throw new Error(`${label} source was replaced during quarantine`);
+    }
+    return { moved, ownedDirectory };
+  } catch (error) {
+    throw markRestorationIncomplete(error, [snapshot.path, destination, directoryPath]);
+  }
+}
+
+async function removeKnownRegularFile(fileSystem, snapshot, platform, label) {
+  const directoryPath = `${snapshot.path}.${process.pid}.${randomUUID()}.stale`;
+  const { moved, ownedDirectory } = await moveKnownFileToPrivateDirectory(
+    fileSystem,
+    snapshot,
+    directoryPath,
+    platform,
+    label,
+  );
+  try {
+    await fileSystem.unlink(moved.path);
+    await fileSystem.rmdir(ownedDirectory.path);
+    await syncDirectory(fileSystem, dirname(snapshot.path), platform);
+  } catch (error) {
+    throw markRestorationIncomplete(error, [snapshot.path, moved.path, ownedDirectory.path]);
+  }
+  return true;
+}
+
+async function removeOwnedPrivateDirectory(fileSystem, ownedDirectory, platform, label) {
+  if (!ownedDirectory) return;
+  const status = await lstatIfPresent(fileSystem, ownedDirectory.path);
+  if (!status) return;
+  if (!configDirectoryStatusIsSafe(status, platform)
+    || !sameIdentity(fileIdentity(status), ownedDirectory.identity)) {
+    throw markRestorationIncomplete(new Error(`${label} directory changed during cleanup`), [ownedDirectory.path]);
+  }
+  try {
+    await fileSystem.rmdir(ownedDirectory.path);
+    await syncDirectory(fileSystem, dirname(ownedDirectory.path), platform);
+  } catch (error) {
+    throw markRestorationIncomplete(error, [ownedDirectory.path]);
+  }
+}
+
 async function unlinkIfOwned(fileSystem, path, identity) {
   const status = await lstatIfPresent(fileSystem, path);
   if (!status) return true;
@@ -454,8 +591,7 @@ async function createConfigDirectory(fileSystem, homeDir, observation, platform)
   }
   await fileSystem.mkdir(observation.path, { mode: ENHANCEMENT_CONFIG_DIRECTORY_MODE });
   const created = await fileSystem.lstat(observation.path);
-  if (!directoryStatusIsSafe(created, platform)
-    || (platform !== 'win32' && fileMode(created) !== ENHANCEMENT_CONFIG_DIRECTORY_MODE)) {
+  if (!configDirectoryStatusIsSafe(created, platform)) {
     throw new Error('Unsafe created enhancement config directory');
   }
   const homeAfter = await inspectHome(fileSystem, homeDir, platform);
@@ -488,16 +624,87 @@ function configTransactionPaths(lock) {
   const lockName = basename(lock.path);
   const configPath = join(dirname(lock.path), lockName.slice(1, -'.lock'.length));
   const prefix = join(dirname(configPath), `.${basename(configPath)}.${lock.ownerPid}.${lock.token}`);
+  const backupDirectory = `${prefix}.backup`;
+  const failedDirectory = `${prefix}.failed`;
+  const lockStaleDirectory = `${prefix}.lock.stale`;
   return {
     temporary: `${prefix}.tmp`,
-    backup: `${prefix}.backup`,
-    failed: `${prefix}.failed`,
+    backupDirectory,
+    backup: join(backupDirectory, basename(backupDirectory)),
+    failedDirectory,
+    failed: join(failedDirectory, basename(failedDirectory)),
+    lockStaleDirectory,
+    lockStale: join(lockStaleDirectory, basename(lockStaleDirectory)),
   };
+}
+
+function transactionOwnerFromStaleName(name, configName) {
+  const prefix = `.${configName}.`;
+  const suffix = '.lock.stale';
+  if (!name.startsWith(prefix) || !name.endsWith(suffix)) return null;
+  const owner = name.slice(prefix.length, -suffix.length);
+  const separator = owner.indexOf('.');
+  if (separator <= 0) return null;
+  const ownerPid = owner.slice(0, separator);
+  const token = owner.slice(separator + 1);
+  return LOCK_OWNER_PATTERN.test(`${ownerPid}:${token}\n`) ? { ownerPid: Number(ownerPid), token } : null;
+}
+
+async function observeOrphanLockStaleEvidence(fileSystem, directoryPath, platform) {
+  const observations = [];
+  for (const name of await fileSystem.readdir(directoryPath)) {
+    const owner = transactionOwnerFromStaleName(name, ENHANCEMENT_CONFIG_FILENAME);
+    if (!owner) continue;
+    const root = join(directoryPath, name);
+    const evidencePaths = [root];
+    const status = await lstatIfPresent(fileSystem, root);
+    if (status && configDirectoryStatusIsSafe(status, platform)) {
+      for (const entry of await fileSystem.readdir(root)) {
+        evidencePaths.push(join(root, entry));
+      }
+    }
+    observations.push({ ...owner, evidencePaths });
+  }
+  return observations;
+}
+
+async function waitForOrphanLockStaleEvidence(
+  fileSystem,
+  homeDir,
+  expectedDirectory,
+  deadline,
+  platform,
+  isProcessAlive,
+) {
+  while (true) {
+    await assertReadDirectoryCurrent(fileSystem, homeDir, expectedDirectory, platform);
+    const observations = await observeOrphanLockStaleEvidence(fileSystem, expectedDirectory.path, platform);
+    await assertReadDirectoryCurrent(fileSystem, homeDir, expectedDirectory, platform);
+    if (observations.length === 0) return;
+    const states = await Promise.all(observations.map(async observation => ({
+      observation,
+      alive: await isProcessAlive(observation.ownerPid),
+    })));
+    const evidencePaths = observations.flatMap(observation => observation.evidencePaths);
+    if (states.some(state => !state.alive)) {
+      throw markRestorationIncomplete(
+        new Error('Enhancement config transaction has orphan stale lock evidence'),
+        evidencePaths,
+      );
+    }
+    if (Date.now() >= deadline) {
+      throw markRestorationIncomplete(
+        new Error('Timed out waiting for live enhancement config stale lock cleanup'),
+        evidencePaths,
+      );
+    }
+    await new Promise(resolve => setTimeout(resolve, LOCK_POLL_MS));
+  }
 }
 
 async function observeConfigLock(fileSystem, path, platform) {
   const parentStatus = await fileSystem.lstat(dirname(path));
-  assertSafeDirectoryStatus(parentStatus, 'lock directory', platform);
+  assertSafeConfigDirectoryStatus(parentStatus, 'lock directory', platform);
   const snapshot = await readFileSnapshot(fileSystem, path, parentStatus, platform);
   if (!snapshot.present) return null;
   const text = decodeSource(snapshot.bytes, 'enhancement config lock');
@@ -518,42 +725,53 @@ function defaultIsProcessAlive(pid) {
 }
 
 async function removeObservedFile(fileSystem, snapshot, platform, label) {
-  const quarantine = join(dirname(snapshot.path), `.${basename(snapshot.path)}.${process.pid}.${randomUUID()}.stale`);
+  const transactionPaths = snapshot.ownerPid && snapshot.token ? configTransactionPaths(snapshot) : null;
+  const quarantine = transactionPaths?.lockStaleDirectory
+    || join(dirname(snapshot.path), `.${basename(snapshot.path)}.${process.pid}.${randomUUID()}.stale`);
+  let moved;
   try {
-    await fileSystem.rename(snapshot.path, quarantine);
+    moved = await moveKnownFileToPrivateDirectory(fileSystem, snapshot, quarantine, platform, label);
   } catch (error) {
     if (error?.code === 'ENOENT') return false;
     throw error;
   }
-  let moved;
   try {
-    const parentStatus = await fileSystem.lstat(dirname(snapshot.path));
-    moved = await readFileSnapshot(fileSystem, quarantine, parentStatus, platform);
+    await fileSystem.unlink(moved.moved.path);
+    await fileSystem.rmdir(moved.ownedDirectory.path);
+    await syncDirectory(fileSystem, dirname(snapshot.path), platform);
   } catch (error) {
-    throw markRestorationIncomplete(error, [quarantine, snapshot.path]);
-  }
-  if (!snapshotsEqual(snapshot, moved)) {
-    const restored = await restoreSnapshotExclusively(fileSystem, moved, snapshot.path, platform);
-    if (!restored) {
-      throw markRestorationIncomplete(new Error(`${label} changed during quarantine`), [quarantine, snapshot.path]);
+    try {
+      await stagePrivateFile(fileSystem, snapshot.path, Buffer.from(snapshot.bytes), platform);
+    } catch (restoreError) {
+      if (restoreError?.code !== 'EEXIST') {
+        throw markRestorationIncomplete(restoreError, [moved.moved.path, quarantine, snapshot.path]);
+      }
     }
-    return false;
+    throw markRestorationIncomplete(error, [moved.moved.path, quarantine, snapshot.path]);
   }
-  if (!await unlinkIfOwned(fileSystem, quarantine, moved.identity)) {
-    throw markRestorationIncomplete(new Error(`${label} changed during cleanup`), [quarantine]);
-  }
-  await syncDirectory(fileSystem, dirname(snapshot.path), platform);
   return true;
 }
 
 async function reclaimDeadConfigLock(fileSystem, lock, platform, isProcessAlive) {
   if (await isProcessAlive(lock.ownerPid)) return false;
   const residuePaths = [];
-  for (const path of Object.values(configTransactionPaths(lock))) {
-    if (await lstatIfPresent(fileSystem, path)) residuePaths.push(path);
+  const transactionPaths = configTransactionPaths(lock);
+  for (const path of [
+    transactionPaths.temporary,
+    transactionPaths.backupDirectory,
+    transactionPaths.failedDirectory,
+    transactionPaths.lockStaleDirectory,
+  ]) {
+    const status = await lstatIfPresent(fileSystem, path);
+    if (!status) continue;
+    residuePaths.push(path);
+    if (!status.isDirectory()) continue;
+    for (const name of await fileSystem.readdir(path)) {
+      residuePaths.push(join(path, name));
+    }
   }
-  const backupName = basename(configTransactionPaths(lock).backup);
-  const rejectedPrefix = `${backupName}.rejected-`;
+  const legacyBackupName = basename(transactionPaths.backupDirectory);
+  const rejectedPrefix = `${legacyBackupName}.rejected-`;
   for (const name of await fileSystem.readdir(dirname(lock.path))) {
     if (name.startsWith(rejectedPrefix)) residuePaths.push(join(dirname(lock.path), name));
   }
@@ -590,7 +808,7 @@ async function acquireConfigLock(fileSystem, path, platform, isProcessAlive) {
 
 async function assertConfigLockCurrent(fileSystem, lock, platform) {
   const parentStatus = await fileSystem.lstat(dirname(lock.path));
-  assertSafeDirectoryStatus(parentStatus, 'lock directory', platform);
+  assertSafeConfigDirectoryStatus(parentStatus, 'lock directory', platform);
   if (!sameIdentity(fileIdentity(parentStatus), lock.parentIdentity)) {
     throw new Error('Enhancement config ancestor changed during update');
   }
@@ -605,9 +823,42 @@ async function releaseConfigLock(fileSystem, lock, platform) {
   return removeObservedFile(fileSystem, lock, platform, 'Enhancement config transaction lock');
 }
 
-async function waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive) {
+async function waitForConfigUnlock(
+  fileSystem,
+  lockPath,
+  deadline,
+  platform,
+  isProcessAlive,
+  homeDir = null,
+  expectedDirectory = null,
+) {
+  if (expectedDirectory) {
+    await waitForOrphanLockStaleEvidence(
+      fileSystem,
+      homeDir,
+      expectedDirectory,
+      deadline,
+      platform,
+      isProcessAlive,
+    );
+  }
   const lock = await observeConfigLock(fileSystem, lockPath, platform);
-  if (!lock) return false;
+  if (expectedDirectory) {
+    await assertReadDirectoryCurrent(fileSystem, homeDir, expectedDirectory, platform);
+  }
+  if (!lock) {
+    if (expectedDirectory) {
+      await waitForOrphanLockStaleEvidence(
+        fileSystem,
+        homeDir,
+        expectedDirectory,
+        deadline,
+        platform,
+        isProcessAlive,
+      );
+    }
+    return false;
+  }
   if (await reclaimDeadConfigLock(fileSystem, lock, platform, isProcessAlive)) return false;
   if (Date.now() >= deadline) throw new Error('Timed out waiting for enhancement config update');
   await new Promise(resolve => setTimeout(resolve, LOCK_POLL_MS));
@@ -631,7 +882,7 @@ async function rejectRollbackLink(fileSystem, source, target, platform, cause, e
     if (expectedTarget) {
       const parentStatus = await fileSystem.lstat(dirname(rejected));
       const moved = await readFileSnapshot(fileSystem, rejected, parentStatus, platform, expectedTarget.nlink);
-      if (!snapshotMatchesWithLinkCount(expectedTarget, moved, expectedTarget.nlink)) {
+      if (!snapshotMatchesIgnoringParent(expectedTarget, moved, expectedTarget.nlink)) {
         throw new Error('Rejected enhancement config rollback link changed during quarantine');
       }
     }
@@ -648,21 +899,22 @@ async function restoreSnapshotExclusively(fileSystem, source, target, platform) 
     if (error?.code === 'EEXIST') return false;
     throw error;
   }
-  const parentStatus = await fileSystem.lstat(dirname(target));
+  const targetParentStatus = await fileSystem.lstat(dirname(target));
   let linkedTarget;
   try {
-    linkedTarget = await readFileSnapshot(fileSystem, target, parentStatus, platform, 2);
+    linkedTarget = await readFileSnapshot(fileSystem, target, targetParentStatus, platform, 2);
   } catch (error) {
     return rejectRollbackLink(fileSystem, source, target, platform, error);
   }
   let linkedSource;
   try {
-    linkedSource = await readFileSnapshot(fileSystem, source.path, parentStatus, platform, 2);
+    const sourceParentStatus = await fileSystem.lstat(dirname(source.path));
+    linkedSource = await readFileSnapshot(fileSystem, source.path, sourceParentStatus, platform, 2);
   } catch (error) {
     return rejectRollbackLink(fileSystem, source, target, platform, error, linkedTarget);
   }
-  if (!snapshotMatchesWithLinkCount(source, linkedSource, 2)
-    || !snapshotMatchesWithLinkCount(source, linkedTarget, 2)) {
+  if (!snapshotMatchesIgnoringParent(source, linkedSource, 2)
+    || !snapshotMatchesIgnoringParent(source, linkedTarget, 2)) {
     return rejectRollbackLink(
       fileSystem,
       source,
@@ -683,11 +935,11 @@ async function restoreSnapshotExclusively(fileSystem, source, target, platform) 
   }
   let restored;
   try {
-    restored = await readFileSnapshot(fileSystem, target, parentStatus, platform);
+    restored = await readFileSnapshot(fileSystem, target, targetParentStatus, platform);
   } catch (error) {
     return rejectRollbackLink(fileSystem, source, target, platform, error);
   }
-  if (!snapshotMatchesWithLinkCount(source, restored, 1)) {
+  if (!snapshotMatchesIgnoringParent(source, restored, 1)) {
     return rejectRollbackLink(
       fileSystem,
       source,
@@ -722,18 +974,39 @@ export async function readEnhancementConfig({
   const deadline = Date.now() + waitForUnlockMs;
   while (true) {
     const directory = await inspectConfigDirectory(fileSystem, homeDir, { platform });
-    if (!directory.status) return null;
-    if (await waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive)) continue;
+    if (!directory.status) {
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+      return null;
+    }
+    if (await waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive, homeDir, directory)) {
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+      continue;
+    }
+    await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
     let snapshot;
     try {
       snapshot = await readFileSnapshot(fileSystem, path, directory.status, platform);
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
     } catch (error) {
-      if (await waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive)) continue;
+      if (await waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive, homeDir, directory)) {
+        await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+        continue;
+      }
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
       throw error;
     }
-    if (await waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive)) continue;
-    if (!snapshot.present) return null;
-    return parseStoredEnhancementConfig(snapshot.bytes, manifest);
+    if (await waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive, homeDir, directory)) {
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+      continue;
+    }
+    await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+    if (!snapshot.present) {
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+      return null;
+    }
+    const config = parseStoredEnhancementConfig(snapshot.bytes, manifest);
+    await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+    return config;
   }
 }
 
@@ -757,6 +1030,7 @@ export async function writeEnhancementConfig({
   let lock = null;
   let backupPath = null;
   let backup = null;
+  let backupDirectory = null;
   let publicationIdentity = null;
   let targetMutationStarted = false;
   let publicationCommitted = false;
@@ -784,22 +1058,15 @@ export async function writeEnhancementConfig({
     targetMutationStarted = true;
     if (original.present) {
       backupPath = transactionPaths.backup;
-      await fileSystem.rename(path, backupPath);
-      const moved = await readFileSnapshot(fileSystem, backupPath, directory.status, platform);
-      if (!snapshotsMatch(original, moved)) {
-        const restored = await restoreSnapshotExclusively(fileSystem, moved, path, platform);
-        if (restored) {
-          backupPath = null;
-          targetMutationStarted = false;
-        } else {
-          throw markRestorationIncomplete(
-            new Error('Enhancement config changed during update by a concurrent replacement'),
-            [backupPath, path],
-          );
-        }
-        throw new Error('Enhancement config changed during update by a concurrent replacement');
-      }
-      backup = moved;
+      const moved = await moveKnownFileToPrivateDirectory(
+        fileSystem,
+        original,
+        transactionPaths.backupDirectory,
+        platform,
+        'Enhancement config backup publication',
+      );
+      backup = moved.moved;
+      backupDirectory = moved.ownedDirectory;
     }
 
     try {
@@ -828,11 +1095,13 @@ export async function writeEnhancementConfig({
     }
     await syncDirectory(fileSystem, directory.path, platform);
 
-    if (backup && !await unlinkIfOwned(fileSystem, backup.path, backup.identity)) {
-      throw new Error('Enhancement config backup changed during cleanup');
+    if (backup) {
+      await removeKnownRegularFile(fileSystem, backup, platform, 'Enhancement config backup');
+      await removeOwnedPrivateDirectory(fileSystem, backupDirectory, platform, 'Enhancement config backup');
     }
     backup = null;
     backupPath = null;
+    backupDirectory = null;
     publicationCommitted = true;
     if (!await releaseConfigLock(fileSystem, lock, platform)) {
       throw markRestorationIncomplete(
@@ -852,7 +1121,7 @@ export async function writeEnhancementConfig({
     const currentDirectoryStatus = await lstatIfPresent(fileSystem, directory.path).catch(() => null);
     const directoryChanged = !directory.status
       || !currentDirectoryStatus
-      || !directoryStatusIsSafe(currentDirectoryStatus, platform)
+      || !configDirectoryStatusIsSafe(currentDirectoryStatus, platform)
       || !sameIdentity(fileIdentity(currentDirectoryStatus), fileIdentity(directory.status));
     if (directoryChanged) {
       restorationIncomplete = true;
@@ -901,14 +1170,24 @@ export async function writeEnhancementConfig({
 
     if (targetMutationStarted && !publicationCommitted && !directoryChanged && !targetIsOriginal) {
       if (targetIsPublication) {
-        const failedPath = configTransactionPaths(lock).failed;
+        const transactionPaths = configTransactionPaths(lock);
+        let failedPath = transactionPaths.failed;
+        let failedDirectory = null;
         let movedPublication = null;
         try {
-          await fileSystem.rename(path, failedPath);
-          movedPublication = await readFileSnapshot(fileSystem, failedPath, currentDirectoryStatus, platform);
-        } catch {
+          const moved = await moveKnownFileToPrivateDirectory(
+            fileSystem,
+            currentTarget,
+            transactionPaths.failedDirectory,
+            platform,
+            'Enhancement config failed publication',
+          );
+          movedPublication = moved.moved;
+          failedDirectory = moved.ownedDirectory;
+          failedPath = movedPublication.path;
+        } catch (moveError) {
           restorationIncomplete = true;
-          evidenceCandidates.push(failedPath, path);
+          evidenceCandidates.push(...(moveError?.evidencePaths || []), failedPath, path);
         }
         if (movedPublication && sameIdentity(movedPublication.identity, publicationIdentity)
           && configModeMatches(movedPublication.mode, platform)
@@ -921,6 +1200,8 @@ export async function writeEnhancementConfig({
               if (restored) {
                 backup = null;
                 backupPath = null;
+                await removeOwnedPrivateDirectory(fileSystem, backupDirectory, platform, 'Enhancement config backup');
+                backupDirectory = null;
               }
             } catch (restoreError) {
               recordRestorationFailure(restoreError);
@@ -929,8 +1210,10 @@ export async function writeEnhancementConfig({
           }
           if (restored) {
             try {
-              if (!await unlinkIfOwned(fileSystem, failedPath, movedPublication.identity)) restored = false;
-            } catch {
+              await removeKnownRegularFile(fileSystem, movedPublication, platform, 'Enhancement config failed publication');
+              await removeOwnedPrivateDirectory(fileSystem, failedDirectory, platform, 'Enhancement config failed publication');
+            } catch (cleanupError) {
+              recordRestorationFailure(cleanupError);
               restored = false;
             }
           }
@@ -952,6 +1235,8 @@ export async function writeEnhancementConfig({
           if (await restoreSnapshotExclusively(fileSystem, backup, path, platform)) {
             backup = null;
             backupPath = null;
+            await removeOwnedPrivateDirectory(fileSystem, backupDirectory, platform, 'Enhancement config backup');
+            backupDirectory = null;
           } else restorationIncomplete = true;
         } catch (restoreError) {
           recordRestorationFailure(restoreError);
