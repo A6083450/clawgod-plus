@@ -123,14 +123,17 @@ CLAWGOD_NO_AUTO_CHROME=1 claude
 
 ClawGod Plus のマルチエージェント処理や長時間タスクには、ステータスラインプラグイン [Claude HUD](https://github.com/jarrodwatts/claude-hud) を推奨します。別ウィンドウを開かずに、モデルとコンテキストの状態、プロジェクトと Git、Claude 設定数、使用量、ツール、Agent、Todo、コスト、速度、セッション時間を常時確認できます。
 
-Claude Code 内でインストール：
+インストールと更新のたびに、次の任意 Claude Code プラグイン依存関係を自動確認します。
 
-```text
-/plugin marketplace add jarrodwatts/claude-hud
-/plugin install claude-hud
-/reload-plugins
-/claude-hud:setup
-```
+| プラグイン | Canonical ID | ベースライン |
+|---|---|---|
+| Claude HUD | `claude-hud@claude-hud` | `0.7.0` |
+| claude-mem | `claude-mem@thedotmack` | `13.14.0` |
+| Superpowers | `superpowers@superpowers-marketplace` | `6.2.0` |
+
+未導入またはベースライン未満なら固定ベースラインを導入し、インストール済みの新しいバージョンを維持します。公開固定アーカイブは選択済みの `hub.211107.xyz` プロキシを使用し、正確なバイト長と固定 SHA-256 の両方が一致した場合だけ展開します。インストールが必要な JavaScript ランタイムは引き続き Bun だけです。
+
+HUD では、インストーラが以下の正確な profile を維持し、`~/.claude/settings.json` の `statusLine` フィールドだけを管理します。このコマンドは Bun の絶対パスで管理対象の `claude-hud-statusline.mjs` を実行し、Node や Bash のステータスラインランタイムを追加しません。任意プラグインの警告が発生しても ClawGod Plus 本体のインストールは失敗しません。
 
 以下の画像は、この推奨設定をマルチエージェントセッションで使用した実際の表示例です。
 
@@ -236,6 +239,7 @@ CLAUDE_CODE_CONTEXT_LIMIT=1000000 claude
 
 claude-mem がインストールされ、Claude Provider に設定されている場合、インストーラは次を行えます。
 
+- 選択した claude-mem の Hook と MCP エントリポイントを Bun で実行する。
 - claude-mem の `.env` に資格情報を書かず、現在の ClawGod Plus Provider または Claude 設定を再利用する。
 - 専用 ClawGod Plus Launcher 経由で claude-mem SDK サブプロセスを起動する。
 - 互換ヘルパーが管理する設定だけをバックアップし、アンインストール時に復元する。
@@ -243,6 +247,8 @@ claude-mem がインストールされ、Claude Provider に設定されてい�
 - 重複した古い Chroma MCP プロセスを整理して Worker を再起動する。
 
 claude-mem が存在しない、別 Provider を使用している、有効な資格情報がない、またはユーザー所有の競合設定がある場合でも、ClawGod Plus 本体のインストールは継続し、それらの設定を管理対象にしません。
+
+管理対象の統合状態は fail-closed です。未知の上位 claude-mem 所有 schema は保持し、Bun 未検証として報告します。ClawGod Plus はその状態を書き換えたり削除したりしません。
 
 ## 独立パッチツール
 
@@ -274,6 +280,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 6. 統合済みの Chrome、Computer Use、コンテキスト上限、Worker、貼り付け、Provider、機能パッチを適用します。
 7. Bun がパッチ済み CLI を読み込めることを検証します。
 8. 元の Launcher をバックアップし、`claude` と `clawgod` Launcher を作成します。
+9. 生成した `plugin-dependencies.mjs` で 3 つの任意プラグインのベースラインを確保し、管理対象の HUD と claude-mem 統合を適用します。
 
 `~/.clawgod/.source-version` はパッチ対象のネイティブ版を記録します。その後の起動で Wrapper が公式 Claude Code の更新を検出し、新しいバイナリへ再パッチします。
 
@@ -285,7 +292,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 claude update
 ```
 
-ローカル ClawGod Plus インストーラが存在する場合、拡張パッチは更新をそこへルーティングし、対象 Claude Code パッケージのダウンロード、再抽出、全パッチの再適用、Launcher の再作成を行います。
+ローカル ClawGod Plus インストーラが存在する場合、拡張パッチは更新をそこへルーティングします。通常の `claude update` は最新の Claude Code Release を選択し、再抽出、全パッチの再適用、Launcher の再作成を行います。プラグインのベースラインは独立して管理され、Claude Code をプラグインのバージョンに固定しません。
 
 ```bash
 claude update --version 2.1.220  # 既知の Claude Code バージョンに固定
@@ -307,7 +314,7 @@ hash -r
 .\install.ps1 -Uninstall
 ```
 
-アンインストールは元の Claude Launcher を復元し、ClawGod Plus エイリアスと生成済みランタイムファイルを削除し、互換ヘルパーが引き続き所有している claude-mem 設定を復元します。
+アンインストールは元の Claude Launcher を復元し、ClawGod Plus エイリアスと生成済みランタイムファイルを削除し、以前の HUD `statusLine` と引き続き ClawGod が所有する claude-mem エントリポイントを復元し、ClawGod 所有のプラグイン helper、state、cache ファイルを削除します。プラグインキャッシュ、Marketplace 登録、claude-mem のメモリデータを保持し、任意プラグイン自体はアンインストールしません。
 
 ## 検証
 

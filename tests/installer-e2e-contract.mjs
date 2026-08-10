@@ -17,6 +17,142 @@ function runContract(contract, input) {
   return spawnSync(process.execPath, [e2e.pathname], { encoding: 'utf8', env });
 }
 
+const pluginSummary = runContract('plugin-summary', [
+  'claude-hud@claude-hud: ready - installed 0.7.0',
+  'claude-mem@thedotmack: ready - installed 13.14.0',
+  'superpowers@superpowers-marketplace: ready - installed 6.2.0',
+  'Optional plugins: 3 ready, 0 warnings',
+  '',
+].join('\n'));
+assert.equal(pluginSummary.status, 0, pluginSummary.stderr);
+assert.match(pluginSummary.stdout, /^plugin summary: ready=3 warnings=0$/m);
+
+for (const [label, output] of [
+  ['missing summary', 'all plugin detail lines only\n'],
+  ['duplicate summary', 'Optional plugins: 3 ready, 0 warnings\nOptional plugins: 3 ready, 0 warnings\n'],
+  ['two ready', 'Optional plugins: 2 ready, 0 warnings\n'],
+  ['warning summary', 'Optional plugins: 2 ready, 1 warning\n'],
+]) {
+  const run = runContract('plugin-summary', output);
+  assert.notEqual(run.status, 0, `${label} must fail plugin summary validation`);
+  assert.match(run.stderr, /plugin|summary|ready|warning/i, `${label} must explain the plugin summary failure`);
+}
+
+const contractBunPath = '/tmp/clawgod-contract/bin/bun';
+const contractHudModulePath = '/tmp/clawgod-contract/home/.clawgod/claude-hud-statusline.mjs';
+const managedHudSettings = {
+  unrelated: { preserve: true },
+  statusLine: { type: 'command', command: `'${contractBunPath}' '${contractHudModulePath}'` },
+};
+const hudStatusLine = runContract('hud-statusline', {
+  settings: managedHudSettings,
+  bunPath: contractBunPath,
+  managedModulePath: contractHudModulePath,
+});
+assert.equal(hudStatusLine.status, 0, hudStatusLine.stderr);
+assert.match(hudStatusLine.stdout, /^HUD statusline: bun-only current-style=exact$/m);
+
+for (const [label, statusLine] of [
+  ['missing statusLine', undefined],
+  ['Node command', { type: 'command', command: `node '${contractHudModulePath}'` }],
+  ['Bash command', { type: 'command', command: `bash -c "'${contractBunPath}' '${contractHudModulePath}'"` }],
+  ['wrong managed module', { type: 'command', command: `'${contractBunPath}' '/tmp/clawgod-contract/home/.clawgod/other.mjs'` }],
+]) {
+  const settings = { unrelated: { preserve: true } };
+  if (statusLine !== undefined) settings.statusLine = statusLine;
+  const run = runContract('hud-statusline', { settings, bunPath: contractBunPath, managedModulePath: contractHudModulePath });
+  assert.notEqual(run.status, 0, `${label} must fail HUD statusLine validation`);
+  assert.match(run.stderr, /HUD|statusLine|Bun|command|module/i, `${label} must explain the HUD validation failure`);
+}
+
+const canonicalPluginIds = [
+  'claude-hud@claude-hud',
+  'claude-mem@thedotmack',
+  'superpowers@superpowers-marketplace',
+];
+const retentionSpecs = [
+  { id: canonicalPluginIds[0], marketplace: 'claude-hud', plugin: 'claude-hud', version: '0.7.0' },
+  { id: canonicalPluginIds[1], marketplace: 'thedotmack', plugin: 'claude-mem', version: '13.14.0' },
+  { id: canonicalPluginIds[2], marketplace: 'superpowers-marketplace', plugin: 'superpowers', version: '6.2.0' },
+];
+const retentionHome = mkdtempSync(join(realpathSync(tmpdir()), 'clawgod-plugin-retention-contract-'));
+const retentionPluginRoot = join(retentionHome, '.claude', 'plugins');
+const retentionInstalledPath = join(retentionPluginRoot, 'installed_plugins.json');
+function writeRetentionFixture() {
+  const plugins = {};
+  for (const spec of retentionSpecs) {
+    const installPath = join(retentionPluginRoot, 'cache', spec.marketplace, spec.plugin, spec.version);
+    mkdirSync(installPath, { recursive: true });
+    mkdirSync(join(retentionPluginRoot, 'marketplaces', spec.marketplace), { recursive: true });
+    mkdirSync(join(retentionPluginRoot, 'clawgod-marketplaces', spec.marketplace, spec.version), { recursive: true });
+    plugins[spec.id] = [{ scope: 'user', version: spec.version, installPath }];
+  }
+  writeFileSync(retentionInstalledPath, `${JSON.stringify({ version: 2, plugins }, null, 2)}\n`);
+}
+try {
+  writeRetentionFixture();
+  const retained = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
+  assert.equal(retained.status, 0, retained.stderr);
+  assert.match(retained.stdout, /^plugin retention: hud=present memory=present superpowers=present$/m);
+
+  const wrongIdState = JSON.parse(String(await Bun.file(retentionInstalledPath).text()));
+  wrongIdState.plugins['claude-hud@wrong-marketplace'] = wrongIdState.plugins[canonicalPluginIds[0]];
+  delete wrongIdState.plugins[canonicalPluginIds[0]];
+  writeFileSync(retentionInstalledPath, `${JSON.stringify(wrongIdState, null, 2)}\n`);
+  const wrongId = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
+  assert.notEqual(wrongId.status, 0, 'a wrong canonical plugin ID must fail retention validation');
+  assert.match(wrongId.stderr, /plugin|canonical|ID|claude-hud/i);
+
+  writeRetentionFixture();
+  rmSync(join(retentionPluginRoot, 'cache', 'thedotmack', 'claude-mem', '13.14.0'), { recursive: true });
+  const missingCache = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
+  assert.notEqual(missingCache.status, 0, 'a removed plugin cache must fail retention validation');
+  assert.match(missingCache.stderr, /cache|claude-mem|plugin/i);
+
+  writeRetentionFixture();
+  rmSync(join(retentionPluginRoot, 'marketplaces', 'superpowers-marketplace'), { recursive: true });
+  const missingMarketplace = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
+  assert.notEqual(missingMarketplace.status, 0, 'a removed marketplace must fail retention validation');
+  assert.match(missingMarketplace.stderr, /marketplace|superpowers|plugin/i);
+} finally {
+  rmSync(retentionHome, { recursive: true, force: true });
+}
+
+const claudeMemPrefix = 'export PATH="$($SHELL -lc \'echo $PATH\' 2>/dev/null):$PATH"; _P="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"; ';
+const managedClaudeMemHooks = {
+  description: 'Claude-mem memory system hooks',
+  hooks: {
+    Setup: [{ matcher: '*', hooks: [{ type: 'command', shell: 'bash', command: `${claudeMemPrefix}'${contractBunPath}' "$_P/scripts/version-check.js"` }] }],
+    SessionStart: [{ hooks: [{ type: 'command', shell: 'bash', command: `${claudeMemPrefix}'${contractBunPath}' "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" start` }] }],
+    PostToolUse: [{ hooks: [{ type: 'command', shell: 'bash', command: `${claudeMemPrefix}'${contractBunPath}' "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code observation` }] }],
+  },
+};
+const managedClaudeMemMcp = {
+  mcpServers: {
+    'mcp-search': { type: 'stdio', command: contractBunPath, args: ['-e', 'process.stdout.write(process.execPath)'] },
+  },
+};
+const claudeMemEntrypoints = runContract('claude-mem-entrypoints', {
+  hooksJson: managedClaudeMemHooks,
+  mcpJson: managedClaudeMemMcp,
+  bunPath: contractBunPath,
+});
+assert.equal(claudeMemEntrypoints.status, 0, claudeMemEntrypoints.stderr);
+assert.match(claudeMemEntrypoints.stdout, /^claude-mem entrypoints: hooks=bun mcp=bun$/m);
+
+for (const [label, mutate] of [
+  ['partial Hook rewrite', ({ hooksJson }) => { hooksJson.hooks.PostToolUse[0].hooks[0].command = `${claudeMemPrefix}node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code observation`; }],
+  ['missing required Hook rewrite', ({ hooksJson }) => { delete hooksJson.hooks.SessionStart; delete hooksJson.hooks.PostToolUse; }],
+  ['Node MCP command', ({ mcpJson }) => { mcpJson.mcpServers['mcp-search'].command = 'node'; }],
+  ['wrong Bun path', ({ mcpJson }) => { mcpJson.mcpServers['mcp-search'].command = '/tmp/other/bin/bun'; }],
+]) {
+  const fixture = { hooksJson: structuredClone(managedClaudeMemHooks), mcpJson: structuredClone(managedClaudeMemMcp), bunPath: contractBunPath };
+  mutate(fixture);
+  const run = runContract('claude-mem-entrypoints', fixture);
+  assert.notEqual(run.status, 0, `${label} must fail claude-mem entrypoint validation`);
+  assert.match(run.stderr, /claude-mem|Hook|MCP|Bun|entrypoint/i, `${label} must explain the claude-mem validation failure`);
+}
+
 for (const output of [
   'ripgrep 15.2.0\n',
   'ripgrep 15.2.0 (rev e89fff89ac)\n',

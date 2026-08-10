@@ -35,12 +35,28 @@ const allowedReferences = [
   'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24',
 ];
 
-function findForbiddenDependencies(source) {
+const allowedBadgePublishGitCommands = new Set([
+  'git init -q -b badges',
+  'git config user.email "github-actions[bot]@users.noreply.github.com"',
+  'git config user.name "github-actions[bot]"',
+  'git add claude-version.json',
+  'git commit -q -m "compat-daily: claude $version verified"',
+  'git push -fq "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:badges',
+]);
+
+function findForbiddenDependencies(source, options = {}) {
   const matches = [];
   let inPowerShellBlockComment = false;
-  const add = (kind, lineNumber, line) => matches.push({ kind, lineNumber, line: line.trim() });
+  let inBadgePublishStep = false;
+  const add = (kind, lineNumber, line) => {
+    const trimmed = line.trim();
+    if (kind === 'system-git' && options.allowBadgePublishGit === true
+      && inBadgePublishStep && allowedBadgePublishGitCommands.has(trimmed)) return;
+    matches.push({ kind, lineNumber, line: trimmed });
+  };
   const kindForProgram = program => {
     const normalized = program.toLowerCase();
+    if (normalized === 'git' || normalized === 'git.exe') return 'system-git';
     if (normalized.startsWith('node')) return 'node';
     if (normalized.startsWith('npm') || normalized.startsWith('npx')) return 'npm';
     if (normalized === 'curl' || normalized === 'wget') return 'external-downloader';
@@ -50,6 +66,11 @@ function findForbiddenDependencies(source) {
 
   for (const [offset, line] of source.split(/\r?\n/).entries()) {
     const lineNumber = offset + 1;
+    if (/^\s*-\s+name:\s+Publish supported-Claude-version badge\s*$/.test(line)) {
+      inBadgePublishStep = true;
+    } else if (/^\s*-\s+name:\s+/.test(line)) {
+      inBadgePublishStep = false;
+    }
     if (inPowerShellBlockComment) {
       if (/#>/.test(line)) inPowerShellBlockComment = false;
       continue;
@@ -69,7 +90,7 @@ function findForbiddenDependencies(source) {
     if (/^\s*node-version:\s*\S+/i.test(line)) add('node-version', lineNumber, line);
     if (/^\s*path:\s*~\/\.npm\s*$/i.test(line)) add('npm-cache', lineNumber, line);
 
-    const command = /(?:^|&&|\|\||;|\||\$\(|\{)\s*(?:(?:if|then|do|while|until|sudo|command|exec|time|nohup|cmd(?:\.exe)?\s+\/c)\s+|env(?:\s+[A-Za-z_][\w]*=(?:"[^"]*"|'[^']*'|\S+))*\s+)*(?:&\s*)?(node(?:\.exe)?|node\.exe|npm(?:\.cmd)?|npx(?:\.cmd)?|rg(?:\.exe)?|ripgrep(?:\.exe)?|curl|wget|Invoke-WebRequest|irm)(?=\s|$)/g;
+    const command = /(?:^|&&|\|\||;|\||\$\(|\{)\s*(?:(?:if|then|do|while|until|sudo|command|exec|time|nohup|cmd(?:\.exe)?\s+\/c)\s+|env(?:\s+[A-Za-z_][\w]*=(?:"[^"]*"|'[^']*'|\S+))*\s+)*(?:&\s*)?(git(?:\.exe)?|node(?:\.exe)?|npm(?:\.cmd)?|npx(?:\.cmd)?|rg(?:\.exe)?|ripgrep(?:\.exe)?|curl|wget|Invoke-WebRequest|irm)(?=\s|$)/g;
     for (const match of line.matchAll(command)) {
       add(kindForProgram(match[1]), lineNumber, line);
     }
@@ -77,7 +98,11 @@ function findForbiddenDependencies(source) {
       add('external-downloader', lineNumber, line);
     }
 
-    if (/\bStart-Process\s+(?:-FilePath\s+)?node(?:\.exe)?\b/i.test(line) || /&\s+\$Node(?:Bin|Path|Exe)?\b/i.test(line)) {
+    const startProcess = /\bStart-Process\s+(?:-FilePath\s+)?(git(?:\.exe)?|node(?:\.exe)?)\b/i.exec(line);
+    if (startProcess) {
+      add(kindForProgram(startProcess[1]), lineNumber, line);
+    }
+    if (/&\s+\$Node(?:Bin|Path|Exe)?\b/i.test(line)) {
       add('node', lineNumber, line);
     }
 
@@ -96,7 +121,7 @@ function findForbiddenDependencies(source) {
     if (/(?:^|&&|\|\||;|\||\$\(|\{)\s*(?:sudo\s+)?(?:apt(?:-get)?|brew|choco|winget|dnf|yum|apk|pacman)\b[^;|&]*\b(?:install|add)\b[^;|&]*\b(?:rg|ripgrep)\b/i.test(line)) {
       add('system-ripgrep', lineNumber, line);
     }
-    const yamlCommand = /^\s*run:\s*(node(?:\.exe)?|npm(?:\.cmd)?|npx(?:\.cmd)?|rg(?:\.exe)?|ripgrep(?:\.exe)?)(?=\s|$)/i.exec(line);
+    const yamlCommand = /^\s*run:\s*(git(?:\.exe)?|node(?:\.exe)?|npm(?:\.cmd)?|npx(?:\.cmd)?|rg(?:\.exe)?|ripgrep(?:\.exe)?)(?=\s|$)/i.exec(line);
     if (yamlCommand) {
       add(kindForProgram(yamlCommand[1]), lineNumber, line);
     }
@@ -110,6 +135,19 @@ function findForbiddenDependencies(source) {
 }
 
 const executableDependencyFixtures = [
+  ['git command', 'git status --short', ['system-git']],
+  ['git executable', 'git.exe status --short', ['system-git']],
+  ['environment git wrapper', 'env CI=1 git status --short', ['system-git']],
+  ['sudo git wrapper', 'sudo git status --short', ['system-git']],
+  ['PowerShell call operator git', '& git.exe status --short', ['system-git']],
+  ['PowerShell Start-Process git', 'Start-Process git -ArgumentList "status --short"', ['system-git']],
+  ['PowerShell Start-Process git executable', 'Start-Process -FilePath git.exe -ArgumentList "status --short"', ['system-git']],
+  ['PowerShell git wrapper', 'pwsh -NoProfile -Command "git status --short"', ['system-git']],
+  ['Bash git wrapper', 'bash -c "git status --short"', ['system-git']],
+  ['Shell git executable wrapper', 'sh -c "git.exe status --short"', ['system-git']],
+  ['Cmd git wrapper', 'cmd /c git status --short', ['system-git']],
+  ['Cmd quoted git wrapper', 'cmd.exe /c "git.exe status --short"', ['system-git']],
+  ['YAML git command', 'run: git status --short', ['system-git']],
   ['node file', 'node ./helper.mjs', ['node']],
   ['node eval', 'node -e "console.log(1)"', ['node']],
   ['node executable', 'node.exe --version', ['node']],
@@ -154,12 +192,39 @@ const allowedDependencyFixtures = [
   'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24',
 ];
 
+const badgePublishFixture = `
+      - name: Publish supported-Claude-version badge
+        run: |
+          git init -q -b badges
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add claude-version.json
+          git commit -q -m "compat-daily: claude $version verified"
+          git push -fq "https://x-access-token:\${GH_TOKEN}@github.com/\${GITHUB_REPOSITORY}.git" HEAD:badges
+`;
+
 for (const [label, source, expected] of executableDependencyFixtures) {
   assert.deepEqual(findForbiddenDependencies(source).map(match => match.kind), expected, `${label} must be rejected`);
 }
 for (const source of allowedDependencyFixtures) {
   assert.deepEqual(findForbiddenDependencies(source), [], `${source} must remain allowed`);
 }
+assert.deepEqual(
+  findForbiddenDependencies(badgePublishFixture, { allowBadgePublishGit: true }),
+  [],
+  'the existing badge-publish Git commands must remain the only system Git workflow exception',
+);
+assert.deepEqual(
+  findForbiddenDependencies(badgePublishFixture.replace('git add claude-version.json', 'git status --short'), { allowBadgePublishGit: true })
+    .map(match => match.kind),
+  ['system-git'],
+  'an unlisted Git command inside the badge-publish step must be rejected',
+);
+assert.deepEqual(
+  findForbiddenDependencies('run: |\n  git add claude-version.json', { allowBadgePublishGit: true }).map(match => match.kind),
+  ['system-git'],
+  'a badge Git command outside the named badge-publish step must be rejected',
+);
 
 for (const reference of allowedReferences) {
   assert.deepEqual(findForbiddenDependencies(reference), [], `policy must allow ${reference}`);
@@ -174,15 +239,29 @@ const testFiles = readdirSync(join(root, 'tests')).filter(path => path.endsWith(
 for (const path of testFiles) {
   assert.match(read(`tests/${path}`), /^#!\/usr\/bin\/env bun\r?\n/, `tests/${path} must run under Bun`);
 }
+assert.deepEqual(
+  findForbiddenDependencies(read('tests/installer-e2e.mjs')),
+  [],
+  'the network installer E2E must trap rather than execute system Git, Node, npm, downloaders, or system ripgrep',
+);
 
 for (const path of paths.docs) {
   const source = read(path);
   assert.doesNotMatch(source, /\|\s*\*\*Node\.js\*\*\s*\|/i, `${path} must not list Node.js as a prerequisite`);
   assert.deepEqual(
-    findForbiddenDependencies(source).filter(match => match.kind !== 'external-downloader'),
+    findForbiddenDependencies(source).filter(match => !['external-downloader', 'system-git'].includes(match.kind)),
     [],
     `${path} must not document executable Node, npm, or system ripgrep dependencies`,
   );
+  if (path.startsWith('README')) {
+    const installSection = source.match(/## (?:安装 ClawGod Plus|Install ClawGod Plus|ClawGod Plus をインストール)[\s\S]*?(?=\n## )/)?.[0];
+    assert.equal(typeof installSection, 'string', `${path} must retain its install section`);
+    assert.deepEqual(
+      findForbiddenDependencies(installSection).filter(match => match.kind === 'system-git'),
+      [],
+      `${path} install requirements must not depend on system Git`,
+    );
+  }
 }
 
 const readmeFeatureMarkers = {
@@ -206,9 +285,31 @@ for (const path of ['README.md', 'README_EN.md', 'README_JP.md']) {
   assert.match(source, /uninstall|Uninstall|卸载|アンインストール/, `${path} must retain uninstall documentation`);
   assert.match(source, /bun "\$test_file"/, `${path} must show Bun test commands`);
   assert.doesNotMatch(source, /包含 8 个针对性回归脚本|includes eight focused regression scripts|8 本の回帰スクリプト/, `${path} must not hard-code the stale focused-test count`);
+  for (const marker of [
+    'claude-hud@claude-hud', 'claude-mem@thedotmack', 'superpowers@superpowers-marketplace',
+    '0.7.0', '13.14.0', '6.2.0', 'hub.211107.xyz', 'statusLine',
+  ]) {
+    assert.ok(source.includes(marker), `${path} must document managed plugin dependency marker ${marker}`);
+  }
+  assert.match(source, /SHA-256/i, `${path} must document fixed plugin archive hashes`);
+  assert.match(source, /statusLine[\s\S]{0,240}Bun|Bun[\s\S]{0,240}statusLine/i, `${path} must document the Bun HUD statusLine`);
+  const claudeMemSection = source.match(/## claude-mem[^\n]*\n[\s\S]*?(?=\n## )/i)?.[0] ?? '';
+  for (const marker of ['Bun', 'MCP']) assert.ok(claudeMemSection.includes(marker), `${path} claude-mem section must document ${marker} entrypoints`);
+  assert.match(claudeMemSection, /hooks?|Hook/i, `${path} claude-mem section must document Hook entrypoints`);
+  assert.match(source, /warning|警告/i, `${path} must explain optional plugin warning semantics`);
   for (const marker of readmeFeatureMarkers[path]) {
     assert.ok(source.includes(marker), `${path} must retain ${marker}`);
   }
+}
+
+const localizedPluginContracts = {
+  'README.md': ['保留已安装的更高版本', '不会把 Claude Code 固定到插件版本', '保留插件缓存、Marketplace 注册和 claude-mem 记忆数据', '保留并报告为未经 Bun 验证'],
+  'README_EN.md': ['preserves any installed newer version', 'does not pin Claude Code to plugin versions', 'keeps plugin caches, marketplace registrations, and claude-mem memory data', 'preserved and reported as not Bun-verified'],
+  'README_JP.md': ['インストール済みの新しいバージョンを維持', 'Claude Code をプラグインのバージョンに固定しません', 'プラグインキャッシュ、Marketplace 登録、claude-mem のメモリデータを保持', '保持し、Bun 未検証として報告'],
+};
+for (const [path, markers] of Object.entries(localizedPluginContracts)) {
+  const source = read(path);
+  for (const marker of markers) assert.ok(source.includes(marker), `${path} must document: ${marker}`);
 }
 
 const agents = read('AGENTS.md');
@@ -216,10 +317,25 @@ assert.match(agents, /two parts|两部分/i, 'AGENTS.md must describe the two-pa
 assert.match(agents, /@anthropic-ai\/claude-code-<platform>/, 'AGENTS.md must use the correct Claude Code package name');
 assert.match(agents, /Bun-only[\s\S]{0,100}CI|CI[\s\S]{0,100}Bun-only/i, 'AGENTS.md must document the Bun-only CI contract');
 assert.match(agents, /Linux[\s\S]{0,160}Windows|Windows[\s\S]{0,160}Linux/i, 'AGENTS.md must describe the current Bun-only Linux and Windows workflow');
+assert.match(agents, /plugin-dependencies\.mjs/, 'AGENTS.md must name the generated optional plugin manager');
+assert.match(agents, /bun tests\/installer-plugin-dependencies\.mjs/, 'AGENTS.md must name the focused optional plugin dependency test');
 assert.doesNotMatch(agents, /Task 7|temporary workflow exception|cache-cleanup-weekly/i, 'AGENTS.md must reject completed-task exceptions and deleted workflow references');
 
 const workflow = read('.github/workflows/compat-daily.yml');
-assert.deepEqual(findForbiddenDependencies(workflow), [], 'compat-daily must not require an external Node, npm, or system ripgrep executable');
+const installerE2E = read('tests/installer-e2e.mjs');
+assert.match(installerE2E, /\['node', 'npm', 'rg', 'tar', 'unzip', 'git'\]/, 'Unix installer E2E must trap system Git with the other forbidden dependencies');
+assert.match(installerE2E, /claude-hud-current-style\.json/, 'Unix installer E2E must execute the committed HUD golden fixture');
+for (const marker of [
+  'HUD statusline: bun-only current-style=exact',
+  'claude-mem entrypoints: hooks=bun mcp=bun',
+  'plugin retention: hud=present memory=present superpowers=present',
+]) {
+  assert.ok(installerE2E.includes(marker), `Unix installer E2E must produce ${marker}`);
+}
+assert.equal(installerE2E.match(/validatePluginSummary\((?:initialInstallOutput|noUpgradeOutput)\)/g)?.length, 2, 'Unix installer E2E must validate the exact optional plugin summary after both installs');
+assert.match(installerE2E, /expectedSettingsAfterUninstall/, 'Unix installer E2E must derive settings by removing only managed statusLine');
+assert.match(installerE2E, /claude-mem[\s\S]{0,160}sentinel/i, 'Unix installer E2E must preserve claude-mem sentinel data');
+assert.deepEqual(findForbiddenDependencies(workflow, { allowBadgePublishGit: true }), [], 'compat-daily must not require an external Node, npm, system Git, or system ripgrep executable outside badge publishing');
 assert.equal(workflow.match(/FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/g)?.length, 1, 'compat-daily must retain exactly one GitHub Actions runtime setting');
 assert.match(workflow, /^\s*FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*["']true["']\s*$/m, 'compat-daily must keep the exact GitHub Actions Node 24 opt-in');
 assert.match(workflow, /GitHub-hosted Actions[^\n]*internals|internals[^\n]*GitHub-hosted Actions/i, 'compat-daily must explain that the Node 24 setting applies only to GitHub-hosted Actions internals');
@@ -233,12 +349,17 @@ for (const variable of ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) {
 for (const command of ['-LeanOn', '-NoUpgrade -LeanOff', '-Uninstall']) {
   assert.ok(workflow.includes(command), `Windows smoke must exercise install.ps1 ${command}`);
 }
-for (const dependency of ['node', 'npm', 'rg', 'tar', 'unzip']) {
+for (const dependency of ['node', 'npm', 'rg', 'tar', 'unzip', 'git', 'git.exe']) {
   assert.match(workflow, new RegExp(`['"]${dependency}['"]`), `Windows smoke must trap ${dependency} with a command shim`);
 }
 assert.match(workflow, /\.clawgod\\vendor\\ripgrep\\bin\\rg\.exe/, 'Windows smoke must execute the private ripgrep binary');
 assert.match(workflow, /forbidden dependency invoked:/, 'compat smoke must fail on the forbidden dependency marker');
-assert.match(workflow, /tests\/\*\.mjs/, 'compat path filters must include every Bun test');
+assert.equal(workflow.match(/['"]tests\/\*\*['"]/g)?.length, 2, 'compat path filters must include all tests and fixtures for push and pull requests');
+for (const path of ['README.md', 'README_EN.md', 'README_JP.md', 'AGENTS.md']) {
+  assert.equal(workflow.match(new RegExp(`['"]?${path.replace('.', '\\.')}['"]?`, 'g'))?.length, 2, `compat path filters must include ${path} twice`);
+}
+assert.equal(workflow.match(/docs\/superpowers\/specs\/2026-08-09-claude-plugin-dependencies-design\.md/g)?.length, 2, 'compat filters must include the plugin design spec twice');
+assert.equal(workflow.match(/docs\/superpowers\/plans\/2026-08-09-claude-plugin-dependencies\.md/g)?.length, 2, 'compat filters must include the plugin plan twice');
 assert.match(workflow, /scripts\/rebuild-helper-zips\.mjs/, 'compat path filters must include the ZIP rebuild script');
 assert.equal(workflow.match(/claude-browser-1\.0\.77-patched\.zip/g)?.length, 2, 'browser extension ZIP changes must trigger both push and pull-request compat runs');
 assert.match(workflow, /Assert-PatchSummary/, 'Windows smoke must enforce patch summaries independently of child process exit codes');
@@ -255,10 +376,26 @@ assert.match(workflow, /\.local\\bin\\claude\.exe/, 'Windows uninstall checks mu
 assert.match(workflow, /\.local\\bin\\clawgod\.cmd/, 'Windows uninstall checks must cover the explicit alias');
 assert.match(workflow, /clawgod-settings-backup\.json/, 'Windows uninstall checks must cover claude-mem backup state');
 assert.match(workflow, /clawgod-settings-state\.json/, 'Windows uninstall checks must cover claude-mem managed state');
+assert.match(workflow, /ConvertFrom-Json/, 'Windows plugin assertions must parse JSON with PowerShell APIs');
+assert.match(workflow, /claude-hud-current-style\.json/, 'Windows smoke must execute the committed HUD golden fixture');
+assert.match(workflow, /expectedSettingsAfterUninstall/, 'Windows smoke must derive settings by removing only managed statusLine');
+for (const marker of [
+  'Optional plugins: 3 ready, 0 warnings',
+  'HUD statusline: bun-only current-style=exact',
+  'claude-mem entrypoints: hooks=bun mcp=bun',
+  'plugin retention: hud=present memory=present superpowers=present',
+]) {
+  assert.ok(workflow.includes(marker), `Windows smoke must assert ${marker}`);
+}
 assert.equal(existsSync(join(root, '.github/workflows/cache-cleanup-weekly.yml')), false, 'obsolete npm cache cleanup workflow must not return');
 for (const path of readdirSync(join(root, '.github/workflows')).filter(path => /\.ya?ml$/.test(path))) {
   const source = read(`.github/workflows/${path}`);
-  assert.deepEqual(findForbiddenDependencies(source), [], `.github/workflows/${path} must not add an executable Node, npm, or system ripgrep dependency`);
+  const matches = findForbiddenDependencies(source, { allowBadgePublishGit: path === 'compat-daily.yml' });
+  assert.deepEqual(
+    path === 'compat-daily.yml' ? matches : matches.filter(match => match.kind !== 'system-git'),
+    [],
+    `.github/workflows/${path} must not add a product Node, npm, downloader, or system ripgrep dependency; compat Git is limited to badge publishing`,
+  );
 }
 
 for (const path of paths.installers) {
