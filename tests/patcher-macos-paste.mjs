@@ -5,28 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
-
-function extractUnixPatcher() {
-  const marker = 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\'';
-  const start = unixInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed patch.mjs');
-  const bodyStart = unixInstaller.indexOf('\n', start) + 1;
-  const end = unixInstaller.indexOf('\nPATCHER_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh patcher heredoc must end');
-  return unixInstaller.slice(bodyStart, end);
-}
-
-function extractPowerShellPatcher() {
-  const marker = "$patcherCode = @'\n";
-  const start = powerShellInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must embed patch.mjs');
-  const bodyStart = start + marker.length;
-  const end = powerShellInstaller.indexOf("\n'@\n\nSet-Content", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 patcher here-string must end');
-  return powerShellInstaller.slice(bodyStart, end);
-}
+const patcher = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
 
 // Pre-v2.2 paste handler: the clipboard-read fallback was gated behind the
 // TemporaryItems screenshot-path check (N&&d), so other image paths got typed
@@ -90,13 +69,10 @@ paste(${JSON.stringify(imageUrl)},true);
 setTimeout(()=>console.log(JSON.stringify(calls)),0);
 `;
 
-for (const [name, patcher] of [
-  ['install.sh', extractUnixPatcher()],
-  ['install.ps1', extractPowerShellPatcher()],
-]) {
+for (const [name, patcherSource] of [['canonical patcher', patcher]]) {
   const dir = mkdtempSync(join(tmpdir(), 'clawgod-macos-paste-'));
   try {
-    writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
+    writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
 
     // Legacy paste handler fallback patch still applies to old bundles.
     writeFileSync(join(dir, 'cli.original.cjs'), legacyPasteFixture, 'utf8');

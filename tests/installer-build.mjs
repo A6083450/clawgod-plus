@@ -47,6 +47,11 @@ const rendered = renderTemplate(
   { FIRST: 'one', SECOND: 'two' },
 );
 assert.equal(rendered, 'before\none\nmiddle\ntwo\nafter\n', 'renderTemplate must replace each declared placeholder once');
+assert.equal(
+  renderTemplate('@@CLAWGOD_SOURCE@@\n', { SOURCE: 'literal $& $1 $$\n' }),
+  'literal $& $1 $$\n',
+  'renderTemplate must preserve replacement metacharacters as exact canonical source bytes',
+);
 
 assert.throws(
   () => renderTemplate('no marker here\n', { REQUIRED: 'value' }),
@@ -829,6 +834,7 @@ try {
     'src/generic/runtime/claude-mem-compat.cjs',
     'src/generic/runtime/plugin-dependencies.mjs',
     'src/generic/runtime/claude-hud-statusline.mjs',
+    'src/generic/patcher/entry.mjs',
   ]) {
     const destination = join(cliRoot, path);
     mkdirSync(dirname(destination), { recursive: true });

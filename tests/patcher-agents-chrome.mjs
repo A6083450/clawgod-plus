@@ -6,14 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const root = new URL('..', import.meta.url);
-const installSh = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const startMarker = 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\'';
-const start = installSh.indexOf(startMarker);
-assert.notEqual(start, -1, 'install.sh must embed patch.mjs');
-const bodyStart = installSh.indexOf('\n', start) + 1;
-const end = installSh.indexOf('\nPATCHER_EOF', bodyStart);
-assert.notEqual(end, -1, 'install.sh patcher heredoc must end');
-const patcher = installSh.slice(bodyStart, end);
+const patcher = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
 
 const dir = mkdtempSync(join(tmpdir(), 'clawgod-patcher-'));
 try {

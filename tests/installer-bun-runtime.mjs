@@ -18,6 +18,7 @@ const canonicalRuntime = Object.fromEntries(
 canonicalRuntime['plugin-dependencies.mjs'] = renderTemplate(canonicalRuntime['plugin-dependencies.mjs'], {
   HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(canonicalRuntime['claude-hud-statusline.mjs'])).slice(1, -1),
 });
+canonicalRuntime['patcher.mjs'] = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
 
 function assertTemporaryPath(path, label) {
   const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];
@@ -61,16 +62,6 @@ function unixTemplate(name, marker) {
   const end = unix.indexOf(`\n${marker.match(/<< '([^']+)'/)?.[1]}`, bodyStart);
   assert.notEqual(end, -1, `install.sh ${name} template must end`);
   return unix.slice(bodyStart, end);
-}
-
-function powerShellTemplate(name, firstLine) {
-  const marker = `@'\n${firstLine}`;
-  const start = windows.indexOf(marker);
-  assert.notEqual(start, -1, `install.ps1 must generate ${name}`);
-  const bodyStart = start + 3;
-  const end = windows.indexOf("\n'@", bodyStart);
-  assert.notEqual(end, -1, `install.ps1 ${name} template must end`);
-  return windows.slice(bodyStart, end);
 }
 
 function powerShellRuntimePayload(name) {
@@ -906,7 +897,7 @@ const windowsTemplates = {
   'extract-natives.mjs': powerShellRuntimePayload('ExtractorBytes').toString('utf8').trimEnd(),
   'post-process.mjs': powerShellRuntimePayload('PostProcessorBytes').toString('utf8').trimEnd(),
   'repatch.mjs': powerShellRuntimePayload('RepatcherBytes').toString('utf8').trimEnd(),
-  'patch.mjs': powerShellTemplate('patch.mjs', '#!/usr/bin/env bun\n/**\n * ClawGod Plus Universal Patcher'),
+  'patch.mjs': powerShellRuntimePayload('PatcherBytes').toString('utf8').trimEnd(),
   'fetch-file.mjs': powerShellRuntimePayload('FetchFileBytes').toString('utf8').trimEnd(),
 };
 
@@ -917,6 +908,7 @@ const runtimeDefinitions = [
   ['extract-natives.mjs', 'extractor.mjs', 'ExtractorBytes', 'cat > "$CLAWGOD_DIR/extract-natives.mjs" << \'EXTRACTOR_EOF\''],
   ['post-process.mjs', 'post-processor.mjs', 'PostProcessorBytes', 'cat > "$CLAWGOD_DIR/post-process.mjs" << \'POSTPROC_EOF\''],
   ['repatch.mjs', 'repatcher.mjs', 'RepatcherBytes', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''],
+  ['patch.mjs', 'patcher.mjs', 'PatcherBytes', 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\''],
   ['cli.cjs', 'wrapper.cjs', 'WrapperBytes', 'cat > "$CLAWGOD_DIR/cli.cjs" << \'WRAPPER_EOF\''],
   ['openai-proxy.cjs', 'openai-proxy.cjs', 'OpenAIProxyBytes', 'cat > "$CLAWGOD_DIR/openai-proxy.cjs" << \'PROXY_EOF\''],
   ['claude-mem-compat.cjs', 'claude-mem-compat.cjs', 'ClaudeMemCompatBytes', 'cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << \'CLAUDE_MEM_COMPAT_EOF\''],

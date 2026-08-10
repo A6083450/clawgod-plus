@@ -16,34 +16,13 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const root = realpathSync(new URL('../', import.meta.url));
-const unixInstaller = readFileSync(join(root, 'install.sh'), 'utf8');
-const windowsInstaller = readFileSync(join(root, 'install.ps1'), 'utf8');
+const patcher = readFileSync(join(root, 'src/generic/patcher/entry.mjs'), 'utf8');
 
 function assertTemporaryPath(path, parent, label) {
   const resolvedParent = realpathSync(parent);
   const resolvedPath = realpathSync(path);
   const child = relative(resolvedParent, resolvedPath);
   assert.ok(child && child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child), `${label} must stay under its fixture root`);
-}
-
-function extractUnixPatcher() {
-  const marker = 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\'';
-  const start = unixInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed patch.mjs');
-  const bodyStart = unixInstaller.indexOf('\n', start) + 1;
-  const end = unixInstaller.indexOf('\nPATCHER_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh patcher heredoc must end');
-  return unixInstaller.slice(bodyStart, end);
-}
-
-function extractWindowsPatcher() {
-  const marker = "$patcherCode = @'\n";
-  const start = windowsInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must embed patch.mjs');
-  const bodyStart = start + marker.length;
-  const end = windowsInstaller.indexOf("\n'@\n\nSet-Content", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 patcher here-string must end');
-  return windowsInstaller.slice(bodyStart, end);
 }
 
 const fixtureSource = `
@@ -162,8 +141,7 @@ process.exit(Number(process.env.RUN_EXIT||0));
 }
 
 const patchedUpdateBranches = [
-  ['install.sh', patchUpdateBranch('install.sh', extractUnixPatcher())],
-  ['install.ps1', patchUpdateBranch('install.ps1', extractWindowsPatcher())],
+  ['canonical patcher', patchUpdateBranch('canonical patcher', patcher)],
 ];
 
 function windowsUpdateCommandSource(code) {
@@ -176,12 +154,6 @@ const expectedWindowsCommand = "'powershell','-NoProfile','-ExecutionPolicy','By
 for (const [label, code] of patchedUpdateBranches) {
   assert.equal(windowsUpdateCommandSource(code), expectedWindowsCommand, `${label} must generate the complete PowerShell execution-policy argv in exact order`);
 }
-assert.equal(
-  windowsUpdateCommandSource(patchedUpdateBranches[0][1]),
-  windowsUpdateCommandSource(patchedUpdateBranches[1][1]),
-  'Unix and PowerShell installers must generate identical Windows update argv',
-);
-
 for (const [label, code] of patchedUpdateBranches) {
 
   for (const windows of [false, true]) {

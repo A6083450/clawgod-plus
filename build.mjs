@@ -58,8 +58,8 @@ export function renderTemplate(template, replacements) {
     const token = placeholder(name);
     const value = String(replacementValue);
     rendered = value.endsWith('\n') && rendered.includes(`${token}\n`)
-      ? rendered.replace(`${token}\n`, value)
-      : rendered.replace(token, value);
+      ? rendered.replace(`${token}\n`, () => value)
+      : rendered.replace(token, () => value);
   }
 
   const remaining = rendered.match(PLACEHOLDER_CANDIDATE_PATTERN);
@@ -100,6 +100,7 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     CLAUDE_MEM_COMPAT_CJS: 'src/generic/runtime/claude-mem-compat.cjs',
     PLUGIN_DEPENDENCIES_MJS: 'src/generic/runtime/plugin-dependencies.mjs',
     CLAUDE_HUD_STATUSLINE_MJS: 'src/generic/runtime/claude-hud-statusline.mjs',
+    PATCHER_MJS: 'src/generic/patcher/entry.mjs',
   };
   const runtimeSources = Object.fromEntries(await Promise.all(
     Object.entries(runtimeSourceFiles).map(async ([name, path]) => [

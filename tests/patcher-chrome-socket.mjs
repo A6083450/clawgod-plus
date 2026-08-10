@@ -6,8 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 
-const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const patcher = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
 const unixHelper = readFileSync(new URL('../apply-claude-code-chrome-fix.sh', import.meta.url), 'utf8');
 const powerShellHelper = readFileSync(new URL('../apply-claude-code-chrome-fix.ps1', import.meta.url), 'utf8');
 
@@ -27,26 +26,6 @@ for (const [name, helper] of [
   );
   assert.match(helper, /legacyClientFactory/, `${name}: helper must detect legacy synchronous Chrome patches`);
   assert.match(helper, /__ccpp_bridge_fallback_v2/, `${name}: helper must mark the async-safe Chrome patch version`);
-}
-
-function extractUnixPatcher() {
-  const marker = 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\'';
-  const start = unixInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed patch.mjs');
-  const bodyStart = unixInstaller.indexOf('\n', start) + 1;
-  const end = unixInstaller.indexOf('\nPATCHER_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh patcher heredoc must end');
-  return unixInstaller.slice(bodyStart, end);
-}
-
-function extractPowerShellPatcher() {
-  const marker = "$patcherCode = @'\n";
-  const start = powerShellInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must embed patch.mjs');
-  const bodyStart = start + marker.length;
-  const end = powerShellInstaller.indexOf("\n'@\n\nSet-Content", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 patcher here-string must end');
-  return powerShellInstaller.slice(bodyStart, end);
 }
 
 function extractUnixHelperPatcher() {
@@ -113,19 +92,16 @@ function evaluate(code) {
 }
 
 let helperAcornSource;
-for (const [name, patcher] of [
-  ['install.sh', extractUnixPatcher()],
-  ['install.ps1', extractPowerShellPatcher()],
-]) {
+for (const [name, patcherSource] of [['canonical patcher', patcher]]) {
   for (const noAcorn of [false, true]) {
     for (const [fixtureName, fixture] of fixtures) {
       const mode = noAcorn ? 'regex fallback' : 'AST';
       const label = `${name} ${mode} ${fixtureName}`;
       const dir = mkdtempSync(join(tmpdir(), 'clawgod-chrome-socket-'));
       try {
-        assert.doesNotMatch(patcher, /require\(['"]acorn['"]\)/, `${label}: ambient package caches must not select Acorn`);
+        assert.doesNotMatch(patcherSource, /require\(['"]acorn['"]\)/, `${label}: ambient package caches must not select Acorn`);
         if (noAcorn) disableAcorn(dir);
-        writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
+        writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
         writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 
         const args = noAcorn ? ['no-fetch.cjs', './patch.mjs'] : ['patch.mjs'];
