@@ -644,8 +644,8 @@ Install-FetchFileHelper
  * }} PluginContext
  */
 
-import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 export const PLUGIN_BASELINES = Object.freeze({
   hud: Object.freeze({
@@ -698,8 +698,17 @@ function decodeTarText(bytes, label, spec) {
 }
 
 function parseTarNumber(bytes, label, spec) {
-  const value = decodeTarText(bytes, label, spec).trim();
-  if (!/^[0-7]+$/.test(value)) throw new Error(`${spec.key}: malformed tar ${label}`);
+  if (bytes.some(byte => byte > 0x7f)) throw new Error(`${spec.key}: malformed tar ${label}`);
+  const field = String.fromCharCode(...bytes);
+  const nul = field.indexOf('\0');
+  let value;
+  if (nul === -1) {
+    if (!/^ *[0-7]+ *$/.test(field)) throw new Error(`${spec.key}: malformed tar ${label}`);
+    value = field.trim();
+  } else {
+    if (!/^ *[0-7]+ *\0 *$/.test(field)) throw new Error(`${spec.key}: malformed tar ${label}`);
+    value = field.slice(0, nul).trim();
+  }
   const parsed = Number.parseInt(value, 8);
   if (!Number.isSafeInteger(parsed)) throw new Error(`${spec.key}: malformed tar ${label}`);
   return parsed;
@@ -772,13 +781,38 @@ function normalizeArchivePath(value, spec) {
   return normalized;
 }
 
-function parseTar(bytes, spec) {
-  let tar;
+async function gunzipBounded(bytes, spec) {
+  const chunks = [];
+  let total = 0;
+  let reader;
   try {
-    tar = Bun.gunzipSync(bytes);
-  } catch {
+    reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      total += chunk.byteLength;
+      if (total > MAX_EXPANDED_BYTES) {
+        try { await reader.cancel(); } catch {}
+        throw new Error(`${spec.key}: decompressed archive exceeds safety limit`);
+      }
+      chunks.push(chunk);
+    }
+  } catch (error) {
+    if (error?.message === `${spec.key}: decompressed archive exceeds safety limit`) throw error;
     throw new Error(`${spec.key}: archive gzip is invalid`);
   }
+  const tar = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    tar.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return tar;
+}
+
+async function parseTar(bytes, spec) {
+  const tar = await gunzipBounded(bytes, spec);
   const entries = [];
   const seenPaths = new Set();
   const roots = new Set();
@@ -793,6 +827,13 @@ function parseTar(bytes, spec) {
   while (offset + TAR_BLOCK_BYTES <= tar.byteLength) {
     const header = tar.subarray(offset, offset + TAR_BLOCK_BYTES);
     if (header.every(byte => byte === 0)) {
+      const terminatorEnd = offset + 2 * TAR_BLOCK_BYTES;
+      if (terminatorEnd > tar.byteLength
+        || !tar.subarray(offset + TAR_BLOCK_BYTES, terminatorEnd).every(byte => byte === 0)
+        || tar.byteLength % TAR_BLOCK_BYTES !== 0
+        || tar.subarray(terminatorEnd).some(byte => byte !== 0)) {
+        throw new Error(`${spec.key}: malformed tar terminator or padding`);
+      }
       terminated = true;
       break;
     }
@@ -806,8 +847,12 @@ function parseTar(bytes, spec) {
     if (!['0', '5', 'x', 'g', 'L'].includes(type)) {
       throw new Error(`${spec.key}: unsupported tar link or device entry`);
     }
-    const headerSize = parseTarNumber(header.subarray(124, 136), 'size', spec);
     const metadata = type === 'x' || type === 'g' || type === 'L';
+    if (metadata && (localPax !== null || longName !== null)) {
+      throw new Error(`${spec.key}: malformed archive metadata`);
+    }
+    const headerSize = parseTarNumber(header.subarray(124, 136), 'size', spec);
+    const mode = parseTarNumber(header.subarray(100, 108), 'mode', spec);
     const effectivePax = { ...globalPax, ...(localPax || {}) };
     const size = metadata ? headerSize : paxSize(effectivePax.size, headerSize, spec);
     if (size > MAX_ENTRY_BYTES) throw new Error(`${spec.key}: archive entry exceeds safety limit`);
@@ -828,7 +873,7 @@ function parseTar(bytes, spec) {
       continue;
     }
     if (type === 'L') {
-      if (data.length === 0 || data[data.length - 1] !== 0 || longName !== null) {
+      if (data.length === 0 || data[data.length - 1] !== 0 || data.subarray(0, -1).includes(0)) {
         throw new Error(`${spec.key}: malformed GNU long-name metadata`);
       }
       longName = decodeTarText(data.subarray(0, -1), 'GNU long-name', spec);
@@ -846,10 +891,10 @@ function parseTar(bytes, spec) {
     if (seenPaths.has(path)) throw new Error(`${spec.key}: duplicate archive path`);
     seenPaths.add(path);
     roots.add(path.split('/')[0]);
-    entries.push({ path, type, data });
+    entries.push({ path, type, data, executable: (mode & 0o111) !== 0 });
   }
 
-  if (!terminated || tar.subarray(offset).some(byte => byte !== 0)) throw new Error(`${spec.key}: malformed tar terminator`);
+  if (!terminated) throw new Error(`${spec.key}: malformed tar terminator`);
   if (localPax !== null || longName !== null) throw new Error(`${spec.key}: malformed archive metadata`);
   if (roots.size !== 1) throw new Error(`${spec.key}: archive must contain a single top-level repository directory`);
   return { entries, root: roots.values().next().value };
@@ -871,10 +916,103 @@ function ensureDirectory(root, relativePath, spec) {
   return current;
 }
 
-function writeExclusive(path, bytes, spec) {
+function safeDirectoryStatus(path, spec) {
+  let status;
+  try {
+    status = lstatSync(path);
+  } catch {
+    throw new Error(`${spec.key}: unsafe managed directory`);
+  }
+  if (status.isSymbolicLink() || !status.isDirectory()) {
+    throw new Error(`${spec.key}: unsafe managed directory`);
+  }
+  return status;
+}
+
+function ensureDestinationDirectory(destination, spec) {
+  const missing = [];
+  let current = destination;
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) throw new Error(`${spec.key}: unsafe extraction destination`);
+    missing.unshift(basename(current));
+    current = parent;
+  }
+  try {
+    safeDirectoryStatus(current, spec);
+  } catch {
+    throw new Error(`${spec.key}: unsafe extraction destination`);
+  }
+  for (const part of missing) {
+    current = join(current, part);
+    mkdirSync(current, 0o700);
+    try {
+      safeDirectoryStatus(current, spec);
+    } catch {
+      throw new Error(`${spec.key}: unsafe extraction destination`);
+    }
+  }
+  return destination;
+}
+
+function ensureTrustedDirectory(root, parts, spec) {
+  safeDirectoryStatus(root, spec);
+  let current = root;
+  for (const part of parts) {
+    current = join(current, part);
+    if (existsSync(current)) safeDirectoryStatus(current, spec);
+    else {
+      mkdirSync(current, 0o700);
+      safeDirectoryStatus(current, spec);
+    }
+  }
+  return current;
+}
+
+function validateFilenameComponent(value, label) {
+  if (typeof value !== 'string' || value.length > 128
+    || value === '.' || value === '..'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    throw new Error(`plugin: invalid ${label} filename component`);
+  }
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size
+    && left.mtimeMs === right.mtimeMs;
+}
+
+function readSingleLinkFile(path) {
+  let pathBefore;
+  try {
+    pathBefore = lstatSync(path);
+  } catch {
+    return null;
+  }
+  if (!pathBefore.isFile() || pathBefore.isSymbolicLink() || pathBefore.nlink !== 1) return null;
   let descriptor;
   try {
-    descriptor = openSync(path, 'wx', 0o600);
+    descriptor = openSync(path, 'r');
+    const descriptorBefore = fstatSync(descriptor);
+    if (!descriptorBefore.isFile() || descriptorBefore.nlink !== 1 || !sameFileIdentity(pathBefore, descriptorBefore)) return null;
+    const bytes = new Uint8Array(readFileSync(descriptor));
+    const descriptorAfter = fstatSync(descriptor);
+    const pathAfter = lstatSync(path);
+    if (descriptorAfter.nlink !== 1 || pathAfter.nlink !== 1
+      || !sameFileIdentity(descriptorBefore, descriptorAfter)
+      || !sameFileIdentity(descriptorAfter, pathAfter)) return null;
+    return { bytes, identity: pathAfter };
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function writeExclusive(path, bytes, executable, spec) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, 'wx', executable ? 0o700 : 0o600);
     let offset = 0;
     while (offset < bytes.length) offset += writeSync(descriptor, bytes, offset);
   } catch {
@@ -914,8 +1052,8 @@ function containedRelativeSource(sourceRoot, source, spec) {
 
 export async function extractPluginArchive(bytes, spec, destination) {
   validateArchive(bytes, spec);
-  const archive = parseTar(bytes, spec);
-  mkdirSync(destination, { recursive: true });
+  const archive = await parseTar(bytes, spec);
+  ensureDestinationDirectory(destination, spec);
   const destinationStatus = lstatSync(destination);
   if (destinationStatus.isSymbolicLink() || !destinationStatus.isDirectory()) {
     throw new Error(`${spec.key}: unsafe extraction destination`);
@@ -926,7 +1064,7 @@ export async function extractPluginArchive(bytes, spec, destination) {
       const parent = ensureDirectory(stagingRoot, dirname(entry.path).replace(/\\/g, '/'), spec);
       const target = join(parent, entry.path.split('/').at(-1));
       if (entry.type === '5') ensureDirectory(stagingRoot, entry.path, spec);
-      else writeExclusive(target, entry.data, spec);
+      else writeExclusive(target, entry.data, entry.executable, spec);
     }
     const sourceRoot = join(stagingRoot, archive.root);
     const manifest = readJson(join(sourceRoot, '.claude-plugin', 'marketplace.json'), spec);
@@ -947,17 +1085,22 @@ export async function extractPluginArchive(bytes, spec, destination) {
 }
 
 export async function downloadAndStage(spec, context) {
-  const cacheDirectory = join(context.clawgodDir, 'cache', 'claude-plugins');
+  validateFilenameComponent(spec.key, 'key');
+  validateFilenameComponent(spec.version, 'version');
+  const cacheDirectory = ensureTrustedDirectory(context.clawgodDir, ['cache', 'claude-plugins'], spec);
   const archivePath = join(cacheDirectory, `${spec.key}-${spec.version}.tar.gz`);
-  const stagingDirectory = join(context.clawgodDir, 'staging', 'claude-plugins');
-  mkdirSync(cacheDirectory, { recursive: true });
+  const stagingDirectory = ensureTrustedDirectory(context.clawgodDir, ['staging', 'claude-plugins'], spec);
   let archiveBytes = null;
-  if (existsSync(archivePath)) {
+  let cacheIdentity = null;
+  const cachedFile = readSingleLinkFile(archivePath);
+  if (cachedFile) {
     try {
-      archiveBytes = new Uint8Array(readFileSync(archivePath));
+      archiveBytes = cachedFile.bytes;
       validateArchive(archiveBytes, spec);
+      cacheIdentity = cachedFile.identity;
     } catch {
       archiveBytes = null;
+      cacheIdentity = null;
     }
   }
   let cached = archiveBytes !== null;
@@ -977,18 +1120,29 @@ export async function downloadAndStage(spec, context) {
         throw new Error(`${spec.key}: download failed`);
       }
       if (result.exitCode !== 0) throw new Error(`${spec.key}: download failed`);
-      try {
-        archiveBytes = new Uint8Array(readFileSync(temporaryArchive));
-      } catch {
-        throw new Error(`${spec.key}: download failed`);
-      }
+      ensureTrustedDirectory(context.clawgodDir, ['cache', 'claude-plugins'], spec);
+      const temporaryFile = readSingleLinkFile(temporaryArchive);
+      if (!temporaryFile) throw new Error(`${spec.key}: download failed`);
+      archiveBytes = temporaryFile.bytes;
       validateArchive(archiveBytes, spec);
       renameSync(temporaryArchive, archivePath);
+      ensureTrustedDirectory(context.clawgodDir, ['cache', 'claude-plugins'], spec);
+      const installedFile = readSingleLinkFile(archivePath);
+      if (!installedFile) throw new Error(`${spec.key}: cache replacement is unsafe`);
+      validateArchive(installedFile.bytes, spec);
+      archiveBytes = installedFile.bytes;
+      cacheIdentity = installedFile.identity;
     } finally {
       rmSync(temporaryDirectory, { recursive: true, force: true });
     }
   }
   const sourceRoot = await extractPluginArchive(archiveBytes, spec, stagingDirectory);
+  ensureTrustedDirectory(context.clawgodDir, ['cache', 'claude-plugins'], spec);
+  const finalCacheFile = readSingleLinkFile(archivePath);
+  if (!finalCacheFile || !sameFileIdentity(cacheIdentity, finalCacheFile.identity)) {
+    throw new Error(`${spec.key}: cache changed during use`);
+  }
+  validateArchive(finalCacheFile.bytes, spec);
   return { sourceRoot, archivePath, cached };
 }
 

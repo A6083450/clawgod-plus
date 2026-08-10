@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -72,24 +72,27 @@ function writeTarString(header, offset, length, value) {
   bytes.copy(header, offset);
 }
 
-function tarHeader({ name, type = '0', size = 0 }) {
+function tarHeader({ name, type = '0', size = 0, mode = 0o755, modeField, sizeField, checksumStyle }) {
   const header = Buffer.alloc(512);
   writeTarString(header, 0, 100, name);
-  writeTarString(header, 100, 8, '0000755\0');
+  writeTarString(header, 100, 8, modeField ?? `${mode.toString(8).padStart(7, '0')}\0`);
   writeTarString(header, 108, 8, '0000000\0');
   writeTarString(header, 116, 8, '0000000\0');
-  writeTarString(header, 124, 12, `${size.toString(8).padStart(11, '0')}\0`);
+  writeTarString(header, 124, 12, sizeField ?? `${size.toString(8).padStart(11, '0')}\0`);
   writeTarString(header, 136, 12, '00000000000\0');
   header.fill(0x20, 148, 156);
   writeTarString(header, 156, 1, type);
   writeTarString(header, 257, 6, 'ustar\0');
   writeTarString(header, 263, 2, '00');
   const checksum = header.reduce((sum, byte) => sum + byte, 0);
-  writeTarString(header, 148, 8, `${checksum.toString(8).padStart(6, '0')}\0 `);
+  const checksumField = checksumStyle === 'tab'
+    ? `\t${checksum.toString(8).padStart(6, '0')}\0`
+    : `${checksum.toString(8).padStart(6, '0')}\0 `;
+  writeTarString(header, 148, 8, checksumField);
   return header;
 }
 
-function rawTar(entries) {
+function rawTarBytes(entries, options = {}) {
   const chunks = [];
   for (const entry of entries) {
     const data = Buffer.from(entry.data || '');
@@ -98,8 +101,13 @@ function rawTar(entries) {
     const padding = (512 - (data.length % 512)) % 512;
     if (padding) chunks.push(Buffer.alloc(padding));
   }
-  chunks.push(Buffer.alloc(1024));
-  return Bun.gzipSync(Buffer.concat(chunks));
+  chunks.push(Buffer.alloc((options.terminatorBlocks ?? 2) * 512));
+  if (options.tail) chunks.push(Buffer.from(options.tail));
+  return Buffer.concat(chunks);
+}
+
+function rawTar(entries, options) {
+  return Bun.gzipSync(rawTarBytes(entries, options));
 }
 
 function paxRecord(key, value) {
@@ -277,6 +285,20 @@ try {
   );
   assert.equal(readFileSync(join(metadataRoot, 'README.md'), 'utf8'), 'fixture only\n', 'valid PAX and GNU long-name metadata must extract safely');
 
+  const executableArchive = rawTar([
+    { name: 'executable-repo/.claude-plugin/marketplace.json', data: JSON.stringify({ name: 'superpowers-dev', plugins: [{ name: 'superpowers', source: './' }] }), mode: 0o644 },
+    { name: 'executable-repo/.claude-plugin/plugin.json', data: JSON.stringify({ name: 'superpowers', version: '6.2.0' }), mode: 0o644 },
+    { name: 'executable-repo/hooks/run-hook.cmd', data: '#!/bin/sh\nexit 0\n', mode: 0o755 },
+    { name: 'executable-repo/README.md', data: 'not executable\n', mode: 0o644 },
+  ]);
+  const executableRoot = await extractPluginArchive(
+    executableArchive,
+    archiveSpec(PLUGIN_BASELINES.superpowers, executableArchive),
+    join(fixtureRoot, 'valid-executable'),
+  );
+  assert.equal(statSync(join(executableRoot, 'hooks', 'run-hook.cmd')).mode & 0o777, 0o700, 'tar executable bits must produce an executable staged hook');
+  assert.equal(statSync(join(executableRoot, 'README.md')).mode & 0o777, 0o600, 'non-executable tar files must remain private and non-executable');
+
   const invalidEntries = [
     ['traversal', '../escape', '0'],
     ['absolute', '/tmp/escape', '0'],
@@ -307,13 +329,15 @@ try {
   const oversizedEntry = rawTar([{ name: 'repo/large.bin', size: 64 * 1024 * 1024 + 1 }]);
   await rejectsArchive(extractPluginArchive, oversizedEntry, PLUGIN_BASELINES.hud, fixtureRoot, 'single entry size limit', /entry.*safety limit|entry.*large/i);
 
-  const expandedLimitTar = Buffer.alloc(512 * 1024 * 1024 + 10 * 512);
-  for (let index = 0; index < 9; index++) {
-    const offset = index * (512 + 64 * 1024 * 1024);
-    tarHeader({ name: `repo/large-${index}.bin`, size: 64 * 1024 * 1024 }).copy(expandedLimitTar, offset);
-  }
-  const expandedLimitArchive = Bun.gzipSync(expandedLimitTar);
-  await rejectsArchive(extractPluginArchive, expandedLimitArchive, PLUGIN_BASELINES.hud, fixtureRoot, 'expanded data limit', /expanded.*safety limit|expanded.*large/i);
+  const decompressionBomb = Bun.gzipSync(new Uint8Array(512 * 1024 * 1024 + 1));
+  await rejectsArchive(
+    extractPluginArchive,
+    decompressionBomb,
+    PLUGIN_BASELINES.hud,
+    fixtureRoot,
+    'bounded gzip output',
+    /decompressed.*safety limit|gzip output.*limit/i,
+  );
 
   const malformedMetadata = [
     ['malformed PAX metadata', rawTar([
@@ -328,6 +352,90 @@ try {
   for (const [label, bytes] of malformedMetadata) {
     await rejectsArchive(extractPluginArchive, bytes, PLUGIN_BASELINES.hud, fixtureRoot, label, /malformed.*metadata|metadata.*malformed/i);
   }
+
+  const strictMarketplace = JSON.stringify({ name: 'claude-hud', plugins: [{ name: 'claude-hud', source: './' }] });
+  const strictPlugin = JSON.stringify({ name: 'claude-hud', version: '0.7.0' });
+  const strictTail = [
+    { name: 'strict-repo/.claude-plugin/marketplace.json', data: strictMarketplace },
+    { name: 'strict-repo/.claude-plugin/plugin.json', data: strictPlugin },
+    { name: 'strict-repo/README.md', data: 'strict fixture\n' },
+  ];
+  const parserDifferentials = [
+    ['NUL-tailed mode field', rawTar([
+      { ...strictTail[0], modeField: '000755\0x' },
+      ...strictTail.slice(1),
+    ])],
+    ['NUL-tailed size field', rawTar([
+      ...strictTail.slice(0, 2),
+      { ...strictTail[2], sizeField: '0000000017\0x' },
+    ])],
+    ['tab-prefixed checksum field', rawTar([
+      { ...strictTail[0], checksumStyle: 'tab' },
+      ...strictTail.slice(1),
+    ])],
+    ['embedded NUL GNU long name', rawTar([
+      { name: '././@LongLink', type: 'L', data: Buffer.from('strict-repo/.claude-plugin/marketplace.json\0ignored\0') },
+      { name: 'ignored-marketplace', data: strictMarketplace },
+      ...strictTail.slice(1),
+    ])],
+    ['stacked local PAX metadata', rawTar([
+      { name: 'pax-one', type: 'x', data: paxRecord('comment', 'first') },
+      { name: 'pax-two', type: 'x', data: paxRecord('path', 'strict-repo/.claude-plugin/marketplace.json') },
+      { name: 'ignored-marketplace', data: strictMarketplace },
+      ...strictTail.slice(1),
+    ])],
+    ['GNU name across global PAX metadata', rawTar([
+      { name: '././@LongLink', type: 'L', data: Buffer.from('strict-repo/.claude-plugin/marketplace.json\0') },
+      { name: 'global-pax', type: 'g', data: paxRecord('comment', 'intervening') },
+      { name: 'ignored-marketplace', data: strictMarketplace },
+      ...strictTail.slice(1),
+    ])],
+  ];
+  const acceptedParserDifferentials = [];
+  for (const [label, bytes] of parserDifferentials) {
+    try {
+      await extractPluginArchive(bytes, archiveSpec(PLUGIN_BASELINES.hud, bytes), join(fixtureRoot, `strict-${label.replace(/[^a-z0-9]+/gi, '-')}`));
+      acceptedParserDifferentials.push(label);
+    } catch (error) {
+      if (!/malformed.*(?:tar|metadata)|metadata.*malformed/i.test(error.message)) throw error;
+    }
+  }
+  assert.deepEqual(acceptedParserDifferentials, [], 'strict tar parsing must reject every numeric and metadata differential');
+
+  const strictArchive = rawTar(strictTail);
+  const checksumMutation = Buffer.from(Bun.gunzipSync(strictArchive));
+  checksumMutation[0] ^= 1;
+  await rejectsArchive(
+    extractPluginArchive,
+    Bun.gzipSync(checksumMutation),
+    PLUGIN_BASELINES.hud,
+    fixtureRoot,
+    'tar checksum mutation',
+    /checksum mismatch/i,
+  );
+  const truncatedTar = rawTarBytes(strictTail);
+  await rejectsArchive(
+    extractPluginArchive,
+    Bun.gzipSync(truncatedTar.subarray(0, truncatedTar.length - 513)),
+    PLUGIN_BASELINES.hud,
+    fixtureRoot,
+    'truncated tar padding',
+    /truncated|terminator|checksum|malformed/i,
+  );
+  const terminatorDifferentials = [
+    ['single zero terminator block', rawTar(strictTail, { terminatorBlocks: 1 })],
+    ['partial zero tail', rawTar(strictTail, { tail: Buffer.from([0]) })],
+  ];
+  const acceptedTerminatorDifferentials = [];
+  for (const [label, bytes] of terminatorDifferentials) {
+    try {
+      await extractPluginArchive(bytes, archiveSpec(PLUGIN_BASELINES.hud, bytes), join(fixtureRoot, `terminator-${label.replace(/[^a-z0-9]+/gi, '-')}`));
+      acceptedTerminatorDifferentials.push(label);
+    } catch (error) {
+      if (!/terminator|padding|block-aligned|malformed/i.test(error.message)) throw error;
+    }
+  }
+  assert.deepEqual(acceptedTerminatorDifferentials, [], 'tar parsing must require two complete zero blocks and block-aligned trailing padding');
 
   for (const [label, overrides, expected] of [
     ['marketplace name mismatch', { marketplaceName: 'wrong-marketplace' }, /marketplace name mismatch/i],
@@ -350,12 +458,16 @@ try {
   const fetchFilePath = join(clawgodDir, 'fetch-file.mjs');
   const fetchLog = join(fixtureRoot, 'fetch-log.json');
   writeFileSync(fetchFilePath, `#!/usr/bin/env bun
-import { copyFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 if (process.env.FIXTURE_FETCH_FAIL === '1') {
   console.error('fixture downloader failure: https://secret.example.test/proxy?token=do-not-leak');
   process.exit(23);
 }
 copyFileSync(process.env.FIXTURE_ARCHIVE, process.argv[3]);
+if (process.env.FIXTURE_ATTACK_CACHE_DIR) {
+  renameSync(process.env.FIXTURE_ATTACK_CACHE_DIR, process.env.FIXTURE_ATTACK_CACHE_BACKUP);
+  symlinkSync(process.env.FIXTURE_ATTACK_CACHE_BACKUP, process.env.FIXTURE_ATTACK_CACHE_DIR, process.platform === 'win32' ? 'junction' : 'dir');
+}
 writeFileSync(process.env.FIXTURE_FETCH_LOG, JSON.stringify(process.env));
 `);
   chmodSync(fetchFilePath, 0o700);
@@ -391,6 +503,95 @@ writeFileSync(process.env.FIXTURE_FETCH_LOG, JSON.stringify(process.env));
   for (const [key, value] of Object.entries(context.env)) {
     assert.equal(fetchedEnvironment[key], value, `the managed fetcher must receive context.env ${key}`);
   }
+
+  const containmentFailures = [];
+  for (const [label, maliciousSpec] of [
+    ['key separator', { ...hudSpec, key: '../hud' }],
+    ['version separator', { ...hudSpec, version: '../0.7.0' }],
+  ]) {
+    const componentRoot = join(fixtureRoot, `component-${label.replace(' ', '-')}`);
+    mkdirSync(componentRoot);
+    try {
+      await downloadAndStage(maliciousSpec, { ...context, clawgodDir: componentRoot });
+      containmentFailures.push(`${label}: accepted`);
+    } catch (error) {
+      if (!/invalid.*(?:key|version)|filename component/i.test(error.message)) containmentFailures.push(`${label}: ${error.message}`);
+    }
+  }
+
+  const symlinkCacheTarget = join(fixtureRoot, 'symlink-cache-target.tar.gz');
+  writeFileSync(symlinkCacheTarget, validArchives.hud);
+  rmSync(cachePath, { force: true });
+  symlinkSync(symlinkCacheTarget, cachePath);
+  try {
+    const result = await downloadAndStage(hudSpec, context);
+    if (result.cached || lstatSync(cachePath).isSymbolicLink() || statSync(cachePath).nlink !== 1) {
+      containmentFailures.push('cache symlink leaf: reused or retained');
+    }
+  } catch (error) {
+    containmentFailures.push(`cache symlink leaf: ${error.message}`);
+  }
+
+  const hardlinkCacheTarget = join(fixtureRoot, 'hardlink-cache-target.tar.gz');
+  writeFileSync(hardlinkCacheTarget, validArchives.hud);
+  rmSync(cachePath, { force: true });
+  linkSync(hardlinkCacheTarget, cachePath);
+  try {
+    const result = await downloadAndStage(hudSpec, context);
+    if (result.cached || statSync(cachePath).nlink !== 1 || statSync(hardlinkCacheTarget).nlink !== 1) {
+      containmentFailures.push('cache hardlink leaf: reused or retained');
+    }
+  } catch (error) {
+    containmentFailures.push(`cache hardlink leaf: ${error.message}`);
+  }
+
+  const cacheAncestorRoot = join(fixtureRoot, 'cache-ancestor-root');
+  const cacheAncestorOutside = join(fixtureRoot, 'cache-ancestor-outside');
+  mkdirSync(cacheAncestorRoot);
+  mkdirSync(cacheAncestorOutside);
+  symlinkSync(cacheAncestorOutside, join(cacheAncestorRoot, 'cache'), process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    await downloadAndStage(hudSpec, { ...context, clawgodDir: cacheAncestorRoot });
+    containmentFailures.push('cache symlink ancestor: accepted');
+  } catch (error) {
+    if (!/unsafe.*directory|symlink.*ancestor/i.test(error.message)) containmentFailures.push(`cache symlink ancestor: ${error.message}`);
+  }
+
+  const stagingAncestorRoot = join(fixtureRoot, 'staging-ancestor-root');
+  const stagingAncestorOutside = join(fixtureRoot, 'staging-ancestor-outside');
+  mkdirSync(join(stagingAncestorRoot, 'cache', 'claude-plugins'), { recursive: true });
+  writeFileSync(join(stagingAncestorRoot, 'cache', 'claude-plugins', `${hudSpec.key}-${hudSpec.version}.tar.gz`), validArchives.hud);
+  mkdirSync(stagingAncestorOutside);
+  symlinkSync(stagingAncestorOutside, join(stagingAncestorRoot, 'staging'), process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    await downloadAndStage(hudSpec, { ...context, clawgodDir: stagingAncestorRoot });
+    containmentFailures.push('staging symlink ancestor: accepted');
+  } catch (error) {
+    if (!/unsafe.*directory|symlink.*ancestor/i.test(error.message)) containmentFailures.push(`staging symlink ancestor: ${error.message}`);
+  }
+
+  const concurrentRoot = join(fixtureRoot, 'concurrent-root');
+  const concurrentCache = join(concurrentRoot, 'cache', 'claude-plugins');
+  const concurrentBackup = join(fixtureRoot, 'concurrent-cache-backup');
+  mkdirSync(concurrentCache, { recursive: true });
+  writeFileSync(join(concurrentCache, `${hudSpec.key}-${hudSpec.version}.tar.gz`), 'corrupt');
+  try {
+    await downloadAndStage(hudSpec, {
+      ...context,
+      clawgodDir: concurrentRoot,
+      env: {
+        ...context.env,
+        FIXTURE_ATTACK_CACHE_DIR: concurrentCache,
+        FIXTURE_ATTACK_CACHE_BACKUP: concurrentBackup,
+      },
+    });
+    containmentFailures.push('concurrent cache ancestor replacement: accepted');
+  } catch (error) {
+    if (!/unsafe.*directory|changed during download|cache.*replaced/i.test(error.message)) {
+      containmentFailures.push(`concurrent cache ancestor replacement: ${error.message}`);
+    }
+  }
+  assert.deepEqual(containmentFailures, [], 'cache and staging containment must reject every path, leaf, and replacement differential');
 
   const previousArchive = await pluginArchive(PLUGIN_BASELINES.hud, { root: 'previous-valid-cache' });
   writeFileSync(cachePath, previousArchive);
