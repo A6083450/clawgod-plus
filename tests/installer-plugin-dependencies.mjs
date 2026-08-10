@@ -476,6 +476,133 @@ try {
   assert.deepEqual(readFileSync(concurrentPaths.hookPath), concurrentBytes, 'a concurrent plugin edit must not be overwritten');
   assert.equal(existsSync(concurrentClaudeMem.statePath), false, 'ownership state must roll back after concurrent edit detection');
 
+  const metadataRaceOutcomes = [];
+  for (const phase of ['before-first-target-write', 'after-last-target-write']) {
+    const fixture = makeClaudeMemFixture(`metadata-race-${phase}`);
+    const selectedPaths = fixture.pathsByVersion.get('13.14.0');
+    const originalHook = readFileSync(selectedPaths.hookPath);
+    const originalMcp = readFileSync(selectedPaths.mcpPath);
+    let insertedPaths = null;
+    const insertHigherVersion = () => {
+      if (!insertedPaths) insertedPaths = fixture.addVersion('13.15.0', { description: `concurrent ${phase}` });
+    };
+    if (phase === 'before-first-target-write') {
+      fixture.context.onClaudeMemWriting = ({ relativePath }) => {
+        if (relativePath === 'hooks/hooks.json') insertHigherVersion();
+      };
+    } else {
+      fixture.context.onClaudeMemWritten = ({ relativePath }) => {
+        if (relativePath === '.mcp.json') insertHigherVersion();
+      };
+    }
+    const result = await configureClaudeMemBun(fixture.context, emptyManagedState());
+    metadataRaceOutcomes.push({ phase, status: result.status, ready: result.ready, version: result.version });
+    assert.deepEqual(readFileSync(selectedPaths.hookPath), originalHook, `${phase}: stale selected hook writes must roll back`);
+    assert.deepEqual(readFileSync(selectedPaths.mcpPath), originalMcp, `${phase}: stale selected MCP writes must roll back`);
+    assert.equal(existsSync(fixture.statePath), false, `${phase}: stale ownership state must roll back`);
+    assert.equal(readFileSync(insertedPaths.hookPath, 'utf8'), insertedPaths.hookRaw, `${phase}: the concurrent higher-version hook must be preserved`);
+    assert.equal(readFileSync(insertedPaths.mcpPath, 'utf8'), insertedPaths.mcpRaw, `${phase}: the concurrent higher-version MCP must be preserved`);
+  }
+  assert.deepEqual(metadataRaceOutcomes, [
+    { phase: 'before-first-target-write', status: 'warning', ready: false, version: null },
+    { phase: 'after-last-target-write', status: 'warning', ready: false, version: null },
+  ], 'authoritative installed metadata changes must prevent stale ready results');
+
+  const selectionIdentityRace = makeClaudeMemFixture('selected-cache-identity-race');
+  const selectionIdentityPaths = selectionIdentityRace.pathsByVersion.get('13.14.0');
+  const displacedSelection = join(selectionIdentityRace.root, 'displaced-selected-version');
+  const replacementHook = Buffer.from('external replacement hook\n');
+  const replacementMcp = Buffer.from('external replacement MCP\n');
+  selectionIdentityRace.context.onClaudeMemWriting = ({ relativePath }) => {
+    if (relativePath !== 'hooks/hooks.json') return;
+    renameSync(selectionIdentityPaths.installPath, displacedSelection);
+    mkdirSync(join(selectionIdentityPaths.installPath, 'hooks'), { recursive: true });
+    writeFileSync(selectionIdentityPaths.hookPath, replacementHook);
+    writeFileSync(selectionIdentityPaths.mcpPath, replacementMcp);
+  };
+  const selectionIdentityResult = await configureClaudeMemBun(selectionIdentityRace.context, emptyManagedState());
+  assert.equal(selectionIdentityResult.status, 'warning', 'a selected canonical cache identity change must warn');
+  assert.equal(selectionIdentityResult.ready, false);
+  assert.deepEqual(readFileSync(selectionIdentityPaths.hookPath), replacementHook, 'the external replacement hook must be preserved');
+  assert.deepEqual(readFileSync(selectionIdentityPaths.mcpPath), replacementMcp, 'the external replacement MCP must be preserved');
+  assert.equal(existsSync(selectionIdentityRace.statePath), false, 'the transaction-owned state must roll back after selected identity transfer');
+
+  const ownershipRaceOutcomes = [];
+  for (const mutation of ['replace-schema', 'delete-after-targets', 'shared-restore', 'transfer-target-and-state']) {
+    const fixture = makeClaudeMemFixture(`ownership-race-${mutation}`);
+    const paths = fixture.pathsByVersion.get('13.14.0');
+    const originalHook = readFileSync(paths.hookPath);
+    const originalMcp = readFileSync(paths.mcpPath);
+    let externalStateBytes = null;
+    let sharedRestoreRun = null;
+    if (mutation === 'replace-schema') {
+      fixture.context.onClaudeMemWriting = ({ relativePath }) => {
+        if (relativePath !== 'hooks/hooks.json') return;
+        const replacement = join(fixture.clawgodDir, 'external-state-replacement');
+        externalStateBytes = Buffer.from('{"schemaVersion":2,"external":true}\n');
+        writeFileSync(replacement, externalStateBytes);
+        renameSync(replacement, fixture.statePath);
+      };
+    } else if (mutation === 'delete-after-targets') {
+      fixture.context.onClaudeMemWritten = ({ relativePath }) => {
+        if (relativePath === '.mcp.json') rmSync(fixture.statePath);
+      };
+    } else if (mutation === 'shared-restore') {
+      fixture.context.onClaudeMemWriting = ({ relativePath }) => {
+        if (relativePath !== 'hooks/hooks.json' || sharedRestoreRun) return;
+        const childContext = {
+          home: fixture.home,
+          claudeConfigDir: fixture.claudeConfigDir,
+          clawgodDir: fixture.clawgodDir,
+          bunPath: process.execPath,
+          env: fixture.context.env,
+        };
+        const source = `const helper = await import(${JSON.stringify(`${pathToFileURL(modulePath).href}?shared-restore=${Date.now()}`)}); const result = await helper.restoreManagedIntegrations(${JSON.stringify(childContext)}); process.stdout.write(JSON.stringify(result));`;
+        sharedRestoreRun = Bun.spawnSync([process.execPath, '-e', source], {
+          cwd: fixture.root,
+          env: fixture.context.env,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        if (sharedRestoreRun.exitCode === 0) externalStateBytes = readFileSync(fixture.statePath);
+      };
+    } else {
+      fixture.context.onClaudeMemWritten = ({ relativePath }) => {
+        if (relativePath !== '.mcp.json') return;
+        const replacementHookPath = join(fixture.root, 'external-hook-replacement');
+        const replacementStatePath = join(fixture.clawgodDir, 'external-state-replacement');
+        writeFileSync(replacementHookPath, 'external hook owner\n');
+        renameSync(replacementHookPath, paths.hookPath);
+        externalStateBytes = Buffer.from('{"schemaVersion":2,"external":true}\n');
+        writeFileSync(replacementStatePath, externalStateBytes);
+        renameSync(replacementStatePath, fixture.statePath);
+      };
+    }
+    const result = await configureClaudeMemBun(fixture.context, emptyManagedState());
+    if (mutation === 'shared-restore') {
+      assert.equal(sharedRestoreRun?.exitCode, 0, sharedRestoreRun?.stderr.toString());
+      assert.deepEqual(JSON.parse(sharedRestoreRun.stdout.toString()).conflicts.sort(), [resolve(paths.hookPath), resolve(paths.mcpPath)].sort(), 'concurrent shared restore must transfer both not-yet-written targets');
+    }
+    ownershipRaceOutcomes.push({ mutation, status: result.status, ready: result.ready, version: result.version });
+    if (mutation === 'transfer-target-and-state') {
+      assert.equal(readFileSync(paths.hookPath, 'utf8'), 'external hook owner\n', 'an externally transferred target must not be rolled back');
+    } else {
+      assert.deepEqual(readFileSync(paths.hookPath), originalHook, `${mutation}: targets without a durable restore point must retain original bytes`);
+    }
+    assert.deepEqual(readFileSync(paths.mcpPath), originalMcp, `${mutation}: MCP without a durable restore point must retain original bytes`);
+    if (mutation === 'delete-after-targets') {
+      assert.equal(existsSync(fixture.statePath), false, 'an externally deleted state file must remain missing');
+    } else {
+      assert.deepEqual(readFileSync(fixture.statePath), externalStateBytes, `${mutation}: external ownership state must be preserved`);
+    }
+  }
+  assert.deepEqual(ownershipRaceOutcomes, [
+    { mutation: 'replace-schema', status: 'warning', ready: false, version: null },
+    { mutation: 'delete-after-targets', status: 'warning', ready: false, version: null },
+    { mutation: 'shared-restore', status: 'warning', ready: false, version: null },
+    { mutation: 'transfer-target-and-state', status: 'warning', ready: false, version: null },
+  ], 'ownership state replacement, deletion, and concurrent shared restore must fail closed');
+
   const restoreClaudeMem = makeClaudeMemFixture('restore-owned');
   const restorePaths = restoreClaudeMem.pathsByVersion.get('13.14.0');
   const restoreHookOriginal = readFileSync(restorePaths.hookPath);

@@ -743,6 +743,21 @@ function rollbackHudWrite(write) {
   }
 }
 
+function rollbackClaudeMemWrites(writes) {
+  const transferred = [];
+  const errors = [];
+  for (const write of [...writes].reverse()) {
+    try { assertHudSnapshotCurrent(write.postWrite, write.root, write.label); }
+    catch {
+      transferred.push(write.label);
+      continue;
+    }
+    try { rollbackHudWrite(write); }
+    catch (error) { errors.push(error); }
+  }
+  return { transferred, errors };
+}
+
 function atomicHudRemove(root, snapshot, label) {
   assertHudSnapshotCurrent(snapshot, root, label);
   if (snapshot.present) unlinkSync(snapshot.path);
@@ -929,6 +944,29 @@ function selectedClaudeMemInstall(installed, claudeConfigDir) {
   return valid[0] || null;
 }
 
+function captureClaudeMemSelection(installedSnapshot, selected, context) {
+  const directories = [];
+  let current = context.claudeConfigDir;
+  for (const part of ['', ...relative(context.claudeConfigDir, selected.installPath).split(sep).filter(Boolean)]) {
+    if (part) current = join(current, part);
+    const status = lstatSync(current);
+    if (status.isSymbolicLink() || !status.isDirectory()) throw new Error('claude-mem: unsafe selected cache identity');
+    directories.push({ path: current, dev: status.dev, ino: status.ino, mode: status.mode, nlink: status.nlink });
+  }
+  return { installedSnapshot, directories };
+}
+
+function assertClaudeMemSelectionCurrent(selection, context) {
+  assertHudSnapshotCurrent(selection.installedSnapshot, context.claudeConfigDir, 'installed plugin state');
+  for (const expected of selection.directories) {
+    const status = lstatSync(expected.path);
+    if (status.isSymbolicLink() || !status.isDirectory() || status.dev !== expected.dev || status.ino !== expected.ino
+      || status.mode !== expected.mode || status.nlink !== expected.nlink) {
+      throw new Error('claude-mem: selected cache identity changed during update');
+    }
+  }
+}
+
 export function quoteStatusLineArg(path, platform = process.platform) {
   if (typeof path !== 'string' || path.includes('\0') || path.includes('*') || path.includes('$(') || path.includes('`')) {
     throw new Error('hud: unsafe status-line path');
@@ -965,6 +1003,45 @@ function parseClaudeMemJson(relativePath, raw) {
   return value;
 }
 
+function claudeMemPluginNodePositions(command) {
+  const positions = [];
+  let quote = null;
+  let atCommandStart = true;
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index];
+    if (quote === "'") {
+      if (character === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (character === '\\') index += 1;
+      else if (character === '"') quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      if (atCommandStart) atCommandStart = false;
+      quote = character;
+      continue;
+    }
+    if (character === '\\') {
+      if (atCommandStart) atCommandStart = false;
+      index += 1;
+      continue;
+    }
+    if (character === ';' || character === '&' || character === '|' || character === '\n') {
+      atCommandStart = true;
+      continue;
+    }
+    if (atCommandStart && /\s/.test(character)) continue;
+    if (!atCommandStart) continue;
+    const candidate = command.slice(index);
+    if (/^node\s+(?=["']?\$_P\/scripts\/)/.test(candidate)) positions.push(index);
+    atCommandStart = false;
+  }
+  if (quote !== null) throw new Error('claude-mem: unterminated shell quote');
+  return positions;
+}
+
 export function rewriteClaudeMemFile(relativePath, raw, bunPath) {
   if (relativePath !== 'hooks/hooks.json' && relativePath !== '.mcp.json') {
     throw new Error('claude-mem: unsupported integration path');
@@ -994,18 +1071,22 @@ export function rewriteClaudeMemFile(relativePath, raw, bunPath) {
       if (!isPlainRecord(group) || !Array.isArray(group.hooks)) throw new Error('claude-mem: invalid hooks schema');
       for (const hook of group.hooks) {
         if (!isPlainRecord(hook) || typeof hook.command !== 'string') throw new Error('claude-mem: invalid hook command schema');
-        for (const entry of known) {
-          const escaped = entry.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const boundary = new RegExp(`(^|[;&|]\\s*)${escaped}`, 'g');
-          const matches = [...hook.command.matchAll(boundary)];
-          if (matches.length > 1) throw new Error(`claude-mem: duplicate ${entry.label} executable`);
-          if (matches.length === 1) {
-            hook.command = hook.command.replace(boundary, (_match, prefix) => `${prefix}${quotedBun}${entry.token.slice(4)}`);
-            counts[entry.label] += 1;
-          }
+        const replacements = [];
+        const commandCounts = { 'version-check': 0, 'bun-runner': 0 };
+        for (const position of claudeMemPluginNodePositions(hook.command)) {
+          const entry = known.find(candidate => hook.command.startsWith(candidate.token, position)
+            && (hook.command[position + candidate.token.length] === undefined
+              || /[\s;&|]/.test(hook.command[position + candidate.token.length])));
+          if (!entry) throw new Error('claude-mem: remaining unknown Node executable');
+          commandCounts[entry.label] += 1;
+          if (commandCounts[entry.label] > 1) throw new Error(`claude-mem: duplicate ${entry.label} executable`);
+          replacements.push({ position, entry });
         }
-        if (/(^|[;&|]\s*)node\s+(?=["']?\$_P\/scripts\/)/.test(hook.command)) {
-          throw new Error('claude-mem: remaining unknown Node executable');
+        for (const replacement of replacements.reverse()) {
+          const before = hook.command.slice(0, replacement.position);
+          const after = hook.command.slice(replacement.position + replacement.entry.token.length);
+          hook.command = `${before}${quotedBun}${replacement.entry.token.slice(4)}${after}`;
+          counts[replacement.entry.label] += 1;
         }
       }
     }
@@ -1019,6 +1100,7 @@ export function rewriteClaudeMemFile(relativePath, raw, bunPath) {
 export async function configureClaudeMemBun(context, state) {
   const spec = PLUGIN_BASELINES.memory;
   const completedWrites = [];
+  let ownershipWrite = null;
   try {
     claudeMemBunPath(context.bunPath);
     const installedPath = join(context.claudeConfigDir, 'plugins', 'installed_plugins.json');
@@ -1030,6 +1112,7 @@ export async function configureClaudeMemBun(context, state) {
     if (!selected || compareSemver(selected.record.version, spec.version) < 0) {
       throw new Error('claude-mem: no valid baseline user installation');
     }
+    const selection = captureClaudeMemSelection(installedSnapshot, selected, context);
     const statePath = join(context.clawgodDir, 'plugin-dependencies-state.json');
     const stateSnapshot = hudFileSnapshot(context.clawgodDir, statePath, 'ownership state', true);
     const nextState = validateManagedHudState(stateSnapshot.present ? stateSnapshot.value : state, !stateSnapshot.present);
@@ -1060,6 +1143,7 @@ export async function configureClaudeMemBun(context, state) {
       plans.push({ ...definition, snapshot, bytes: managedBytes, write: true });
     }
     if (plans.every(plan => !plan.write)) {
+      assertClaudeMemSelectionCurrent(selection, context);
       if (state && typeof state === 'object') {
         for (const key of Object.keys(state)) delete state[key];
         Object.assign(state, structuredClone(nextState));
@@ -1084,24 +1168,31 @@ export async function configureClaudeMemBun(context, state) {
     }))];
     for (const write of writes) {
       if (write.relativePath) context.onClaudeMemWriting?.({ relativePath: write.relativePath });
+      assertClaudeMemSelectionCurrent(selection, context);
+      if (write.relativePath && ownershipWrite) {
+        assertHudSnapshotCurrent(ownershipWrite.postWrite, ownershipWrite.root, ownershipWrite.label);
+      }
       atomicHudWrite(write.root, write.snapshot, write.bytes, write.mode, write.label);
-      completedWrites.push({ ...write, postWrite: hudFileSnapshot(write.root, write.snapshot.path, write.label) });
+      const completedWrite = { ...write, postWrite: hudFileSnapshot(write.root, write.snapshot.path, write.label) };
+      completedWrites.push(completedWrite);
+      if (!write.relativePath) ownershipWrite = completedWrite;
       if (write.relativePath) context.onClaudeMemWritten?.({ relativePath: write.relativePath });
     }
+    assertClaudeMemSelectionCurrent(selection, context);
+    assertHudSnapshotCurrent(ownershipWrite.postWrite, ownershipWrite.root, ownershipWrite.label);
     if (state && typeof state === 'object') {
       for (const key of Object.keys(state)) delete state[key];
       Object.assign(state, structuredClone(nextState));
     }
     return pluginResult(spec, 'configured', true, selected.record.version, `configured ${selected.record.version}`);
   } catch (error) {
-    const rollbackErrors = [];
-    for (const write of completedWrites.reverse()) {
-      try { rollbackHudWrite(write); }
-      catch (rollbackError) { rollbackErrors.push(rollbackError); break; }
-    }
-    const message = rollbackErrors.length > 0
-      ? `rollback incomplete: ${rollbackErrors[0].message}`
-      : (error instanceof Error ? error.message : 'claude-mem configuration failed');
+    const rollback = rollbackClaudeMemWrites(completedWrites);
+    const primary = error instanceof Error ? error.message : 'claude-mem configuration failed';
+    const message = rollback.errors.length > 0
+      ? `rollback incomplete: ${rollback.errors[0].message}`
+      : rollback.transferred.length > 0
+        ? `${primary}; ownership transferred: ${rollback.transferred.join(', ')}`
+        : primary;
     return pluginResult(spec, 'warning', false, null, `preserved but not Bun-verified: ${message}`);
   }
 }

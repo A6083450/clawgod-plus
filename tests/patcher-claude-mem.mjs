@@ -498,6 +498,25 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
     const unknownExecutable = structuredClone(hooksFixture);
     unknownExecutable.hooks.Setup[0].hooks[0].command += '; node "$_P/scripts/unknown.js"';
     assert.throws(() => rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(unknownExecutable), process.execPath), /unknown|remaining|executable|node/i, 'unknown plugin script entrypoints must fail closed');
+    const quotedDecoyOnly = structuredClone(hooksFixture);
+    quotedDecoyOnly.hooks.Setup[0].hooks[0].command = `${hookPrefix}printf '%s' 'text; node "$_P/scripts/version-check.js"'`;
+    const newlineUnknownExecutable = structuredClone(hooksFixture);
+    newlineUnknownExecutable.hooks.Setup[0].hooks[0].command += '\nnode "$_P/scripts/unknown.js"';
+    const acceptedShellDecoys = [];
+    for (const [label, fixture] of [
+      ['single-quoted version-check decoy', quotedDecoyOnly],
+      ['newline unknown executable', newlineUnknownExecutable],
+    ]) {
+      try {
+        rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(fixture), process.execPath);
+        acceptedShellDecoys.push(label);
+      } catch {}
+    }
+    assert.deepEqual(acceptedShellDecoys, [], 'quoted text must not count as an executable and newline command boundaries must reject unknown scripts');
+    const quotedTextWithRealExecutable = structuredClone(hooksFixture);
+    quotedTextWithRealExecutable.hooks.Setup[0].hooks[0].command = `${hookPrefix}printf '%s' 'text; node "$_P/scripts/version-check.js"'; ${hookCommands[0]}`;
+    const quotedTextResult = JSON.parse(rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(quotedTextWithRealExecutable), process.execPath).text);
+    assert.match(quotedTextResult.hooks.Setup[0].hooks[0].command, /printf '%s' 'text; node "\$_P\/scripts\/version-check\.js"'/, 'ordinary quoted Node text must remain byte-identical');
     const descriptiveNode = structuredClone(hooksFixture);
     descriptiveNode.hooks.Setup[0].hooks[0].note = 'run node for node:fs while native.node remains unchanged';
     const descriptiveResult = JSON.parse(rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(descriptiveNode), process.execPath).text);
