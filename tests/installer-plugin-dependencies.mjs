@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const unix = await Bun.file(new URL('../install.sh', import.meta.url)).text();
@@ -126,6 +126,41 @@ async function rejectsArchive(extractPluginArchive, bytes, base, fixtureRoot, la
   );
 }
 
+function snapshotTree(path) {
+  if (!existsSync(path)) return { present: false };
+  const status = lstatSync(path);
+  if (status.isSymbolicLink()) return { present: true, type: 'link', target: readlinkSync(path), mode: status.mode & 0o777 };
+  if (status.isFile()) return { present: true, type: 'file', bytes: readFileSync(path).toString('base64'), mode: status.mode & 0o777 };
+  assert.equal(status.isDirectory(), true, `${path} must be a regular filesystem entry`);
+  return {
+    present: true,
+    type: 'directory',
+    mode: status.mode & 0o777,
+    entries: Object.fromEntries(readdirSync(path).sort().map(name => [name, snapshotTree(join(path, name))])),
+  };
+}
+
+function snapshotContentTree(path) {
+  const status = lstatSync(path);
+  if (status.isSymbolicLink()) return { type: 'link', target: readlinkSync(path) };
+  if (status.isFile()) return { type: 'file', bytes: readFileSync(path).toString('base64'), mode: status.mode & 0o777 };
+  assert.equal(status.isDirectory(), true, `${path} must be a regular filesystem entry`);
+  return {
+    type: 'directory',
+    entries: Object.fromEntries(readdirSync(path).sort().map(name => [name, snapshotContentTree(join(path, name))])),
+  };
+}
+
+function walkTextFiles(path, values = []) {
+  const status = lstatSync(path);
+  if (status.isDirectory()) {
+    for (const name of readdirSync(path)) walkTextFiles(join(path, name), values);
+  } else if (status.isFile()) {
+    values.push(readFileSync(path, 'utf8'));
+  }
+  return values;
+}
+
 const unixModule = unixTemplate('plugin-dependencies.mjs', 'PLUGIN_DEPENDENCIES_EOF');
 const windowsModule = powerShellTemplate('plugin-dependencies.mjs', '# --- Optional Claude plugin dependencies');
 assert.equal(normalize(windowsModule), normalize(unixModule), 'Unix and Windows plugin-dependencies.mjs bodies must be identical');
@@ -184,6 +219,7 @@ try {
     classifyPlugin,
     compareSemver,
     downloadAndStage,
+    ensureMarketplacePlugin,
     extractPluginArchive,
     parseSemver,
     selectInstalledRecord,
@@ -193,6 +229,7 @@ try {
 
   assert.equal(typeof extractPluginArchive, 'function', 'plugin-dependencies.mjs must export extractPluginArchive');
   assert.equal(typeof downloadAndStage, 'function', 'plugin-dependencies.mjs must export downloadAndStage');
+  assert.equal(typeof ensureMarketplacePlugin, 'function', 'plugin-dependencies.mjs must export ensureMarketplacePlugin');
 
   assert.deepEqual(PLUGIN_BASELINES, expected, 'managed plugin baselines must retain their verified source metadata');
 
@@ -236,6 +273,7 @@ try {
   assert.equal(JSON.stringify(duplicateSuperpowers.plugins['superpowers@claude-plugins-official']), officialBefore, 'the official Superpowers record must remain byte-identical');
 
   const validArchives = {};
+  const verifiedSourceTrees = {};
   assert.equal(sha256(new TextEncoder().encode('abc')), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'SHA-256 must match the standard abc vector');
   for (const key of ['hud', 'memory', 'superpowers']) {
     const base = PLUGIN_BASELINES[key];
@@ -246,6 +284,7 @@ try {
     validateArchive(bytes, spec);
     const sourceRoot = await extractPluginArchive(bytes, spec, join(fixtureRoot, `valid-${key}`));
     assert.equal(existsSync(join(sourceRoot, '.claude-plugin', 'marketplace.json')), true, `${key} must return its single repository root`);
+    verifiedSourceTrees[key] = snapshotContentTree(sourceRoot);
   }
 
   const hudSpec = archiveSpec(PLUGIN_BASELINES.hud, validArchives.hud);
@@ -677,6 +716,554 @@ writeFileSync(process.env.FIXTURE_FETCH_LOG, JSON.stringify(process.env));
     'a failed downloader must report one sanitized line',
   );
   assert.deepEqual(readFileSync(cachePath), Buffer.from(previousArchive), 'a downloader failure must leave the previous cache bytes untouched');
+
+  const fakeCliPath = join(fixtureRoot, 'fake-cli.original.cjs');
+  writeFileSync(fakeCliPath, `#!/usr/bin/env bun
+import { appendFileSync, cpSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
+const config = process.env.CLAUDE_CONFIG_DIR;
+const pluginRoot = join(config, 'plugins');
+const knownPath = join(pluginRoot, 'known_marketplaces.json');
+const installedPath = join(pluginRoot, 'installed_plugins.json');
+const settingsPath = join(config, 'settings.json');
+const args = process.argv.slice(2);
+appendFileSync(process.env.FIXTURE_CLI_LOG, JSON.stringify({ args, disabled: process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, execPath: process.execPath, script: process.argv[1] }) + '\\n');
+
+function readJson(path, fallback) {
+  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return fallback; }
+}
+function writeJson(path, value) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(value, null, 2) + '\\n');
+}
+function failAfter(step) {
+  if (process.env.FIXTURE_CLI_FAIL === step) process.exit(41);
+}
+
+if (args[0] !== 'plugin') process.exit(64);
+if (args[1] === 'marketplace' && args[2] === 'remove') {
+  const marketplace = args[3];
+  const known = readJson(knownPath, {});
+  delete known[marketplace];
+  writeJson(knownPath, known);
+  rmSync(join(pluginRoot, 'marketplaces', marketplace), { recursive: true, force: true });
+  failAfter('marketplace-remove');
+  process.exit(0);
+}
+  if (args[1] === 'marketplace' && args[2] === 'add' && args[4] === '--scope' && args[5] === 'user') {
+  const source = args[3];
+  const manifest = readJson(join(source, '.claude-plugin', 'marketplace.json'), null);
+  if (!manifest?.name) process.exit(65);
+  const install = join(pluginRoot, 'marketplaces', manifest.name);
+  rmSync(install, { recursive: true, force: true });
+  mkdirSync(dirname(install), { recursive: true });
+  cpSync(source, install, { recursive: true, errorOnExist: true, force: false });
+  const known = readJson(knownPath, {});
+  known[manifest.name] = { source: { source: 'directory', path: source }, installLocation: install };
+  writeJson(knownPath, known);
+  if (process.env.FIXTURE_ATTACK_MARKETPLACE_PARENT) {
+    const parent = dirname(install);
+    renameSync(parent, process.env.FIXTURE_ATTACK_MARKETPLACE_BACKUP);
+    symlinkSync(process.env.FIXTURE_ATTACK_MARKETPLACE_OUTSIDE, parent, process.platform === 'win32' ? 'junction' : 'dir');
+  }
+  if (process.env.FIXTURE_CREATE_MARKETPLACE_SIBLING === '1') {
+    writeFileSync(join(dirname(install), 'concurrent-sibling.txt'), 'preserve concurrent data\\n');
+  }
+  if (process.env.FIXTURE_ATTACK_PLUGIN_ROOT === '1') {
+    renameSync(pluginRoot, process.env.FIXTURE_ATTACK_PLUGIN_ROOT_BACKUP);
+    symlinkSync(process.env.FIXTURE_ATTACK_PLUGIN_ROOT_BACKUP, pluginRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    writeFileSync(
+      join(process.env.FIXTURE_ATTACK_PLUGIN_ROOT_BACKUP, 'marketplaces', manifest.name, 'outside-sentinel.txt'),
+      'do not delete through plugin-root replacement\\n',
+    );
+  }
+  failAfter('marketplace-add');
+  process.exit(0);
+}
+if ((args[1] === 'install' || args[1] === 'update') && args[3] === '--scope' && args[4] === 'user') {
+  const id = args[2];
+  const separator = id.lastIndexOf('@');
+  const plugin = id.slice(0, separator);
+  const marketplace = id.slice(separator + 1);
+  const known = readJson(knownPath, {});
+  const source = known[marketplace]?.source?.path;
+  const manifest = source ? readJson(join(source, '.claude-plugin', 'marketplace.json'), null) : null;
+  const entry = manifest?.plugins?.find(candidate => candidate.name === plugin);
+  if (!entry || !source) process.exit(66);
+  const pluginSource = join(source, entry.source.replace(/^\\.\\//, ''));
+  const pluginManifest = readJson(join(pluginSource, '.claude-plugin', 'plugin.json'), null);
+  const version = entry.version || pluginManifest?.version;
+  if (!version) process.exit(66);
+  const installPath = join(pluginRoot, 'cache', marketplace, plugin, version);
+  rmSync(installPath, { recursive: true, force: true });
+  mkdirSync(dirname(installPath), { recursive: true });
+  cpSync(pluginSource, installPath, { recursive: true, errorOnExist: true, force: false });
+  const installed = readJson(installedPath, { version: 2, plugins: {} });
+  installed.version ??= 2;
+  installed.plugins ??= {};
+  const previousRecord = (installed.plugins[id] || []).find(record => record.scope === 'user');
+  if (process.env.FIXTURE_MUTATE_OLD_CACHE === '1' && previousRecord?.installPath) {
+    rmSync(previousRecord.installPath, { recursive: true, force: true });
+    mkdirSync(previousRecord.installPath, { recursive: true });
+    writeFileSync(join(previousRecord.installPath, 'mutated-old-cache.txt'), 'must be rolled back\\n');
+  }
+  installed.plugins[id] = (installed.plugins[id] || []).filter(record => record.scope !== 'user');
+  const recordedInstallPath = process.env.FIXTURE_RECORD_CACHE_ROOT === '1'
+    ? join(pluginRoot, 'cache')
+    : installPath;
+  installed.plugins[id].push({ scope: 'user', version, installPath: recordedInstallPath });
+  writeJson(installedPath, installed);
+  if (process.env.FIXTURE_SKIP_ENABLE !== '1') {
+    const settings = readJson(settingsPath, {});
+    settings.enabledPlugins ??= {};
+    settings.enabledPlugins[id] = true;
+    writeJson(settingsPath, settings);
+  }
+  if (process.env.FIXTURE_MALFORMED_AFTER === 'installed') writeFileSync(installedPath, '{malformed installed state\\n');
+  if (process.env.FIXTURE_MALFORMED_AFTER === 'settings') writeFileSync(settingsPath, '{malformed settings state\\n');
+  if (process.env.FIXTURE_CREATE_EXTRA_CACHE === '1') {
+    const extraCache = join(dirname(installPath), '.fixture-transaction-cache');
+    mkdirSync(extraCache, { recursive: true });
+    writeFileSync(join(extraCache, 'partial.txt'), 'remove only transaction-created cache paths\\n');
+  }
+  if (process.env.FIXTURE_ATTACK_CACHE_ROOT === '1') {
+    const cacheRoot = join(pluginRoot, 'cache');
+    renameSync(cacheRoot, process.env.FIXTURE_ATTACK_CACHE_ROOT_BACKUP);
+    symlinkSync(process.env.FIXTURE_ATTACK_CACHE_ROOT_BACKUP, cacheRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    writeFileSync(join(process.env.FIXTURE_ATTACK_CACHE_ROOT_BACKUP, 'outside-sentinel.txt'), 'do not trust relocated cache\\n');
+  }
+  failAfter(args[1]);
+  process.exit(0);
+}
+process.exit(67);
+`);
+  chmodSync(fakeCliPath, 0o700);
+
+  function olderVersion(spec) {
+    return spec.key === 'memory' ? '13.13.0' : spec.key === 'superpowers' ? '6.1.0' : '0.6.0';
+  }
+
+  function transactionSnapshot(fixture) {
+    return Object.fromEntries(Object.entries(fixture.paths).map(([key, path]) => [key, snapshotTree(path)]));
+  }
+
+  function assertTransactionSnapshot(fixture, expectedSnapshot, message) {
+    assert.deepEqual(transactionSnapshot(fixture), expectedSnapshot, message);
+  }
+
+  function makeTransactionFixture(label, spec, classification, options = {}) {
+    const root = join(fixtureRoot, `transaction-${label}`);
+    const home = join(root, 'home');
+    const claudeConfigDir = join(root, 'claude-config');
+    const pluginRoot = join(claudeConfigDir, 'plugins');
+    const clawgodDir = join(root, 'clawgod');
+    const cacheDirectory = join(clawgodDir, 'cache', 'claude-plugins');
+    const persistentSource = join(pluginRoot, 'clawgod-marketplaces', spec.marketplace, spec.version);
+    const marketplaceInstall = join(pluginRoot, 'marketplaces', spec.marketplace);
+    const knownPath = join(pluginRoot, 'known_marketplaces.json');
+    const installedPath = join(pluginRoot, 'installed_plugins.json');
+    const settingsPath = join(claudeConfigDir, 'settings.json');
+    const pluginCache = join(pluginRoot, 'cache', spec.marketplace, spec.plugin);
+    const cliLog = join(root, 'cli-log.jsonl');
+    const fetchLogPath = join(root, 'fetch-used');
+    const fetchPath = join(root, 'unreachable-fetch.mjs');
+    mkdirSync(home, { recursive: true });
+    mkdirSync(pluginRoot, { recursive: true });
+    mkdirSync(cacheDirectory, { recursive: true });
+    mkdirSync(join(root, 'bin'), { recursive: true });
+    const bytes = validArchives[spec.key];
+    const archivePath = join(cacheDirectory, `${spec.key}-${spec.version}.tar.gz`);
+    if (options.archive !== false) writeFileSync(archivePath, bytes);
+    writeFileSync(fetchPath, `await Bun.write(${JSON.stringify(fetchLogPath)}, 'called'); process.exit(79);\n`);
+
+    const plugins = {
+      'unrelated@fixture': [{ scope: 'user', version: '1.0.0', metadata: { preserve: true } }],
+      ...(spec.key === 'superpowers' ? {
+        'superpowers@claude-plugins-official': [{ scope: 'user', version: '99.0.0', metadata: { exact: 'official-record' } }],
+      } : {}),
+    };
+    if (classification !== 'missing') {
+      const version = classification === 'older' ? olderVersion(spec)
+        : classification === 'satisfied' ? spec.version
+          : classification === 'newer' ? '99.0.0' : 'latest';
+      plugins[spec.id] = [{ scope: 'user', version, installPath: join(pluginCache, version), metadata: { preserve: classification } }];
+      mkdirSync(join(pluginCache, version), { recursive: true });
+      writeFileSync(join(pluginCache, version, 'old-cache.txt'), `old cache ${classification}\n`);
+    } else {
+      mkdirSync(join(pluginCache, 'legacy'), { recursive: true });
+      writeFileSync(join(pluginCache, 'legacy', 'keep.txt'), 'unrelated legacy cache\n');
+    }
+    if (options.staleBaselineCache) {
+      mkdirSync(join(pluginCache, spec.version), { recursive: true });
+      writeFileSync(join(pluginCache, spec.version, 'stale.txt'), 'restore stale baseline cache\n');
+    }
+    writeFileSync(installedPath, `{\n  "version": 2,\n  "plugins": ${JSON.stringify(plugins, null, 4)}\n}\n`);
+    chmodSync(installedPath, 0o640);
+    writeFileSync(settingsPath, JSON.stringify({ enabledPlugins: { 'unrelated@fixture': true, [spec.id]: false } }, null, 4) + '\n');
+    chmodSync(settingsPath, 0o600);
+    const known = { 'unrelated-marketplace': { source: { source: 'github', repo: 'fixture/keep' } } };
+    if (options.known !== false) {
+      known[spec.marketplace] = { source: { source: 'directory', path: '/old/stale/source' }, installLocation: marketplaceInstall, marker: 'old-known-entry' };
+      mkdirSync(marketplaceInstall, { recursive: true });
+      writeFileSync(join(marketplaceInstall, 'old-marketplace.txt'), 'restore old marketplace\n');
+    }
+    writeFileSync(knownPath, JSON.stringify(known, null, 3) + '\n');
+    chmodSync(knownPath, 0o644);
+    if (options.oldPersistent) {
+      mkdirSync(persistentSource, { recursive: true });
+      writeFileSync(join(persistentSource, 'old-source.txt'), 'restore old persistent source\n');
+    }
+    if (spec.key === 'superpowers') {
+      const officialCache = join(pluginRoot, 'cache', 'claude-plugins-official', 'superpowers', '99.0.0');
+      mkdirSync(officialCache, { recursive: true });
+      writeFileSync(join(officialCache, 'official.txt'), 'official bytes must remain exact\n');
+    }
+    const fixtureContext = {
+      home,
+      claudeConfigDir,
+      clawgodDir,
+      bunPath: process.execPath,
+      claudeCliPath: fakeCliPath,
+      fetchFilePath: fetchPath,
+      env: {
+        HOME: home,
+        CLAUDE_CONFIG_DIR: claudeConfigDir,
+        PATH: join(root, 'bin'),
+        FIXTURE_CLI_LOG: cliLog,
+        ...(options.failStep ? { FIXTURE_CLI_FAIL: options.failStep } : {}),
+        ...(options.extraCacheOnFailure ? { FIXTURE_CREATE_EXTRA_CACHE: '1' } : {}),
+        ...(options.recordCacheRoot ? { FIXTURE_RECORD_CACHE_ROOT: '1' } : {}),
+        ...(options.skipEnable ? { FIXTURE_SKIP_ENABLE: '1' } : {}),
+        ...(options.malformedAfter ? { FIXTURE_MALFORMED_AFTER: options.malformedAfter } : {}),
+        ...(options.createMarketplaceSibling ? { FIXTURE_CREATE_MARKETPLACE_SIBLING: '1' } : {}),
+        ...(options.mutateOldCache ? { FIXTURE_MUTATE_OLD_CACHE: '1' } : {}),
+        ...(options.attackMarketplaceParent ? {
+          FIXTURE_ATTACK_MARKETPLACE_PARENT: '1',
+          FIXTURE_ATTACK_MARKETPLACE_BACKUP: join(root, 'marketplaces-displaced'),
+          FIXTURE_ATTACK_MARKETPLACE_OUTSIDE: join(root, 'marketplaces-outside'),
+        } : {}),
+        ...(options.attackPluginRoot ? {
+          FIXTURE_ATTACK_PLUGIN_ROOT: '1',
+          FIXTURE_ATTACK_PLUGIN_ROOT_BACKUP: join(root, 'plugins-displaced'),
+        } : {}),
+        ...(options.attackCacheRoot ? {
+          FIXTURE_ATTACK_CACHE_ROOT: '1',
+          FIXTURE_ATTACK_CACHE_ROOT_BACKUP: join(root, 'cache-displaced'),
+        } : {}),
+      },
+      spawnSyncImpl: Bun.spawnSync,
+    };
+    return {
+      root, home, claudeConfigDir, pluginRoot, clawgodDir, persistentSource, marketplaceInstall,
+      knownPath, installedPath, settingsPath, pluginCache, cliLog, fetchLogPath,
+      context: fixtureContext,
+      paths: {
+        pluginRoot,
+        known: knownPath,
+        installed: installedPath,
+        settings: settingsPath,
+        marketplace: marketplaceInstall,
+        cache: pluginCache,
+        persistent: persistentSource,
+      },
+    };
+  }
+
+  function readCliLog(fixture) {
+    if (!existsSync(fixture.cliLog)) return [];
+    return readFileSync(fixture.cliLog, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+  }
+
+  const installFixture = makeTransactionFixture('missing-install', hudSpec, 'missing', { known: false });
+  const installResult = await ensureMarketplacePlugin(hudSpec, installFixture.context);
+  assert.deepEqual(installResult, {
+    key: 'hud', id: hudSpec.id, version: hudSpec.version, status: 'installed', ready: true,
+    detail: 'installed 0.7.0',
+  }, 'a missing plugin must install the exact baseline');
+  assert.deepEqual(readCliLog(installFixture), [
+    { args: ['plugin', 'marketplace', 'add', installFixture.persistentSource, '--scope', 'user'], disabled: '1', execPath: process.execPath, script: fakeCliPath },
+    { args: ['plugin', 'install', hudSpec.id, '--scope', 'user'], disabled: '1', execPath: process.execPath, script: fakeCliPath },
+  ], 'a missing plugin must add its persistent marketplace and install only the canonical id');
+  const installedHud = JSON.parse(readFileSync(installFixture.installedPath, 'utf8'));
+  assert.equal(installedHud.plugins[hudSpec.id].find(record => record.scope === 'user').version, hudSpec.version);
+  assert.deepEqual(JSON.parse(readFileSync(installFixture.settingsPath, 'utf8')).enabledPlugins, {
+    'unrelated@fixture': true,
+    [hudSpec.id]: true,
+  }, 'installation must enable only the canonical dependency while preserving unrelated settings');
+  assert.equal(existsSync(installFixture.persistentSource), true, 'the persistent marketplace source must remain after success');
+  assert.equal(walkTextFiles(installFixture.persistentSource).some(value => value.includes('.staged') || value.includes('/staging/')), false, 'persistent source bytes must not reference temporary staging paths');
+  const installedHudPath = installedHud.plugins[hudSpec.id].find(record => record.scope === 'user').installPath;
+  assert.equal(realpathSync(installedHudPath).startsWith(`${realpathSync(join(installFixture.pluginRoot, 'cache'))}/`), true, 'the installed plugin must remain under the canonical cache root');
+  rmSync(installFixture.clawgodDir, { recursive: true, force: true });
+  assert.equal(existsSync(installFixture.persistentSource), true, 'the marketplace source must survive removal of ClawGod state');
+
+  const updateFixture = makeTransactionFixture('older-update', hudSpec, 'older', { oldPersistent: true });
+  const updateResult = await ensureMarketplacePlugin(hudSpec, updateFixture.context);
+  assert.equal(updateResult.status, 'upgraded', 'an older user plugin must be upgraded to the baseline');
+  assert.deepEqual(readCliLog(updateFixture).map(entry => entry.args), [
+    ['plugin', 'marketplace', 'remove', hudSpec.marketplace],
+    ['plugin', 'marketplace', 'add', updateFixture.persistentSource, '--scope', 'user'],
+    ['plugin', 'update', hudSpec.id, '--scope', 'user'],
+  ], 'an older plugin must replace the stale canonical marketplace before update');
+  assert.equal(existsSync(join(updateFixture.marketplaceInstall, 'old-marketplace.txt')), false, 'a stale canonical marketplace install must not survive success');
+
+  const superSpec = archiveSpec(PLUGIN_BASELINES.superpowers, validArchives.superpowers);
+  const superFixture = makeTransactionFixture('superpowers-wrapper', superSpec, 'missing', { known: false });
+  const officialRecordBefore = JSON.stringify(JSON.parse(readFileSync(superFixture.installedPath, 'utf8')).plugins['superpowers@claude-plugins-official']);
+  const officialCacheBefore = snapshotTree(join(superFixture.pluginRoot, 'cache', 'claude-plugins-official', 'superpowers'));
+  const superResult = await ensureMarketplacePlugin(superSpec, superFixture.context);
+  assert.equal(superResult.status, 'installed');
+  assert.deepEqual(JSON.parse(readFileSync(join(superFixture.persistentSource, '.claude-plugin', 'marketplace.json'), 'utf8')), {
+    name: 'superpowers-marketplace',
+    plugins: [{ name: 'superpowers', version: '6.2.0', source: './plugin' }],
+  }, 'Superpowers must use the exact canonical wrapper manifest');
+  assert.deepEqual(snapshotContentTree(join(superFixture.persistentSource, 'plugin')), verifiedSourceTrees.superpowers, 'the complete verified Superpowers repository must remain nested byte-for-byte with exact file modes');
+  const installedSuperpowers = JSON.parse(readFileSync(superFixture.installedPath, 'utf8'));
+  assert.equal(JSON.stringify(installedSuperpowers.plugins['superpowers@claude-plugins-official']), officialRecordBefore, 'the official Superpowers record must remain byte-identical');
+  assert.deepEqual(snapshotTree(join(superFixture.pluginRoot, 'cache', 'claude-plugins-official', 'superpowers')), officialCacheBefore, 'the official Superpowers cache must remain byte-identical');
+  assert.equal(readCliLog(superFixture).some(entry => entry.args.join(' ').includes('superpowers@claude-plugins-official')), false, 'no command may target official Superpowers');
+
+  for (const [classification, expectedStatus, expectedReady] of [
+    ['satisfied', 'preserved', true],
+    ['newer', 'preserved', true],
+    ['invalid', 'warning', false],
+  ]) {
+    const preserveFixture = makeTransactionFixture(`preserve-${classification}`, hudSpec, classification, { archive: false, oldPersistent: true });
+    const before = transactionSnapshot(preserveFixture);
+    const result = await ensureMarketplacePlugin(hudSpec, preserveFixture.context);
+    assert.equal(result.status, expectedStatus, `${classification} versions must return ${expectedStatus}`);
+    assert.equal(result.ready, expectedReady, `${classification} readiness must be explicit`);
+    assertTransactionSnapshot(preserveFixture, before, `${classification} versions must preserve marketplace, cache, settings, source, and installation record bytes`);
+    assert.equal(existsSync(preserveFixture.cliLog), false, `${classification} versions must spawn no CLI command`);
+    assert.equal(existsSync(preserveFixture.fetchLogPath), false, `${classification} versions must not fetch archives`);
+  }
+
+  const noncanonicalSpec = { ...hudSpec, id: 'claude-hud@wrong-marketplace' };
+  const noncanonicalFixture = makeTransactionFixture('noncanonical-id', noncanonicalSpec, 'missing', { archive: false });
+  const noncanonicalBefore = transactionSnapshot(noncanonicalFixture);
+  const noncanonicalResult = await ensureMarketplacePlugin(noncanonicalSpec, noncanonicalFixture.context);
+  assert.equal(noncanonicalResult.status, 'warning', 'a noncanonical plugin id must be rejected');
+  assert.equal(noncanonicalResult.ready, false, 'a noncanonical plugin id must not report readiness');
+  assertTransactionSnapshot(noncanonicalFixture, noncanonicalBefore, 'a noncanonical plugin id must preserve every byte and mode');
+  assert.equal(existsSync(noncanonicalFixture.cliLog), false, 'a noncanonical plugin id must spawn no CLI command');
+  assert.equal(existsSync(noncanonicalFixture.fetchLogPath), false, 'a noncanonical plugin id must not fetch archives');
+
+  const malformedSpecFixture = makeTransactionFixture('malformed-spec', hudSpec, 'missing', { archive: false });
+  const malformedSpecBefore = transactionSnapshot(malformedSpecFixture);
+  const malformedSpecResult = await ensureMarketplacePlugin({ ...hudSpec, key: '../hud' }, malformedSpecFixture.context);
+  assert.equal(malformedSpecResult.status, 'warning', 'a malformed plugin spec must warn without throwing');
+  assert.equal(malformedSpecResult.ready, false, 'a malformed plugin spec must not report readiness');
+  assertTransactionSnapshot(malformedSpecFixture, malformedSpecBefore, 'a malformed plugin spec must preserve every byte and mode');
+  assert.equal(existsSync(malformedSpecFixture.cliLog), false, 'a malformed plugin spec must spawn no CLI command');
+  assert.equal(existsSync(malformedSpecFixture.fetchLogPath), false, 'a malformed plugin spec must not fetch archives');
+
+  for (const malformedTarget of ['installed', 'known', 'settings']) {
+    const malformedFixture = makeTransactionFixture(`malformed-${malformedTarget}`, hudSpec, 'missing', { archive: false });
+    writeFileSync(malformedFixture.paths[malformedTarget], '{not valid json\n');
+    const before = transactionSnapshot(malformedFixture);
+    const result = await ensureMarketplacePlugin(hudSpec, malformedFixture.context);
+    assert.equal(result.status, 'warning', `malformed ${malformedTarget} state must warn without throwing`);
+    assertTransactionSnapshot(malformedFixture, before, `malformed ${malformedTarget} state must preserve every byte and mode`);
+    assert.equal(existsSync(malformedFixture.cliLog), false, `malformed ${malformedTarget} state must spawn no CLI command`);
+    assert.equal(existsSync(malformedFixture.fetchLogPath), false, `malformed ${malformedTarget} state must not fetch archives`);
+  }
+
+  const unsafeCacheFixture = makeTransactionFixture('unsafe-cache-snapshot', hudSpec, 'older', { oldPersistent: true });
+  const unsafeCacheOutside = join(unsafeCacheFixture.root, 'unsafe-cache-outside');
+  mkdirSync(unsafeCacheOutside);
+  writeFileSync(join(unsafeCacheOutside, 'outside-sentinel.txt'), 'cache snapshot must not alter this target\n');
+  symlinkSync(unsafeCacheOutside, join(unsafeCacheFixture.pluginCache, 'unsafe-link'), process.platform === 'win32' ? 'junction' : 'dir');
+  const unsafeCacheBefore = transactionSnapshot(unsafeCacheFixture);
+  const unsafeCacheOutsideBefore = snapshotTree(unsafeCacheOutside);
+  const unsafeCacheResult = await ensureMarketplacePlugin(hudSpec, unsafeCacheFixture.context);
+  assert.equal(unsafeCacheResult.status, 'warning', 'an unsafe cache snapshot must warn without throwing');
+  assert.equal(unsafeCacheResult.ready, false, 'an unsafe cache snapshot must not report readiness');
+  assertTransactionSnapshot(unsafeCacheFixture, unsafeCacheBefore, 'failed cache snapshot preparation must restore exact directory trees');
+  assert.deepEqual(snapshotTree(unsafeCacheOutside), unsafeCacheOutsideBefore, 'cache snapshot preparation must not write through a link');
+  assert.equal(existsSync(unsafeCacheFixture.cliLog), false, 'an unsafe cache snapshot must spawn no plugin CLI');
+
+  const cacheBackupCollisionFixture = makeTransactionFixture('cache-backup-collision', hudSpec, 'missing', { oldPersistent: true });
+  rmSync(cacheBackupCollisionFixture.pluginCache, { recursive: true, force: true });
+  const cacheBackupCollision = `${cacheBackupCollisionFixture.pluginCache}.${process.pid}.backup`;
+  mkdirSync(cacheBackupCollision);
+  writeFileSync(join(cacheBackupCollision, 'collision-sentinel.txt'), 'preserve pre-existing backup collision\n');
+  const cacheBackupCollisionBefore = transactionSnapshot(cacheBackupCollisionFixture);
+  const cacheBackupCollisionResult = await ensureMarketplacePlugin(hudSpec, cacheBackupCollisionFixture.context);
+  assert.equal(cacheBackupCollisionResult.status, 'warning', 'a cache backup collision must warn without throwing');
+  assert.equal(cacheBackupCollisionResult.ready, false, 'a cache backup collision must not report readiness');
+  assertTransactionSnapshot(cacheBackupCollisionFixture, cacheBackupCollisionBefore, 'cache backup collision must not leave a transaction-created cache directory');
+  assert.equal(existsSync(cacheBackupCollisionFixture.cliLog), false, 'a cache backup collision must spawn no plugin CLI');
+
+  for (const [failStep, classification, staleBaselineCache, oldPersistent, knownMarketplace] of [
+    ['marketplace-remove', 'older', false, true, true],
+    ['marketplace-add', 'older', false, true, true],
+    ['install', 'missing', true, false, false],
+    ['update', 'older', false, true, true],
+  ]) {
+    const rollbackFixture = makeTransactionFixture(`rollback-${failStep}`, hudSpec, classification, {
+      failStep,
+      oldPersistent,
+      known: knownMarketplace,
+      staleBaselineCache,
+      extraCacheOnFailure: failStep === 'install' || failStep === 'update',
+      mutateOldCache: failStep === 'update',
+    });
+    const before = transactionSnapshot(rollbackFixture);
+    const result = await ensureMarketplacePlugin(hudSpec, rollbackFixture.context);
+    assert.equal(result.status, 'warning', `${failStep} failure must be reported as a warning`);
+    assert.equal(result.ready, false, `${failStep} failure must not report readiness`);
+    assertTransactionSnapshot(rollbackFixture, before, `${failStep} failure must restore exact JSON modes/bytes and directory trees`);
+  }
+
+  const cacheRootRecordFixture = makeTransactionFixture('rollback-cache-root-record', hudSpec, 'missing', {
+    known: false,
+    recordCacheRoot: true,
+    staleBaselineCache: true,
+  });
+  const cacheRootRecordBefore = transactionSnapshot(cacheRootRecordFixture);
+  const cacheRootRecordResult = await ensureMarketplacePlugin(hudSpec, cacheRootRecordFixture.context);
+  assert.equal(cacheRootRecordResult.status, 'warning', 'an install record at the cache root must fail verification');
+  assert.equal(cacheRootRecordResult.ready, false, 'an install record at the cache root must not report readiness');
+  assertTransactionSnapshot(cacheRootRecordFixture, cacheRootRecordBefore, 'cache-root verification failure must restore exact JSON modes/bytes and directory trees');
+
+  const enableFailureFixture = makeTransactionFixture('rollback-enable-verification', hudSpec, 'missing', {
+    known: false,
+    skipEnable: true,
+    staleBaselineCache: true,
+  });
+  const enableFailureBefore = transactionSnapshot(enableFailureFixture);
+  const enableFailureResult = await ensureMarketplacePlugin(hudSpec, enableFailureFixture.context);
+  assert.equal(enableFailureResult.status, 'warning', 'a plugin left disabled by the CLI must fail verification');
+  assert.equal(enableFailureResult.ready, false, 'a plugin left disabled by the CLI must not report readiness');
+  assertTransactionSnapshot(enableFailureFixture, enableFailureBefore, 'enable verification failure must restore exact JSON modes/bytes and directory trees');
+
+  for (const malformedAfter of ['installed', 'settings']) {
+    const malformedAfterFixture = makeTransactionFixture(`rollback-malformed-after-${malformedAfter}`, hudSpec, 'missing', {
+      known: false,
+      malformedAfter,
+      staleBaselineCache: true,
+    });
+    const malformedAfterBefore = transactionSnapshot(malformedAfterFixture);
+    const malformedAfterResult = await ensureMarketplacePlugin(hudSpec, malformedAfterFixture.context);
+    assert.equal(malformedAfterResult.status, 'warning', `malformed post-command ${malformedAfter} state must fail verification`);
+    assert.equal(malformedAfterResult.ready, false, `malformed post-command ${malformedAfter} state must not report readiness`);
+    assertTransactionSnapshot(malformedAfterFixture, malformedAfterBefore, `malformed post-command ${malformedAfter} state must roll back exact bytes, modes, and directory trees`);
+  }
+
+  const forbiddenCommands = ['git', 'node', 'npm', 'npx', 'curl', 'wget'];
+  for (const fixture of [installFixture, updateFixture, superFixture]) {
+    for (const entry of readCliLog(fixture)) {
+      assert.equal(forbiddenCommands.some(command => entry.args.includes(command)), false, 'the transaction CLI must not invoke PATH tools or network commands');
+    }
+  }
+
+  const linkedSourceFixture = makeTransactionFixture('linked-persistent-ancestor', hudSpec, 'missing', { known: false });
+  const linkedOutside = join(linkedSourceFixture.root, 'outside-source');
+  const linkedSourceParent = join(linkedSourceFixture.pluginRoot, 'clawgod-marketplaces');
+  mkdirSync(linkedOutside);
+  symlinkSync(linkedOutside, linkedSourceParent, process.platform === 'win32' ? 'junction' : 'dir');
+  const linkedOutsideBefore = snapshotTree(linkedOutside);
+  const linkedResult = await ensureMarketplacePlugin(hudSpec, linkedSourceFixture.context);
+  assert.equal(linkedResult.status, 'warning', 'a linked persistent-source ancestor must fail closed');
+  assert.deepEqual(snapshotTree(linkedOutside), linkedOutsideBefore, 'a linked persistent-source ancestor must receive no writes');
+  assert.equal(existsSync(linkedSourceFixture.cliLog), false, 'a linked persistent-source ancestor must spawn no plugin CLI');
+
+  const linkedSourceLeafFixture = makeTransactionFixture('linked-persistent-leaf', hudSpec, 'missing', { known: false });
+  const linkedSourceLeafOutside = join(linkedSourceLeafFixture.root, 'outside-source-leaf');
+  mkdirSync(dirname(linkedSourceLeafFixture.persistentSource), { recursive: true });
+  mkdirSync(linkedSourceLeafOutside);
+  writeFileSync(join(linkedSourceLeafOutside, 'outside-sentinel.txt'), 'do not replace or write through this link\n');
+  symlinkSync(linkedSourceLeafOutside, linkedSourceLeafFixture.persistentSource, process.platform === 'win32' ? 'junction' : 'dir');
+  const linkedSourceLeafBefore = transactionSnapshot(linkedSourceLeafFixture);
+  const linkedSourceLeafOutsideBefore = snapshotTree(linkedSourceLeafOutside);
+  const linkedSourceLeafResult = await ensureMarketplacePlugin(hudSpec, linkedSourceLeafFixture.context);
+  assert.equal(linkedSourceLeafResult.status, 'warning', 'a linked persistent-source leaf must fail closed');
+  assertTransactionSnapshot(linkedSourceLeafFixture, linkedSourceLeafBefore, 'a linked persistent-source leaf must remain byte-identical');
+  assert.deepEqual(snapshotTree(linkedSourceLeafOutside), linkedSourceLeafOutsideBefore, 'a linked persistent-source leaf target must receive no writes');
+  assert.equal(existsSync(linkedSourceLeafFixture.cliLog), false, 'a linked persistent-source leaf must spawn no plugin CLI');
+
+  const stagedLeafFixture = makeTransactionFixture('linked-staged-leaf', hudSpec, 'missing', { known: false });
+  const stagedParent = join(stagedLeafFixture.pluginRoot, 'clawgod-marketplaces', hudSpec.marketplace);
+  const stagedOutside = join(stagedLeafFixture.root, 'outside-staged-leaf');
+  mkdirSync(stagedParent, { recursive: true });
+  mkdirSync(stagedOutside);
+  const stagedLeaf = `${stagedLeafFixture.persistentSource}.${process.pid}.staged`;
+  symlinkSync(stagedOutside, stagedLeaf, process.platform === 'win32' ? 'junction' : 'dir');
+  const stagedOutsideBefore = snapshotTree(stagedOutside);
+  const stagedLeafResult = await ensureMarketplacePlugin(hudSpec, stagedLeafFixture.context);
+  assert.equal(stagedLeafResult.status, 'warning', 'a pre-existing staged source leaf must fail closed');
+  assert.equal(lstatSync(stagedLeaf).isSymbolicLink(), true, 'the transaction must not unlink an unowned staged source leaf');
+  assert.deepEqual(snapshotTree(stagedOutside), stagedOutsideBefore, 'a staged source link target must receive no writes');
+
+  const concurrentFixture = makeTransactionFixture('concurrent-marketplace-parent', hudSpec, 'older', {
+    failStep: 'marketplace-add',
+    oldPersistent: true,
+    attackMarketplaceParent: true,
+  });
+  mkdirSync(concurrentFixture.context.env.FIXTURE_ATTACK_MARKETPLACE_OUTSIDE);
+  writeFileSync(join(concurrentFixture.context.env.FIXTURE_ATTACK_MARKETPLACE_OUTSIDE, 'outside-sentinel.txt'), 'do not delete through replacement link\n');
+  await assert.rejects(
+    ensureMarketplacePlugin(hudSpec, concurrentFixture.context),
+    error => error?.restorationIncomplete === true,
+    'a concurrent marketplace-parent replacement must retain incomplete-restoration evidence',
+  );
+  assert.equal(readFileSync(join(concurrentFixture.context.env.FIXTURE_ATTACK_MARKETPLACE_OUTSIDE, 'outside-sentinel.txt'), 'utf8'), 'do not delete through replacement link\n', 'rollback must not recurse through a concurrently replaced parent');
+
+  const pluginRootSwapFixture = makeTransactionFixture('concurrent-plugin-root', hudSpec, 'older', {
+    failStep: 'marketplace-add',
+    oldPersistent: true,
+    attackPluginRoot: true,
+  });
+  await assert.rejects(
+    ensureMarketplacePlugin(hudSpec, pluginRootSwapFixture.context),
+    error => error?.restorationIncomplete === true,
+    'a concurrent plugin-root replacement must retain incomplete-restoration evidence',
+  );
+  assert.equal(
+    readFileSync(join(pluginRootSwapFixture.context.env.FIXTURE_ATTACK_PLUGIN_ROOT_BACKUP, 'marketplaces', hudSpec.marketplace, 'outside-sentinel.txt'), 'utf8'),
+    'do not delete through plugin-root replacement\n',
+    'rollback must not recurse through a replaced plugin-root ancestor',
+  );
+
+  const concurrentSiblingFixture = makeTransactionFixture('concurrent-marketplace-sibling', hudSpec, 'missing', {
+    failStep: 'marketplace-add',
+    known: false,
+    createMarketplaceSibling: true,
+  });
+  await assert.rejects(
+    ensureMarketplacePlugin(hudSpec, concurrentSiblingFixture.context),
+    error => error?.restorationIncomplete === true,
+    'a concurrent entry in a transaction-created parent must retain incomplete-restoration evidence',
+  );
+  assert.equal(readFileSync(join(concurrentSiblingFixture.pluginRoot, 'marketplaces', 'concurrent-sibling.txt'), 'utf8'), 'preserve concurrent data\n', 'rollback must preserve an unrelated concurrent sibling');
+
+  const cacheRootSwapFixture = makeTransactionFixture('concurrent-cache-root', hudSpec, 'missing', {
+    known: false,
+    attackCacheRoot: true,
+  });
+  await assert.rejects(
+    ensureMarketplacePlugin(hudSpec, cacheRootSwapFixture.context),
+    error => error?.restorationIncomplete === true,
+    'a relocated cache root must not be accepted as a ready installation',
+  );
+  assert.equal(
+    readFileSync(join(cacheRootSwapFixture.context.env.FIXTURE_ATTACK_CACHE_ROOT_BACKUP, 'outside-sentinel.txt'), 'utf8'),
+    'do not trust relocated cache\n',
+    'verification and rollback must not delete through a relocated cache root',
+  );
+
+  const cleanupWarningFixture = makeTransactionFixture('concurrent-cleanup-warning', hudSpec, 'older', {
+    oldPersistent: true,
+    attackMarketplaceParent: true,
+  });
+  mkdirSync(cleanupWarningFixture.context.env.FIXTURE_ATTACK_MARKETPLACE_OUTSIDE);
+  writeFileSync(join(cleanupWarningFixture.context.env.FIXTURE_ATTACK_MARKETPLACE_OUTSIDE, 'outside-sentinel.txt'), 'do not delete through cleanup replacement link\n');
+  const cleanupWarningResult = await ensureMarketplacePlugin(hudSpec, cleanupWarningFixture.context);
+  assert.equal(cleanupWarningResult.status, 'warning', 'backup cleanup failure must be reported as a warning');
+  assert.equal(cleanupWarningResult.ready, true, 'backup cleanup failure must not roll back a verified plugin');
+  assert.equal(cleanupWarningResult.version, hudSpec.version, 'backup cleanup warning must retain the verified baseline version');
+  assert.equal(readFileSync(join(cleanupWarningFixture.context.env.FIXTURE_ATTACK_MARKETPLACE_OUTSIDE, 'outside-sentinel.txt'), 'utf8'), 'do not delete through cleanup replacement link\n', 'cleanup must not recurse through a concurrently replaced parent');
 } finally {
   for (const [key, value] of savedEnvironment) {
     if (value === undefined) delete process.env[key];

@@ -513,8 +513,8 @@ cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << 'PLUGIN_DEPENDENCIES_EOF'
  * }} PluginContext
  */
 
-import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, writeSync } from 'node:fs';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 export const PLUGIN_BASELINES = Object.freeze({
   hud: Object.freeze({
@@ -1105,6 +1105,512 @@ export function classifyPlugin(installed, spec) {
   const comparison = compareSemver(selected.version, spec.version);
   if (comparison === null) return 'invalid';
   return comparison < 0 ? 'older' : 'satisfied';
+}
+
+function snapshotFile(path, spec) {
+  const parentTrust = captureDirectoryTrust(dirname(path), spec);
+  let status;
+  try {
+    status = lstatSync(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { present: false, parentTrust };
+    throw new Error(`${spec.key}: plugin state could not be read`);
+  }
+  if (!status.isFile() || status.isSymbolicLink() || status.nlink !== 1) {
+    throw new Error(`${spec.key}: plugin state file is unsafe`);
+  }
+  const file = readSingleLinkFile(path);
+  if (!file) throw new Error(`${spec.key}: plugin state file changed while reading`);
+  return { present: true, bytes: file.bytes, mode: status.mode & 0o777, parentTrust };
+}
+
+function parseStateSnapshot(snapshot, fallback, spec, label) {
+  if (!snapshot.present) return fallback;
+  try {
+    const value = JSON.parse(textDecoder.decode(snapshot.bytes));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid');
+    return value;
+  } catch {
+    throw new Error(`${spec.key}: ${label} is malformed`);
+  }
+}
+
+function assertDirectoryIdentity(path, expected, spec, label) {
+  const actual = directoryIdentity(path, spec);
+  if (actual.dev !== expected.dev || actual.ino !== expected.ino) {
+    throw new Error(`${spec.key}: ${label} directory changed`);
+  }
+}
+
+function captureDirectoryTrust(path, spec) {
+  const requested = resolve(path);
+  const suffix = [];
+  let existing = requested;
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) throw new Error(`${spec.key}: unsafe managed directory`);
+    suffix.unshift(basename(existing));
+    existing = parent;
+  }
+  const paths = [];
+  let current = existing;
+  while (true) {
+    paths.unshift(current);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  const chain = paths.map(chainPath => ({ path: chainPath, identity: directoryIdentity(chainPath, spec) }));
+  return { requested, suffix, chain };
+}
+
+function assertDirectoryTrust(trust, spec, label) {
+  if (!trust || !Array.isArray(trust.chain) || trust.chain.length === 0) {
+    throw new Error(`${spec.key}: ${label} directory trust is missing`);
+  }
+  for (const entry of trust.chain) assertDirectoryIdentity(entry.path, entry.identity, spec, label);
+  let current = trust.chain[trust.chain.length - 1].path;
+  for (const part of trust.suffix) {
+    current = join(current, part);
+    safeDirectoryStatus(current, spec);
+  }
+  if (resolve(current) !== trust.requested) throw new Error(`${spec.key}: ${label} directory changed`);
+}
+
+function safeRemoveExact(target, parent, name, recursive, spec, parentTrust) {
+  if (dirname(target) !== parent || basename(target) !== name) {
+    throw new Error(`${spec.key}: unsafe transaction cleanup target`);
+  }
+  assertDirectoryTrust(parentTrust, spec, 'transaction cleanup parent');
+  let status;
+  try {
+    status = lstatSync(target);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  assertDirectoryTrust(parentTrust, spec, 'transaction cleanup parent');
+  if (status.isSymbolicLink()) rmSync(target, { force: true });
+  else if (status.isDirectory()) {
+    if (!recursive) throw new Error(`${spec.key}: unsafe transaction cleanup type`);
+    rmSync(target, { recursive: true, force: true });
+  } else if (status.isFile()) rmSync(target, { force: true });
+  else throw new Error(`${spec.key}: unsafe transaction cleanup type`);
+}
+
+function restoreFile(path, snapshot, spec) {
+  const parent = dirname(path);
+  assertDirectoryTrust(snapshot.parentTrust, spec, 'plugin state parent');
+  if (!snapshot.present) {
+    safeRemoveExact(path, parent, basename(path), false, spec, snapshot.parentTrust);
+    return;
+  }
+  const staged = `${path}.${process.pid}.restore`;
+  if (existsSync(staged)) throw new Error(`${spec.key}: restoration staging path already exists`);
+  try {
+    writeExclusive(staged, snapshot.bytes, false, spec);
+    chmodSync(staged, snapshot.mode);
+    const current = existsSync(path) ? lstatSync(path) : null;
+    if (current?.isDirectory()) throw new Error(`${spec.key}: plugin state path became a directory`);
+    renameSync(staged, path);
+  } finally {
+    if (existsSync(staged)) safeRemoveExact(staged, parent, basename(staged), false, spec, snapshot.parentTrust);
+  }
+}
+
+function copyValidatedDirectory(source, destination, spec) {
+  const sourceIdentity = directoryIdentity(source, spec);
+  mkdirSync(destination, 0o700);
+  const destinationStatus = lstatSync(destination);
+  if (destinationStatus.isSymbolicLink() || !destinationStatus.isDirectory()) {
+    throw new Error(`${spec.key}: persistent source staging is unsafe`);
+  }
+  for (const name of readdirSync(source).sort()) {
+    if (!name || name === '.' || name === '..' || name.length > 255 || name.includes('/') || name.includes('\\') || name.includes('\0')) {
+      throw new Error(`${spec.key}: invalid staged source entry`);
+    }
+    const sourcePath = join(source, name);
+    const destinationPath = join(destination, name);
+    const status = lstatSync(sourcePath);
+    if (status.isSymbolicLink()) throw new Error(`${spec.key}: staged source contains a link`);
+    if (status.isDirectory()) copyValidatedDirectory(sourcePath, destinationPath, spec);
+    else if (status.isFile() && status.nlink === 1) {
+      const file = readSingleLinkFile(sourcePath);
+      if (!file) throw new Error(`${spec.key}: staged source file changed while copying`);
+      writeExclusive(destinationPath, file.bytes, (status.mode & 0o111) !== 0, spec);
+    } else throw new Error(`${spec.key}: staged source contains an unsafe entry`);
+  }
+  assertDirectoryIdentity(source, sourceIdentity, spec, 'staged source');
+}
+
+function prepareDirectoryReplacement(target, spec, label) {
+  const parent = dirname(target);
+  const parentTrust = captureDirectoryTrust(parent, spec);
+  const parentIdentity = directoryIdentity(parent, spec);
+  const backup = `${target}.${process.pid}.backup`;
+  if (existsSync(backup)) throw new Error(`${spec.key}: ${label} backup already exists`);
+  const transaction = { target, parent, parentTrust, parentIdentity, backup, hadExisting: false, label };
+  if (existsSync(target)) {
+    const status = lstatSync(target);
+    if (status.isSymbolicLink() || !status.isDirectory()) throw new Error(`${spec.key}: unsafe ${label} directory`);
+    renameSync(target, backup);
+    transaction.hadExisting = true;
+    try {
+      assertDirectoryTrust(parentTrust, spec, label);
+      assertDirectoryIdentity(parent, parentIdentity, spec, label);
+    } catch (error) {
+      const failure = new Error(`${spec.key}: ${label} restoration incomplete`);
+      failure.restorationIncomplete = true;
+      failure.cause = error;
+      throw failure;
+    }
+  }
+  return transaction;
+}
+
+function restoreDirectoryReplacement(transaction, spec) {
+  assertDirectoryTrust(transaction.parentTrust, spec, transaction.label);
+  assertDirectoryIdentity(transaction.parent, transaction.parentIdentity, spec, transaction.label);
+  safeRemoveExact(transaction.target, transaction.parent, basename(transaction.target), true, spec, transaction.parentTrust);
+  if (transaction.hadExisting) {
+    const backupStatus = lstatSync(transaction.backup);
+    if (backupStatus.isSymbolicLink() || !backupStatus.isDirectory()) {
+      throw new Error(`${spec.key}: unsafe ${transaction.label} backup`);
+    }
+    renameSync(transaction.backup, transaction.target);
+  }
+}
+
+function cleanupDirectoryReplacement(transaction, spec) {
+  if (!transaction.hadExisting) return;
+  assertDirectoryTrust(transaction.parentTrust, spec, transaction.label);
+  assertDirectoryIdentity(transaction.parent, transaction.parentIdentity, spec, transaction.label);
+  safeRemoveExact(transaction.backup, transaction.parent, basename(transaction.backup), true, spec, transaction.parentTrust);
+}
+
+function materializePersistentSource(sourceRoot, spec, context) {
+  const pluginRootPath = join(context.claudeConfigDir, 'plugins');
+  const sourceRootPath = join(pluginRootPath, 'clawgod-marketplaces');
+  const sourceParentPath = join(sourceRootPath, spec.marketplace);
+  const parentPaths = [pluginRootPath, sourceRootPath, sourceParentPath];
+  const originallyPresent = parentPaths.map(path => existsSync(path));
+  const pluginRoot = ensureTrustedDirectory(context.claudeConfigDir, ['plugins'], spec);
+  const sourceParent = ensureTrustedDirectory(pluginRoot, ['clawgod-marketplaces', spec.marketplace], spec);
+  const persistentSource = join(sourceParent, spec.version);
+  const staged = `${persistentSource}.${process.pid}.staged`;
+  if (existsSync(staged)) throw new Error(`${spec.key}: persistent source staging path already exists`);
+  const parentIdentity = directoryIdentity(sourceParent, spec);
+  const parentTrust = captureDirectoryTrust(sourceParent, spec);
+  let completed = false;
+  try {
+    if (spec.key === 'superpowers') {
+      mkdirSync(staged, 0o700);
+      safeDirectoryStatus(staged, spec);
+      const manifestDirectory = join(staged, '.claude-plugin');
+      mkdirSync(manifestDirectory, 0o700);
+      writeExclusive(
+        join(manifestDirectory, 'marketplace.json'),
+        new TextEncoder().encode(JSON.stringify({
+          name: 'superpowers-marketplace',
+          plugins: [{ name: 'superpowers', version: '6.2.0', source: './plugin' }],
+        })),
+        false,
+        spec,
+      );
+      copyValidatedDirectory(sourceRoot, join(staged, 'plugin'), spec);
+    } else copyValidatedDirectory(sourceRoot, staged, spec);
+    assertDirectoryIdentity(sourceParent, parentIdentity, spec, 'persistent source');
+    const transaction = prepareDirectoryReplacement(persistentSource, spec, 'persistent source');
+    try {
+      renameSync(staged, persistentSource);
+      assertDirectoryIdentity(sourceParent, parentIdentity, spec, 'persistent source');
+      safeDirectoryStatus(persistentSource, spec);
+      transaction.parentPaths = parentPaths;
+      transaction.originallyPresent = originallyPresent;
+      completed = true;
+      return { persistentSource, transaction };
+    } catch (error) {
+      try { restoreDirectoryReplacement(transaction, spec); } catch (restoreError) {
+        const failure = new Error(`${spec.key}: persistent source restoration incomplete`);
+        failure.restorationIncomplete = true;
+        failure.cause = restoreError;
+        throw failure;
+      }
+      throw error;
+    }
+  } finally {
+    if (existsSync(staged)) {
+      assertDirectoryIdentity(sourceParent, parentIdentity, spec, 'persistent source');
+      safeRemoveExact(staged, sourceParent, basename(staged), true, spec, parentTrust);
+    }
+    if (!completed) cleanupCreatedParents(parentPaths, originallyPresent, spec);
+  }
+}
+
+function copyDirectorySnapshot(source, destination, spec) {
+  const sourceStatus = safeDirectoryStatus(source, spec);
+  const sourceIdentity = { dev: sourceStatus.dev, ino: sourceStatus.ino };
+  mkdirSync(destination, sourceStatus.mode & 0o777);
+  chmodSync(destination, sourceStatus.mode & 0o777);
+  for (const name of readdirSync(source).sort()) {
+    const sourcePath = join(source, name);
+    const destinationPath = join(destination, name);
+    const status = lstatSync(sourcePath);
+    if (status.isSymbolicLink()) throw new Error(`${spec.key}: plugin cache contains a link`);
+    if (status.isDirectory()) copyDirectorySnapshot(sourcePath, destinationPath, spec);
+    else if (status.isFile() && status.nlink === 1) {
+      const file = readSingleLinkFile(sourcePath);
+      if (!file) throw new Error(`${spec.key}: plugin cache changed while snapshotting`);
+      writeExclusive(destinationPath, file.bytes, (status.mode & 0o111) !== 0, spec);
+      chmodSync(destinationPath, status.mode & 0o777);
+    } else throw new Error(`${spec.key}: plugin cache contains an unsafe entry`);
+  }
+  assertDirectoryIdentity(source, sourceIdentity, spec, 'plugin cache');
+}
+
+function prepareCacheTransaction(pluginRoot, spec) {
+  const cacheRoot = join(pluginRoot, 'cache');
+  const marketplaceCache = join(cacheRoot, spec.marketplace);
+  const pluginCache = join(marketplaceCache, spec.plugin);
+  const paths = [cacheRoot, marketplaceCache, pluginCache];
+  const originallyPresent = paths.map(path => existsSync(path));
+  const backup = `${pluginCache}.${process.pid}.backup`;
+  const backupPreExisting = existsSync(backup);
+  let marketplaceCacheTrust = null;
+  try {
+    for (const path of paths) {
+      if (existsSync(path)) safeDirectoryStatus(path, spec);
+      else mkdirSync(path, 0o700);
+    }
+    const pluginCacheIdentity = directoryIdentity(pluginCache, spec);
+    const pluginCacheTrust = captureDirectoryTrust(pluginCache, spec);
+    marketplaceCacheTrust = captureDirectoryTrust(marketplaceCache, spec);
+    if (backupPreExisting) throw new Error(`${spec.key}: plugin cache backup already exists`);
+    if (originallyPresent[2]) copyDirectorySnapshot(pluginCache, backup, spec);
+    return {
+      pluginCache, pluginCacheIdentity, pluginCacheTrust, marketplaceCache, marketplaceCacheTrust,
+      backup, hadExisting: originallyPresent[2], paths, originallyPresent,
+    };
+  } catch (error) {
+    const restorationErrors = [];
+    try {
+      if (!backupPreExisting && marketplaceCacheTrust && existsSync(backup)) {
+        safeRemoveExact(backup, marketplaceCache, basename(backup), true, spec, marketplaceCacheTrust);
+      }
+    } catch (restoreError) { restorationErrors.push(restoreError); }
+    try { cleanupCreatedParents(paths, originallyPresent, spec); } catch (restoreError) { restorationErrors.push(restoreError); }
+    if (restorationErrors.length > 0) {
+      const failure = new Error(`${spec.key}: plugin cache preparation restoration incomplete`);
+      failure.restorationIncomplete = true;
+      failure.cause = restorationErrors[0];
+      throw failure;
+    }
+    throw error;
+  }
+}
+
+function restoreCacheTransaction(transaction, spec) {
+  assertDirectoryTrust(transaction.pluginCacheTrust, spec, 'plugin cache');
+  assertDirectoryIdentity(transaction.pluginCache, transaction.pluginCacheIdentity, spec, 'plugin cache');
+  safeRemoveExact(
+    transaction.pluginCache,
+    transaction.marketplaceCache,
+    basename(transaction.pluginCache),
+    true,
+    spec,
+    transaction.marketplaceCacheTrust,
+  );
+  if (transaction.hadExisting) {
+    assertDirectoryTrust(transaction.marketplaceCacheTrust, spec, 'plugin cache parent');
+    renameSync(transaction.backup, transaction.pluginCache);
+  }
+}
+
+function cleanupCacheTransaction(transaction, spec) {
+  if (!transaction.hadExisting) return;
+  safeRemoveExact(
+    transaction.backup,
+    transaction.marketplaceCache,
+    basename(transaction.backup),
+    true,
+    spec,
+    transaction.marketplaceCacheTrust,
+  );
+}
+
+function cleanupCreatedParents(paths, originallyPresent, spec) {
+  for (let index = paths.length - 1; index >= 0; index--) {
+    if (originallyPresent[index]) continue;
+    const path = paths[index];
+    try {
+      const parent = dirname(path);
+      const parentTrust = captureDirectoryTrust(parent, spec);
+      const status = lstatSync(path);
+      if (status.isSymbolicLink() || !status.isDirectory()) throw new Error(`${spec.key}: unsafe created parent`);
+      assertDirectoryTrust(parentTrust, spec, 'created parent');
+      rmdirSync(path);
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      const failure = new Error(`${spec.key}: created parent restoration incomplete`);
+      failure.restorationIncomplete = true;
+      failure.cause = error;
+      throw failure;
+    }
+  }
+}
+
+function cleanupCreatedCacheParents(cacheTransaction, spec) {
+  cleanupCreatedParents(cacheTransaction.paths, cacheTransaction.originallyPresent, spec);
+}
+
+function runPluginCli(args, spec, context) {
+  let result;
+  try {
+    result = context.spawnSyncImpl({
+      cmd: [context.bunPath, context.claudeCliPath, ...args],
+      env: { ...context.env, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+  } catch {
+    throw new Error(`${spec.key}: plugin command failed`);
+  }
+  if (result.exitCode !== 0) throw new Error(`${spec.key}: plugin command failed`);
+}
+
+function verifyPluginInstallation(spec, context, pluginRoot, cacheTransaction) {
+  assertDirectoryTrust(cacheTransaction.pluginCacheTrust, spec, 'plugin cache');
+  assertDirectoryIdentity(cacheTransaction.pluginCache, cacheTransaction.pluginCacheIdentity, spec, 'plugin cache');
+  const installed = parseStateSnapshot(snapshotFile(join(pluginRoot, 'installed_plugins.json'), spec), {}, spec, 'installed plugin state');
+  const records = Array.isArray(installed?.plugins?.[spec.id]) ? installed.plugins[spec.id] : [];
+  const record = records.find(candidate => candidate?.scope === 'user' && candidate.version === spec.version);
+  if (!record || typeof record.installPath !== 'string') throw new Error(`${spec.key}: installed version was not verified`);
+  const cacheRoot = realpathSync(join(pluginRoot, 'cache'));
+  const installPath = realpathSync(record.installPath);
+  if (!installPath.startsWith(`${cacheRoot}${sep}`)) {
+    throw new Error(`${spec.key}: installed plugin escaped the canonical cache`);
+  }
+  const settings = parseStateSnapshot(snapshotFile(join(context.claudeConfigDir, 'settings.json'), spec), {}, spec, 'plugin settings');
+  if (settings?.enabledPlugins?.[spec.id] !== true) throw new Error(`${spec.key}: installed plugin is not enabled`);
+}
+
+function pluginResult(spec, status, ready, version, detail) {
+  return { key: spec.key, id: spec.id, version, status, ready, detail };
+}
+
+export async function ensureMarketplacePlugin(spec, context) {
+  try {
+    validateSpecFilenameComponents(spec);
+    validateFilenameComponent(spec?.marketplace, 'marketplace');
+    validateFilenameComponent(spec?.plugin, 'plugin');
+  } catch (error) {
+    return pluginResult(spec || {}, 'warning', false, null, error.message);
+  }
+  if (spec.id !== `${spec.plugin}@${spec.marketplace}`) {
+    return pluginResult(spec, 'warning', false, null, 'plugin id is not canonical');
+  }
+  const pluginRoot = join(context.claudeConfigDir, 'plugins');
+  const installedPlugins = join(pluginRoot, 'installed_plugins.json');
+  let installedSnapshot;
+  let installed;
+  try {
+    installedSnapshot = snapshotFile(installedPlugins, spec);
+    installed = parseStateSnapshot(installedSnapshot, { version: 2, plugins: {} }, spec, 'installed plugin state');
+  } catch (error) {
+    return pluginResult(spec, 'warning', false, null, error.message);
+  }
+  const classification = classifyPlugin(installed, spec);
+  const selected = selectInstalledRecord(installed, spec.id);
+  if (classification === 'satisfied') {
+    return pluginResult(spec, 'preserved', true, selected.version, `preserved ${selected.version}`);
+  }
+  if (classification === 'invalid') {
+    return pluginResult(spec, 'warning', false, null, 'installed version is invalid; preserved existing state');
+  }
+
+  const knownMarketplaces = join(pluginRoot, 'known_marketplaces.json');
+  const settingsPath = join(context.claudeConfigDir, 'settings.json');
+  let knownSnapshot;
+  let settingsSnapshot;
+  let known;
+  try {
+    knownSnapshot = snapshotFile(knownMarketplaces, spec);
+    settingsSnapshot = snapshotFile(settingsPath, spec);
+    known = parseStateSnapshot(knownSnapshot, {}, spec, 'known marketplace state');
+    parseStateSnapshot(settingsSnapshot, {}, spec, 'plugin settings');
+  } catch (error) {
+    return pluginResult(spec, 'warning', false, selected?.version || null, error.message);
+  }
+
+  let persistentTransaction = null;
+  let marketplaceTransaction = null;
+  let cacheTransaction = null;
+  try {
+    const stagedSource = await downloadAndStage(spec, context);
+    const materialized = materializePersistentSource(stagedSource.sourceRoot, spec, context);
+    persistentTransaction = materialized.transaction;
+    const marketplaceParentPath = join(pluginRoot, 'marketplaces');
+    const marketplaceParentPresent = existsSync(marketplaceParentPath);
+    const marketplaceParent = ensureTrustedDirectory(pluginRoot, ['marketplaces'], spec);
+    marketplaceTransaction = prepareDirectoryReplacement(join(marketplaceParent, spec.marketplace), spec, 'marketplace');
+    marketplaceTransaction.parentPaths = [marketplaceParentPath];
+    marketplaceTransaction.originallyPresent = [marketplaceParentPresent];
+    cacheTransaction = prepareCacheTransaction(pluginRoot, spec);
+
+    if (Object.hasOwn(known, spec.marketplace)) {
+      runPluginCli(['plugin', 'marketplace', 'remove', spec.marketplace], spec, context);
+    }
+    runPluginCli(['plugin', 'marketplace', 'add', materialized.persistentSource, '--scope', 'user'], spec, context);
+    runPluginCli(
+      classification === 'missing'
+        ? ['plugin', 'install', spec.id, '--scope', 'user']
+        : ['plugin', 'update', spec.id, '--scope', 'user'],
+      spec,
+      context,
+    );
+    verifyPluginInstallation(spec, context, pluginRoot, cacheTransaction);
+  } catch (error) {
+    const restorationErrors = [];
+    for (const restore of [
+      () => restoreFile(knownMarketplaces, knownSnapshot, spec),
+      () => restoreFile(installedPlugins, installedSnapshot, spec),
+      () => restoreFile(settingsPath, settingsSnapshot, spec),
+      () => marketplaceTransaction && restoreDirectoryReplacement(marketplaceTransaction, spec),
+      () => cacheTransaction && restoreCacheTransaction(cacheTransaction, spec),
+      () => marketplaceTransaction && cleanupCreatedParents(marketplaceTransaction.parentPaths, marketplaceTransaction.originallyPresent, spec),
+      () => cacheTransaction && cleanupCreatedCacheParents(cacheTransaction, spec),
+      () => persistentTransaction && restoreDirectoryReplacement(persistentTransaction, spec),
+      () => persistentTransaction && cleanupCreatedParents(persistentTransaction.parentPaths, persistentTransaction.originallyPresent, spec),
+    ]) {
+      try { restore(); } catch (restoreError) { restorationErrors.push(restoreError); }
+    }
+    if (restorationErrors.length > 0 || error?.restorationIncomplete) {
+      const failure = new Error(`${spec.key}: plugin transaction restoration incomplete`);
+      failure.restorationIncomplete = true;
+      failure.cause = restorationErrors[0] || error;
+      throw failure;
+    }
+    return pluginResult(spec, 'warning', false, selected?.version || null, error.message);
+  }
+
+  const cleanupErrors = [];
+  for (const cleanup of [
+    () => cleanupDirectoryReplacement(marketplaceTransaction, spec),
+    () => cleanupCacheTransaction(cacheTransaction, spec),
+    () => cleanupDirectoryReplacement(persistentTransaction, spec),
+  ]) {
+    try { cleanup(); } catch (error) { cleanupErrors.push(error); }
+  }
+  if (cleanupErrors.length > 0) {
+    return pluginResult(spec, 'warning', true, spec.version, 'installed plugin verified; transaction backup cleanup failed');
+  }
+  return pluginResult(
+    spec,
+    classification === 'missing' ? 'installed' : 'upgraded',
+    true,
+    spec.version,
+    `${classification === 'missing' ? 'installed' : 'upgraded'} ${spec.version}`,
+  );
 }
 PLUGIN_DEPENDENCIES_EOF
 chmod 700 "$CLAWGOD_DIR/plugin-dependencies.mjs"
