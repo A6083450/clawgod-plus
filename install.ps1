@@ -641,6 +641,9 @@ Install-FetchFileHelper
  *   fetchFilePath: string,
  *   env: Record<string, string | undefined>,
  *   spawnSyncImpl: typeof Bun.spawnSync,
+ *   onPersistentTransactionPrepared?: (transaction: object) => void,
+ *   onCacheQuarantined?: (transaction: object) => void,
+ *   onCacheFailedInspected?: (transaction: object) => void,
  * }} PluginContext
  */
 
@@ -1295,7 +1298,7 @@ function captureDirectoryTrust(path, spec) {
   return { requested, suffix, chain };
 }
 
-function assertDirectoryTrust(trust, spec, label) {
+function directoryTrustPresent(trust, spec, label) {
   if (!trust || !Array.isArray(trust.chain) || trust.chain.length === 0) {
     throw new Error(`${spec.key}: ${label} directory trust is missing`);
   }
@@ -1303,9 +1306,23 @@ function assertDirectoryTrust(trust, spec, label) {
   let current = trust.chain[trust.chain.length - 1].path;
   for (const part of trust.suffix) {
     current = join(current, part);
-    safeDirectoryStatus(current, spec);
+    let status;
+    try {
+      status = lstatSync(current);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return false;
+      throw error;
+    }
+    if (status.isSymbolicLink() || !status.isDirectory()) throw new Error(`${spec.key}: unsafe managed directory`);
   }
   if (resolve(current) !== trust.requested) throw new Error(`${spec.key}: ${label} directory changed`);
+  return true;
+}
+
+function assertDirectoryTrust(trust, spec, label) {
+  if (!directoryTrustPresent(trust, spec, label)) {
+    throw new Error(`${spec.key}: ${label} directory is absent`);
+  }
 }
 
 function safeRemoveExact(target, parent, name, recursive, spec, parentTrust) {
@@ -1331,11 +1348,12 @@ function safeRemoveExact(target, parent, name, recursive, spec, parentTrust) {
 
 function restoreFile(path, snapshot, spec) {
   const parent = dirname(path);
-  assertDirectoryTrust(snapshot.parentTrust, spec, 'plugin state parent');
   if (!snapshot.present) {
+    if (!directoryTrustPresent(snapshot.parentTrust, spec, 'plugin state parent')) return;
     safeRemoveExact(path, parent, basename(path), false, spec, snapshot.parentTrust);
     return;
   }
+  assertDirectoryTrust(snapshot.parentTrust, spec, 'plugin state parent');
   const staged = `${path}.${process.pid}.restore`;
   if (existsSync(staged)) throw new Error(`${spec.key}: restoration staging path already exists`);
   try {
@@ -1393,6 +1411,7 @@ function prepareDirectoryReplacement(target, spec, label) {
       const failure = new Error(`${spec.key}: ${label} restoration incomplete`);
       failure.restorationIncomplete = true;
       failure.cause = error;
+      failure.transaction = transaction;
       throw failure;
     }
   }
@@ -1419,6 +1438,20 @@ function cleanupDirectoryReplacement(transaction, spec) {
   safeRemoveExact(transaction.backup, transaction.parent, basename(transaction.backup), true, spec, transaction.parentTrust);
 }
 
+function captureCreatedParents(paths, originallyPresent, spec) {
+  const createdParents = [];
+  for (let index = 0; index < paths.length; index++) {
+    if (originallyPresent[index]) continue;
+    const path = paths[index];
+    createdParents.push({
+      path,
+      identity: directoryIdentity(path, spec),
+      parentTrust: captureDirectoryTrust(dirname(path), spec),
+    });
+  }
+  return createdParents;
+}
+
 function materializePersistentSource(sourceRoot, spec, context) {
   const pluginRootPath = join(context.claudeConfigDir, 'plugins');
   const sourceRootPath = join(pluginRootPath, 'clawgod-marketplaces');
@@ -1427,12 +1460,16 @@ function materializePersistentSource(sourceRoot, spec, context) {
   const originallyPresent = parentPaths.map(path => existsSync(path));
   const pluginRoot = ensureTrustedDirectory(context.claudeConfigDir, ['plugins'], spec);
   const sourceParent = ensureTrustedDirectory(pluginRoot, ['clawgod-marketplaces', spec.marketplace], spec);
+  const createdParents = captureCreatedParents(parentPaths, originallyPresent, spec);
   const persistentSource = join(sourceParent, spec.version);
   const staged = `${persistentSource}.${process.pid}.staged`;
   if (existsSync(staged)) throw new Error(`${spec.key}: persistent source staging path already exists`);
   const parentIdentity = directoryIdentity(sourceParent, spec);
   const parentTrust = captureDirectoryTrust(sourceParent, spec);
   let completed = false;
+  let transaction = null;
+  let result = null;
+  let failure = null;
   try {
     if (spec.key === 'superpowers') {
       mkdirSync(staged, 0o700);
@@ -1451,31 +1488,57 @@ function materializePersistentSource(sourceRoot, spec, context) {
       copyValidatedDirectory(sourceRoot, join(staged, 'plugin'), spec);
     } else copyValidatedDirectory(sourceRoot, staged, spec);
     assertDirectoryIdentity(sourceParent, parentIdentity, spec, 'persistent source');
-    const transaction = prepareDirectoryReplacement(persistentSource, spec, 'persistent source');
+    transaction = prepareDirectoryReplacement(persistentSource, spec, 'persistent source');
     try {
+      context.onPersistentTransactionPrepared?.(transaction);
       renameSync(staged, persistentSource);
       assertDirectoryIdentity(sourceParent, parentIdentity, spec, 'persistent source');
       safeDirectoryStatus(persistentSource, spec);
-      transaction.parentPaths = parentPaths;
-      transaction.originallyPresent = originallyPresent;
+      transaction.createdParents = createdParents;
+      const manifest = readJson(join(persistentSource, '.claude-plugin', 'marketplace.json'), spec);
+      const entry = manifest.plugins?.find(candidate => candidate.name === spec.plugin);
+      if (!entry) throw new Error(`${spec.key}: persistent plugin entry is missing`);
+      const pluginSource = spec.key === 'superpowers'
+        ? join(persistentSource, 'plugin')
+        : containedRelativeSource(persistentSource, entry.source, spec);
+      result = { persistentSource, pluginSource, transaction };
       completed = true;
-      return { persistentSource, transaction };
     } catch (error) {
       try { restoreDirectoryReplacement(transaction, spec); } catch (restoreError) {
-        const failure = new Error(`${spec.key}: persistent source restoration incomplete`);
-        failure.restorationIncomplete = true;
-        failure.cause = restoreError;
-        throw failure;
+        const restorationFailure = new Error(`${spec.key}: persistent source restoration incomplete`);
+        restorationFailure.restorationIncomplete = true;
+        restorationFailure.cause = restoreError;
+        restorationFailure.transaction = transaction;
+        throw restorationFailure;
       }
       throw error;
     }
-  } finally {
+  } catch (error) {
+    failure = error;
+    if (!transaction && error?.transaction) transaction = error.transaction;
+  }
+
+  const cleanupErrors = [];
+  try {
     if (existsSync(staged)) {
       assertDirectoryIdentity(sourceParent, parentIdentity, spec, 'persistent source');
       safeRemoveExact(staged, sourceParent, basename(staged), true, spec, parentTrust);
     }
-    if (!completed) cleanupCreatedParents(parentPaths, originallyPresent, spec);
+  } catch (error) {
+    cleanupErrors.push(error);
   }
+  if (!completed) {
+    try { cleanupCreatedParents(createdParents, spec); } catch (error) { cleanupErrors.push(error); }
+  }
+  if (failure || cleanupErrors.length > 0) {
+    const primary = failure?.restorationIncomplete ? failure : cleanupErrors.find(error => error?.restorationIncomplete) || failure || cleanupErrors[0];
+    if (primary?.restorationIncomplete) {
+      primary.transaction = primary.transaction || transaction;
+      throw primary;
+    }
+    throw primary;
+  }
+  return result;
 }
 
 function copyDirectorySnapshot(source, destination, spec) {
@@ -1499,7 +1562,66 @@ function copyDirectorySnapshot(source, destination, spec) {
   assertDirectoryIdentity(source, sourceIdentity, spec, 'plugin cache');
 }
 
-function prepareCacheTransaction(pluginRoot, spec) {
+function recordCacheEntries(directory, entries, spec, prefix = '') {
+  for (const name of readdirSync(directory)) {
+    const relativePath = prefix ? `${prefix}/${name}` : name;
+    const path = join(directory, name);
+    const status = lstatSync(path);
+    if (status.isSymbolicLink()) throw new Error(`${spec.key}: plugin cache contains a link`);
+    if (status.isDirectory()) {
+      entries.set(relativePath, `directory:${status.mode & 0o777}`);
+      recordCacheEntries(path, entries, spec, relativePath);
+    } else if (status.isFile() && status.nlink === 1) {
+      const file = readSingleLinkFile(path);
+      if (!file) throw new Error(`${spec.key}: plugin cache changed while inventorying`);
+      entries.set(relativePath, `file:${status.mode & 0o777}:${sha256(file.bytes)}`);
+    } else throw new Error(`${spec.key}: plugin cache contains an unsafe entry`);
+  }
+}
+
+function cacheEntrySignature(path, status, spec) {
+  if (status.isSymbolicLink()) return 'unsafe';
+  if (status.isDirectory()) return `directory:${status.mode & 0o777}`;
+  if (!status.isFile() || status.nlink !== 1) return 'unsafe';
+  const file = readSingleLinkFile(path);
+  if (!file) throw new Error(`${spec.key}: plugin cache changed while inventorying`);
+  return `file:${status.mode & 0o777}:${sha256(file.bytes)}`;
+}
+
+function cacheTreeMatches(directory, expected, expectedRootSignature, spec) {
+  if (!existsSync(directory)) return false;
+  const rootStatus = lstatSync(directory);
+  if (cacheEntrySignature(directory, rootStatus, spec) !== expectedRootSignature) return false;
+  const actual = new Map();
+  recordCacheEntries(directory, actual, spec);
+  if (actual.size !== expected.size) return false;
+  for (const [path, signature] of expected) if (actual.get(path) !== signature) return false;
+  return true;
+}
+
+function unexpectedCachePaths(directory, transaction, spec, prefix = '', unexpected = []) {
+  for (const name of readdirSync(directory)) {
+    const relativePath = prefix ? `${prefix}/${name}` : name;
+    const path = join(directory, name);
+    const status = lstatSync(path);
+    const baselinePrefix = `${transaction.version}/`;
+    const expectedPath = relativePath === transaction.version ? ''
+      : relativePath.startsWith(baselinePrefix) ? relativePath.slice(baselinePrefix.length) : null;
+    const expectedSignature = expectedPath === '' ? transaction.expectedVersionRootSignature
+      : expectedPath === null ? null : transaction.expectedVersionEntries.get(expectedPath);
+    if (!transaction.preExistingEntries.has(relativePath)
+      && (expectedSignature === null || expectedSignature === undefined || cacheEntrySignature(path, status, spec) !== expectedSignature)) {
+      unexpected.push(relativePath);
+      continue;
+    }
+    if (status.isDirectory() && !status.isSymbolicLink()) {
+      unexpectedCachePaths(path, transaction, spec, relativePath, unexpected);
+    }
+  }
+  return unexpected;
+}
+
+function prepareCacheTransaction(pluginRoot, spec, installed, pluginSource) {
   const cacheRoot = join(pluginRoot, 'cache');
   const marketplaceCache = join(cacheRoot, spec.marketplace);
   const pluginCache = join(marketplaceCache, spec.plugin);
@@ -1508,19 +1630,32 @@ function prepareCacheTransaction(pluginRoot, spec) {
   const backup = `${pluginCache}.${process.pid}.backup`;
   const backupPreExisting = existsSync(backup);
   let marketplaceCacheTrust = null;
+  const createdParents = [];
   try {
     for (const path of paths) {
       if (existsSync(path)) safeDirectoryStatus(path, spec);
-      else mkdirSync(path, 0o700);
+      else {
+        const parentTrust = captureDirectoryTrust(dirname(path), spec);
+        mkdirSync(path, 0o700);
+        createdParents.push({ path, identity: directoryIdentity(path, spec), parentTrust });
+      }
     }
     const pluginCacheIdentity = directoryIdentity(pluginCache, spec);
     const pluginCacheTrust = captureDirectoryTrust(pluginCache, spec);
     marketplaceCacheTrust = captureDirectoryTrust(marketplaceCache, spec);
+    const preExistingEntries = new Map();
+    recordCacheEntries(pluginCache, preExistingEntries, spec);
+    const preExistingRootSignature = cacheEntrySignature(pluginCache, lstatSync(pluginCache), spec);
+    const expectedVersionEntries = new Map();
+    recordCacheEntries(pluginSource, expectedVersionEntries, spec);
+    const expectedVersionRootSignature = cacheEntrySignature(pluginSource, lstatSync(pluginSource), spec);
     if (backupPreExisting) throw new Error(`${spec.key}: plugin cache backup already exists`);
     if (originallyPresent[2]) copyDirectorySnapshot(pluginCache, backup, spec);
     return {
       pluginCache, pluginCacheIdentity, pluginCacheTrust, marketplaceCache, marketplaceCacheTrust,
-      backup, hadExisting: originallyPresent[2], paths, originallyPresent,
+      backup, hadExisting: originallyPresent[2], createdParents, preExistingEntries, preExistingRootSignature,
+      expectedVersionEntries, expectedVersionRootSignature,
+      version: spec.version,
     };
   } catch (error) {
     const restorationErrors = [];
@@ -1529,7 +1664,7 @@ function prepareCacheTransaction(pluginRoot, spec) {
         safeRemoveExact(backup, marketplaceCache, basename(backup), true, spec, marketplaceCacheTrust);
       }
     } catch (restoreError) { restorationErrors.push(restoreError); }
-    try { cleanupCreatedParents(paths, originallyPresent, spec); } catch (restoreError) { restorationErrors.push(restoreError); }
+    try { cleanupCreatedParents(createdParents, spec); } catch (restoreError) { restorationErrors.push(restoreError); }
     if (restorationErrors.length > 0) {
       const failure = new Error(`${spec.key}: plugin cache preparation restoration incomplete`);
       failure.restorationIncomplete = true;
@@ -1540,21 +1675,92 @@ function prepareCacheTransaction(pluginRoot, spec) {
   }
 }
 
-function restoreCacheTransaction(transaction, spec) {
+function restoreCacheTransaction(transaction, spec, context) {
   assertDirectoryTrust(transaction.pluginCacheTrust, spec, 'plugin cache');
   assertDirectoryIdentity(transaction.pluginCache, transaction.pluginCacheIdentity, spec, 'plugin cache');
-  safeRemoveExact(
-    transaction.pluginCache,
-    transaction.marketplaceCache,
-    basename(transaction.pluginCache),
-    true,
-    spec,
-    transaction.marketplaceCacheTrust,
-  );
-  if (transaction.hadExisting) {
-    assertDirectoryTrust(transaction.marketplaceCacheTrust, spec, 'plugin cache parent');
-    renameSync(transaction.backup, transaction.pluginCache);
+  const failedPath = `${transaction.pluginCache}.${process.pid}.failed`;
+  const cleanupPath = `${transaction.pluginCache}.${process.pid}.cleanup`;
+  const concurrentPath = `${transaction.pluginCache}.${process.pid}.concurrent`;
+  if (existsSync(failedPath) || existsSync(cleanupPath) || existsSync(concurrentPath)) {
+    const failure = new Error(`${spec.key}: plugin cache restoration incomplete; evidence path exists`);
+    failure.restorationIncomplete = true;
+    failure.evidencePath = transaction.pluginCache;
+    throw failure;
   }
+  assertDirectoryTrust(transaction.marketplaceCacheTrust, spec, 'plugin cache parent');
+  renameSync(transaction.pluginCache, failedPath);
+  if (transaction.hadExisting) copyDirectorySnapshot(transaction.backup, transaction.pluginCache, spec);
+  context.onCacheQuarantined?.({ pluginCache: transaction.pluginCache, failedPath });
+
+  const canonicalChanged = transaction.hadExisting
+    ? !cacheTreeMatches(transaction.pluginCache, transaction.preExistingEntries, transaction.preExistingRootSignature, spec)
+    : existsSync(transaction.pluginCache);
+  if (canonicalChanged) {
+    const evidencePaths = [failedPath];
+    if (existsSync(transaction.pluginCache)) {
+      renameSync(transaction.pluginCache, concurrentPath);
+      evidencePaths.push(concurrentPath);
+    }
+    if (transaction.hadExisting) renameSync(transaction.backup, transaction.pluginCache);
+    const failure = new Error(`${spec.key}: plugin cache restoration incomplete; concurrent data preserved`);
+    failure.restorationIncomplete = true;
+    failure.evidencePath = evidencePaths.at(-1);
+    failure.evidencePaths = evidencePaths;
+    throw failure;
+  }
+
+  const unexpected = unexpectedCachePaths(failedPath, transaction, spec);
+  context.onCacheFailedInspected?.({ pluginCache: transaction.pluginCache, failedPath, unexpectedPaths: unexpected });
+
+  assertDirectoryTrust(transaction.marketplaceCacheTrust, spec, 'plugin cache parent');
+  renameSync(failedPath, cleanupPath);
+  const lateUnexpected = unexpectedCachePaths(cleanupPath, transaction, spec);
+  const canonicalChangedAfterInspection = transaction.hadExisting
+    ? !cacheTreeMatches(transaction.pluginCache, transaction.preExistingEntries, transaction.preExistingRootSignature, spec)
+    : existsSync(transaction.pluginCache);
+  if (canonicalChangedAfterInspection) {
+    const evidencePaths = [cleanupPath];
+    if (existsSync(transaction.pluginCache)) {
+      renameSync(transaction.pluginCache, concurrentPath);
+      evidencePaths.push(concurrentPath);
+    }
+    if (transaction.hadExisting) renameSync(transaction.backup, transaction.pluginCache);
+    const failure = new Error(`${spec.key}: plugin cache restoration incomplete; late concurrent data preserved`);
+    failure.restorationIncomplete = true;
+    failure.evidencePath = evidencePaths.at(-1);
+    failure.evidencePaths = evidencePaths;
+    throw failure;
+  }
+  if (unexpected.length > 0 || lateUnexpected.length > 0 || existsSync(failedPath)) {
+    const evidencePaths = [cleanupPath, transaction.pluginCache];
+    if (existsSync(failedPath)) evidencePaths.push(failedPath);
+    if (transaction.hadExisting) evidencePaths.push(transaction.backup);
+    const failure = new Error(`${spec.key}: plugin cache restoration incomplete; unknown paths preserved`);
+    failure.restorationIncomplete = true;
+    failure.evidencePath = cleanupPath;
+    failure.evidencePaths = evidencePaths;
+    failure.unexpectedPaths = [...new Set([...unexpected, ...lateUnexpected])];
+    throw failure;
+  }
+
+  safeRemoveExact(cleanupPath, transaction.marketplaceCache, basename(cleanupPath), true, spec, transaction.marketplaceCacheTrust);
+  const canonicalChangedAfterCleanup = transaction.hadExisting
+    ? !cacheTreeMatches(transaction.pluginCache, transaction.preExistingEntries, transaction.preExistingRootSignature, spec)
+    : existsSync(transaction.pluginCache);
+  if (canonicalChangedAfterCleanup || existsSync(failedPath) || existsSync(cleanupPath)) {
+    const evidencePaths = [failedPath, cleanupPath].filter(path => existsSync(path));
+    if (canonicalChangedAfterCleanup && existsSync(transaction.pluginCache)) {
+      renameSync(transaction.pluginCache, concurrentPath);
+      evidencePaths.push(concurrentPath);
+    }
+    if (transaction.hadExisting) renameSync(transaction.backup, transaction.pluginCache);
+    const failure = new Error(`${spec.key}: plugin cache restoration incomplete; cleanup race preserved`);
+    failure.restorationIncomplete = true;
+    failure.evidencePath = evidencePaths.at(-1) || transaction.pluginCache;
+    failure.evidencePaths = evidencePaths;
+    throw failure;
+  }
+  if (transaction.hadExisting) cleanupCacheTransaction(transaction, spec);
 }
 
 function cleanupCacheTransaction(transaction, spec) {
@@ -1569,16 +1775,14 @@ function cleanupCacheTransaction(transaction, spec) {
   );
 }
 
-function cleanupCreatedParents(paths, originallyPresent, spec) {
-  for (let index = paths.length - 1; index >= 0; index--) {
-    if (originallyPresent[index]) continue;
-    const path = paths[index];
+function cleanupCreatedParents(createdParents, spec) {
+  for (let index = createdParents.length - 1; index >= 0; index--) {
+    const { path, identity, parentTrust } = createdParents[index];
     try {
-      const parent = dirname(path);
-      const parentTrust = captureDirectoryTrust(parent, spec);
       const status = lstatSync(path);
       if (status.isSymbolicLink() || !status.isDirectory()) throw new Error(`${spec.key}: unsafe created parent`);
       assertDirectoryTrust(parentTrust, spec, 'created parent');
+      assertDirectoryIdentity(path, identity, spec, 'created parent');
       rmdirSync(path);
     } catch (error) {
       if (error?.code === 'ENOENT') continue;
@@ -1591,7 +1795,7 @@ function cleanupCreatedParents(paths, originallyPresent, spec) {
 }
 
 function cleanupCreatedCacheParents(cacheTransaction, spec) {
-  cleanupCreatedParents(cacheTransaction.paths, cacheTransaction.originallyPresent, spec);
+  cleanupCreatedParents(cacheTransaction.createdParents, spec);
 }
 
 function runPluginCli(args, spec, context) {
@@ -1637,8 +1841,9 @@ export async function ensureMarketplacePlugin(spec, context) {
   } catch (error) {
     return pluginResult(spec || {}, 'warning', false, null, error.message);
   }
-  if (spec.id !== `${spec.plugin}@${spec.marketplace}`) {
-    return pluginResult(spec, 'warning', false, null, 'plugin id is not canonical');
+  const baseline = PLUGIN_BASELINES[spec.key];
+  if (!baseline || ['key', 'id', 'marketplace', 'plugin', 'version'].some(field => spec[field] !== baseline[field])) {
+    return pluginResult(spec, 'warning', false, null, 'plugin spec is not canonical');
   }
   const pluginRoot = join(context.claudeConfigDir, 'plugins');
   const installedPlugins = join(pluginRoot, 'installed_plugins.json');
@@ -1683,10 +1888,10 @@ export async function ensureMarketplacePlugin(spec, context) {
     const marketplaceParentPath = join(pluginRoot, 'marketplaces');
     const marketplaceParentPresent = existsSync(marketplaceParentPath);
     const marketplaceParent = ensureTrustedDirectory(pluginRoot, ['marketplaces'], spec);
+    const marketplaceCreatedParents = captureCreatedParents([marketplaceParentPath], [marketplaceParentPresent], spec);
     marketplaceTransaction = prepareDirectoryReplacement(join(marketplaceParent, spec.marketplace), spec, 'marketplace');
-    marketplaceTransaction.parentPaths = [marketplaceParentPath];
-    marketplaceTransaction.originallyPresent = [marketplaceParentPresent];
-    cacheTransaction = prepareCacheTransaction(pluginRoot, spec);
+    marketplaceTransaction.createdParents = marketplaceCreatedParents;
+    cacheTransaction = prepareCacheTransaction(pluginRoot, spec, installed, materialized.pluginSource);
 
     if (Object.hasOwn(known, spec.marketplace)) {
       runPluginCli(['plugin', 'marketplace', 'remove', spec.marketplace], spec, context);
@@ -1701,24 +1906,30 @@ export async function ensureMarketplacePlugin(spec, context) {
     );
     verifyPluginInstallation(spec, context, pluginRoot, cacheTransaction);
   } catch (error) {
+    if (!persistentTransaction && error?.transaction) persistentTransaction = error.transaction;
     const restorationErrors = [];
     for (const restore of [
       () => restoreFile(knownMarketplaces, knownSnapshot, spec),
       () => restoreFile(installedPlugins, installedSnapshot, spec),
       () => restoreFile(settingsPath, settingsSnapshot, spec),
       () => marketplaceTransaction && restoreDirectoryReplacement(marketplaceTransaction, spec),
-      () => cacheTransaction && restoreCacheTransaction(cacheTransaction, spec),
-      () => marketplaceTransaction && cleanupCreatedParents(marketplaceTransaction.parentPaths, marketplaceTransaction.originallyPresent, spec),
+      () => cacheTransaction && restoreCacheTransaction(cacheTransaction, spec, context),
+      () => marketplaceTransaction && cleanupCreatedParents(marketplaceTransaction.createdParents, spec),
       () => cacheTransaction && cleanupCreatedCacheParents(cacheTransaction, spec),
       () => persistentTransaction && restoreDirectoryReplacement(persistentTransaction, spec),
-      () => persistentTransaction && cleanupCreatedParents(persistentTransaction.parentPaths, persistentTransaction.originallyPresent, spec),
+      () => persistentTransaction && cleanupCreatedParents(persistentTransaction.createdParents || [], spec),
     ]) {
       try { restore(); } catch (restoreError) { restorationErrors.push(restoreError); }
     }
     if (restorationErrors.length > 0 || error?.restorationIncomplete) {
       const failure = new Error(`${spec.key}: plugin transaction restoration incomplete`);
       failure.restorationIncomplete = true;
-      failure.cause = restorationErrors[0] || error;
+      const primary = error?.restorationIncomplete ? error : restorationErrors.find(candidate => candidate?.restorationIncomplete) || restorationErrors[0] || error;
+      failure.cause = primary;
+      failure.transaction = primary?.transaction || persistentTransaction || null;
+      if (primary?.evidencePath) failure.evidencePath = primary.evidencePath;
+      if (primary?.evidencePaths) failure.evidencePaths = primary.evidencePaths;
+      if (primary?.unexpectedPaths) failure.unexpectedPaths = primary.unexpectedPaths;
       throw failure;
     }
     return pluginResult(spec, 'warning', false, selected?.version || null, error.message);
