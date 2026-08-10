@@ -641,6 +641,7 @@ Install-FetchFileHelper
  *   fetchFilePath: string,
  *   env: Record<string, string | undefined>,
  *   spawnSyncImpl: typeof Bun.spawnSync,
+ *   onManagedDirectoryPublishing?: (transaction: object) => void,
  *   onManagedDirectoryInstalled?: (transaction: object) => void,
  *   onPersistentTransactionPrepared?: (transaction: object) => void,
  *   onCacheQuarantined?: (transaction: object) => void,
@@ -990,28 +991,33 @@ function createTrackedDirectory(target, spec, context, label) {
   const parent = dirname(target);
   const parentTrust = captureDirectoryTrust(parent, spec);
   const parentIdentity = directoryIdentity(parent, spec);
-  const staged = mkdtempSync(join(parent, `.${basename(target)}.${process.pid}.create-`));
-  chmodSync(staged, 0o700);
-  const identity = directoryIdentity(staged, spec);
   try {
     assertDirectoryTrust(parentTrust, spec, label);
     assertDirectoryIdentity(parent, parentIdentity, spec, label);
-    if (existsSync(target)) {
-      throw managedDirectoryFailure(spec, `${label} creation raced with another directory`, null, [staged, target]);
-    }
-    renameSync(staged, target);
+    context.onManagedDirectoryPublishing?.({ path: target, label });
+    mkdirSync(target, 0o700);
+    const identity = directoryIdentity(target, spec);
+    const trust = captureDirectoryTrust(target, spec);
+    assertDirectoryTrust(parentTrust, spec, label);
+    assertDirectoryIdentity(parent, parentIdentity, spec, label);
+    assertDirectoryTrust(trust, spec, label);
+    assertDirectoryIdentity(target, identity, spec, label);
     context.onManagedDirectoryInstalled?.({ path: target, identity, label });
     assertDirectoryTrust(parentTrust, spec, label);
     assertDirectoryIdentity(parent, parentIdentity, spec, label);
-    assertDirectoryIdentity(target, identity, spec, label);
-    const trust = captureDirectoryTrust(target, spec);
     assertDirectoryTrust(trust, spec, label);
     assertDirectoryIdentity(target, identity, spec, label);
     return { path: target, identity, parentTrust, trust };
   } catch (error) {
     if (error?.restorationIncomplete) throw error;
-    const evidencePaths = [staged, target].filter(path => existsSync(path));
-    throw managedDirectoryFailure(spec, `${label} creation restoration incomplete`, error, evidencePaths);
+    const evidencePaths = [];
+    let evidenceCause = null;
+    try { lstatSync(target); evidencePaths.push(target); } catch (evidenceError) {
+      if (evidenceError?.code !== 'ENOENT') evidenceCause = evidenceError;
+    }
+    const failure = managedDirectoryFailure(spec, `${label} creation restoration incomplete`, error, evidencePaths);
+    if (evidenceCause) failure.evidenceCause = evidenceCause;
+    throw failure;
   }
 }
 

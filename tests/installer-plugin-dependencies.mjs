@@ -1440,6 +1440,39 @@ process.exit(67);
   assert.equal(existsSync(join(displacedPersistentParent, `${hudSpec.version}.${process.pid}.backup`)), true, 'the displaced persistent backup must remain as evidence');
   assert.equal(existsSync(join(displacedPersistentParent, `${hudSpec.version}.${process.pid}.staged`)), true, 'the displaced staged source must remain as evidence');
 
+  const publicationRaceFixture = makeTransactionFixture('creation-publication-no-clobber', hudSpec, 'missing', {
+    failStep: 'install',
+    known: false,
+  });
+  const publicationPath = join(publicationRaceFixture.pluginRoot, 'clawgod-marketplaces');
+  let publicationHookRan = false;
+  let suppliedIdentity = null;
+  publicationRaceFixture.context.onManagedDirectoryPublishing = ({ path }) => {
+    if (path !== publicationPath) return;
+    publicationHookRan = true;
+    mkdirSync(path);
+    const status = lstatSync(path);
+    suppliedIdentity = { dev: status.dev, ino: status.ino };
+  };
+  let publicationError = null;
+  try {
+    await ensureMarketplacePlugin(hudSpec, publicationRaceFixture.context);
+  } catch (error) {
+    publicationError = error;
+  }
+  const publishedStatus = existsSync(publicationPath) ? lstatSync(publicationPath) : null;
+  assert.deepEqual({
+    hookRan: publicationHookRan,
+    restorationIncomplete: publicationError?.restorationIncomplete === true,
+    suppliedPreserved: suppliedIdentity !== null && publishedStatus?.dev === suppliedIdentity.dev && publishedStatus?.ino === suppliedIdentity.ino,
+    evidenceReported: publicationError?.evidencePaths?.includes(publicationPath) === true,
+  }, {
+    hookRan: true,
+    restorationIncomplete: true,
+    suppliedPreserved: true,
+    evidenceReported: true,
+  }, 'pre-publication must never overwrite or adopt an empty concurrently supplied directory');
+
   const creationRaceOutcomes = {};
   for (const targetKind of ['persistent', 'marketplace']) {
     const creationRaceFixture = makeTransactionFixture(`creation-identity-${targetKind}`, hudSpec, 'missing', {
