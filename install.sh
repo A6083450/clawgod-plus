@@ -510,13 +510,15 @@ cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << 'PLUGIN_DEPENDENCIES_EOF'
  *   fetchFilePath: string,
  *   env: Record<string, string | undefined>,
  *   spawnSyncImpl: typeof Bun.spawnSync,
+ *   onManagedDirectoryInstalled?: (transaction: object) => void,
  *   onPersistentTransactionPrepared?: (transaction: object) => void,
  *   onCacheQuarantined?: (transaction: object) => void,
  *   onCacheFailedInspected?: (transaction: object) => void,
+ *   onCacheCleanupInventoried?: (transaction: object) => void,
  * }} PluginContext
  */
 
-import { chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, unlinkSync, writeSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 
 export const PLUGIN_BASELINES = Object.freeze({
@@ -842,6 +844,86 @@ function ensureTrustedDirectory(root, parts, spec) {
     }
   }
   return current;
+}
+
+function managedDirectoryFailure(spec, message, cause, evidencePaths = []) {
+  const failure = new Error(`${spec.key}: ${message}`);
+  failure.restorationIncomplete = true;
+  failure.cause = cause;
+  failure.evidencePaths = evidencePaths;
+  failure.evidencePath = evidencePaths.at(-1);
+  return failure;
+}
+
+function createTrackedDirectory(target, spec, context, label) {
+  const parent = dirname(target);
+  const parentTrust = captureDirectoryTrust(parent, spec);
+  const parentIdentity = directoryIdentity(parent, spec);
+  const staged = mkdtempSync(join(parent, `.${basename(target)}.${process.pid}.create-`));
+  chmodSync(staged, 0o700);
+  const identity = directoryIdentity(staged, spec);
+  try {
+    assertDirectoryTrust(parentTrust, spec, label);
+    assertDirectoryIdentity(parent, parentIdentity, spec, label);
+    if (existsSync(target)) {
+      throw managedDirectoryFailure(spec, `${label} creation raced with another directory`, null, [staged, target]);
+    }
+    renameSync(staged, target);
+    context.onManagedDirectoryInstalled?.({ path: target, identity, label });
+    assertDirectoryTrust(parentTrust, spec, label);
+    assertDirectoryIdentity(parent, parentIdentity, spec, label);
+    assertDirectoryIdentity(target, identity, spec, label);
+    const trust = captureDirectoryTrust(target, spec);
+    assertDirectoryTrust(trust, spec, label);
+    assertDirectoryIdentity(target, identity, spec, label);
+    return { path: target, identity, parentTrust, trust };
+  } catch (error) {
+    if (error?.restorationIncomplete) throw error;
+    const evidencePaths = [staged, target].filter(path => existsSync(path));
+    throw managedDirectoryFailure(spec, `${label} creation restoration incomplete`, error, evidencePaths);
+  }
+}
+
+function trackedDirectoryGuard(path, createdParents, spec, label) {
+  const created = createdParents.find(entry => entry.path === path);
+  const identity = created?.identity || directoryIdentity(path, spec);
+  const trust = created?.trust || captureDirectoryTrust(path, spec);
+  try {
+    assertDirectoryTrust(trust, spec, label);
+    assertDirectoryIdentity(path, identity, spec, label);
+  } catch (error) {
+    if (created) {
+      throw managedDirectoryFailure(spec, `${label} creation identity changed`, error, [path].filter(candidate => existsSync(candidate)));
+    }
+    throw error;
+  }
+  return { identity, trust };
+}
+
+function ensureTrackedDirectory(root, parts, spec, context, label) {
+  safeDirectoryStatus(root, spec);
+  let current = root;
+  const createdParents = [];
+  try {
+    for (const part of parts) {
+      const target = join(current, part);
+      if (existsSync(target)) safeDirectoryStatus(target, spec);
+      else createdParents.push(createTrackedDirectory(target, spec, context, label));
+      current = target;
+    }
+    for (const created of createdParents) trackedDirectoryGuard(created.path, [created], spec, label);
+    return { path: current, createdParents };
+  } catch (error) {
+    try {
+      cleanupCreatedParents(createdParents, spec);
+    } catch (cleanupError) {
+      if (!error?.restorationIncomplete) {
+        throw managedDirectoryFailure(spec, `${label} creation restoration incomplete`, cleanupError, createdParents.map(entry => entry.path));
+      }
+      error.cleanupCause = cleanupError;
+    }
+    throw error;
+  }
 }
 
 function validateFilenameComponent(value, label) {
@@ -1261,10 +1343,12 @@ function copyValidatedDirectory(source, destination, spec) {
   assertDirectoryIdentity(source, sourceIdentity, spec, 'staged source');
 }
 
-function prepareDirectoryReplacement(target, spec, label) {
+function prepareDirectoryReplacement(target, spec, label, parentGuard = null) {
   const parent = dirname(target);
-  const parentTrust = captureDirectoryTrust(parent, spec);
-  const parentIdentity = directoryIdentity(parent, spec);
+  const parentTrust = parentGuard?.trust || captureDirectoryTrust(parent, spec);
+  const parentIdentity = parentGuard?.identity || directoryIdentity(parent, spec);
+  assertDirectoryTrust(parentTrust, spec, label);
+  assertDirectoryIdentity(parent, parentIdentity, spec, label);
   const backup = `${target}.${process.pid}.backup`;
   if (existsSync(backup)) throw new Error(`${spec.key}: ${label} backup already exists`);
   const transaction = { target, parent, parentTrust, parentIdentity, backup, hadExisting: false, label };
@@ -1307,34 +1391,22 @@ function cleanupDirectoryReplacement(transaction, spec) {
   safeRemoveExact(transaction.backup, transaction.parent, basename(transaction.backup), true, spec, transaction.parentTrust);
 }
 
-function captureCreatedParents(paths, originallyPresent, spec) {
-  const createdParents = [];
-  for (let index = 0; index < paths.length; index++) {
-    if (originallyPresent[index]) continue;
-    const path = paths[index];
-    createdParents.push({
-      path,
-      identity: directoryIdentity(path, spec),
-      parentTrust: captureDirectoryTrust(dirname(path), spec),
-    });
-  }
-  return createdParents;
-}
-
 function materializePersistentSource(sourceRoot, spec, context) {
-  const pluginRootPath = join(context.claudeConfigDir, 'plugins');
-  const sourceRootPath = join(pluginRootPath, 'clawgod-marketplaces');
-  const sourceParentPath = join(sourceRootPath, spec.marketplace);
-  const parentPaths = [pluginRootPath, sourceRootPath, sourceParentPath];
-  const originallyPresent = parentPaths.map(path => existsSync(path));
-  const pluginRoot = ensureTrustedDirectory(context.claudeConfigDir, ['plugins'], spec);
-  const sourceParent = ensureTrustedDirectory(pluginRoot, ['clawgod-marketplaces', spec.marketplace], spec);
-  const createdParents = captureCreatedParents(parentPaths, originallyPresent, spec);
+  const trackedParents = ensureTrackedDirectory(
+    context.claudeConfigDir,
+    ['plugins', 'clawgod-marketplaces', spec.marketplace],
+    spec,
+    context,
+    'persistent marketplace parent',
+  );
+  const sourceParent = trackedParents.path;
+  const createdParents = trackedParents.createdParents;
+  const sourceParentGuard = trackedDirectoryGuard(sourceParent, createdParents, spec, 'persistent marketplace parent');
   const persistentSource = join(sourceParent, spec.version);
   const staged = `${persistentSource}.${process.pid}.staged`;
   if (existsSync(staged)) throw new Error(`${spec.key}: persistent source staging path already exists`);
-  const parentIdentity = directoryIdentity(sourceParent, spec);
-  const parentTrust = captureDirectoryTrust(sourceParent, spec);
+  const parentIdentity = sourceParentGuard.identity;
+  const parentTrust = sourceParentGuard.trust;
   let completed = false;
   let transaction = null;
   let result = null;
@@ -1357,7 +1429,7 @@ function materializePersistentSource(sourceRoot, spec, context) {
       copyValidatedDirectory(sourceRoot, join(staged, 'plugin'), spec);
     } else copyValidatedDirectory(sourceRoot, staged, spec);
     assertDirectoryIdentity(sourceParent, parentIdentity, spec, 'persistent source');
-    transaction = prepareDirectoryReplacement(persistentSource, spec, 'persistent source');
+    transaction = prepareDirectoryReplacement(persistentSource, spec, 'persistent source', sourceParentGuard);
     try {
       context.onPersistentTransactionPrepared?.(transaction);
       renameSync(staged, persistentSource);
@@ -1468,6 +1540,85 @@ function cacheTreeMatches(directory, expected, expectedRootSignature, spec) {
   return true;
 }
 
+function captureCacheCleanupNode(path, spec) {
+  const before = lstatSync(path);
+  const signature = cacheEntrySignature(path, before, spec);
+  if (signature === 'unsafe') throw new Error(`${spec.key}: plugin cache cleanup contains an unsafe entry`);
+  const node = {
+    type: before.isDirectory() ? 'directory' : 'file',
+    identity: { dev: before.dev, ino: before.ino },
+    signature,
+    children: [],
+  };
+  const names = node.type === 'directory' ? readdirSync(path).sort() : [];
+  for (const name of names) {
+    node.children.push({ name, node: captureCacheCleanupNode(join(path, name), spec) });
+  }
+  const after = lstatSync(path);
+  const afterSignature = cacheEntrySignature(path, after, spec);
+  const afterNames = node.type === 'directory' ? readdirSync(path).sort() : [];
+  if (after.dev !== node.identity.dev || after.ino !== node.identity.ino
+    || afterSignature !== signature || afterNames.length !== names.length
+    || afterNames.some((name, index) => name !== names[index])) {
+    throw new Error(`${spec.key}: plugin cache changed while capturing cleanup inventory`);
+  }
+  return node;
+}
+
+function cacheCleanupNodeMatches(path, node, spec) {
+  if (!existsSync(path)) return false;
+  const status = lstatSync(path);
+  return status.dev === node.identity.dev && status.ino === node.identity.ino
+    && cacheEntrySignature(path, status, spec) === node.signature;
+}
+
+function removeCapturedCacheNode(path, node, spec) {
+  if (!cacheCleanupNodeMatches(path, node, spec)) {
+    throw managedDirectoryFailure(spec, 'plugin cache restoration incomplete; cleanup entry changed', null, [path]);
+  }
+  if (node.type === 'directory') {
+    for (const child of node.children) removeCapturedCacheNode(join(path, child.name), child.node, spec);
+    if (!cacheCleanupNodeMatches(path, node, spec)) {
+      throw managedDirectoryFailure(spec, 'plugin cache restoration incomplete; cleanup directory changed', null, [path]);
+    }
+  }
+
+  const parent = dirname(path);
+  const parentTrust = captureDirectoryTrust(parent, spec);
+  const parentIdentity = directoryIdentity(parent, spec);
+  const quarantine = mkdtempSync(join(parent, `.clawgod-remove-${process.pid}-`));
+  chmodSync(quarantine, 0o700);
+  const quarantineIdentity = directoryIdentity(quarantine, spec);
+  const moved = join(quarantine, 'entry');
+  try {
+    assertDirectoryTrust(parentTrust, spec, 'plugin cache cleanup parent');
+    assertDirectoryIdentity(parent, parentIdentity, spec, 'plugin cache cleanup parent');
+    renameSync(path, moved);
+    assertDirectoryIdentity(parent, parentIdentity, spec, 'plugin cache cleanup parent');
+    assertDirectoryIdentity(quarantine, quarantineIdentity, spec, 'plugin cache cleanup quarantine');
+    if (existsSync(path) || !cacheCleanupNodeMatches(moved, node, spec)) {
+      throw managedDirectoryFailure(
+        spec,
+        'plugin cache restoration incomplete; cleanup entry was replaced',
+        null,
+        [quarantine, moved, path].filter(candidate => existsSync(candidate)),
+      );
+    }
+    if (node.type === 'directory') rmdirSync(moved);
+    else unlinkSync(moved);
+    assertDirectoryIdentity(quarantine, quarantineIdentity, spec, 'plugin cache cleanup quarantine');
+    rmdirSync(quarantine);
+  } catch (error) {
+    if (error?.restorationIncomplete) throw error;
+    throw managedDirectoryFailure(
+      spec,
+      'plugin cache restoration incomplete; cleanup race preserved',
+      error,
+      [quarantine, moved, path].filter(candidate => existsSync(candidate)),
+    );
+  }
+}
+
 function unexpectedCachePaths(directory, transaction, spec, prefix = '', unexpected = []) {
   for (const name of readdirSync(directory)) {
     const relativePath = prefix ? `${prefix}/${name}` : name;
@@ -1490,28 +1641,29 @@ function unexpectedCachePaths(directory, transaction, spec, prefix = '', unexpec
   return unexpected;
 }
 
-function prepareCacheTransaction(pluginRoot, spec, installed, pluginSource) {
+function prepareCacheTransaction(pluginRoot, spec, installed, pluginSource, context) {
   const cacheRoot = join(pluginRoot, 'cache');
   const marketplaceCache = join(cacheRoot, spec.marketplace);
   const pluginCache = join(marketplaceCache, spec.plugin);
-  const paths = [cacheRoot, marketplaceCache, pluginCache];
-  const originallyPresent = paths.map(path => existsSync(path));
   const backup = `${pluginCache}.${process.pid}.backup`;
   const backupPreExisting = existsSync(backup);
   let marketplaceCacheTrust = null;
-  const createdParents = [];
+  let createdParents = [];
   try {
-    for (const path of paths) {
-      if (existsSync(path)) safeDirectoryStatus(path, spec);
-      else {
-        const parentTrust = captureDirectoryTrust(dirname(path), spec);
-        mkdirSync(path, 0o700);
-        createdParents.push({ path, identity: directoryIdentity(path, spec), parentTrust });
-      }
-    }
-    const pluginCacheIdentity = directoryIdentity(pluginCache, spec);
-    const pluginCacheTrust = captureDirectoryTrust(pluginCache, spec);
-    marketplaceCacheTrust = captureDirectoryTrust(marketplaceCache, spec);
+    const trackedCache = ensureTrackedDirectory(
+      pluginRoot,
+      ['cache', spec.marketplace, spec.plugin],
+      spec,
+      context,
+      'plugin cache parent',
+    );
+    createdParents = trackedCache.createdParents;
+    const hadExisting = !createdParents.some(entry => entry.path === pluginCache);
+    const pluginCacheGuard = trackedDirectoryGuard(pluginCache, createdParents, spec, 'plugin cache');
+    const marketplaceCacheGuard = trackedDirectoryGuard(marketplaceCache, createdParents, spec, 'plugin cache parent');
+    const pluginCacheIdentity = pluginCacheGuard.identity;
+    const pluginCacheTrust = pluginCacheGuard.trust;
+    marketplaceCacheTrust = marketplaceCacheGuard.trust;
     const preExistingEntries = new Map();
     recordCacheEntries(pluginCache, preExistingEntries, spec);
     const preExistingRootSignature = cacheEntrySignature(pluginCache, lstatSync(pluginCache), spec);
@@ -1519,10 +1671,13 @@ function prepareCacheTransaction(pluginRoot, spec, installed, pluginSource) {
     recordCacheEntries(pluginSource, expectedVersionEntries, spec);
     const expectedVersionRootSignature = cacheEntrySignature(pluginSource, lstatSync(pluginSource), spec);
     if (backupPreExisting) throw new Error(`${spec.key}: plugin cache backup already exists`);
-    if (originallyPresent[2]) copyDirectorySnapshot(pluginCache, backup, spec);
+    if (hadExisting) copyDirectorySnapshot(pluginCache, backup, spec);
+    assertDirectoryTrust(pluginCacheTrust, spec, 'plugin cache');
+    assertDirectoryIdentity(pluginCache, pluginCacheIdentity, spec, 'plugin cache');
+    assertDirectoryTrust(marketplaceCacheTrust, spec, 'plugin cache parent');
     return {
       pluginCache, pluginCacheIdentity, pluginCacheTrust, marketplaceCache, marketplaceCacheTrust,
-      backup, hadExisting: originallyPresent[2], createdParents, preExistingEntries, preExistingRootSignature,
+      backup, hadExisting, createdParents, preExistingEntries, preExistingRootSignature,
       expectedVersionEntries, expectedVersionRootSignature,
       version: spec.version,
     };
@@ -1612,7 +1767,20 @@ function restoreCacheTransaction(transaction, spec, context) {
     throw failure;
   }
 
-  safeRemoveExact(cleanupPath, transaction.marketplaceCache, basename(cleanupPath), true, spec, transaction.marketplaceCacheTrust);
+  let cleanupInventory;
+  try {
+    cleanupInventory = captureCacheCleanupNode(cleanupPath, spec);
+    context.onCacheCleanupInventoried?.({ cleanupPath });
+    removeCapturedCacheNode(cleanupPath, cleanupInventory, spec);
+  } catch (error) {
+    if (error?.restorationIncomplete) throw error;
+    throw managedDirectoryFailure(
+      spec,
+      'plugin cache restoration incomplete; cleanup inventory changed',
+      error,
+      [cleanupPath].filter(path => existsSync(path)),
+    );
+  }
   const canonicalChangedAfterCleanup = transaction.hadExisting
     ? !cacheTreeMatches(transaction.pluginCache, transaction.preExistingEntries, transaction.preExistingRootSignature, spec)
     : existsSync(transaction.pluginCache);
@@ -1754,13 +1922,24 @@ export async function ensureMarketplacePlugin(spec, context) {
     const stagedSource = await downloadAndStage(spec, context);
     const materialized = materializePersistentSource(stagedSource.sourceRoot, spec, context);
     persistentTransaction = materialized.transaction;
-    const marketplaceParentPath = join(pluginRoot, 'marketplaces');
-    const marketplaceParentPresent = existsSync(marketplaceParentPath);
-    const marketplaceParent = ensureTrustedDirectory(pluginRoot, ['marketplaces'], spec);
-    const marketplaceCreatedParents = captureCreatedParents([marketplaceParentPath], [marketplaceParentPresent], spec);
-    marketplaceTransaction = prepareDirectoryReplacement(join(marketplaceParent, spec.marketplace), spec, 'marketplace');
+    const trackedMarketplace = ensureTrackedDirectory(
+      pluginRoot,
+      ['marketplaces'],
+      spec,
+      context,
+      'marketplace parent',
+    );
+    const marketplaceParent = trackedMarketplace.path;
+    const marketplaceCreatedParents = trackedMarketplace.createdParents;
+    const marketplaceParentGuard = trackedDirectoryGuard(marketplaceParent, marketplaceCreatedParents, spec, 'marketplace parent');
+    marketplaceTransaction = prepareDirectoryReplacement(
+      join(marketplaceParent, spec.marketplace),
+      spec,
+      'marketplace',
+      marketplaceParentGuard,
+    );
     marketplaceTransaction.createdParents = marketplaceCreatedParents;
-    cacheTransaction = prepareCacheTransaction(pluginRoot, spec, installed, materialized.pluginSource);
+    cacheTransaction = prepareCacheTransaction(pluginRoot, spec, installed, materialized.pluginSource, context);
 
     if (Object.hasOwn(known, spec.marketplace)) {
       runPluginCli(['plugin', 'marketplace', 'remove', spec.marketplace], spec, context);

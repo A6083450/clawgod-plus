@@ -1310,6 +1310,31 @@ process.exit(67);
     'a late frozen-tree insertion must survive incomplete rollback',
   );
 
+  const postInventoryFixture = makeTransactionFixture('rollback-post-inventory-insertion', hudSpec, 'missing', {
+    failStep: 'install',
+    known: false,
+  });
+  let postInventoryHookRan = false;
+  postInventoryFixture.context.onCacheCleanupInventoried = ({ cleanupPath }) => {
+    postInventoryHookRan = true;
+    writeFileSync(join(cleanupPath, 'post-inventory.txt'), 'preserve insertion after cleanup inventory\n');
+  };
+  await assert.rejects(
+    ensureMarketplacePlugin(hudSpec, postInventoryFixture.context),
+    error => {
+      assert.equal(error?.restorationIncomplete, true, 'a post-inventory insertion must mark restoration incomplete');
+      const evidencePaths = Array.isArray(error?.evidencePaths) ? error.evidencePaths : [];
+      assert.equal(
+        evidencePaths.some(path => existsSync(join(path, 'post-inventory.txt'))),
+        true,
+        'a post-inventory insertion must survive in an evidence tree',
+      );
+      return true;
+    },
+    'an insertion after the final cleanup inventory must survive and reject ordinary rollback',
+  );
+  assert.equal(postInventoryHookRan, true, 'the post-inventory cleanup race hook must run');
+
   const enableFailureFixture = makeTransactionFixture('rollback-enable-verification', hudSpec, 'missing', {
     known: false,
     skipEnable: true,
@@ -1414,6 +1439,51 @@ process.exit(67);
   );
   assert.equal(existsSync(join(displacedPersistentParent, `${hudSpec.version}.${process.pid}.backup`)), true, 'the displaced persistent backup must remain as evidence');
   assert.equal(existsSync(join(displacedPersistentParent, `${hudSpec.version}.${process.pid}.staged`)), true, 'the displaced staged source must remain as evidence');
+
+  const creationRaceOutcomes = {};
+  for (const targetKind of ['persistent', 'marketplace']) {
+    const creationRaceFixture = makeTransactionFixture(`creation-identity-${targetKind}`, hudSpec, 'missing', {
+      failStep: 'install',
+      known: false,
+    });
+    const managedPath = targetKind === 'persistent'
+      ? join(creationRaceFixture.pluginRoot, 'clawgod-marketplaces')
+      : join(creationRaceFixture.pluginRoot, 'marketplaces');
+    const displacedPath = join(creationRaceFixture.root, `${targetKind}-created-object`);
+    let hookRan = false;
+    creationRaceFixture.context.onManagedDirectoryInstalled = ({ path }) => {
+      if (path !== managedPath) return;
+      hookRan = true;
+      renameSync(path, displacedPath);
+      mkdirSync(path);
+    };
+    let creationError = null;
+    try {
+      await ensureMarketplacePlugin(hudSpec, creationRaceFixture.context);
+    } catch (error) {
+      creationError = error;
+    }
+    creationRaceOutcomes[targetKind] = {
+      hookRan,
+      restorationIncomplete: creationError?.restorationIncomplete === true,
+      replacementPreserved: existsSync(managedPath),
+      createdObjectPreserved: existsSync(displacedPath),
+    };
+  }
+  assert.deepEqual(creationRaceOutcomes, {
+    persistent: {
+      hookRan: true,
+      restorationIncomplete: true,
+      replacementPreserved: true,
+      createdObjectPreserved: true,
+    },
+    marketplace: {
+      hookRan: true,
+      restorationIncomplete: true,
+      replacementPreserved: true,
+      createdObjectPreserved: true,
+    },
+  }, 'a substituted regular directory must never be recorded or removed as transaction-created');
 
   const concurrentFixture = makeTransactionFixture('concurrent-marketplace-parent', hudSpec, 'older', {
     failStep: 'marketplace-add',
