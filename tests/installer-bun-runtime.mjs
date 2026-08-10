@@ -4,16 +4,16 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
 const canonicalRuntime = Object.fromEntries(
-  ['fetch-file.mjs', 'extractor.mjs', 'post-processor.mjs'].map(name => [
+  ['fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs'].map(name => [
     name,
     readFileSync(new URL(`../src/generic/runtime/${name}`, import.meta.url), 'utf8'),
   ]),
 );
-canonicalRuntime['repatcher.mjs'] = readFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), 'utf8');
 
 function assertTemporaryPath(path, label) {
   const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];
@@ -67,6 +67,19 @@ function powerShellTemplate(name, firstLine) {
   const end = windows.indexOf("\n'@", bodyStart);
   assert.notEqual(end, -1, `install.ps1 ${name} template must end`);
   return windows.slice(bodyStart, end);
+}
+
+function powerShellRuntimePayload(name) {
+  const marker = `$${name} = [Convert]::FromBase64String('`;
+  const start = windows.indexOf(marker);
+  assert.notEqual(start, -1, `install.ps1 must declare canonical byte payload $${name}`);
+  const bodyStart = start + marker.length;
+  const end = windows.indexOf("')", bodyStart);
+  assert.notEqual(end, -1, `install.ps1 canonical byte payload $${name} must end`);
+  const encoded = windows.slice(bodyStart, end);
+  assert.match(encoded, /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/, `$${name} must be canonical base64`);
+  assert.equal(Buffer.from(encoded, 'base64').toString('base64'), encoded, `$${name} must round-trip as canonical base64`);
+  return Buffer.from(encoded, 'base64');
 }
 
 function powerShellFunction(name) {
@@ -889,25 +902,159 @@ const unixTemplates = {
 };
 const windowsTemplates = {
   'claude-mem-compat.cjs': powerShellTemplate('claude-mem-compat.cjs', '#!/usr/bin/env bun\nconst fs = require'),
-  'extract-natives.mjs': powerShellTemplate('extract-natives.mjs', '#!/usr/bin/env bun\n/**\n * ClawGod Plus Bun section extractor'),
-  'post-process.mjs': powerShellTemplate('post-process.mjs', "#!/usr/bin/env bun\nimport { readFileSync, writeFileSync, unlinkSync } from 'fs';"),
-  'repatch.mjs': powerShellTemplate('repatch.mjs', "#!/usr/bin/env bun\n// Re-extract + post-process + patch the user's currently-installed"),
+  'extract-natives.mjs': powerShellRuntimePayload('ExtractorBytes').toString('utf8').trimEnd(),
+  'post-process.mjs': powerShellRuntimePayload('PostProcessorBytes').toString('utf8').trimEnd(),
+  'repatch.mjs': powerShellRuntimePayload('RepatcherBytes').toString('utf8').trimEnd(),
   'patch.mjs': powerShellTemplate('patch.mjs', '#!/usr/bin/env bun\n/**\n * ClawGod Plus Universal Patcher'),
-  'fetch-file.mjs': powerShellTemplate('fetch-file.mjs', "#!/usr/bin/env bun\nimport { existsSync, renameSync, rmSync } from 'node:fs';"),
+  'fetch-file.mjs': powerShellRuntimePayload('FetchFileBytes').toString('utf8').trimEnd(),
   'plugin-dependencies.mjs': powerShellTemplate('plugin-dependencies.mjs', '#!/usr/bin/env bun\n/**\n * @typedef {{'),
 };
 
-for (const [generatedName, canonicalName] of [
-  ['fetch-file.mjs', 'fetch-file.mjs'],
-  ['extract-natives.mjs', 'extractor.mjs'],
-  ['post-process.mjs', 'post-processor.mjs'],
-]) {
-  const canonical = canonicalRuntime[canonicalName];
+const runtimeDefinitions = [
+  ['fetch-file.mjs', 'fetch-file.mjs', 'FetchFileBytes', 'cat > "$CLAWGOD_DIR/fetch-file.mjs" << \'FETCH_FILE_EOF\''],
+  ['fetch-package.mjs', 'fetch-package.mjs', 'FetchPackageBytes', 'cat > "$FETCH_SCRIPT" << \'FETCH_PACKAGE_EOF\''],
+  ['install-ripgrep.mjs', 'install-ripgrep.mjs', 'InstallRipgrepBytes', 'cat > "$CLAWGOD_DIR/install-ripgrep.mjs" << \'INSTALL_RIPGREP_EOF\''],
+  ['extract-natives.mjs', 'extractor.mjs', 'ExtractorBytes', 'cat > "$CLAWGOD_DIR/extract-natives.mjs" << \'EXTRACTOR_EOF\''],
+  ['post-process.mjs', 'post-processor.mjs', 'PostProcessorBytes', 'cat > "$CLAWGOD_DIR/post-process.mjs" << \'POSTPROC_EOF\''],
+  ['repatch.mjs', 'repatcher.mjs', 'RepatcherBytes', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''],
+];
+
+for (const [generatedName, canonicalName, powerShellVariable, unixMarker] of runtimeDefinitions) {
+  const canonical = Buffer.from(canonicalRuntime[canonicalName]);
+  const powerShellBytes = powerShellRuntimePayload(powerShellVariable);
+  const unixBytes = Buffer.from(`${unixTemplate(generatedName, unixMarker)}\n`);
   assert.deepEqual(
-    [`${unixTemplates[generatedName]}\n`, `${windowsTemplates[generatedName]}\n`],
+    [unixBytes, powerShellBytes],
     [canonical, canonical],
-    `both generated installers must embed the canonical ${canonicalName} bytes`,
+    `both generated installers must write the canonical ${canonicalName} bytes`,
   );
+  assert.equal(canonical.at(-1), 0x0a, `${canonicalName} must retain one LF terminal newline`);
+  assert.equal(canonical.includes(0x0d), false, `${canonicalName} canonical bytes must not contain CR`);
+  assert.equal(canonical.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), false, `${canonicalName} canonical bytes must not contain a UTF-8 BOM`);
+  assert.match(
+    windows,
+    new RegExp(`\\[System\\.IO\\.File\\]::WriteAllBytes\\([^\\n]*\\$${powerShellVariable}\\)`),
+    `install.ps1 must write $${powerShellVariable} without text transcoding`,
+  );
+}
+
+const powerShellByteFixture = mkdtempSync(join(tmpdir(), 'clawgod-powershell-runtime-bytes-'));
+assertTemporaryPath(powerShellByteFixture, 'PowerShell runtime byte fixture');
+try {
+  for (const [generatedName, canonicalName, powerShellVariable] of runtimeDefinitions) {
+    const destination = join(powerShellByteFixture, generatedName);
+    writeFileSync(destination, powerShellRuntimePayload(powerShellVariable));
+    assert.deepEqual(readFileSync(destination), Buffer.from(canonicalRuntime[canonicalName]), `${generatedName} decoded WriteAllBytes payload must be canonical`);
+  }
+} finally {
+  rmSync(powerShellByteFixture, { recursive: true, force: true });
+}
+
+function peBunFixture(modules) {
+  const data = [];
+  const records = [];
+  let cursor = 0;
+  for (const module of modules) {
+    const name = Buffer.from(module.name);
+    const content = Buffer.from(module.content);
+    const nameOffset = cursor;
+    data.push(name);
+    cursor += name.length;
+    const contentOffset = cursor;
+    data.push(content);
+    cursor += content.length;
+    const record = Buffer.alloc(52);
+    record.writeUInt32LE(nameOffset, 0);
+    record.writeUInt32LE(name.length, 4);
+    record.writeUInt32LE(contentOffset, 8);
+    record.writeUInt32LE(content.length, 12);
+    record.writeUInt8(module.loader, 49);
+    records.push(record);
+  }
+  const table = Buffer.concat(records);
+  const offsets = Buffer.alloc(32);
+  offsets.writeUInt32LE(cursor, 8);
+  offsets.writeUInt32LE(table.length, 12);
+  offsets.writeUInt32LE(0, 16);
+  const payload = Buffer.concat([...data, table, offsets, Buffer.from('\n---- Bun! ----\n')]);
+  const section = Buffer.alloc(8 + payload.length);
+  section.writeBigUInt64LE(BigInt(payload.length), 0);
+  payload.copy(section, 8);
+
+  const peOffset = 0x80;
+  const optionalHeaderSize = 0x20;
+  const sectionTable = peOffset + 0x18 + optionalHeaderSize;
+  const rawOffset = 0x200;
+  const binary = Buffer.alloc(rawOffset + section.length);
+  binary.write('MZ', 0, 'ascii');
+  binary.writeUInt32LE(peOffset, 0x3c);
+  binary.write('PE\0\0', peOffset, 'ascii');
+  binary.writeUInt16LE(0x8664, peOffset + 0x04);
+  binary.writeUInt16LE(1, peOffset + 0x06);
+  binary.writeUInt16LE(optionalHeaderSize, peOffset + 0x14);
+  binary.writeUInt16LE(0x20b, peOffset + 0x18);
+  binary.write('.bun', sectionTable, 'ascii');
+  binary.writeUInt32LE(section.length, sectionTable + 0x10);
+  binary.writeUInt32LE(rawOffset, sectionTable + 0x14);
+  section.copy(binary, rawOffset);
+  return binary;
+}
+
+const extractorFixture = mkdtempSync(join(tmpdir(), 'clawgod-canonical-extractor-'));
+assertTemporaryPath(extractorFixture, 'canonical extractor fixture');
+try {
+  const binary = join(extractorFixture, 'fixture.exe');
+  const output = join(extractorFixture, 'output');
+  const cliBytes = Buffer.from('(function(exports,require,module,__filename,__dirname){return 7})');
+  const napiBytes = Buffer.from([0xca, 0xfe, 0xba, 0xbe]);
+  writeFileSync(binary, peBunFixture([
+    { name: 'entry.js', content: cliBytes, loader: 1 },
+    { name: 'native/image.node', content: napiBytes, loader: 10 },
+  ]));
+  const extractorPath = fileURLToPath(new URL('../src/generic/runtime/extractor.mjs', import.meta.url));
+  const extracted = spawnSync(process.execPath, [extractorPath, binary, output], { encoding: 'utf8' });
+  assert.equal(extracted.status, 0, extracted.stderr);
+  assert.deepEqual(readFileSync(join(output, 'cli.original.js')), cliBytes, 'canonical extractor must emit the entry module bytes');
+  assert.deepEqual(readFileSync(join(output, 'vendor', 'image', 'x64-win32', 'image.node')), napiBytes, 'canonical extractor must emit the napi module bytes');
+
+  const invalidOutput = join(extractorFixture, 'invalid-output');
+  const invalidBinary = join(extractorFixture, 'invalid.exe');
+  writeFileSync(invalidBinary, 'not a native binary');
+  const invalid = spawnSync(process.execPath, [extractorPath, invalidBinary, invalidOutput], { encoding: 'utf8' });
+  assert.notEqual(invalid.status, 0, 'canonical extractor must reject an invalid native binary');
+  assert.equal(existsSync(invalidOutput), false, 'canonical extractor must not create output after parse failure');
+} finally {
+  rmSync(extractorFixture, { recursive: true, force: true });
+}
+
+const postProcessorFixture = mkdtempSync(join(tmpdir(), 'clawgod-canonical-post-processor-'));
+assertTemporaryPath(postProcessorFixture, 'canonical post-processor fixture');
+try {
+  const script = join(postProcessorFixture, 'post-processor.mjs');
+  writeFileSync(script, canonicalRuntime['post-processor.mjs']);
+  writeFileSync(join(postProcessorFixture, 'cli.original.js'), `// @bun @bytecode @bun-cjs
+(function(exports,require,module,__filename,__dirname){
+const native=require('/$bunfs/root/image-processor.node');
+const leaked=x.fileURLToPath("file:///home/runner/work/claude-cli-internal/claude-cli-internal/src/index.ts");
+})`);
+  const processed = spawnSync(process.execPath, [script], { cwd: postProcessorFixture, encoding: 'utf8' });
+  assert.equal(processed.status, 0, processed.stderr);
+  assert.equal(existsSync(join(postProcessorFixture, 'cli.original.js')), false, 'canonical post-processor must remove the extracted source after success');
+  const output = readFileSync(join(postProcessorFixture, 'cli.original.cjs'), 'utf8');
+  assert.match(output, /^\(function/, 'canonical post-processor must strip leading Bun pragmas');
+  assert.match(output, /vendor.*image-processor.*x64.*win32.*image-processor\.node/s, 'canonical post-processor must rewrite bunfs native module lookup');
+  assert.match(output, /const leaked=__filename;/, 'canonical post-processor must rewrite build-time file paths');
+  assert.match(output, /\}\)\(exports, require, module, __filename, __dirname\)$/, 'canonical post-processor must invoke the outer CommonJS wrapper');
+
+  const missingFixture = join(postProcessorFixture, 'missing');
+  mkdirSync(missingFixture);
+  const missingScript = join(missingFixture, 'post-processor.mjs');
+  writeFileSync(missingScript, canonicalRuntime['post-processor.mjs']);
+  const missing = spawnSync(process.execPath, [missingScript], { cwd: missingFixture, encoding: 'utf8' });
+  assert.notEqual(missing.status, 0, 'canonical post-processor must fail when cli.original.js is missing');
+  assert.equal(existsSync(join(missingFixture, 'cli.original.cjs')), false, 'failed canonical post-processing must not create output');
+} finally {
+  rmSync(postProcessorFixture, { recursive: true, force: true });
 }
 
 for (const [name, body] of Object.entries(unixTemplates)) {

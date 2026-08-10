@@ -7,33 +7,6 @@ import { join } from 'node:path';
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
 const canonicalModuleUrl = new URL('../src/generic/runtime/fetch-package.mjs', import.meta.url);
-const canonicalModule = readFileSync(canonicalModuleUrl, 'utf8');
-
-function unixTemplate() {
-  const marker = 'cat > "$FETCH_SCRIPT" << \'FETCH_PACKAGE_EOF\'';
-  const start = unix.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must generate fetch-package.mjs');
-  const bodyStart = unix.indexOf('\n', start) + 1;
-  const end = unix.indexOf('\nFETCH_PACKAGE_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh fetch-package.mjs template must end');
-  return unix.slice(bodyStart, end);
-}
-
-function powerShellTemplate() {
-  const marker = "$fetchScript = Join-Path $NativeBinTmpDir \"fetch-package.mjs\"\n    @'\n#!/usr/bin/env bun";
-  const start = windows.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must generate fetch-package.mjs');
-  const bodyStart = windows.indexOf('#!/usr/bin/env bun', start);
-  const end = windows.indexOf("\n'@ | Set-Content $fetchScript", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 fetch-package.mjs template must end');
-  return windows.slice(bodyStart, end);
-}
-
-assert.deepEqual(
-  [`${unixTemplate()}\n`, `${powerShellTemplate()}\n`],
-  [canonicalModule, canonicalModule],
-  'both generated installers must embed the canonical fetch-package.mjs bytes',
-);
 
 const fixtureDir = mkdtempSync(join(tmpdir(), 'clawgod-registry-'));
 try {

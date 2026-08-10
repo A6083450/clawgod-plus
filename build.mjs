@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
 import * as defaultFileSystem from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -86,8 +87,8 @@ function resolveOutput(rootDir, output) {
 }
 
 export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = defaultFileSystem } = {}) {
-  const sourceFiles = {
-    FEATURES_JSON: 'src/generic/features.json',
+  const featuresJson = await fileSystem.readFile(join(rootDir, 'src/generic/features.json'), 'utf8');
+  const runtimeSourceFiles = {
     FETCH_FILE_MJS: 'src/generic/runtime/fetch-file.mjs',
     FETCH_PACKAGE_MJS: 'src/generic/runtime/fetch-package.mjs',
     INSTALL_RIPGREP_MJS: 'src/generic/runtime/install-ripgrep.mjs',
@@ -95,14 +96,22 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     POST_PROCESSOR_MJS: 'src/generic/runtime/post-processor.mjs',
     REPATCHER_MJS: 'src/generic/runtime/repatcher.mjs',
   };
-  const replacements = Object.fromEntries(await Promise.all(
-    Object.entries(sourceFiles).map(async ([name, path]) => [
+  const runtimeSources = Object.fromEntries(await Promise.all(
+    Object.entries(runtimeSourceFiles).map(async ([name, path]) => [
       name,
       await fileSystem.readFile(join(rootDir, path), 'utf8'),
     ]),
   ));
   return Promise.all(OUTPUTS.map(async entry => {
     const template = await fileSystem.readFile(join(rootDir, entry.template), 'utf8');
+    const powerShell = entry.output.endsWith('.ps1');
+    const replacements = {
+      FEATURES_JSON: featuresJson,
+      ...Object.fromEntries(Object.entries(runtimeSources).map(([name, source]) => [
+        powerShell ? `${name}_BASE64` : name,
+        powerShell ? Buffer.from(source, 'utf8').toString('base64') : source,
+      ])),
+    };
     const content = renderTemplate(template, replacements);
     return { ...entry, content: addGeneratedHeader(entry.output, content) };
   }));

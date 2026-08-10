@@ -236,14 +236,12 @@ function Install-ClaudeMemCompatHelper {
     [System.IO.File]::WriteAllText($helper, $ClaudeMemCompatSource + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding $false))
 }
 
-$FetchFileSource = @'
-@@CLAWGOD_FETCH_FILE_MJS@@
-'@
+$FetchFileBytes = [Convert]::FromBase64String('@@CLAWGOD_FETCH_FILE_MJS_BASE64@@')
 
 function Install-FetchFileHelper {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
     $helper = Join-Path $ClawDir "fetch-file.mjs"
-    [System.IO.File]::WriteAllText($helper, $FetchFileSource + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding $false))
+    [System.IO.File]::WriteAllBytes($helper, $FetchFileBytes)
 }
 
 function Install-ChromeFixScript {
@@ -3286,9 +3284,8 @@ if (import.meta.main) {
 
 # --- Managed ripgrep -------------------------------------------------
 
-$ripgrepInstaller = @'
-@@CLAWGOD_INSTALL_RIPGREP_MJS@@
-'@ | Set-Content (Join-Path $ClawDir "install-ripgrep.mjs") -Encoding UTF8
+$InstallRipgrepBytes = [Convert]::FromBase64String('@@CLAWGOD_INSTALL_RIPGREP_MJS_BASE64@@')
+[System.IO.File]::WriteAllBytes((Join-Path $ClawDir "install-ripgrep.mjs"), $InstallRipgrepBytes)
 
 $ripgrepOutput = & $BunBin (Join-Path $ClawDir "install-ripgrep.mjs") $ClawDir 2>&1
 if ($LASTEXITCODE -ne 0) {
@@ -3360,9 +3357,8 @@ if (-not $NativeBin) {
     $NativeBinTmpDir = Join-Path $env:TEMP "clawgod-binary-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Force -Path $NativeBinTmpDir | Out-Null
     $fetchScript = Join-Path $NativeBinTmpDir "fetch-package.mjs"
-    @'
-@@CLAWGOD_FETCH_PACKAGE_MJS@@
-'@ | Set-Content $fetchScript -Encoding UTF8
+    $FetchPackageBytes = [Convert]::FromBase64String('@@CLAWGOD_FETCH_PACKAGE_MJS_BASE64@@')
+    [System.IO.File]::WriteAllBytes($fetchScript, $FetchPackageBytes)
 
     $output = & $BunBin $fetchScript "$npmPkg@$Version" $NativeBinTmpDir 2>&1
     $exitCode = $LASTEXITCODE
@@ -3400,9 +3396,8 @@ if (-not $NativeBin) {
 
 # Always write the extractor (used for cli.js and/or .node modules)
 $extractorPath = Join-Path $ClawDir "extract-natives.mjs"
-@'
-@@CLAWGOD_EXTRACTOR_MJS@@
-'@ | Set-Content $extractorPath -Encoding UTF8
+$ExtractorBytes = [Convert]::FromBase64String('@@CLAWGOD_EXTRACTOR_MJS_BASE64@@')
+[System.IO.File]::WriteAllBytes($extractorPath, $ExtractorBytes)
 
 # ─── Extract cli.js + native modules from Bun binary ──────────
 
@@ -3429,9 +3424,8 @@ if (-not (Test-Path $dstCli)) {
 
 Write-Dim "Rewriting bunfs paths and IIFE invocation ..."
 $postProc = Join-Path $ClawDir "post-process.mjs"
-@'
-@@CLAWGOD_POST_PROCESSOR_MJS@@
-'@ | Set-Content $postProc -Encoding UTF8
+$PostProcessorBytes = [Convert]::FromBase64String('@@CLAWGOD_POST_PROCESSOR_MJS_BASE64@@')
+[System.IO.File]::WriteAllBytes($postProc, $PostProcessorBytes)
 & $BunBin $postProc 2>&1 | ForEach-Object { Write-Host "  $_" }
 if (-not (Test-Path (Join-Path $ClawDir "cli.original.cjs"))) {
     Write-Err "Post-process failed"
@@ -3453,9 +3447,8 @@ Write-OK "cli.original.cjs ready ($NativeBinLabel)"
 
 # ─── Write re-patch helper (used by wrapper on version drift) ─────────
 
-@'
-@@CLAWGOD_REPATCHER_MJS@@
-'@ | Set-Content (Join-Path $ClawDir "repatch.mjs") -Encoding UTF8
+$RepatcherBytes = [Convert]::FromBase64String('@@CLAWGOD_REPATCHER_MJS_BASE64@@')
+[System.IO.File]::WriteAllBytes((Join-Path $ClawDir "repatch.mjs"), $RepatcherBytes)
 Write-OK "Re-patch helper installed (repatch.mjs)"
 
 # ─── Write OpenAI-compatible proxy ────────────────────────────

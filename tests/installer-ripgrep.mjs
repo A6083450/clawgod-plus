@@ -20,27 +20,7 @@ import { deflateRawSync } from 'node:zlib';
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
 const canonicalRipgrepUrl = new URL('../src/generic/runtime/install-ripgrep.mjs', import.meta.url);
-const canonicalRipgrep = readFileSync(canonicalRipgrepUrl, 'utf8');
 const canonicalRepatch = readFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), 'utf8');
-
-function unixTemplate() {
-  const marker = 'cat > "$CLAWGOD_DIR/install-ripgrep.mjs" << \'INSTALL_RIPGREP_EOF\'';
-  const start = unix.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must generate install-ripgrep.mjs');
-  const bodyStart = unix.indexOf('\n', start) + 1;
-  const end = unix.indexOf('\nINSTALL_RIPGREP_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh install-ripgrep.mjs template must end');
-  return unix.slice(bodyStart, end);
-}
-
-function powerShellTemplate() {
-  const section = windows.indexOf('# --- Managed ripgrep');
-  assert.notEqual(section, -1, 'install.ps1 must generate install-ripgrep.mjs');
-  const bodyStart = windows.indexOf('#!/usr/bin/env bun', section);
-  const end = windows.indexOf("\n'@ | Set-Content (Join-Path $ClawDir \"install-ripgrep.mjs\")", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 install-ripgrep.mjs template must end');
-  return windows.slice(bodyStart, end);
-}
 
 function unixWrapper() {
   const marker = 'cat > "$CLAWGOD_DIR/cli.cjs" << \'WRAPPER_EOF\'';
@@ -58,25 +38,6 @@ function powerShellWrapper() {
   const bodyStart = windows.indexOf('#!/usr/bin/env bun', section);
   const end = windows.indexOf("\n'@ | Set-Content (Join-Path $ClawDir \"cli.cjs\")", bodyStart);
   assert.notEqual(end, -1, 'install.ps1 cli.cjs template must end');
-  return windows.slice(bodyStart, end);
-}
-
-function unixRepatch() {
-  const marker = 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\'';
-  const start = unix.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed repatch.mjs');
-  const bodyStart = unix.indexOf('\n', start) + 1;
-  const end = unix.indexOf('\nREPATCH_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh repatch.mjs template must end');
-  return unix.slice(bodyStart, end);
-}
-
-function powerShellRepatch() {
-  const section = windows.indexOf('# ─── Write re-patch helper');
-  assert.notEqual(section, -1, 'install.ps1 must embed repatch.mjs');
-  const bodyStart = windows.indexOf('#!/usr/bin/env bun', section);
-  const end = windows.indexOf("\n'@ | Set-Content (Join-Path $ClawDir \"repatch.mjs\")", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 repatch.mjs template must end');
   return windows.slice(bodyStart, end);
 }
 
@@ -143,17 +104,6 @@ function zipFixture(entries, options = {}) {
   ]);
   return new Uint8Array(Buffer.concat([Buffer.concat(locals), central, eocd]));
 }
-
-assert.deepEqual(
-  [`${unixTemplate()}\n`, `${powerShellTemplate()}\n`],
-  [canonicalRipgrep, canonicalRipgrep],
-  'both generated installers must embed the canonical install-ripgrep.mjs bytes',
-);
-assert.deepEqual(
-  [`${unixRepatch()}\n`, `${powerShellRepatch()}\n`],
-  [canonicalRepatch, canonicalRepatch],
-  'both generated installers must embed the canonical repatcher.mjs bytes',
-);
 
 const fixtureDir = mkdtempSync(join(tmpdir(), 'clawgod-ripgrep-'));
 assert.equal(realpathSync(dirname(fixtureDir)), realpathSync(tmpdir()), 'ripgrep fixture must be created directly under the system temporary directory');
