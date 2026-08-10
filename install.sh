@@ -514,7 +514,7 @@ cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << 'PLUGIN_DEPENDENCIES_EOF'
  */
 
 import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export const PLUGIN_BASELINES = Object.freeze({
   hud: Object.freeze({
@@ -799,25 +799,28 @@ function safeDirectoryStatus(path, spec) {
 }
 
 function ensureDestinationDirectory(destination, spec) {
-  const missing = [];
+  const ancestors = [];
   let current = destination;
-  while (!existsSync(current)) {
+  while (true) {
+    ancestors.unshift(current);
     const parent = dirname(current);
-    if (parent === current) throw new Error(`${spec.key}: unsafe extraction destination`);
-    missing.unshift(basename(current));
+    if (parent === current) break;
     current = parent;
   }
-  try {
-    safeDirectoryStatus(current, spec);
-  } catch {
-    throw new Error(`${spec.key}: unsafe extraction destination`);
-  }
-  for (const part of missing) {
-    current = join(current, part);
-    mkdirSync(current, 0o700);
+  for (const path of ancestors) {
+    let status;
     try {
-      safeDirectoryStatus(current, spec);
-    } catch {
+      status = lstatSync(path);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw new Error(`${spec.key}: unsafe extraction destination`);
+      try {
+        mkdirSync(path, 0o700);
+        status = lstatSync(path);
+      } catch {
+        throw new Error(`${spec.key}: unsafe extraction destination`);
+      }
+    }
+    if (status.isSymbolicLink() || !status.isDirectory()) {
       throw new Error(`${spec.key}: unsafe extraction destination`);
     }
   }
@@ -844,6 +847,25 @@ function validateFilenameComponent(value, label) {
     || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
     throw new Error(`plugin: invalid ${label} filename component`);
   }
+}
+
+function validateSpecFilenameComponents(spec) {
+  validateFilenameComponent(spec?.key, 'key');
+  validateFilenameComponent(spec?.version, 'version');
+}
+
+function directoryIdentity(path, spec) {
+  const status = safeDirectoryStatus(path, spec);
+  return { dev: status.dev, ino: status.ino };
+}
+
+function assertTrustedDirectoryIdentity(root, parts, expected, spec) {
+  const path = ensureTrustedDirectory(root, parts, spec);
+  const actual = directoryIdentity(path, spec);
+  if (actual.dev !== expected.dev || actual.ino !== expected.ino) {
+    throw new Error(`${spec.key}: cache directory changed`);
+  }
+  return path;
 }
 
 function sameFileIdentity(left, right) {
@@ -920,6 +942,7 @@ function containedRelativeSource(sourceRoot, source, spec) {
 }
 
 export async function extractPluginArchive(bytes, spec, destination) {
+  validateSpecFilenameComponents(spec);
   validateArchive(bytes, spec);
   const archive = await parseTar(bytes, spec);
   ensureDestinationDirectory(destination, spec);
@@ -954,14 +977,16 @@ export async function extractPluginArchive(bytes, spec, destination) {
 }
 
 export async function downloadAndStage(spec, context) {
-  validateFilenameComponent(spec.key, 'key');
-  validateFilenameComponent(spec.version, 'version');
+  validateSpecFilenameComponents(spec);
   const cacheDirectory = ensureTrustedDirectory(context.clawgodDir, ['cache', 'claude-plugins'], spec);
+  const cacheDirectoryIdentity = directoryIdentity(cacheDirectory, spec);
   const archivePath = join(cacheDirectory, `${spec.key}-${spec.version}.tar.gz`);
   const stagingDirectory = ensureTrustedDirectory(context.clawgodDir, ['staging', 'claude-plugins'], spec);
   let archiveBytes = null;
   let cacheIdentity = null;
+  assertTrustedDirectoryIdentity(context.clawgodDir, ['cache', 'claude-plugins'], cacheDirectoryIdentity, spec);
   const cachedFile = readSingleLinkFile(archivePath);
+  assertTrustedDirectoryIdentity(context.clawgodDir, ['cache', 'claude-plugins'], cacheDirectoryIdentity, spec);
   if (cachedFile) {
     try {
       archiveBytes = cachedFile.bytes;
@@ -989,13 +1014,14 @@ export async function downloadAndStage(spec, context) {
         throw new Error(`${spec.key}: download failed`);
       }
       if (result.exitCode !== 0) throw new Error(`${spec.key}: download failed`);
-      ensureTrustedDirectory(context.clawgodDir, ['cache', 'claude-plugins'], spec);
+      assertTrustedDirectoryIdentity(context.clawgodDir, ['cache', 'claude-plugins'], cacheDirectoryIdentity, spec);
       const temporaryFile = readSingleLinkFile(temporaryArchive);
       if (!temporaryFile) throw new Error(`${spec.key}: download failed`);
       archiveBytes = temporaryFile.bytes;
       validateArchive(archiveBytes, spec);
+      assertTrustedDirectoryIdentity(context.clawgodDir, ['cache', 'claude-plugins'], cacheDirectoryIdentity, spec);
       renameSync(temporaryArchive, archivePath);
-      ensureTrustedDirectory(context.clawgodDir, ['cache', 'claude-plugins'], spec);
+      assertTrustedDirectoryIdentity(context.clawgodDir, ['cache', 'claude-plugins'], cacheDirectoryIdentity, spec);
       const installedFile = readSingleLinkFile(archivePath);
       if (!installedFile) throw new Error(`${spec.key}: cache replacement is unsafe`);
       validateArchive(installedFile.bytes, spec);
@@ -1006,8 +1032,9 @@ export async function downloadAndStage(spec, context) {
     }
   }
   const sourceRoot = await extractPluginArchive(archiveBytes, spec, stagingDirectory);
-  ensureTrustedDirectory(context.clawgodDir, ['cache', 'claude-plugins'], spec);
+  assertTrustedDirectoryIdentity(context.clawgodDir, ['cache', 'claude-plugins'], cacheDirectoryIdentity, spec);
   const finalCacheFile = readSingleLinkFile(archivePath);
+  assertTrustedDirectoryIdentity(context.clawgodDir, ['cache', 'claude-plugins'], cacheDirectoryIdentity, spec);
   if (!finalCacheFile || !sameFileIdentity(cacheIdentity, finalCacheFile.identity)) {
     throw new Error(`${spec.key}: cache changed during use`);
   }

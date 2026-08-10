@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -156,7 +156,7 @@ const expected = {
   },
 };
 
-const fixtureRoot = mkdtempSync(join(tmpdir(), 'clawgod-plugin-deps-'));
+const fixtureRoot = realpathSync(mkdtempSync(join(tmpdir(), 'clawgod-plugin-deps-')));
 const fixtureHome = join(fixtureRoot, 'home');
 const fixtureClaudeConfig = join(fixtureRoot, 'claude-config');
 const fixtureBin = join(fixtureRoot, 'bin');
@@ -249,6 +249,39 @@ try {
   }
 
   const hudSpec = archiveSpec(PLUGIN_BASELINES.hud, validArchives.hud);
+  const roundTwoContainmentFailures = [];
+  for (const [label, unsafeSpec] of [
+    ['extract key separator', { ...hudSpec, key: '../hud' }],
+    ['extract version separator', { ...hudSpec, version: '../0.7.0' }],
+  ]) {
+    try {
+      await extractPluginArchive(validArchives.hud, unsafeSpec, join(fixtureRoot, label.replaceAll(' ', '-')));
+      roundTwoContainmentFailures.push(`${label}: accepted`);
+    } catch (error) {
+      if (!/invalid.*(?:key|version)|filename component/i.test(error.message)) {
+        roundTwoContainmentFailures.push(`${label}: ${error.message}`);
+      }
+    }
+  }
+
+  const existingAncestorTarget = join(fixtureRoot, 'existing-ancestor-target');
+  const existingAncestorLink = join(fixtureRoot, 'existing-ancestor-link');
+  const existingLinkedDestination = join(existingAncestorLink, 'nested', 'destination');
+  const actualLinkedDestination = join(existingAncestorTarget, 'nested', 'destination');
+  mkdirSync(actualLinkedDestination, { recursive: true });
+  symlinkSync(existingAncestorTarget, existingAncestorLink, process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    await extractPluginArchive(validArchives.hud, hudSpec, existingLinkedDestination);
+    roundTwoContainmentFailures.push('existing destination symlink ancestor: accepted');
+  } catch (error) {
+    if (!/unsafe.*destination|destination.*(?:link|ancestor)/i.test(error.message)) {
+      roundTwoContainmentFailures.push(`existing destination symlink ancestor: ${error.message}`);
+    }
+  }
+  if (readdirSync(actualLinkedDestination).length !== 0) {
+    roundTwoContainmentFailures.push('existing destination symlink ancestor: wrote through link');
+  }
+
   const outsideDestination = join(fixtureRoot, 'outside-destination');
   const linkedDestination = join(fixtureRoot, 'linked-destination');
   mkdirSync(outsideDestination);
@@ -592,6 +625,43 @@ writeFileSync(process.env.FIXTURE_FETCH_LOG, JSON.stringify(process.env));
     }
   }
   assert.deepEqual(containmentFailures, [], 'cache and staging containment must reject every path, leaf, and replacement differential');
+
+  const regularReplacementRoot = join(fixtureRoot, 'regular-replacement-root');
+  const regularReplacementCache = join(regularReplacementRoot, 'cache', 'claude-plugins');
+  const regularReplacementBackup = join(fixtureRoot, 'regular-replacement-cache-backup');
+  mkdirSync(regularReplacementCache, { recursive: true });
+  writeFileSync(join(regularReplacementCache, `${hudSpec.key}-${hudSpec.version}.tar.gz`), 'corrupt');
+  let regularReplacementTriggered = false;
+  const regularReplacementSpec = { ...hudSpec };
+  Object.defineProperty(regularReplacementSpec, 'sha256', {
+    enumerable: true,
+    get() {
+      if (!regularReplacementTriggered) {
+        regularReplacementTriggered = true;
+        renameSync(regularReplacementCache, regularReplacementBackup);
+        mkdirSync(regularReplacementCache, { recursive: true });
+        const temporaryName = readdirSync(regularReplacementBackup).find(name => name.startsWith(`.${hudSpec.key}-${hudSpec.version}-`));
+        assert.ok(temporaryName, 'the real fetch path must create its private temporary directory before hash validation');
+        const replacementTemporary = join(regularReplacementCache, temporaryName);
+        mkdirSync(replacementTemporary);
+        copyFileSync(
+          join(regularReplacementBackup, temporaryName, 'download.tar.gz'),
+          join(replacementTemporary, 'download.tar.gz'),
+        );
+      }
+      return hudSpec.sha256;
+    },
+  });
+  try {
+    await downloadAndStage(regularReplacementSpec, { ...context, clawgodDir: regularReplacementRoot });
+    roundTwoContainmentFailures.push('regular cache directory replacement: accepted');
+  } catch (error) {
+    if (!/cache.*directory.*changed|cache.*replaced|unsafe.*cache/i.test(error.message)) {
+      roundTwoContainmentFailures.push(`regular cache directory replacement: ${error.message}`);
+    }
+  }
+  assert.equal(regularReplacementTriggered, true, 'the regular-directory replacement fixture must run during archive validation');
+  assert.deepEqual(roundTwoContainmentFailures, [], 'exported extraction and regular-directory replacement must fail closed');
 
   const previousArchive = await pluginArchive(PLUGIN_BASELINES.hud, { root: 'previous-valid-cache' });
   writeFileSync(cachePath, previousArchive);
