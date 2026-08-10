@@ -172,6 +172,7 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     CLAUDE_MEM_COMPAT_CJS: 'src/generic/runtime/claude-mem-compat.cjs',
     PLUGIN_DEPENDENCIES_MJS: 'src/generic/runtime/plugin-dependencies.mjs',
     CLAUDE_HUD_STATUSLINE_MJS: 'src/generic/runtime/claude-hud-statusline.mjs',
+    ENHANCEMENT_CONFIG_MJS: 'src/generic/enhancement-config.mjs',
   };
   const runtimeSources = Object.fromEntries(await Promise.all(
     Object.entries(runtimeSourceFiles).map(async ([name, path]) => [
@@ -184,11 +185,29 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     runtimeSources.PLUGIN_DEPENDENCIES_MJS,
     { HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(runtimeSources.CLAUDE_HUD_STATUSLINE_MJS)).slice(1, -1) },
   );
+  const platformSourceFiles = {
+    UNIX_LIFECYCLE: 'src/unix/lifecycle.sh',
+    UNIX_LAUNCHER: 'src/unix/launcher.sh',
+    WINDOWS_LIFECYCLE: 'src/windows/lifecycle.ps1',
+    WINDOWS_LAUNCHER: 'src/windows/launcher.cmd',
+  };
+  const platformSources = Object.fromEntries(await Promise.all(
+    Object.entries(platformSourceFiles).map(async ([name, path]) => [
+      name,
+      await fileSystem.readFile(join(rootDir, path), 'utf8'),
+    ]),
+  ));
   return Promise.all(OUTPUTS.map(async entry => {
     const template = await fileSystem.readFile(join(rootDir, entry.template), 'utf8');
     const powerShell = entry.output.endsWith('.ps1');
     const replacements = {
       FEATURES_JSON: featuresJson,
+      [powerShell ? 'ENHANCEMENTS_JSON_BASE64' : 'ENHANCEMENTS_JSON']: powerShell
+        ? Buffer.from(enhancementsJson, 'utf8').toString('base64')
+        : enhancementsJson,
+      ...(powerShell
+        ? { WINDOWS_LIFECYCLE: platformSources.WINDOWS_LIFECYCLE, WINDOWS_LAUNCHER: platformSources.WINDOWS_LAUNCHER }
+        : { UNIX_LIFECYCLE: platformSources.UNIX_LIFECYCLE, UNIX_LAUNCHER: platformSources.UNIX_LAUNCHER }),
       ...Object.fromEntries(Object.entries(runtimeSources)
         .filter(([name]) => name !== 'CLAUDE_HUD_STATUSLINE_MJS')
         .map(([name, source]) => [

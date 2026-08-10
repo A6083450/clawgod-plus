@@ -9,6 +9,12 @@ import { buildPatcherBundle, renderTemplate } from '../build.mjs';
 
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const canonicalPlatform = Object.fromEntries(
+  ['unix/lifecycle.sh', 'unix/launcher.sh', 'windows/lifecycle.ps1', 'windows/launcher.cmd'].map(name => [
+    name,
+    readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8'),
+  ]),
+);
 const canonicalRuntime = Object.fromEntries(
   ['fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
     name,
@@ -19,6 +25,11 @@ canonicalRuntime['plugin-dependencies.mjs'] = renderTemplate(canonicalRuntime['p
   HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(canonicalRuntime['claude-hud-statusline.mjs'])).slice(1, -1),
 });
 canonicalRuntime['patcher.mjs'] = await buildPatcherBundle();
+
+for (const [name, source] of Object.entries(canonicalPlatform)) {
+  const generated = name.startsWith('unix/') ? unix : windows;
+  assert.ok(generated.includes(source), `${name} must be embedded exactly in its generated installer`);
+}
 
 function assertTemporaryPath(path, label) {
   const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];
@@ -827,10 +838,10 @@ assert.match(windowsBackup, /Copy-Item \$latestExe\.FullName \$claudeOrigExe -Fo
 assert.match(windowsUninstall, /Move-Item -Force \$claudeExeOrig \$claudeExe/, 'Windows uninstall must restore the backed-up versions executable');
 
 for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', windowsUninstall]]) {
-  for (const artifact of ['.clawgod-version', '.update-check']) {
+  for (const artifact of ['.clawgod-version', '.update-check', 'enhancement-config.mjs', 'enhancement-manifest.json']) {
     assert.ok(uninstall.includes(artifact), `${name}: uninstall must remove ${artifact}`);
   }
-  for (const preserved of ['provider.json', 'features.json', '.lean-disabled', '.lean-max']) {
+  for (const preserved of ['provider.json', 'features.json', 'enhancements.json', '.lean-disabled', '.lean-max']) {
     assert.doesNotMatch(uninstall, new RegExp(preserved.replace('.', '\\\.')), `${name}: uninstall must preserve ${preserved}`);
   }
 }
@@ -839,7 +850,7 @@ assert.doesNotMatch(unix, /\$\(\$BUN_BIN\s+--version/, 'Unix Bun version probes 
 
 const resolveBunStart = unix.indexOf('resolve_bun() {');
 const normalPreflightStart = unix.indexOf('if ! resolve_bun; then', unix.indexOf('# ─── Bun prerequisite'));
-const normalPreflightEnd = unix.indexOf('mkdir -p "$CLAWGOD_DIR"', normalPreflightStart);
+const normalPreflightEnd = unix.indexOf('prepare_enhancement_config_directory', normalPreflightStart);
 assert.notEqual(resolveBunStart, -1, 'Unix installer must define resolve_bun');
 assert.notEqual(normalPreflightStart, -1, 'Unix installer must resolve Bun before normal installation');
 assert.notEqual(normalPreflightEnd, -1, 'Unix installer must retain its normal Bun preflight');

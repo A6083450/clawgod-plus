@@ -12,27 +12,7 @@ set -e
 #    bash install.sh [--version 2.1.89] [--no-upgrade]
 # ─────────────────────────────────────────────────────────
 
-CLAWGOD_DIR="$HOME/.clawgod"
-BIN_DIR="$HOME/.local/bin"
-VERSION="${CLAWGOD_VERSION:-latest}"
-NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
-LEAN_OFF="${CLAWGOD_LEAN_OFF:-}"
-LEAN_ON="${CLAWGOD_LEAN_ON:-}"
-LEAN_MAX="${CLAWGOD_LEAN_MAX:-}"
-CLAWGOD_SELF_VERSION="0.0.0-dev"  # injected by release workflow from git tag
-
-# Parse args
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --version) VERSION="$2"; shift 2 ;;
-    --no-upgrade) NO_UPGRADE=1; shift ;;
-    --uninstall) UNINSTALL=1; shift ;;
-    --lean-off) LEAN_OFF=1; shift ;;
-    --lean-on) LEAN_ON=1; shift ;;
-    --lean-max) LEAN_MAX=1; shift ;;
-    *) shift ;;
-  esac
-done
+@@CLAWGOD_UNIX_LIFECYCLE@@
 
 # Colors
 GREEN='\033[0;32m'
@@ -190,7 +170,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache/claude-plugins" "$CLAWGOD_DIR/staging/claude-plugins" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh"
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache/claude-plugins" "$CLAWGOD_DIR/staging/claude-plugins" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh"
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -236,7 +216,17 @@ if [ -z "$BUN_VERSION_NUM" ] \
   exit 1
 fi
 
-mkdir -p "$CLAWGOD_DIR"
+prepare_enhancement_config_directory
+cat > "$CLAWGOD_DIR/enhancement-config.mjs" << 'ENHANCEMENT_CONFIG_EOF'
+@@CLAWGOD_ENHANCEMENT_CONFIG_MJS@@
+ENHANCEMENT_CONFIG_EOF
+chmod 700 "$CLAWGOD_DIR/enhancement-config.mjs"
+cat > "$CLAWGOD_DIR/enhancement-manifest.json" << 'ENHANCEMENT_MANIFEST_EOF'
+@@CLAWGOD_ENHANCEMENTS_JSON@@
+ENHANCEMENT_MANIFEST_EOF
+chmod 600 "$CLAWGOD_DIR/enhancement-manifest.json"
+configure_enhancement_selection
+
 cat > "$CLAWGOD_DIR/fetch-file.mjs" << 'FETCH_FILE_EOF'
 @@CLAWGOD_FETCH_FILE_MJS@@
 FETCH_FILE_EOF
@@ -701,64 +691,7 @@ if [ ! -x "$IMPORT_BIN" ]; then
   fi
 fi
 
-LAUNCHER_CONTENT="#!/bin/bash
-# clawgod launcher
-# CLAWGOD_LAUNCHER_V1
-CLAWGOD_CLI=\"$CLAWGOD_DIR/cli.cjs\"
-CLAWGOD_IMPORT=\"$CLAWGOD_DIR/clawgod-import\"
-BUN_BIN=\"$BUN_BIN\"
-# Route 'import' subcommand to clawgod-import binary
-if [ \"\$1\" = \"import\" ]; then
-  shift
-  if [ -x \"\$CLAWGOD_IMPORT\" ]; then
-    exec \"\$CLAWGOD_IMPORT\" \"\$@\"
-  else
-    echo \"clawgod: import tool not installed. Reinstall clawgod to get it.\" >&2
-    exit 127
-  fi
-fi
-if [ ! -f \"\$CLAWGOD_CLI\" ]; then
-  echo \"clawgod: installation at $CLAWGOD_DIR is missing (cli.cjs not found)\" >&2
-  echo \"clawgod: reinstall via  curl -fsSL https://github.com/A6083450/clawgod-plus/releases/latest/download/install.sh | bash\" >&2
-  echo \"clawgod: or remove this launcher:  rm \\\"\$0\\\"\" >&2
-  exit 127
-fi
-if [ ! -x \"\$BUN_BIN\" ]; then
-  if command -v bun >/dev/null 2>&1; then BUN_BIN=\"\$(command -v bun)\"; fi
-fi
-if [ ! -x \"\$BUN_BIN\" ]; then
-  echo \"clawgod: bun runtime not found at \$BUN_BIN\" >&2
-  echo \"clawgod: install bun  curl -fsSL https://bun.sh/install | bash\" >&2
-  exit 127
-fi
-export CLAUDE_CODE_EXECPATH=\"$CLAUDE_BIN.orig\"
-if [ \"\${1:-}\" = \"agents\" ] && [ \"\${CLAWGOD_NO_AUTO_CHROME:-}\" != \"1\" ]; then
-  exec \"\$BUN_BIN\" \"\$CLAWGOD_CLI\" --chrome \"\$@\"
-fi
-CLAWGOD_AUTO_CHROME=1
-if [ \"\${CLAWGOD_NO_AUTO_CHROME:-}\" = \"1\" ]; then
-  CLAWGOD_AUTO_CHROME=0
-fi
-for arg in \"\$@\"; do
-  case \"\$arg\" in
-    --chrome)
-      CLAWGOD_AUTO_CHROME=0
-      break
-      ;;
-    -p|--print|--permission-mode|--input-format|--output-format)
-      CLAWGOD_AUTO_CHROME=0
-      ;;
-  esac
-done
-case \"\${1:-}\" in
-  -h|--help|-v|--version|version|update|upgrade|auth|login|logout|config|mcp|daemon|logs|attach|stop|kill|respawn|rm|doctor|install|uninstall|completion|migrate-installer|setup-token)
-    CLAWGOD_AUTO_CHROME=0
-    ;;
-esac
-if [ \"\$CLAWGOD_AUTO_CHROME\" = \"1\" ]; then
-  exec \"\$BUN_BIN\" \"\$CLAWGOD_CLI\" --chrome \"\$@\"
-fi
-exec \"\$BUN_BIN\" \"\$CLAWGOD_CLI\" \"\$@\""
+@@CLAWGOD_UNIX_LAUNCHER@@
 
 
 # Back up original claude (only once)

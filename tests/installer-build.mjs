@@ -849,6 +849,10 @@ try {
     'src/generic/patcher/enhancements/paste-images.mjs',
     'src/generic/patcher/enhancements/privacy.mjs',
     'src/generic/patcher/enhancements/branding.mjs',
+    'src/unix/lifecycle.sh',
+    'src/unix/launcher.sh',
+    'src/windows/lifecycle.ps1',
+    'src/windows/launcher.cmd',
   ]) {
     const destination = join(cliRoot, path);
     mkdirSync(dirname(destination), { recursive: true });

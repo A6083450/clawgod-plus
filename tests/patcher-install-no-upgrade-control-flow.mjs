@@ -67,11 +67,16 @@ try {
   chmodSync(fakeUname, 0o755);
   writeFileSync(fakeBun, `#!${process.execPath}
 import { basename, dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 const [target, ...args] = process.argv.slice(2);
 if (target === '--version') {
   console.log('1.3.14');
   process.exit(0);
+}
+if (target === '-e') {
+  const child = spawnSync(process.execPath, ['-e', ...args], { env: process.env, stdio: 'inherit' });
+  process.exit(child.status ?? 1);
 }
 const name = basename(target || '');
 if (name === 'install-ripgrep.mjs') {
@@ -116,7 +121,7 @@ if (name === 'install-ripgrep.mjs') {
     const script = join(root, 'installer-lifecycle.sh');
     const pluginHealth = join(root, 'plugin-health.json');
     const claudeResolver = join(root, 'claude-resolver.txt');
-    mkdirSync(join(home, '.clawgod'), { recursive: true });
+    mkdirSync(join(home, '.clawgod'), { recursive: true, mode: 0o700 });
     mkdirSync(temp, { recursive: true });
     if (args.includes('--no-upgrade')) {
       writeFileSync(join(home, '.clawgod', 'cli.original.cjs'), 'existing clean CLI fixture\n');
