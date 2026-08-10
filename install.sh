@@ -344,7 +344,11 @@ if [ "$UNINSTALL" = "1" ]; then
     fi
   done
   # Restore optional Claude plugin integrations before any managed cleanup.
-  if [ -f "$CLAWGOD_DIR/plugin-dependencies.mjs" ] && [ -f "$CLAWGOD_DIR/plugin-dependencies-state.json" ]; then
+  if [ -f "$CLAWGOD_DIR/plugin-dependencies-state.json" ] && [ ! -f "$CLAWGOD_DIR/plugin-dependencies.mjs" ]; then
+    warn "Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled"
+    exit 1
+  fi
+  if [ -f "$CLAWGOD_DIR/plugin-dependencies.mjs" ]; then
     if ! CLAWGOD_BUN_BIN="$BUN_BIN" CLAWGOD_DIR="$CLAWGOD_DIR" \
       "$BUN_BIN" "$CLAWGOD_DIR/plugin-dependencies.mjs" uninstall; then
       warn "Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled"
@@ -3147,6 +3151,38 @@ function printPluginResults(results) {
   console.log(`Optional plugins: ${results.length - warnings} ready, ${warnings} warning${warnings === 1 ? '' : 's'}`);
 }
 
+const MANAGED_ATOMIC_RESIDUE = /^\.(?:plugin-dependencies-state\.json|claude-hud-statusline\.mjs)\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
+
+function cleanupManagedAtomicResidue(context) {
+  const root = resolve(context.clawgodDir);
+  let rootIdentity;
+  try {
+    const status = lstatSync(root);
+    if (status.isSymbolicLink() || !status.isDirectory()) return;
+    rootIdentity = { dev: status.dev, ino: status.ino };
+  } catch { return; }
+  let entries;
+  try { entries = readdirSync(root); } catch { return; }
+  for (const name of entries) {
+    if (!MANAGED_ATOMIC_RESIDUE.test(name)) continue;
+    const path = join(root, name);
+    let status;
+    try { status = lstatSync(path); } catch { continue; }
+    if (status.isSymbolicLink() || !status.isFile() || status.nlink !== 1) continue;
+    let currentRoot;
+    let current;
+    try {
+      currentRoot = lstatSync(root);
+      current = lstatSync(path);
+    } catch { continue; }
+    if (currentRoot.isSymbolicLink() || !currentRoot.isDirectory()
+      || currentRoot.dev !== rootIdentity.dev || currentRoot.ino !== rootIdentity.ino
+      || current.isSymbolicLink() || !current.isFile() || current.nlink !== 1
+      || current.dev !== status.dev || current.ino !== status.ino) continue;
+    try { unlinkSync(path); } catch {}
+  }
+}
+
 async function runPluginDependenciesCli(command) {
   const context = pluginContext();
   if (command === 'ensure') {
@@ -3158,6 +3194,7 @@ async function runPluginDependenciesCli(command) {
     if (restoration.conflicts.length > 0) {
       throw new Error(`optional plugin restoration conflicts: ${restoration.conflicts.join(', ')}`);
     }
+    cleanupManagedAtomicResidue(context);
     return;
   }
   throw new Error('usage: plugin-dependencies.mjs <ensure|uninstall>');

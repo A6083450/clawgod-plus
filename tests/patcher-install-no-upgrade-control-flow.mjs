@@ -55,50 +55,104 @@ assert.doesNotMatch(pluginModule, /CLAWGOD_VERSION|--version\s+2\.|version\s*=\s
 const optionalStart = installer.indexOf('# --- Ensure optional Claude plugins');
 const optionalEnd = installer.indexOf('\ninstall_claude_mem_compat_helper', optionalStart);
 assert.ok(optionalStart >= 0 && optionalEnd > optionalStart, 'install.sh must retain an extractable plugin health-check stage');
-const optionalBlock = installer.slice(optionalStart, optionalEnd);
+const lifecycleSpan = installer.slice(0, optionalEnd);
 
 const dir = mkdtempSync(join(tmpdir(), 'clawgod-no-upgrade-'));
 try {
-  const clawgodDir = join(dir, 'home');
-  const helper = join(clawgodDir, 'apply-claude-code-chrome-fix.sh');
-  const cli = join(clawgodDir, 'cli.original.cjs');
-  const pluginManager = join(clawgodDir, 'plugin-dependencies.mjs');
-  const pluginHealth = join(dir, 'plugin-health');
-  const claudeDownloadAttempt = join(dir, 'claude-download');
-  const fakeBun = join(dir, 'bun');
-  const script = join(dir, 'control-flow.sh');
-  mkdirSync(clawgodDir);
-  writeFileSync(helper, '#!/usr/bin/env bash\nprintf "helper:%s\\n" "$1"\n', 'utf8');
-  chmodSync(helper, 0o755);
-  writeFileSync(cli, 'fixture', 'utf8');
-  writeFileSync(pluginManager, '// fixture plugin manager\n', 'utf8');
-  writeFileSync(fakeBun, `#!/usr/bin/env bash\n[ "$2" = "ensure" ] || exit 78\nprintf 'checked\\n' > ${JSON.stringify(pluginHealth)}\n`, 'utf8');
-  chmodSync(fakeBun, 0o755);
-  writeFileSync(script, `#!/usr/bin/env bash
-set -e
-CLAWGOD_DIR=${JSON.stringify(clawgodDir)}
-BUN_BIN=${JSON.stringify(fakeBun)}
-warn() { printf 'warn:%s\\n' "$*"; }
-dim() { printf 'dim:%s\\n' "$*"; }
-info() { printf 'info:%s\\n' "$*"; }
-${installHelper.source}
-${runHelper.source}
-NO_UPGRADE=1
-if [ "$NO_UPGRADE" = "1" ]; then
-  run_claude_code_chrome_fix
-else
-  : > ${JSON.stringify(claudeDownloadAttempt)}
-fi
-${optionalBlock}
+  const fakeBin = join(dir, 'bin');
+  const fakeBun = join(fakeBin, 'bun');
+  mkdirSync(fakeBin);
+  const fakeUname = join(fakeBin, 'uname');
+  writeFileSync(fakeUname, '#!/bin/sh\n[ "$1" = "-s" ] && printf "Darwin\\n" || printf "arm64\\n"\n');
+  chmodSync(fakeUname, 0o755);
+  writeFileSync(fakeBun, `#!${process.execPath}
+import { basename, dirname, join } from 'node:path';
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+const [target, ...args] = process.argv.slice(2);
+if (target === '--version') {
+  console.log('1.3.14');
+  process.exit(0);
+}
+const name = basename(target || '');
+if (name === 'install-ripgrep.mjs') {
+  console.log('ripgrep 15.2.0: fixture');
+} else if (name === 'fetch-file.mjs') {
+  const destination = args[1];
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, destination.endsWith('.sh') ? '#!/bin/sh\\nexit 0\\n' : 'fixture binary\\n');
+  chmodSync(destination, 0o700);
+} else if (name === 'fetch-package.mjs') {
+  const [spec, output] = args;
+  const version = spec.slice(spec.lastIndexOf('@') + 1);
+  mkdirSync(join(output, 'package'), { recursive: true });
+  writeFileSync(join(output, 'package', 'claude'), new Uint8Array(10_000_001));
+  writeFileSync(process.env.CLAUDE_RESOLVER_MARKER, spec + '\\n');
+  console.log('VERSION=' + version);
+} else if (name === 'extract-natives.mjs') {
+  const output = args[1];
+  mkdirSync(output, { recursive: true });
+  writeFileSync(join(output, 'cli.original.js'), '(function(exports,require,module,__filename,__dirname){})');
+} else if (name === 'post-process.mjs') {
+  const root = dirname(target);
+  writeFileSync(join(root, 'cli.original.cjs'), '(function(exports,require,module,__filename,__dirname){})');
+  rmSync(join(root, 'cli.original.js'), { force: true });
+} else if (name === 'patch.mjs') {
+  console.log('fixture patch applied');
+} else if (name === 'cli.cjs' && args[0] === '--version') {
+  console.log('2.1.999');
+} else if (name === 'plugin-dependencies.mjs' && args[0] === 'ensure') {
+  writeFileSync(process.env.PLUGIN_HEALTH_MARKER, JSON.stringify({ args, clawgodVersion: process.env.CLAWGOD_VERSION || null }) + '\\n');
+} else {
+  console.error('unexpected fake Bun boundary: ' + JSON.stringify({ target, args }));
+  process.exit(97);
+}
 `, 'utf8');
-  chmodSync(script, 0o755);
+  chmodSync(fakeBun, 0o755);
 
-  const run = spawnSync('bash', [script], { encoding: 'utf8' });
-  assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.match(run.stdout, new RegExp(`helper:${cli.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-  assert.doesNotMatch(run.stdout + run.stderr, /command not found/);
-  assert.equal(readFileSync(pluginHealth, 'utf8'), 'checked\n', '--no-upgrade must still run the plugin health check');
-  assert.equal(existsSync(claudeDownloadAttempt), false, '--no-upgrade must not run the Claude package download branch');
+  function runLifecycleCase(label, args) {
+    const root = join(dir, label);
+    const home = join(root, 'home');
+    const temp = join(root, 'tmp');
+    const script = join(root, 'installer-lifecycle.sh');
+    const pluginHealth = join(root, 'plugin-health.json');
+    const claudeResolver = join(root, 'claude-resolver.txt');
+    mkdirSync(join(home, '.clawgod'), { recursive: true });
+    mkdirSync(temp, { recursive: true });
+    if (args.includes('--no-upgrade')) {
+      writeFileSync(join(home, '.clawgod', 'cli.original.cjs'), 'existing clean CLI fixture\n');
+    }
+    writeFileSync(script, lifecycleSpan, 'utf8');
+    chmodSync(script, 0o700);
+    const run = spawnSync('/bin/bash', [script, ...args], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        HOME: home,
+        TMPDIR: temp,
+        PATH: `${fakeBin}:/usr/bin:/bin`,
+        PLUGIN_HEALTH_MARKER: pluginHealth,
+        CLAUDE_RESOLVER_MARKER: claudeResolver,
+      },
+    });
+    return { run, pluginHealth, claudeResolver };
+  }
+
+  const lifecycleCases = [
+    { label: 'default-latest', args: [], expectedResolver: '@anthropic-ai/claude-code-darwin-arm64@latest' },
+    { label: 'explicit-version', args: ['--version', '2.1.777'], expectedResolver: '@anthropic-ai/claude-code-darwin-arm64@2.1.777' },
+    { label: 'no-upgrade', args: ['--no-upgrade'], expectedResolver: null },
+  ];
+  for (const fixture of lifecycleCases) {
+    const result = runLifecycleCase(fixture.label, fixture.args);
+    assert.equal(result.run.status, 0, `${fixture.label}: ${result.run.stdout}${result.run.stderr}`);
+    assert.equal(existsSync(result.pluginHealth), true, `${fixture.label}: plugin ensure must remain reachable from the real installer entry`);
+    assert.deepEqual(JSON.parse(readFileSync(result.pluginHealth, 'utf8')), { args: ['ensure'], clawgodVersion: null }, `${fixture.label}: Claude version selection must not flow into plugin ensure`);
+    if (fixture.expectedResolver === null) {
+      assert.equal(existsSync(result.claudeResolver), false, '--no-upgrade must skip the Claude package resolver boundary');
+    } else {
+      assert.equal(readFileSync(result.claudeResolver, 'utf8'), `${fixture.expectedResolver}\n`, `${fixture.label}: the real parser must feed only the Claude package resolver`);
+    }
+  }
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

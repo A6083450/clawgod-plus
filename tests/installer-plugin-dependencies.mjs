@@ -353,12 +353,43 @@ try {
   const warningState = JSON.parse(readFileSync(warningLifecycle.statePath, 'utf8'));
   assert.equal(Object.keys(warningState.claudeMem.files).length, 2, 'a HUD warning must not stop claude-mem configuration');
 
+  const cleanupLifecycle = makeLifecycleFixture('successful-uninstall-temp-cleanup');
+  const cleanupEnsure = runLifecycleCommand(cleanupLifecycle, 'ensure');
+  assert.equal(cleanupEnsure.exitCode, 0, new TextDecoder().decode(cleanupEnsure.stderr));
+  const stateTemp = join(cleanupLifecycle.clawgodDir, '.plugin-dependencies-state.json.123.00000000-0000-4000-8000-000000000001.tmp');
+  const moduleTemp = join(cleanupLifecycle.clawgodDir, '.claude-hud-statusline.mjs.456.00000000-0000-4000-8000-000000000002.tmp');
+  const lookalikeTemp = join(cleanupLifecycle.clawgodDir, '.plugin-dependencies-state.json.123.00000000-0000-4000-8000-000000000003.tmp.user');
+  const symlinkTemp = join(cleanupLifecycle.clawgodDir, '.plugin-dependencies-state.json.124.00000000-0000-4000-8000-000000000004.tmp');
+  const hardlinkTemp = join(cleanupLifecycle.clawgodDir, '.claude-hud-statusline.mjs.457.00000000-0000-4000-8000-000000000005.tmp');
+  const directoryTemp = join(cleanupLifecycle.clawgodDir, '.claude-hud-statusline.mjs.458.00000000-0000-4000-8000-000000000006.tmp');
+  const hardlinkSource = join(cleanupLifecycle.clawgodDir, 'preserve-hardlink-source');
+  writeFileSync(stateTemp, 'orphaned state write\n');
+  writeFileSync(moduleTemp, 'orphaned module write\n');
+  writeFileSync(lookalikeTemp, 'user lookalike\n');
+  symlinkSync(lookalikeTemp, symlinkTemp);
+  writeFileSync(hardlinkSource, 'shared inode\n');
+  linkSync(hardlinkSource, hardlinkTemp);
+  mkdirSync(directoryTemp);
+  const successfulUninstall = runLifecycleCommand(cleanupLifecycle, 'uninstall');
+  assert.equal(successfulUninstall.exitCode, 0, new TextDecoder().decode(successfulUninstall.stderr));
+  assert.equal(existsSync(stateTemp), false, 'successful uninstall must remove an orphaned atomic ownership-state temp file');
+  assert.equal(existsSync(moduleTemp), false, 'successful uninstall must remove an orphaned atomic HUD-module temp file');
+  for (const preserved of [lookalikeTemp, symlinkTemp, hardlinkTemp, hardlinkSource, directoryTemp]) {
+    assert.equal(existsSync(preserved), true, `successful uninstall must reject unsafe or non-matching residue ${preserved}`);
+  }
+
+  const failedStateTemp = join(readyLifecycle.clawgodDir, '.plugin-dependencies-state.json.789.00000000-0000-4000-8000-000000000007.tmp');
+  const failedModuleTemp = join(readyLifecycle.clawgodDir, '.claude-hud-statusline.mjs.790.00000000-0000-4000-8000-000000000008.tmp');
+  writeFileSync(failedStateTemp, 'preserve failed state write\n');
+  writeFileSync(failedModuleTemp, 'preserve failed module write\n');
   writeFileSync(readyLifecycle.hudConfig, '{"user":"changed after management"}\n');
   const failedUninstall = runLifecycleCommand(readyLifecycle, 'uninstall');
   assert.notEqual(failedUninstall.exitCode, 0, 'uninstall must fail closed when managed integration restoration conflicts');
   assert.equal(existsSync(readyLifecycle.lifecycleModule), true, 'failed restoration must retain the plugin manager module');
   assert.equal(existsSync(readyLifecycle.statusLineModule), true, 'failed restoration must retain the HUD status-line module');
   assert.equal(existsSync(readyLifecycle.statePath), true, 'failed restoration must retain ownership state');
+  assert.equal(existsSync(failedStateTemp), true, 'failed restoration must retain orphaned state-write evidence');
+  assert.equal(existsSync(failedModuleTemp), true, 'failed restoration must retain orphaned module-write evidence');
 
   function makeClaudeMemFixture(label, options = {}) {
     const root = join(fixtureRoot, `claude-mem-${label}`);

@@ -954,37 +954,93 @@ const unixPluginRestoreStart = unixUninstall.indexOf('  # Restore optional Claud
 const unixPluginRestoreEnd = unixUninstall.indexOf('  if [ -f "$CLAWGOD_DIR/claude-mem-compat.cjs" ]; then', unixPluginRestoreStart);
 assert.ok(unixPluginRestoreStart >= 0 && unixPluginRestoreEnd > unixPluginRestoreStart, 'install.sh must retain an extractable fail-closed plugin restore guard');
 const unixPluginRestoreBlock = unixUninstall.slice(unixPluginRestoreStart, unixPluginRestoreEnd);
+const windowsPluginRestoreStart = windowsUninstall.indexOf('    # Restore optional Claude plugin integrations');
+const windowsPluginRestoreEnd = windowsUninstall.indexOf('    $claudeMemCompat = Join-Path $ClawDir "claude-mem-compat.cjs"', windowsPluginRestoreStart);
+assert.ok(windowsPluginRestoreStart >= 0 && windowsPluginRestoreEnd > windowsPluginRestoreStart, 'install.ps1 must retain an extractable fail-closed plugin restore guard');
+const windowsPluginRestoreBlock = windowsUninstall.slice(windowsPluginRestoreStart, windowsPluginRestoreEnd);
 const uninstallLifecycleRoot = mkdtempSync(join(tmpdir(), 'clawgod plugin uninstall '));
 assertTemporaryPath(uninstallLifecycleRoot, 'plugin uninstall fixture');
 try {
-  const home = join(uninstallLifecycleRoot, 'home');
-  const clawgodDir = join(home, '.clawgod');
-  const fixtureBin = join(uninstallLifecycleRoot, 'bin');
-  const fakeBun = join(fixtureBin, 'bun');
-  const artifacts = [
-    join(clawgodDir, 'plugin-dependencies.mjs'),
-    join(clawgodDir, 'claude-hud-statusline.mjs'),
-    join(clawgodDir, 'plugin-dependencies-state.json'),
-    join(clawgodDir, 'cache', 'claude-plugins', 'archive.tar.gz'),
-    join(clawgodDir, 'staging', 'claude-plugins', '.transaction', 'evidence'),
-  ];
-  for (const artifact of artifacts) {
-    mkdirSync(dirname(artifact), { recursive: true });
-    writeFileSync(artifact, 'managed fixture\n');
+  function runUnixPluginGuard(label, { module, state, restoreExit = 0 }) {
+    const root = join(uninstallLifecycleRoot, label);
+    const home = join(root, 'home');
+    const clawgodDir = join(home, '.clawgod');
+    const fixtureBin = join(root, 'bin');
+    const fakeBun = join(fixtureBin, 'bun');
+    const restored = join(root, 'restored');
+    const continued = join(root, 'continued');
+    const artifacts = {
+      module: join(clawgodDir, 'plugin-dependencies.mjs'),
+      state: join(clawgodDir, 'plugin-dependencies-state.json'),
+      hud: join(clawgodDir, 'claude-hud-statusline.mjs'),
+      memory: join(clawgodDir, 'claude-mem-compat.cjs'),
+      launcher: join(root, 'bin-home', 'claude'),
+      runtime: join(clawgodDir, 'cli.cjs'),
+    };
+    mkdirSync(clawgodDir, { recursive: true });
+    mkdirSync(fixtureBin, { recursive: true });
+    for (const artifact of [artifacts.hud, artifacts.memory, artifacts.launcher, artifacts.runtime]) {
+      mkdirSync(dirname(artifact), { recursive: true });
+      writeFileSync(artifact, 'managed fixture\n');
+    }
+    if (module) writeFileSync(artifacts.module, '// plugin manager fixture\n');
+    if (state) writeFileSync(artifacts.state, '{"schemaVersion":1}\n');
+    writeFileSync(fakeBun, `#!/bin/sh\n[ "$2" = "uninstall" ] || exit 92\nprintf 'called\\n' > ${JSON.stringify(restored)}\nexit ${restoreExit}\n`);
+    chmodSync(fakeBun, 0o700);
+    const run = spawnSync('/bin/bash', ['-c', `set -e\nwarn() { printf '%s\\n' "$*" >&2; }\n${unixPluginRestoreBlock}\nprintf 'continued\\n' > "$CONTINUED"\nrm -f "$CLAWGOD_DIR/claude-mem-compat.cjs" "$LAUNCHER" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/claude-hud-statusline.mjs"`], {
+      encoding: 'utf8',
+      env: {
+        HOME: home,
+        CLAWGOD_DIR: clawgodDir,
+        BUN_BIN: fakeBun,
+        PATH: `${fixtureBin}:${isolatedUnixPath(root)}`,
+        CONTINUED: continued,
+        LAUNCHER: artifacts.launcher,
+      },
+    });
+    return { run, restored, continued, artifacts };
   }
-  mkdirSync(fixtureBin, { recursive: true });
-  writeFileSync(fakeBun, '#!/bin/sh\n[ "$2" = "uninstall" ] || exit 92\nexit 42\n');
-  chmodSync(fakeBun, 0o700);
-  const failedRestore = spawnSync('/bin/bash', ['-c', `set -e\nwarn() { printf '%s\\n' "$*" >&2; }\n${unixPluginRestoreBlock}\nrm -rf "$CLAWGOD_DIR"`], {
-    encoding: 'utf8',
-    env: { HOME: home, CLAWGOD_DIR: clawgodDir, BUN_BIN: fakeBun, PATH: fixtureBin },
-  });
-  assert.notEqual(failedRestore.status, 0, 'plugin restoration failure must abort uninstall');
-  assert.match(failedRestore.stderr, /Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled/);
-  for (const artifact of artifacts) assert.equal(existsSync(artifact), true, `failed restoration must retain ${artifact}`);
+
+  const both = runUnixPluginGuard('state-and-module', { module: true, state: true });
+  assert.equal(both.run.status, 0, both.run.stderr);
+  assert.equal(existsSync(both.restored), true, 'state+module must run optional plugin restoration');
+  assert.equal(existsSync(both.continued), true, 'successful state+module restoration must continue uninstall');
+
+  const stateOnly = runUnixPluginGuard('state-only', { module: false, state: true });
+  assert.notEqual(stateOnly.run.status, 0, 'state without its restoration module must fail closed');
+  assert.match(stateOnly.run.stderr, /Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled/);
+  assert.equal(existsSync(stateOnly.restored), false, 'state-only must not invoke a missing restoration module');
+  assert.equal(existsSync(stateOnly.continued), false, 'state-only must not reach claude-mem, launcher, or runtime cleanup');
+  for (const artifact of [stateOnly.artifacts.state, stateOnly.artifacts.hud, stateOnly.artifacts.memory, stateOnly.artifacts.launcher, stateOnly.artifacts.runtime]) {
+    assert.equal(existsSync(artifact), true, `state-only must retain ${artifact}`);
+  }
+
+  const moduleOnly = runUnixPluginGuard('module-only', { module: true, state: false });
+  assert.equal(moduleOnly.run.status, 0, moduleOnly.run.stderr);
+  assert.equal(existsSync(moduleOnly.restored), true, 'module-only generation residue must run the no-state cleanup path');
+  assert.equal(existsSync(moduleOnly.continued), true, 'module-only generation residue may continue uninstall');
+
+  const neither = runUnixPluginGuard('neither', { module: false, state: false });
+  assert.equal(neither.run.status, 0, neither.run.stderr);
+  assert.equal(existsSync(neither.restored), false, 'no plugin artifacts must not run restoration');
+  assert.equal(existsSync(neither.continued), true, 'no plugin artifacts may continue uninstall');
+
+  const failedRestore = runUnixPluginGuard('restore-conflict', { module: true, state: true, restoreExit: 42 });
+  assert.notEqual(failedRestore.run.status, 0, 'plugin restoration failure must abort uninstall');
+  assert.match(failedRestore.run.stderr, /Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled/);
+  assert.equal(existsSync(failedRestore.continued), false, 'failed restoration must not reach later cleanup');
+  for (const artifact of Object.values(failedRestore.artifacts)) {
+    assert.equal(existsSync(artifact), true, `failed restoration must retain ${artifact}`);
+  }
 } finally {
   rmSync(uninstallLifecycleRoot, { recursive: true, force: true });
 }
+
+assert.match(
+  windowsPluginRestoreBlock,
+  /if \(\(Test-Path \$pluginState\) -and -not \(Test-Path \$pluginDependencies\)\) \{[\s\S]*Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled[\s\S]*exit 1[\s\S]*\}\s*if \(Test-Path \$pluginDependencies\)/,
+  'PowerShell must implement the same state-only fail-closed and module-present restore/cleanup truth table',
+);
 
 for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', windowsUninstall]]) {
   const pluginRestore = uninstall.indexOf('plugin-dependencies.mjs');
