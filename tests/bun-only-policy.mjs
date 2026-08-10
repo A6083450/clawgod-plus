@@ -112,8 +112,8 @@ function findForbiddenDependencies(source, options = {}) {
 
   for (const [offset, line] of source.split(/\r?\n/).entries()) {
     const lineNumber = offset + 1;
-    if (heredocTerminator !== null && line.trim() === heredocTerminator) {
-      heredocTerminator = null;
+    if (heredocTerminator !== null) {
+      if (line.trim() === heredocTerminator) heredocTerminator = null;
       continue;
     }
     const heredocStart = /<<-?\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?/.exec(line);
@@ -264,6 +264,10 @@ const allowedDependencyFixtures = [
   '@anthropic-ai/claude-code-linux-x64 from the npm Registry',
   'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24',
 ];
+const heredocFixtures = [
+  ['quoted heredoc body', "cat <<'EOF'\ngit status --short\nEOF", []],
+  ['unquoted heredoc body', 'cat <<EOF\ngit status --short\nEOF', []],
+];
 
 const badgePublishFixture = `
       - name: Publish supported-Claude-version badge
@@ -281,6 +285,9 @@ for (const [label, source, expected] of executableDependencyFixtures) {
 }
 for (const source of allowedDependencyFixtures) {
   assert.deepEqual(findForbiddenDependencies(source), [], `${source} must remain allowed`);
+}
+for (const [label, source, expected] of heredocFixtures) {
+  assert.deepEqual(findForbiddenDependencies(source), expected, `${label} commands must be ignored`);
 }
 assert.deepEqual(
   findForbiddenDependencies(badgePublishFixture, { allowBadgePublishGit: true }),
