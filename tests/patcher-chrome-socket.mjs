@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
-const patcher = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
 const unixHelper = readFileSync(new URL('../apply-claude-code-chrome-fix.sh', import.meta.url), 'utf8');
 const powerShellHelper = readFileSync(new URL('../apply-claude-code-chrome-fix.ps1', import.meta.url), 'utf8');
 
@@ -92,7 +92,7 @@ function evaluate(code) {
 }
 
 let helperAcornSource;
-for (const [name, patcherSource] of [['canonical patcher', patcher]]) {
+for (const [name, patcherSource] of await getPatcherSources()) {
   for (const noAcorn of [false, true]) {
     for (const [fixtureName, fixture] of fixtures) {
       const mode = noAcorn ? 'regex fallback' : 'AST';
@@ -101,6 +101,7 @@ for (const [name, patcherSource] of [['canonical patcher', patcher]]) {
       try {
         assert.doesNotMatch(patcherSource, /require\(['"]acorn['"]\)/, `${label}: ambient package caches must not select Acorn`);
         if (noAcorn) disableAcorn(dir);
+        else seedPatcherAcorn(dir);
         writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
         writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 

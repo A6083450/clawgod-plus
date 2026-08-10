@@ -27,6 +27,53 @@ export function modeForPlatform(mode, platform = process.platform) {
   return (mode & 0o200) === 0o200 ? 0o666 : 0o444;
 }
 
+function formatBuildLog(log) {
+  if (typeof log === 'string') return log;
+  if (typeof log?.message === 'string') return log.message;
+  return String(log);
+}
+
+export async function validatePatcherBuildResult(result) {
+  const logs = result?.logs || [];
+  if (!result?.success) {
+    throw new Error(`Patcher build failed${logs.length > 0 ? `: ${logs.map(formatBuildLog).join('; ')}` : ''}`);
+  }
+  if (logs.length > 0) {
+    throw new Error(`Patcher build emitted warning or error logs: ${logs.map(formatBuildLog).join('; ')}`);
+  }
+  if (result.outputs?.length !== 1) {
+    throw new Error(`Patcher build must produce exactly one output, received ${result.outputs?.length ?? 0}`);
+  }
+  const source = await result.outputs[0].text();
+  if (/\b(?:from\s*|import\s*)\(?\s*['"]\.\.?\//.test(source)) {
+    throw new Error('Patcher build retained an unresolved local import');
+  }
+  return source;
+}
+
+export function assertDeterministicPatcherBundles(first, second) {
+  if (first !== second) throw new Error('Patcher build is non-deterministic');
+}
+
+async function buildPatcherBundleOnce(root) {
+  const result = await Bun.build({
+    entrypoints: [join(root, 'src/generic/patcher/entry.mjs')],
+    target: 'bun',
+    format: 'esm',
+    minify: false,
+    sourcemap: 'none',
+    splitting: false,
+  });
+  return validatePatcherBuildResult(result);
+}
+
+export async function buildPatcherBundle({ rootDir = ROOT_DIR } = {}) {
+  const first = await buildPatcherBundleOnce(rootDir);
+  const second = await buildPatcherBundleOnce(rootDir);
+  assertDeterministicPatcherBundles(first, second);
+  return first;
+}
+
 function modeMatches(actual, expected, platform) {
   if (platform !== 'win32') return (actual & 0o777) === (expected & 0o777);
   return (actual & 0o200) === (expected & 0o200);
@@ -88,6 +135,7 @@ function resolveOutput(rootDir, output) {
 
 export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = defaultFileSystem } = {}) {
   const featuresJson = await fileSystem.readFile(join(rootDir, 'src/generic/features.json'), 'utf8');
+  const patcherBundle = await buildPatcherBundle({ rootDir });
   const runtimeSourceFiles = {
     FETCH_FILE_MJS: 'src/generic/runtime/fetch-file.mjs',
     FETCH_PACKAGE_MJS: 'src/generic/runtime/fetch-package.mjs',
@@ -100,7 +148,6 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     CLAUDE_MEM_COMPAT_CJS: 'src/generic/runtime/claude-mem-compat.cjs',
     PLUGIN_DEPENDENCIES_MJS: 'src/generic/runtime/plugin-dependencies.mjs',
     CLAUDE_HUD_STATUSLINE_MJS: 'src/generic/runtime/claude-hud-statusline.mjs',
-    PATCHER_MJS: 'src/generic/patcher/entry.mjs',
   };
   const runtimeSources = Object.fromEntries(await Promise.all(
     Object.entries(runtimeSourceFiles).map(async ([name, path]) => [
@@ -108,6 +155,7 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
       await fileSystem.readFile(join(rootDir, path), 'utf8'),
     ]),
   ));
+  runtimeSources.PATCHER_MJS = patcherBundle;
   runtimeSources.PLUGIN_DEPENDENCIES_MJS = renderTemplate(
     runtimeSources.PLUGIN_DEPENDENCIES_MJS,
     { HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(runtimeSources.CLAUDE_HUD_STATUSLINE_MJS)).slice(1, -1) },

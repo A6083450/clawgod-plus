@@ -5,8 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
-
-const patcher = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const fixture = `
 /* Version: 2.1.220 */
@@ -36,9 +35,10 @@ function vvl({showWorkflows:e=!1}={}){let t=globalThis.taskList,q=globalThis.sel
 globalThis.visibleTaskState=(rows,count,selected=0)=>{globalThis.terminalSize={columns:120,rows};globalThis.taskList=Array.from({length:count});globalThis.selectedTaskIndex=selected;let result=vvl();return{limit:globalThis.windowLimit,moreVisible:result.moreVisible,windowStart:result.values[0],moreAbove:result.values[2],moreBelow:result.values[3]}};
 `;
 
-for (const [installerName, patcherSource] of [['canonical patcher', patcher]]) {
+for (const [installerName, patcherSource] of await getPatcherSources()) {
   const dir = mkdtempSync(join(tmpdir(), 'clawgod-default-agents-'));
   try {
+    seedPatcherAcorn(dir);
     writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
     writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 

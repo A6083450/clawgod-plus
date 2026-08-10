@@ -5,10 +5,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
-const patcher = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
 
 assert.doesNotMatch(
   unixInstaller,
@@ -52,9 +52,10 @@ function attachments(q){if(userType()!=="ant"&&types.has(q.attachment.type))retu
 function privateDate(e){let t=rdp(),n=odp(t?.known??!1,t?.labKw??!1),r=t?.cnTZ?e.replaceAll("-","/"):e;return\`Today\${n}s date is \${r}.\`}
 `;
 
-for (const [name, patcherSource] of [['canonical patcher', patcher]]) {
+for (const [name, patcherSource] of await getPatcherSources()) {
   const dir = mkdtempSync(join(tmpdir(), 'clawgod-2.1.215-'));
   try {
+    seedPatcherAcorn(dir);
     writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
     writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 
@@ -103,7 +104,7 @@ for (const [name, patcherSource] of [['canonical patcher', patcher]]) {
       /(?:⚠️|!!) Computer Use gate bypass/,
       `${name}: no unverifiable Computer Use alternative`,
     );
-    assert.match(firstOutput, /Result: \d+ applied, \d+ skipped, 0 failed/, `${name}: no patch failures`);
+    assert.match(firstOutput, /Result: 26 applied, 34 skipped, 0 failed/, `${name}: default-all summary must remain canonical`);
 
     const second = spawnSync(process.execPath, ['patch.mjs', '--dry-run'], { cwd: dir, encoding: 'utf8' });
     const secondOutput = second.stdout + second.stderr;

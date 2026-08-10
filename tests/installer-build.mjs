@@ -823,6 +823,7 @@ try {
     'src/template/install.sh',
     'src/template/install.ps1',
     'src/generic/features.json',
+    'src/generic/enhancements.json',
     'src/generic/runtime/fetch-file.mjs',
     'src/generic/runtime/fetch-package.mjs',
     'src/generic/runtime/install-ripgrep.mjs',
@@ -835,6 +836,18 @@ try {
     'src/generic/runtime/plugin-dependencies.mjs',
     'src/generic/runtime/claude-hud-statusline.mjs',
     'src/generic/patcher/entry.mjs',
+    'src/generic/patcher/core.mjs',
+    'src/generic/patcher/registry.mjs',
+    'src/generic/patcher/enhancements/chrome.mjs',
+    'src/generic/patcher/enhancements/computer-use.mjs',
+    'src/generic/patcher/enhancements/agents.mjs',
+    'src/generic/patcher/enhancements/planning.mjs',
+    'src/generic/patcher/enhancements/voice.mjs',
+    'src/generic/patcher/enhancements/auto-mode.mjs',
+    'src/generic/patcher/enhancements/unrestricted-tools.mjs',
+    'src/generic/patcher/enhancements/paste-images.mjs',
+    'src/generic/patcher/enhancements/privacy.mjs',
+    'src/generic/patcher/enhancements/branding.mjs',
   ]) {
     const destination = join(cliRoot, path);
     mkdirSync(dirname(destination), { recursive: true });

@@ -14,9 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
-
-const root = realpathSync(new URL('../', import.meta.url));
-const patcher = readFileSync(join(root, 'src/generic/patcher/entry.mjs'), 'utf8');
+import { getPatcherSources } from './patcher-test-sources.mjs';
 
 function assertTemporaryPath(path, parent, label) {
   const resolvedParent = realpathSync(parent);
@@ -140,9 +138,8 @@ process.exit(Number(process.env.RUN_EXIT||0));
   }
 }
 
-const patchedUpdateBranches = [
-  ['canonical patcher', patchUpdateBranch('canonical patcher', patcher)],
-];
+const patchedUpdateBranches = (await getPatcherSources())
+  .map(([label, patcherSource]) => [label, patchUpdateBranch(label, patcherSource)]);
 
 function windowsUpdateCommandSource(code) {
   const match = code.match(/const __command=_w\?\[([^\]]+)\]:\['bash',__installer\]/);

@@ -5,7 +5,7 @@ import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { renderTemplate } from '../build.mjs';
+import { buildPatcherBundle, renderTemplate } from '../build.mjs';
 
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
@@ -18,7 +18,7 @@ const canonicalRuntime = Object.fromEntries(
 canonicalRuntime['plugin-dependencies.mjs'] = renderTemplate(canonicalRuntime['plugin-dependencies.mjs'], {
   HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(canonicalRuntime['claude-hud-statusline.mjs'])).slice(1, -1),
 });
-canonicalRuntime['patcher.mjs'] = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
+canonicalRuntime['patcher.mjs'] = await buildPatcherBundle();
 
 function assertTemporaryPath(path, label) {
   const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];

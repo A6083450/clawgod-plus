@@ -5,8 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
-
-const patcher = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const fixture = `
 /* Version: 2.1.218 */
@@ -46,7 +45,7 @@ function disableAcorn(dir) {
   );
 }
 
-for (const [name, patcherSource] of [['canonical patcher', patcher]]) {
+for (const [name, patcherSource] of await getPatcherSources()) {
   let acornSource;
   const unpatched = evaluate(fixture);
   assert.equal(unpatched.currentLimit(), 200000, `${name}: unpatched default limit starts at 200000`);
@@ -58,6 +57,7 @@ for (const [name, patcherSource] of [['canonical patcher', patcher]]) {
 
   const dir = mkdtempSync(join(tmpdir(), 'clawgod-context-limit-'));
   try {
+    seedPatcherAcorn(dir);
     writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
     writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 

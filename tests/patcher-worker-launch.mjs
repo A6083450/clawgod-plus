@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const patcher = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
 const compatWorkflow = readFileSync(new URL('../.github/workflows/compat-daily.yml', import.meta.url), 'utf8');
+const patcherSources = await getPatcherSources();
 
 const fixtures = [
   {
@@ -25,7 +26,7 @@ const fixtures = [
   },
 ];
 
-for (const [installerName, patcherSource] of [['canonical patcher', patcher]]) {
+for (const [installerName, patcherSource] of patcherSources) {
   for (const { version, workerResolver, plainBunResult, standaloneResult } of fixtures) {
     const name = `${installerName} Claude Code ${version}`;
     const fixture = `
@@ -42,6 +43,7 @@ globalThis.computerUseMcpCommand=computerUseMcpCommand;
 `;
     const dir = mkdtempSync(join(tmpdir(), 'clawgod-worker-launch-'));
     try {
+      seedPatcherAcorn(dir);
       writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
       writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 
@@ -145,11 +147,12 @@ globalThis.computerUseMcpCommand=computerUseMcpCommand;
   }
 }
 
-for (const [name, patcherSource] of [['canonical patcher', patcher]]) {
+for (const [name, patcherSource] of patcherSources) {
   for (const args of [[], ['--dry-run'], ['--verify']]) {
     const mode = args[0] || 'normal';
     const dir = mkdtempSync(join(tmpdir(), 'clawgod-worker-launch-stale-'));
     try {
+      seedPatcherAcorn(dir);
       const original = 'function WE(){return Bun.isStandaloneExecutable===!0}function W1t(){if(WE())return{cmd:process.execPath,prefixArgs:[]};let t=process.argv[1];if(!t)return{cmd:process.execPath,prefixArgs:[]};return{cmd:process.execPath,prefixArgs:[t],env:{}}}';
       writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
       writeFileSync(join(dir, 'cli.original.cjs'), original, 'utf8');

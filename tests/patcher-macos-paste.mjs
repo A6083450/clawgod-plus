@@ -4,8 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-
-const patcher = readFileSync(new URL('../src/generic/patcher/entry.mjs', import.meta.url), 'utf8');
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 // Pre-v2.2 paste handler: the clipboard-read fallback was gated behind the
 // TemporaryItems screenshot-path check (N&&d), so other image paths got typed
@@ -69,9 +68,10 @@ paste(${JSON.stringify(imageUrl)},true);
 setTimeout(()=>console.log(JSON.stringify(calls)),0);
 `;
 
-for (const [name, patcherSource] of [['canonical patcher', patcher]]) {
+for (const [name, patcherSource] of await getPatcherSources()) {
   const dir = mkdtempSync(join(tmpdir(), 'clawgod-macos-paste-'));
   try {
+    seedPatcherAcorn(dir);
     writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
 
     // Legacy paste handler fallback patch still applies to old bundles.
