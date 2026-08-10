@@ -493,6 +493,113 @@ await withHome('lock-stale-unlink-evidence', async home => {
   assert.equal(readFileSync(target, 'utf8'), CUSTOM_BYTES, 'later reads must not roll back a durable publication');
 });
 
+await withHome('lock-stale-disappears-before-enumeration', async home => {
+  prepareExisting(home);
+  const staleRoot = join(
+    home,
+    '.clawgod',
+    `.enhancements.json.${process.pid}.12345678-1234-4123-8123-123456789abc.lock.stale`,
+  );
+  mkdirSync(staleRoot, { mode: 0o700 });
+  writeFileSync(join(staleRoot, 'evidence'), 'stale lock evidence\n', { mode: 0o600 });
+  let removed = false;
+  const fileSystem = proxyFileSystem({
+    readdir: async (path, ...args) => {
+      if (!removed && path === staleRoot) {
+        removed = true;
+        rmSync(staleRoot, { recursive: true, force: true });
+      }
+      return fsPromises.readdir(path, ...args);
+    },
+  });
+  assert.deepEqual(
+    await readEnhancementConfig({ homeDir: home, manifest, fileSystem, waitForUnlockMs: 0 }),
+    CONFIG_ALL,
+    'a stale lock directory removed after observation must be retried as no evidence',
+  );
+  assert.equal(removed, true, 'the fixture must remove stale lock evidence between lstat and readdir');
+});
+
+await withHome('lock-stale-disappears-after-enumeration', async home => {
+  prepareExisting(home);
+  const staleRoot = join(
+    home,
+    '.clawgod',
+    `.enhancements.json.${process.pid}.12345678-1234-4123-8123-123456789abc.lock.stale`,
+  );
+  mkdirSync(staleRoot, { mode: 0o700 });
+  writeFileSync(join(staleRoot, 'evidence'), 'stale lock evidence\n', { mode: 0o600 });
+  let removed = false;
+  const fileSystem = proxyFileSystem({
+    readdir: async (path, ...args) => {
+      const entries = await fsPromises.readdir(path, ...args);
+      if (!removed && path === staleRoot) {
+        removed = true;
+        rmSync(staleRoot, { recursive: true, force: true });
+      }
+      return entries;
+    },
+  });
+  assert.deepEqual(
+    await readEnhancementConfig({ homeDir: home, manifest, fileSystem, waitForUnlockMs: 0 }),
+    CONFIG_ALL,
+    'a stale lock directory removed after enumeration must be retried as no evidence',
+  );
+  assert.equal(removed, true, 'the fixture must remove stale lock evidence between readdir and identity verification');
+});
+
+await withHome('lock-stale-replaced-before-enumeration', async home => {
+  prepareExisting(home);
+  const staleRoot = join(
+    home,
+    '.clawgod',
+    `.enhancements.json.${process.pid}.12345678-1234-4123-8123-123456789abc.lock.stale`,
+  );
+  mkdirSync(staleRoot, { mode: 0o700 });
+  writeFileSync(join(staleRoot, 'evidence'), 'stale lock evidence\n', { mode: 0o600 });
+  let replaced = false;
+  const fileSystem = proxyFileSystem({
+    readdir: async (path, ...args) => {
+      if (!replaced && path === staleRoot) {
+        replaced = true;
+        rmSync(staleRoot, { recursive: true, force: true });
+        mkdirSync(staleRoot, { mode: 0o700 });
+        writeFileSync(join(staleRoot, 'replacement'), 'replacement evidence\n', { mode: 0o600 });
+      }
+      return fsPromises.readdir(path, ...args);
+    },
+  });
+  await assert.rejects(
+    readEnhancementConfig({ homeDir: home, manifest, fileSystem, waitForUnlockMs: 0 }),
+    /stale lock evidence changed during observation/i,
+    'replacement after stale lock observation must fail closed',
+  );
+  assert.equal(replaced, true, 'the fixture must replace stale lock evidence between lstat and readdir');
+});
+
+await withHome('lock-stale-enumeration-error', async home => {
+  prepareExisting(home);
+  const staleRoot = join(
+    home,
+    '.clawgod',
+    `.enhancements.json.${process.pid}.12345678-1234-4123-8123-123456789abc.lock.stale`,
+  );
+  mkdirSync(staleRoot, { mode: 0o700 });
+  const expected = new Error('injected stale lock enumeration failure');
+  expected.code = 'EIO';
+  const fileSystem = proxyFileSystem({
+    readdir: async (path, ...args) => {
+      if (path === staleRoot) throw expected;
+      return fsPromises.readdir(path, ...args);
+    },
+  });
+  await assert.rejects(
+    readEnhancementConfig({ homeDir: home, manifest, fileSystem, waitForUnlockMs: 0 }),
+    error => error === expected,
+    'non-ENOENT stale lock enumeration errors must propagate unchanged',
+  );
+});
+
 await withHome('live-lock-stale-reader', async home => {
   prepareExisting(home);
   let concurrentRead = null;

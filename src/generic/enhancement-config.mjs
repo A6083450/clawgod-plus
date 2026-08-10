@@ -659,7 +659,20 @@ async function observeOrphanLockStaleEvidence(fileSystem, directoryPath, platfor
     const evidencePaths = [root];
     const status = await lstatIfPresent(fileSystem, root);
     if (status && configDirectoryStatusIsSafe(status, platform)) {
-      for (const entry of await fileSystem.readdir(root)) {
+      let entries;
+      try {
+        entries = await fileSystem.readdir(root);
+      } catch (error) {
+        if (error?.code === 'ENOENT') continue;
+        throw error;
+      }
+      const current = await lstatIfPresent(fileSystem, root);
+      if (!current) continue;
+      if (!sameIdentity(fileIdentity(current), fileIdentity(status))
+        || !configDirectoryStatusIsSafe(current, platform)) {
+        throw new Error('Enhancement config stale lock evidence changed during observation');
+      }
+      for (const entry of entries) {
         evidencePaths.push(join(root, entry));
       }
     }
