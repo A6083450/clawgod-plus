@@ -5,15 +5,19 @@ import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { renderTemplate } from '../build.mjs';
 
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
 const canonicalRuntime = Object.fromEntries(
-  ['fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs'].map(name => [
+  ['fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
     name,
     readFileSync(new URL(`../src/generic/runtime/${name}`, import.meta.url), 'utf8'),
   ]),
 );
+canonicalRuntime['plugin-dependencies.mjs'] = renderTemplate(canonicalRuntime['plugin-dependencies.mjs'], {
+  HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(canonicalRuntime['claude-hud-statusline.mjs'])).slice(1, -1),
+});
 
 function assertTemporaryPath(path, label) {
   const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];
@@ -892,22 +896,18 @@ assert.match(resolveBun, /\$candidate -match '\\\.\(\?:cmd\|bat\|ps1\)\$'/, 'Res
 assert.match(resolveBun, /\$candidate -notmatch '\\.exe\$'/, 'Resolve-Bun must only accept verified native executables');
 
 const unixTemplates = {
-  'claude-mem-compat.cjs': unixTemplate('claude-mem-compat.cjs', 'cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << \'CLAUDE_MEM_COMPAT_EOF\''),
   'extract-natives.mjs': unixTemplate('extract-natives.mjs', 'cat > "$CLAWGOD_DIR/extract-natives.mjs" << \'EXTRACTOR_EOF\''),
   'post-process.mjs': unixTemplate('post-process.mjs', 'cat > "$CLAWGOD_DIR/post-process.mjs" << \'POSTPROC_EOF\''),
   'repatch.mjs': unixTemplate('repatch.mjs', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''),
   'patch.mjs': unixTemplate('patch.mjs', 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\''),
   'fetch-file.mjs': unixTemplate('fetch-file.mjs', 'cat > "$CLAWGOD_DIR/fetch-file.mjs" << \'FETCH_FILE_EOF\''),
-  'plugin-dependencies.mjs': unixTemplate('plugin-dependencies.mjs', 'cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << \'PLUGIN_DEPENDENCIES_EOF\''),
 };
 const windowsTemplates = {
-  'claude-mem-compat.cjs': powerShellTemplate('claude-mem-compat.cjs', '#!/usr/bin/env bun\nconst fs = require'),
   'extract-natives.mjs': powerShellRuntimePayload('ExtractorBytes').toString('utf8').trimEnd(),
   'post-process.mjs': powerShellRuntimePayload('PostProcessorBytes').toString('utf8').trimEnd(),
   'repatch.mjs': powerShellRuntimePayload('RepatcherBytes').toString('utf8').trimEnd(),
   'patch.mjs': powerShellTemplate('patch.mjs', '#!/usr/bin/env bun\n/**\n * ClawGod Plus Universal Patcher'),
   'fetch-file.mjs': powerShellRuntimePayload('FetchFileBytes').toString('utf8').trimEnd(),
-  'plugin-dependencies.mjs': powerShellTemplate('plugin-dependencies.mjs', '#!/usr/bin/env bun\n/**\n * @typedef {{'),
 };
 
 const runtimeDefinitions = [
@@ -917,6 +917,10 @@ const runtimeDefinitions = [
   ['extract-natives.mjs', 'extractor.mjs', 'ExtractorBytes', 'cat > "$CLAWGOD_DIR/extract-natives.mjs" << \'EXTRACTOR_EOF\''],
   ['post-process.mjs', 'post-processor.mjs', 'PostProcessorBytes', 'cat > "$CLAWGOD_DIR/post-process.mjs" << \'POSTPROC_EOF\''],
   ['repatch.mjs', 'repatcher.mjs', 'RepatcherBytes', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''],
+  ['cli.cjs', 'wrapper.cjs', 'WrapperBytes', 'cat > "$CLAWGOD_DIR/cli.cjs" << \'WRAPPER_EOF\''],
+  ['openai-proxy.cjs', 'openai-proxy.cjs', 'OpenAIProxyBytes', 'cat > "$CLAWGOD_DIR/openai-proxy.cjs" << \'PROXY_EOF\''],
+  ['claude-mem-compat.cjs', 'claude-mem-compat.cjs', 'ClaudeMemCompatBytes', 'cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << \'CLAUDE_MEM_COMPAT_EOF\''],
+  ['plugin-dependencies.mjs', 'plugin-dependencies.mjs', 'PluginDependenciesBytes', 'cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << \'PLUGIN_DEPENDENCIES_EOF\''],
 ];
 
 for (const [generatedName, canonicalName, powerShellVariable, unixMarker] of runtimeDefinitions) {
@@ -937,6 +941,11 @@ for (const [generatedName, canonicalName, powerShellVariable, unixMarker] of run
     `install.ps1 must write $${powerShellVariable} without text transcoding`,
   );
 }
+
+const canonicalHudBytes = Buffer.from(canonicalRuntime['claude-hud-statusline.mjs']);
+assert.equal(canonicalHudBytes.at(-1), 0x0a, 'claude-hud-statusline.mjs must retain one LF terminal newline');
+assert.equal(canonicalHudBytes.includes(0x0d), false, 'claude-hud-statusline.mjs canonical bytes must not contain CR');
+assert.equal(canonicalHudBytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), false, 'claude-hud-statusline.mjs canonical bytes must not contain a UTF-8 BOM');
 
 const powerShellByteFixture = mkdtempSync(join(tmpdir(), 'clawgod-powershell-runtime-bytes-'));
 assertTemporaryPath(powerShellByteFixture, 'PowerShell runtime byte fixture');

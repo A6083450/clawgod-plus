@@ -824,6 +824,11 @@ try {
     'src/generic/runtime/extractor.mjs',
     'src/generic/runtime/post-processor.mjs',
     'src/generic/runtime/repatcher.mjs',
+    'src/generic/runtime/wrapper.cjs',
+    'src/generic/runtime/openai-proxy.cjs',
+    'src/generic/runtime/claude-mem-compat.cjs',
+    'src/generic/runtime/plugin-dependencies.mjs',
+    'src/generic/runtime/claude-hud-statusline.mjs',
   ]) {
     const destination = join(cliRoot, path);
     mkdirSync(dirname(destination), { recursive: true });

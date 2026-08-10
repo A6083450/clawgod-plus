@@ -5,58 +5,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { renderTemplate } from '../build.mjs';
 
 const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
-
-function extractUnixHelper() {
-  const marker = 'cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << \'CLAUDE_MEM_COMPAT_EOF\'';
-  const start = unixInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed the claude-mem compatibility helper');
-  const bodyStart = unixInstaller.indexOf('\n', start) + 1;
-  const end = unixInstaller.indexOf('\nCLAUDE_MEM_COMPAT_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh claude-mem compatibility helper must end');
-  return unixInstaller.slice(bodyStart, end);
-}
-
-function extractPowerShellHelper() {
-  const marker = "$ClaudeMemCompatSource = @'\n";
-  const start = powerShellInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must embed the claude-mem compatibility helper');
-  const bodyStart = start + marker.length;
-  const end = powerShellInstaller.indexOf("\n'@\n", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 claude-mem compatibility helper must end');
-  return powerShellInstaller.slice(bodyStart, end);
-}
-
-function extractUnixPluginDependencies() {
-  const marker = 'cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << \'PLUGIN_DEPENDENCIES_EOF\'';
-  const start = unixInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed plugin-dependencies.mjs');
-  const bodyStart = unixInstaller.indexOf('\n', start) + 1;
-  const end = unixInstaller.indexOf('\nPLUGIN_DEPENDENCIES_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh plugin-dependencies.mjs must end');
-  return unixInstaller.slice(bodyStart, end);
-}
-
-function extractPowerShellPluginDependencies() {
-  const section = '# --- Optional Claude plugin dependencies';
-  const start = powerShellInstaller.indexOf(section);
-  assert.notEqual(start, -1, 'install.ps1 must embed plugin-dependencies.mjs');
-  const bodyStart = powerShellInstaller.indexOf('#!/usr/bin/env bun', start);
-  assert.notEqual(bodyStart, -1, 'install.ps1 plugin-dependencies.mjs must start with Bun');
-  const end = powerShellInstaller.indexOf('\n\'@ | Set-Content (Join-Path $ClawDir "plugin-dependencies.mjs")', bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 plugin-dependencies.mjs must end');
-  return powerShellInstaller.slice(bodyStart, end);
-}
-
-const unixHelper = extractUnixHelper();
-const powerShellHelper = extractPowerShellHelper();
-const unixPluginDependencies = extractUnixPluginDependencies();
-const powerShellPluginDependencies = extractPowerShellPluginDependencies();
-assert.equal(powerShellHelper, unixHelper, 'Unix and Windows installers must ship the same helper');
-assert.equal(powerShellPluginDependencies, unixPluginDependencies, 'Unix and Windows installers must ship the same plugin dependency helper');
-assert.match(unixHelper, /^#!\/usr\/bin\/env bun\n/, 'claude-mem compatibility helper must run with Bun');
+const canonicalHelper = readFileSync(new URL('../src/generic/runtime/claude-mem-compat.cjs', import.meta.url), 'utf8');
+const canonicalPluginDependencies = renderTemplate(
+  readFileSync(new URL('../src/generic/runtime/plugin-dependencies.mjs', import.meta.url), 'utf8'),
+  { HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(readFileSync(new URL('../src/generic/runtime/claude-hud-statusline.mjs', import.meta.url), 'utf8'))).slice(1, -1) },
+);
+const canonicalWrapper = readFileSync(new URL('../src/generic/runtime/wrapper.cjs', import.meta.url), 'utf8');
+assert.match(canonicalHelper, /^#!\/usr\/bin\/env bun\n/, 'claude-mem compatibility helper must run with Bun');
 assert.match(powerShellInstaller, /if \(\$LASTEXITCODE -ne 0\) \{ throw "claude-mem compatibility helper exited \$LASTEXITCODE" \}/, 'Windows uninstall must stop on helper failure');
 
 function makeHome(helper) {
@@ -81,7 +40,7 @@ function runHelper(home, command = 'install', extraEnv = {}) {
   });
 }
 
-for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1', powerShellHelper]]) {
+for (const [installerName, helper] of [['canonical source', canonicalHelper]]) {
 {
   const home = makeHome(helper);
   try {
@@ -291,12 +250,7 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
     const fakeBun = join(bin, 'fake-bun');
     const capture = join(home, 'capture.json');
     writeFileSync(cli, '', 'utf8');
-    const wrapperStart = unixInstaller.indexOf("cat > \"$CLAWGOD_DIR/cli.cjs\" << 'WRAPPER_EOF'");
-    const wrapperBody = unixInstaller.indexOf('\n', wrapperStart) + 1;
-    const wrapperEnd = unixInstaller.indexOf('\nWRAPPER_EOF', wrapperBody);
-    assert.notEqual(wrapperStart, -1);
-    assert.notEqual(wrapperEnd, -1);
-    writeFileSync(cli, unixInstaller.slice(wrapperBody, wrapperEnd), 'utf8');
+    writeFileSync(cli, canonicalWrapper, 'utf8');
     writeFileSync(
       join(home, '.clawgod', 'provider.json'),
       `${JSON.stringify({ apiKey: 'provider-secret', baseURL: 'https://gateway.example.test', smallModel: 'provider-haiku' })}\n`,
@@ -410,7 +364,7 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
 
 
 {
-  const windowsHelper = powerShellHelper.replace("const isWindows = process.platform === 'win32';", 'const isWindows = true;');
+  const windowsHelper = canonicalHelper.replace("const isWindows = process.platform === 'win32';", 'const isWindows = true;');
   const home = makeHome(windowsHelper);
   try {
     const memDir = join(home, '.claude-mem');
@@ -439,7 +393,7 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'clawgod-claude-mem-rewrite-'));
   try {
     const modulePath = join(fixtureRoot, 'plugin-dependencies.mjs');
-    writeFileSync(modulePath, unixPluginDependencies, 'utf8');
+    writeFileSync(modulePath, canonicalPluginDependencies, 'utf8');
     const { rewriteClaudeMemFile } = await import(`${pathToFileURL(modulePath).href}?test=${Date.now()}`);
     assert.equal(typeof rewriteClaudeMemFile, 'function', 'plugin-dependencies.mjs must export rewriteClaudeMemFile');
 

@@ -95,6 +95,11 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     EXTRACTOR_MJS: 'src/generic/runtime/extractor.mjs',
     POST_PROCESSOR_MJS: 'src/generic/runtime/post-processor.mjs',
     REPATCHER_MJS: 'src/generic/runtime/repatcher.mjs',
+    WRAPPER_CJS: 'src/generic/runtime/wrapper.cjs',
+    OPENAI_PROXY_CJS: 'src/generic/runtime/openai-proxy.cjs',
+    CLAUDE_MEM_COMPAT_CJS: 'src/generic/runtime/claude-mem-compat.cjs',
+    PLUGIN_DEPENDENCIES_MJS: 'src/generic/runtime/plugin-dependencies.mjs',
+    CLAUDE_HUD_STATUSLINE_MJS: 'src/generic/runtime/claude-hud-statusline.mjs',
   };
   const runtimeSources = Object.fromEntries(await Promise.all(
     Object.entries(runtimeSourceFiles).map(async ([name, path]) => [
@@ -102,15 +107,21 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
       await fileSystem.readFile(join(rootDir, path), 'utf8'),
     ]),
   ));
+  runtimeSources.PLUGIN_DEPENDENCIES_MJS = renderTemplate(
+    runtimeSources.PLUGIN_DEPENDENCIES_MJS,
+    { HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(runtimeSources.CLAUDE_HUD_STATUSLINE_MJS)).slice(1, -1) },
+  );
   return Promise.all(OUTPUTS.map(async entry => {
     const template = await fileSystem.readFile(join(rootDir, entry.template), 'utf8');
     const powerShell = entry.output.endsWith('.ps1');
     const replacements = {
       FEATURES_JSON: featuresJson,
-      ...Object.fromEntries(Object.entries(runtimeSources).map(([name, source]) => [
-        powerShell ? `${name}_BASE64` : name,
-        powerShell ? Buffer.from(source, 'utf8').toString('base64') : source,
-      ])),
+      ...Object.fromEntries(Object.entries(runtimeSources)
+        .filter(([name]) => name !== 'CLAUDE_HUD_STATUSLINE_MJS')
+        .map(([name, source]) => [
+          powerShell ? `${name}_BASE64` : name,
+          powerShell ? Buffer.from(source, 'utf8').toString('base64') : source,
+        ])),
     };
     const content = renderTemplate(template, replacements);
     return { ...entry, content: addGeneratedHeader(entry.output, content) };

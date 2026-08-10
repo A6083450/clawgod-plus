@@ -21,25 +21,7 @@ const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
 const canonicalRipgrepUrl = new URL('../src/generic/runtime/install-ripgrep.mjs', import.meta.url);
 const canonicalRepatch = readFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), 'utf8');
-
-function unixWrapper() {
-  const marker = 'cat > "$CLAWGOD_DIR/cli.cjs" << \'WRAPPER_EOF\'';
-  const start = unix.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed cli.cjs');
-  const bodyStart = unix.indexOf('\n', start) + 1;
-  const end = unix.indexOf('\nWRAPPER_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh cli.cjs template must end');
-  return unix.slice(bodyStart, end);
-}
-
-function powerShellWrapper() {
-  const section = windows.indexOf('# ─── Write wrapper (cli.cjs, runs under Bun)');
-  assert.notEqual(section, -1, 'install.ps1 must embed cli.cjs');
-  const bodyStart = windows.indexOf('#!/usr/bin/env bun', section);
-  const end = windows.indexOf("\n'@ | Set-Content (Join-Path $ClawDir \"cli.cjs\")", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 cli.cjs template must end');
-  return windows.slice(bodyStart, end);
-}
+const canonicalWrapper = readFileSync(new URL('../src/generic/runtime/wrapper.cjs', import.meta.url), 'utf8');
 
 const expectedAssets = {
   'darwin-arm64': ['ripgrep-15.2.0-aarch64-apple-darwin.tar.gz', '3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4'],
@@ -634,7 +616,7 @@ try {
 const wrapperDir = mkdtempSync(join(tmpdir(), 'clawgod-ripgrep-wrapper-'));
 assert.equal(realpathSync(dirname(wrapperDir)), realpathSync(tmpdir()), 'ripgrep wrapper fixture must be created directly under the system temporary directory');
 try {
-  for (const [name, wrapper] of [['install.sh', unixWrapper()], ['install.ps1', powerShellWrapper()]]) {
+  for (const [name, wrapper] of [['canonical source', canonicalWrapper]]) {
     const home = join(wrapperDir, name.replace('.', '-'));
     const clawDir = join(home, '.clawgod');
     const managedBin = join(clawDir, 'vendor', 'ripgrep', 'bin');

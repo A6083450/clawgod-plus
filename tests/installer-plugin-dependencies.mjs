@@ -3,33 +3,16 @@ import assert from 'node:assert/strict';
 import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { renderTemplate } from '../build.mjs';
 
 const unix = await Bun.file(new URL('../install.sh', import.meta.url)).text();
 const windows = await Bun.file(new URL('../install.ps1', import.meta.url)).text();
-
-function unixTemplate(name, marker) {
-  const start = unix.indexOf(`cat > "$CLAWGOD_DIR/${name}" << '${marker}'`);
-  assert.notEqual(start, -1, `install.sh must generate ${name}`);
-  const bodyStart = unix.indexOf('\n', start) + 1;
-  const end = unix.indexOf(`\n${marker}`, bodyStart);
-  assert.notEqual(end, -1, `install.sh ${name} template must end`);
-  return unix.slice(bodyStart, end);
-}
-
-function powerShellTemplate(name, section) {
-  const start = windows.indexOf(section);
-  assert.notEqual(start, -1, `install.ps1 must generate ${name}`);
-  const bodyStart = windows.indexOf('#!/usr/bin/env bun', start);
-  assert.notEqual(bodyStart, -1, `install.ps1 ${name} template must start with Bun`);
-  const end = windows.indexOf(`\n'@ | Set-Content (Join-Path $ClawDir "${name}")`, bodyStart);
-  assert.notEqual(end, -1, `install.ps1 ${name} template must end`);
-  return windows.slice(bodyStart, end);
-}
-
-function normalize(source) {
-  return source.replace(/\r\n/g, '\n').trim();
-}
+const canonicalModulePath = fileURLToPath(new URL('../src/generic/runtime/plugin-dependencies.mjs', import.meta.url));
+const canonicalHudStatusLine = readFileSync(new URL('../src/generic/runtime/claude-hud-statusline.mjs', import.meta.url), 'utf8');
+const canonicalModule = renderTemplate(readFileSync(canonicalModulePath, 'utf8'), {
+  HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(canonicalHudStatusLine)).slice(1, -1),
+});
 
 function records(id, version) {
   return { plugins: { [id]: [{ scope: 'user', version }] } };
@@ -161,11 +144,9 @@ function walkTextFiles(path, values = []) {
   return values;
 }
 
-const unixModule = unixTemplate('plugin-dependencies.mjs', 'PLUGIN_DEPENDENCIES_EOF');
-const windowsModule = powerShellTemplate('plugin-dependencies.mjs', '# --- Optional Claude plugin dependencies');
-assert.equal(normalize(windowsModule), normalize(unixModule), 'Unix and Windows plugin-dependencies.mjs bodies must be identical');
+const unixModule = canonicalModule;
 assert.match(unix, /PLUGIN_DEPENDENCIES_EOF\nchmod 700 "\$CLAWGOD_DIR\/plugin-dependencies\.mjs"/, 'install.sh must write plugin-dependencies.mjs with mode 0700');
-assert.match(windows, /Set-Content \(Join-Path \$ClawDir "plugin-dependencies\.mjs"\) -Encoding UTF8/, 'install.ps1 must write plugin-dependencies.mjs as UTF-8');
+assert.match(windows, /\[System\.IO\.File\]::WriteAllBytes\([^\n]*\$PluginDependenciesBytes\)/, 'install.ps1 must write plugin-dependencies.mjs without text transcoding');
 assert.match(unix, /\$BUN_BIN[^\n]*plugin-dependencies\.mjs" ensure/, 'install.sh must invoke the generated plugin manager');
 assert.match(windows, /& \$BunBin[^\r\n]*plugin-dependencies\.mjs"\) ensure/, 'install.ps1 must invoke the generated plugin manager');
 
@@ -205,10 +186,7 @@ try {
   process.env.CLAUDE_CONFIG_DIR = fixtureClaudeConfig;
   process.env.PATH = fixtureBin;
 
-  const modulePath = join(fixtureRoot, 'plugin-dependencies.mjs');
-  await Bun.write(modulePath, unixModule);
-  chmodSync(modulePath, 0o700);
-  const pluginDependencies = await import(`${pathToFileURL(modulePath).href}?test=${Date.now()}`);
+  const pluginDependencies = await import(`${pathToFileURL(canonicalModulePath).href}?test=${Date.now()}`);
   assert.deepEqual(
     Object.fromEntries(environmentKeys.map(key => [key, process.env[key]])),
     { HOME: fixtureHome, CLAUDE_CONFIG_DIR: fixtureClaudeConfig, PATH: fixtureBin },
@@ -244,6 +222,11 @@ try {
   assert.equal(typeof configureClaudeMemBun, 'function', 'plugin-dependencies.mjs must export configureClaudeMemBun');
   assert.equal(typeof configureHud, 'function', 'plugin-dependencies.mjs must export configureHud');
   assert.equal(typeof renderHudStatusLineModule, 'function', 'plugin-dependencies.mjs must export renderHudStatusLineModule');
+  assert.equal(
+    renderHudStatusLineModule({ claudeConfigDir: '/fixture/claude-config' }),
+    canonicalHudStatusLine.replace('"/__CLAWGOD_HUD_CLAUDE_CONFIG_DIR__"', '"/fixture/claude-config"'),
+    'the plugin manager must render the canonical HUD runner instead of duplicating its logic',
+  );
   assert.equal(typeof restoreHud, 'function', 'plugin-dependencies.mjs must export restoreHud for lifecycle composition');
   assert.equal(typeof restoreManagedIntegrations, 'function', 'plugin-dependencies.mjs must export shared managed integration restore');
 
@@ -496,7 +479,7 @@ try {
               bunPath: process.execPath,
               env: fixture.context.env,
             };
-            const source = `const helper = await import(${JSON.stringify(`${pathToFileURL(modulePath).href}?no-op-shared-restore=${Date.now()}`)}); const result = await helper.restoreManagedIntegrations(${JSON.stringify(childContext)}); process.stdout.write(JSON.stringify(result));`;
+            const source = `const helper = await import(${JSON.stringify(`${pathToFileURL(canonicalModulePath).href}?no-op-shared-restore=${Date.now()}`)}); const result = await helper.restoreManagedIntegrations(${JSON.stringify(childContext)}); process.stdout.write(JSON.stringify(result));`;
             sharedRestoreRun = Bun.spawnSync([process.execPath, '-e', source], {
               cwd: fixture.root,
               env: fixture.context.env,
@@ -770,7 +753,7 @@ try {
           bunPath: process.execPath,
           env: fixture.context.env,
         };
-        const source = `const helper = await import(${JSON.stringify(`${pathToFileURL(modulePath).href}?shared-restore=${Date.now()}`)}); const result = await helper.restoreManagedIntegrations(${JSON.stringify(childContext)}); process.stdout.write(JSON.stringify(result));`;
+        const source = `const helper = await import(${JSON.stringify(`${pathToFileURL(canonicalModulePath).href}?shared-restore=${Date.now()}`)}); const result = await helper.restoreManagedIntegrations(${JSON.stringify(childContext)}); process.stdout.write(JSON.stringify(result));`;
         sharedRestoreRun = Bun.spawnSync([process.execPath, '-e', source], {
           cwd: fixture.root,
           env: fixture.context.env,
