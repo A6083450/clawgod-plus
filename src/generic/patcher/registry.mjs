@@ -36,18 +36,29 @@ export const enhancementRegistries = Object.freeze(patchIds.map((id) => {
 
 export const patchRegistries = Object.freeze([coreRegistry, ...enhancementRegistries]);
 
-function orderedDescriptors(field) {
-  const descriptors = patchRegistries.flatMap(registry => registry[field]);
-  const names = new Set();
-  const orders = new Set();
-  for (const descriptor of descriptors) {
-    if (names.has(descriptor.name)) throw new Error(`Duplicate patch descriptor name: ${descriptor.name}`);
-    if (orders.has(descriptor.order)) throw new Error(`Duplicate patch descriptor order: ${descriptor.order}`);
-    names.add(descriptor.name);
-    orders.add(descriptor.order);
-  }
-  return Object.freeze(descriptors.sort((left, right) => left.order - right.order));
+const ownedDescriptors = patchRegistries.flatMap(registry => [
+  ...registry.patches.map(descriptor => ({ descriptor, type: 'regex' })),
+  ...registry.customPatches.map(descriptor => ({ descriptor, type: 'custom' })),
+]);
+
+const descriptorObjects = new Set();
+const names = new Set();
+const orders = new Set();
+for (const { descriptor } of ownedDescriptors) {
+  if (descriptorObjects.has(descriptor)) throw new Error(`Duplicate patch descriptor object: ${descriptor.name}`);
+  if (names.has(descriptor.name)) throw new Error(`Duplicate patch descriptor name: ${descriptor.name}`);
+  if (orders.has(descriptor.order)) throw new Error(`Duplicate patch descriptor order: ${descriptor.order}`);
+  descriptorObjects.add(descriptor);
+  names.add(descriptor.name);
+  orders.add(descriptor.order);
 }
 
-export const patches = orderedDescriptors('patches');
-export const customPatches = orderedDescriptors('customPatches');
+function orderedDescriptors(type) {
+  return Object.freeze(ownedDescriptors
+    .filter(entry => entry.type === type)
+    .map(entry => entry.descriptor)
+    .sort((left, right) => left.order - right.order));
+}
+
+export const patches = orderedDescriptors('regex');
+export const customPatches = orderedDescriptors('custom');

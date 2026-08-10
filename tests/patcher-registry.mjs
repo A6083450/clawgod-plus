@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const expectedManifest = [
   { id: 'chrome', kind: 'patch' },
@@ -17,6 +20,20 @@ const expectedManifest = [
   { id: 'claude-mem', kind: 'plugin' },
   { id: 'superpowers', kind: 'plugin' },
 ];
+
+const expectedTask5Source = {
+  commit: '5a0ee496d928e331833fcd22cacabab572284055',
+  path: 'src/generic/patcher/entry.mjs',
+  fileSha256: 'a2f5a5732cde3991d61c93df99ea37cfa35a631221856c2d7f01cf70cf7f5f44',
+  descriptorBlockLines: '321-1012',
+  descriptorBlockSha256: 'db943e0ed0ee5058489358a84668bded707fbf506c1d6706133f4e1c809227bf',
+};
+
+const task5Snapshot = JSON.parse(readFileSync(
+  new URL('./fixtures/patcher-task-5-metadata.json', import.meta.url),
+  'utf8',
+));
+assert.deepEqual(task5Snapshot.source, expectedTask5Source, 'Task 5 metadata must retain its independent source provenance');
 
 const expectedRegexOrder = [
   'USER_TYPE → ant',
@@ -118,6 +135,59 @@ assert.equal(
   ownedDescriptors.length,
   'descriptor names must identify exactly one registry owner',
 );
+
+const canonicalDescriptors = ownedDescriptors
+  .map(({ descriptor, owner }) => ({
+    descriptor,
+    owner,
+    type: typeof descriptor.apply === 'function' ? 'custom' : 'regex',
+  }))
+  .sort((left, right) => left.descriptor.order - right.descriptor.order);
+assert.deepEqual(
+  canonicalDescriptors.map(({ descriptor, type }) => ({ name: descriptor.name, type, order: descriptor.order })),
+  task5Snapshot.descriptors.map(({ name, type, order }) => ({ name, type, order })),
+  'all 60 descriptor names, types, and exact global order values must remain at the Task 5 baseline',
+);
+
+function normalizeMetadataValue(value) {
+  if (value === undefined) return { $type: 'undefined' };
+  if (value instanceof RegExp) return { $type: 'regexp', source: value.source, flags: value.flags };
+  return value;
+}
+
+function assertTask5RegexMetadata(descriptor, expected) {
+  const actual = {
+    patternSource: descriptor.pattern.source,
+    patternFlags: descriptor.pattern.flags,
+    sentinel: normalizeMetadataValue(descriptor.sentinel),
+    appliedMarker: normalizeMetadataValue(descriptor.appliedMarker),
+    knownShape: normalizeMetadataValue(descriptor.knownShape),
+    optional: normalizeMetadataValue(descriptor.optional),
+    unique: normalizeMetadataValue(descriptor.unique),
+    selectIndex: normalizeMetadataValue(descriptor.selectIndex),
+  };
+  for (const field of Object.keys(expected.metadata)) {
+    assert.deepEqual(actual[field], expected.metadata[field], `${expected.name} ${field} must match Task 5`);
+  }
+}
+
+for (const expected of task5Snapshot.descriptors.filter(descriptor => descriptor.type === 'regex')) {
+  const actual = canonicalDescriptors.find(({ descriptor }) => descriptor.name === expected.name)?.descriptor;
+  assert.ok(actual, `missing Task 5 descriptor: ${expected.name}`);
+  assertTask5RegexMetadata(actual, expected);
+}
+
+const firstExpected = task5Snapshot.descriptors[0];
+const firstActual = canonicalDescriptors[0].descriptor;
+assert.throws(
+  () => assertTask5RegexMetadata(
+    { ...firstActual, pattern: /function ([\w$]+)\(\)\{return"(?:external|outside)"\}/g },
+    firstExpected,
+  ),
+  /USER_TYPE.*patternSource.*Task 5/,
+  'the metadata gate must reject a controlled regex mutation that the former name/order gate accepted',
+);
+
 assert.deepEqual(patches.map(descriptor => descriptor.name), expectedRegexOrder, 'default-all regex order must remain canonical');
 assert.deepEqual(
   customPatches.map(descriptor => descriptor.name),
@@ -159,5 +229,27 @@ assert.match(
   /Default Agents view with auto Chrome/,
   'default-all must expose the default Agents view because Chrome is enabled',
 );
+
+const duplicateOrderRoot = mkdtempSync(join(tmpdir(), 'clawgod-registry-duplicate-order-'));
+try {
+  const genericSource = fileURLToPath(new URL('../src/generic', import.meta.url));
+  const genericFixture = join(duplicateOrderRoot, 'src', 'generic');
+  cpSync(genericSource, genericFixture, { recursive: true });
+  const corePath = join(genericFixture, 'patcher', 'core.mjs');
+  const coreSource = readFileSync(corePath, 'utf8');
+  const mutatedCore = coreSource.replace(
+    "const customPatches = [{\n  order: 58,\n  name: 'Context limit configurable',",
+    "const customPatches = [{\n  order: 0,\n  name: 'Context limit configurable',",
+  );
+  assert.notEqual(mutatedCore, coreSource, 'cross-type duplicate-order fixture must mutate the custom descriptor');
+  writeFileSync(corePath, mutatedCore, 'utf8');
+  await assert.rejects(
+    import(`${pathToFileURL(join(genericFixture, 'patcher', 'registry.mjs')).href}?duplicate-order`),
+    /Duplicate patch descriptor order: 0/,
+    'a custom descriptor must not reuse a regex descriptor order',
+  );
+} finally {
+  rmSync(duplicateOrderRoot, { recursive: true, force: true });
+}
 
 console.log('patcher registry checks passed');

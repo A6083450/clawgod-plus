@@ -5803,22 +5803,29 @@ var enhancementRegistries = Object.freeze(patchIds.map((id) => {
   return registry;
 }));
 var patchRegistries = Object.freeze([coreRegistry, ...enhancementRegistries]);
-function orderedDescriptors(field) {
-  const descriptors = patchRegistries.flatMap((registry) => registry[field]);
-  const names = new Set;
-  const orders = new Set;
-  for (const descriptor of descriptors) {
-    if (names.has(descriptor.name))
-      throw new Error(`Duplicate patch descriptor name: ${descriptor.name}`);
-    if (orders.has(descriptor.order))
-      throw new Error(`Duplicate patch descriptor order: ${descriptor.order}`);
-    names.add(descriptor.name);
-    orders.add(descriptor.order);
-  }
-  return Object.freeze(descriptors.sort((left, right) => left.order - right.order));
+var ownedDescriptors = patchRegistries.flatMap((registry) => [
+  ...registry.patches.map((descriptor) => ({ descriptor, type: "regex" })),
+  ...registry.customPatches.map((descriptor) => ({ descriptor, type: "custom" }))
+]);
+var descriptorObjects = new Set;
+var names = new Set;
+var orders = new Set;
+for (const { descriptor } of ownedDescriptors) {
+  if (descriptorObjects.has(descriptor))
+    throw new Error(`Duplicate patch descriptor object: ${descriptor.name}`);
+  if (names.has(descriptor.name))
+    throw new Error(`Duplicate patch descriptor name: ${descriptor.name}`);
+  if (orders.has(descriptor.order))
+    throw new Error(`Duplicate patch descriptor order: ${descriptor.order}`);
+  descriptorObjects.add(descriptor);
+  names.add(descriptor.name);
+  orders.add(descriptor.order);
 }
-var patches11 = orderedDescriptors("patches");
-var customPatches3 = orderedDescriptors("customPatches");
+function orderedDescriptors(type) {
+  return Object.freeze(ownedDescriptors.filter((entry) => entry.type === type).map((entry) => entry.descriptor).sort((left, right) => left.order - right.order));
+}
+var patches11 = orderedDescriptors("regex");
+var customPatches3 = orderedDescriptors("custom");
 
 // src/generic/patcher/entry.mjs
 var DEFAULT_ROOT = dirname2(fileURLToPath2(import.meta.url));

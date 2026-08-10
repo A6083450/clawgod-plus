@@ -6,12 +6,38 @@ import { join } from 'node:path';
 import {
   assertDeterministicPatcherBundles,
   buildPatcherBundle,
+  findRelativeModuleLoads,
   validatePatcherBuildResult,
 } from '../build.mjs';
 
 const bundle = await buildPatcherBundle();
 assert.match(bundle, /^#!\/usr\/bin\/env bun/, 'generated patcher must remain directly executable by Bun');
-assert.doesNotMatch(bundle, /from\s+['"]\.\.?\//, 'generated patcher must not retain unresolved local imports');
+assert.deepEqual(findRelativeModuleLoads(bundle), [], 'generated patcher must not retain relative module loads');
+
+for (const [kind, source] of [
+  ['static import', 'import "./left-behind.mjs";\n'],
+  ['dynamic import', 'await import("../left-behind.mjs");\n'],
+  ['export from', 'export { value } from "./left-behind.mjs";\n'],
+  ['literal require', 'require("./left-behind.cjs");\n'],
+]) {
+  await assert.rejects(
+    validatePatcherBuildResult({ success: true, logs: [], outputs: [new Blob([source])] }),
+    /unresolved local import|relative module load/i,
+    `${kind} must not remain in a successful self-contained output`,
+  );
+}
+
+const harmlessLoadText = [
+  '// import "./comment-only.mjs";',
+  '/* require("../comment-only.cjs"); */',
+  'const examples = ["import(\\"./string-only.mjs\\")", "export {x} from \\"./string-only.mjs\\""];',
+  '',
+].join('\n');
+assert.equal(
+  await validatePatcherBuildResult({ success: true, logs: [], outputs: [new Blob([harmlessLoadText])] }),
+  harmlessLoadText,
+  'comments and string contents that resemble loads must not be rejected',
+);
 
 await assert.rejects(
   validatePatcherBuildResult({ success: true, logs: [{ level: 'warning', message: 'fixture warning' }], outputs: [new Blob(['ok'])] }),

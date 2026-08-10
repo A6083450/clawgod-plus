@@ -33,6 +33,22 @@ function formatBuildLog(log) {
   return String(log);
 }
 
+const moduleLoadScanner = new Bun.Transpiler({ loader: 'js' });
+
+function isRelativeModulePath(path) {
+  return path === '.'
+    || path === '..'
+    || path.startsWith('./')
+    || path.startsWith('../')
+    || path.startsWith('.\\')
+    || path.startsWith('..\\');
+}
+
+export function findRelativeModuleLoads(source) {
+  const scannableSource = source.replace(/^#![^\r\n]*(?:\r?\n|$)/, '');
+  return moduleLoadScanner.scanImports(scannableSource).filter(moduleLoad => isRelativeModulePath(moduleLoad.path));
+}
+
 export async function validatePatcherBuildResult(result) {
   const logs = result?.logs || [];
   if (!result?.success) {
@@ -45,8 +61,10 @@ export async function validatePatcherBuildResult(result) {
     throw new Error(`Patcher build must produce exactly one output, received ${result.outputs?.length ?? 0}`);
   }
   const source = await result.outputs[0].text();
-  if (/\b(?:from\s*|import\s*)\(?\s*['"]\.\.?\//.test(source)) {
-    throw new Error('Patcher build retained an unresolved local import');
+  const relativeLoads = findRelativeModuleLoads(source);
+  if (relativeLoads.length > 0) {
+    const detail = relativeLoads.map(moduleLoad => `${moduleLoad.kind}:${moduleLoad.path}`).join(', ');
+    throw new Error(`Patcher build retained a relative module load: ${detail}`);
   }
   return source;
 }
