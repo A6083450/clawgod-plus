@@ -347,6 +347,86 @@ try {
   assert.deepEqual(readFileSync(higherClaudeMem.mcpPath), managedMcpOnce);
   assert.deepEqual(readFileSync(selectedClaudeMem.statePath), stateOnce, 'a fully managed rerun must not churn ownership bytes');
 
+  const noOpRaceOutcomes = [];
+  for (const mutation of ['shared-restore', 'state-delete', 'state-replace', 'target-transfer']) {
+    const fixture = makeClaudeMemFixture(`no-op-race-${mutation}`);
+    const paths = fixture.pathsByVersion.get('13.14.0');
+    const originalHook = readFileSync(paths.hookPath);
+    const originalMcp = readFileSync(paths.mcpPath);
+    const initialResult = await configureClaudeMemBun(fixture.context, emptyManagedState());
+    assert.equal(initialResult.ready, true);
+    const managedHook = readFileSync(paths.hookPath);
+    const managedMcp = readFileSync(paths.mcpPath);
+    const managedState = readFileSync(fixture.statePath);
+    let injected = false;
+    let externalState = null;
+    let sharedRestoreRun = null;
+    const callerState = new Proxy(emptyManagedState(), {
+      ownKeys(target) {
+        if (!injected) {
+          injected = true;
+          if (mutation === 'shared-restore') {
+            const childContext = {
+              home: fixture.home,
+              claudeConfigDir: fixture.claudeConfigDir,
+              clawgodDir: fixture.clawgodDir,
+              bunPath: process.execPath,
+              env: fixture.context.env,
+            };
+            const source = `const helper = await import(${JSON.stringify(`${pathToFileURL(modulePath).href}?no-op-shared-restore=${Date.now()}`)}); const result = await helper.restoreManagedIntegrations(${JSON.stringify(childContext)}); process.stdout.write(JSON.stringify(result));`;
+            sharedRestoreRun = Bun.spawnSync([process.execPath, '-e', source], {
+              cwd: fixture.root,
+              env: fixture.context.env,
+              stdout: 'pipe',
+              stderr: 'pipe',
+            });
+            if (sharedRestoreRun.exitCode === 0) externalState = readFileSync(fixture.statePath);
+          } else if (mutation === 'state-delete') {
+            rmSync(fixture.statePath);
+          } else if (mutation === 'state-replace') {
+            const replacement = join(fixture.clawgodDir, 'external-state-replacement');
+            externalState = Buffer.from('{"schemaVersion":2,"external":true}\n');
+            writeFileSync(replacement, externalState);
+            renameSync(replacement, fixture.statePath);
+          } else {
+            const replacement = join(fixture.root, 'external-hook-replacement');
+            writeFileSync(replacement, 'external no-op hook owner\n');
+            renameSync(replacement, paths.hookPath);
+          }
+        }
+        return Reflect.ownKeys(target);
+      },
+    });
+    const result = await configureClaudeMemBun(fixture.context, callerState);
+    assert.equal(injected, true, `${mutation}: the race must execute after no-op planning and before return`);
+    if (mutation === 'shared-restore') {
+      assert.equal(sharedRestoreRun?.exitCode, 0, sharedRestoreRun?.stderr.toString());
+      assert.deepEqual(JSON.parse(sharedRestoreRun.stdout.toString()).restored.sort(), [resolve(paths.hookPath), resolve(paths.mcpPath)].sort());
+      assert.deepEqual(readFileSync(paths.hookPath), originalHook, 'a shared restore in the no-op return window must remain restored');
+      assert.deepEqual(readFileSync(paths.mcpPath), originalMcp, 'a shared restore in the no-op return window must retain the original MCP bytes');
+      assert.deepEqual(readFileSync(fixture.statePath), externalState, 'the shared restore ownership state must not be rewritten');
+    } else if (mutation === 'state-delete') {
+      assert.equal(existsSync(fixture.statePath), false, 'an externally deleted ownership state must remain missing');
+      assert.deepEqual(readFileSync(paths.hookPath), managedHook);
+      assert.deepEqual(readFileSync(paths.mcpPath), managedMcp);
+    } else if (mutation === 'state-replace') {
+      assert.deepEqual(readFileSync(fixture.statePath), externalState, 'externally replaced ownership state must be preserved');
+      assert.deepEqual(readFileSync(paths.hookPath), managedHook);
+      assert.deepEqual(readFileSync(paths.mcpPath), managedMcp);
+    } else {
+      assert.equal(readFileSync(paths.hookPath, 'utf8'), 'external no-op hook owner\n', 'an externally transferred no-op target must be preserved');
+      assert.deepEqual(readFileSync(paths.mcpPath), managedMcp);
+      assert.deepEqual(readFileSync(fixture.statePath), managedState, 'target transfer must not rewrite ownership state');
+    }
+    noOpRaceOutcomes.push({ mutation, status: result.status, ready: result.ready, version: result.version });
+  }
+  assert.deepEqual(noOpRaceOutcomes, [
+    { mutation: 'shared-restore', status: 'warning', ready: false, version: null },
+    { mutation: 'state-delete', status: 'warning', ready: false, version: null },
+    { mutation: 'state-replace', status: 'warning', ready: false, version: null },
+    { mutation: 'target-transfer', status: 'warning', ready: false, version: null },
+  ], 'a fully managed no-op rerun must fail closed when state or target ownership transfers before return');
+
   const updatedHookRaw = claudeMemHookRaw('plugin update becomes the new restore point');
   const updatedMcpRaw = claudeMemMcpRaw('process.stdout.write("plugin-update:" + process.execPath)');
   writeFileSync(higherClaudeMem.hookPath, updatedHookRaw);

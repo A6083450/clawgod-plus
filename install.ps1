@@ -1274,11 +1274,15 @@ export async function configureClaudeMemBun(context, state) {
       plans.push({ ...definition, snapshot, bytes: managedBytes, write: true });
     }
     if (plans.every(plan => !plan.write)) {
-      assertClaudeMemSelectionCurrent(selection, context);
       if (state && typeof state === 'object') {
         for (const key of Object.keys(state)) delete state[key];
         Object.assign(state, structuredClone(nextState));
       }
+      assertHudSnapshotCurrent(stateSnapshot, context.clawgodDir, 'ownership state');
+      for (const plan of plans) {
+        assertHudSnapshotCurrent(plan.snapshot, selected.installPath, `claude-mem ${plan.relativePath}`);
+      }
+      assertClaudeMemSelectionCurrent(selection, context);
       return pluginResult(spec, 'configured', true, selected.record.version, `configured ${selected.record.version}`);
     }
 
