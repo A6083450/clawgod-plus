@@ -6,6 +6,7 @@ import {
   copyFileSync,
   existsSync,
   lstatSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -299,6 +300,18 @@ const waitFor = async name => {
 };
 const fileSystem = new Proxy(fs, {
   get(target, property) {
+    if (property === 'link') {
+      return async (source, destination) => {
+        try {
+          return await target.link(source, destination);
+        } catch (error) {
+          if (role === 'B' && basename(String(destination)) === '.clawgod-installer-build.lock' && error?.code === 'EEXIST') {
+            await signal('b-contended');
+          }
+          throw error;
+        }
+      };
+    }
     if (property === 'mkdir') {
       return async (path, ...args) => {
         try {
@@ -374,6 +387,148 @@ await writeGeneratedPair(OUTPUTS.map(entry => ({ ...entry, content: \`\${generat
   rmSync(concurrencyRoot, { recursive: true, force: true });
 }
 
+const initializationRaceRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-lock-initialization-'));
+let initializationA;
+let initializationB;
+try {
+  originalPair(initializationRaceRoot);
+  const signals = join(initializationRaceRoot, 'signals');
+  mkdirSync(signals);
+  const worker = join(initializationRaceRoot, 'lock-initialization-worker.mjs');
+  writeFileSync(worker, `
+import * as fs from 'node:fs/promises';
+import { basename, join } from 'node:path';
+import { OUTPUTS, writeGeneratedPair } from ${JSON.stringify(pathToFileURL(buildPath).href)};
+
+const [root, generation, role] = process.argv.slice(2);
+const lockName = '.clawgod-installer-build.lock';
+const lockPath = join(root, lockName);
+const signals = join(root, 'signals');
+const signal = name => fs.writeFile(join(signals, name), '');
+const waitFor = async name => {
+  const path = join(signals, name);
+  while (true) {
+    try { await fs.access(path); return; } catch {}
+    await Bun.sleep(5);
+  }
+};
+const fileSystem = new Proxy(fs, {
+  get(target, property) {
+    if (property === 'mkdir') {
+      return async (path, ...args) => {
+        const result = await target.mkdir(path, ...args);
+        if (role === 'A' && String(path) === lockPath) {
+          await signal('a-lock-visible');
+          await waitFor('allow-a');
+        }
+        return result;
+      };
+    }
+    if (property === 'link') {
+      return async (source, destination) => {
+        try {
+          const result = await target.link(source, destination);
+          if (role === 'A' && String(destination) === lockPath) {
+            await signal('a-lock-visible');
+            await waitFor('allow-a');
+          }
+          return result;
+        } catch (error) {
+          if (role === 'B' && String(destination) === lockPath && error?.code === 'EEXIST') {
+            await signal('b-contended');
+          }
+          throw error;
+        }
+      };
+    }
+    if (property === 'writeFile') {
+      return async (path, ...args) => {
+        const result = await target.writeFile(path, ...args);
+        if (role === 'B' && String(path) === join(lockPath, 'owner.json')) {
+          await signal('b-replacement-owned');
+          await waitFor('allow-b');
+        }
+        return result;
+      };
+    }
+    if (property === 'rm') {
+      return async (path, ...args) => {
+        const result = await target.rm(path, ...args);
+        if (role === 'A' && String(path) === lockPath) await signal('a-removed-replacement');
+        return result;
+      };
+    }
+    if (property === 'rename') {
+      return async (source, destination) => {
+        const result = await target.rename(source, destination);
+        if (role === 'B' && String(source) === lockPath && basename(String(destination)).startsWith(lockName + '.stale-')) {
+          await signal('b-quarantined-ownerless-lock');
+        }
+        return result;
+      };
+    }
+    return Reflect.get(target, property);
+  },
+});
+
+await writeGeneratedPair(OUTPUTS.map(entry => ({ ...entry, content: \`\${generation}:\${entry.output}\\n\` })), {
+  rootDir: root,
+  fileSystem,
+  lockOptions: { retryDelayMs: 5, timeoutMs: 5000, staleMs: 0 },
+});
+`);
+
+  initializationA = Bun.spawn([process.execPath, worker, initializationRaceRoot, 'initialization-a', 'A'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  await waitForAny([join(signals, 'a-lock-visible')], 'generation A visible lock initialization');
+  initializationB = Bun.spawn([process.execPath, worker, initializationRaceRoot, 'initialization-b', 'B'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const bInitializationObservation = await waitForAny([
+    join(signals, 'b-contended'),
+    join(signals, 'b-replacement-owned'),
+  ], 'generation B contention or replacement ownership');
+  writeFileSync(join(signals, 'allow-a'), '');
+
+  if (bInitializationObservation === join(signals, 'b-replacement-owned')) {
+    await waitForAny([join(signals, 'a-removed-replacement')], 'generation A deleting generation B replacement lock');
+    writeFileSync(join(signals, 'allow-b'), '');
+    initializationA.kill();
+    initializationB.kill();
+    await Promise.all([initializationA.exited, initializationB.exited]);
+  } else {
+    await Promise.all([
+      childResult(initializationA, 'initialization generation A'),
+      childResult(initializationB, 'initialization generation B'),
+    ]);
+  }
+
+  assert.equal(
+    bInitializationObservation,
+    join(signals, 'b-contended'),
+    'a visible lock must already carry immutable ownership, so a contender cannot reclaim its initialization window',
+  );
+  assert.equal(
+    existsSync(join(signals, 'a-removed-replacement')),
+    false,
+    'a failed acquire must not delete another process replacement lock',
+  );
+  assert.equal(readFileSync(join(initializationRaceRoot, 'install.sh'), 'utf8'), 'initialization-b:install.sh\n');
+  assert.equal(readFileSync(join(initializationRaceRoot, 'install.ps1'), 'utf8'), 'initialization-b:install.ps1\n');
+} finally {
+  const signals = join(initializationRaceRoot, 'signals');
+  if (existsSync(signals)) {
+    writeFileSync(join(signals, 'allow-a'), '');
+    writeFileSync(join(signals, 'allow-b'), '');
+  }
+  if (initializationA && initializationA.exitCode === null) initializationA.kill();
+  if (initializationB && initializationB.exitCode === null) initializationB.kill();
+  rmSync(initializationRaceRoot, { recursive: true, force: true });
+}
+
 const staleLockRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-stale-lock-'));
 try {
   originalPair(staleLockRoot);
@@ -395,8 +550,168 @@ try {
     lockOptions: { retryDelayMs: 5, timeoutMs: 1000, staleMs: 0 },
   });
   assert.equal(existsSync(lockPath), false, 'an ownerless stale lock must be reclaimed and released');
+
+  const deadToken = 'dead-regular-file-owner';
+  const ownerPath = join(staleLockRoot, `.clawgod-installer-build.lock.owner-${deadToken}`);
+  writeFileSync(ownerPath, JSON.stringify({ pid: 2147483647, token: deadToken, startedAt: 1 }));
+  linkSync(ownerPath, lockPath);
+  await writeGeneratedPair(generatedPair('after-dead-regular-file-owner'), {
+    rootDir: staleLockRoot,
+    lockOptions: { retryDelayMs: 5, timeoutMs: 1000 },
+  });
+  assert.equal(existsSync(lockPath), false, 'a stale regular-file lock must be reclaimed and released');
+  assert.equal(existsSync(ownerPath), false, 'a verified stale regular-file owner anchor must be cleaned');
+
+  const symlinkTarget = join(staleLockRoot, 'unrelated-symlink-target');
+  writeFileSync(symlinkTarget, 'must remain untouched\n');
+  symlinkSync(symlinkTarget, lockPath);
+  await writeGeneratedPair(generatedPair('after-stale-symlink-lock'), {
+    rootDir: staleLockRoot,
+    lockOptions: { retryDelayMs: 5, timeoutMs: 1000, staleMs: 0 },
+  });
+  assert.equal(existsSync(lockPath), false, 'a stale symlink lock must be reclaimed and released');
+  assert.equal(readFileSync(symlinkTarget, 'utf8'), 'must remain untouched\n', 'reclaiming a symlink lock must not touch its target');
 } finally {
   rmSync(staleLockRoot, { recursive: true, force: true });
+}
+
+const reclaimReplacementRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-lock-reclaim-replacement-'));
+try {
+  originalPair(reclaimReplacementRoot);
+  const lockPath = join(reclaimReplacementRoot, '.clawgod-installer-build.lock');
+  const deadToken = 'dead-owner-before-reclaim-race';
+  const deadOwnerPath = join(reclaimReplacementRoot, `.clawgod-installer-build.lock.owner-${deadToken}`);
+  writeFileSync(deadOwnerPath, JSON.stringify({ pid: 2147483647, token: deadToken, startedAt: 1 }));
+  linkSync(deadOwnerPath, lockPath);
+
+  const replacementToken = 'replacement-during-reclaim';
+  const replacementOwnerPath = join(reclaimReplacementRoot, `.clawgod-installer-build.lock.owner-${replacementToken}`);
+  let replacementPublished = false;
+  const replacingReclaimFileSystem = new Proxy(fsPromises, {
+    get(target, property) {
+      if (property === 'rename') {
+        return async (source, destination) => {
+          const result = await target.rename(source, destination);
+          if (!replacementPublished
+            && String(source) === lockPath
+            && String(destination).includes('.clawgod-installer-build.lock.stale-')) {
+            replacementPublished = true;
+            await target.writeFile(replacementOwnerPath, JSON.stringify({
+              pid: process.pid,
+              token: replacementToken,
+              startedAt: Date.now(),
+            }), { flag: 'wx' });
+            await target.link(replacementOwnerPath, lockPath);
+          }
+          return result;
+        };
+      }
+      return Reflect.get(target, property);
+    },
+  });
+
+  await assert.rejects(
+    writeGeneratedPair(generatedPair('must-not-publish-through-replacement'), {
+      rootDir: reclaimReplacementRoot,
+      fileSystem: replacingReclaimFileSystem,
+      lockOptions: { retryDelayMs: 5, timeoutMs: 50 },
+    }),
+    /timed out waiting for installer build lock/i,
+    'a replacement lock published during stale quarantine must remain exclusively owned',
+  );
+  assert.equal(replacementPublished, true, 'the stale-lock quarantine race must publish a replacement lock');
+  assert.equal(JSON.parse(readFileSync(lockPath, 'utf8')).token, replacementToken, 'stale reclaim must not delete the replacement lock path');
+  assert.equal(readFileSync(join(reclaimReplacementRoot, 'install.sh'), 'utf8'), 'old:install.sh\n');
+  assert.equal(readFileSync(join(reclaimReplacementRoot, 'install.ps1'), 'utf8'), 'old:install.ps1\n');
+} finally {
+  rmSync(reclaimReplacementRoot, { recursive: true, force: true });
+}
+
+const releaseReplacementRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-lock-release-replacement-'));
+try {
+  originalPair(releaseReplacementRoot);
+  const lockPath = join(releaseReplacementRoot, '.clawgod-installer-build.lock');
+  const replacementToken = 'replacement-during-release';
+  const replacementOwnerPath = join(releaseReplacementRoot, `.clawgod-installer-build.lock.owner-${replacementToken}`);
+  let replacementPublished = false;
+  const replacingReleaseFileSystem = new Proxy(fsPromises, {
+    get(target, property) {
+      if (property === 'rename') {
+        return async (source, destination) => {
+          const result = await target.rename(source, destination);
+          if (!replacementPublished
+            && String(source) === lockPath
+            && String(destination).includes('.clawgod-installer-build.lock.release-')) {
+            replacementPublished = true;
+            await target.writeFile(replacementOwnerPath, JSON.stringify({
+              pid: process.pid,
+              token: replacementToken,
+              startedAt: Date.now(),
+            }), { flag: 'wx' });
+            await target.link(replacementOwnerPath, lockPath);
+          }
+          return result;
+        };
+      }
+      return Reflect.get(target, property);
+    },
+  });
+
+  await writeGeneratedPair(generatedPair('published-before-release-replacement'), {
+    rootDir: releaseReplacementRoot,
+    fileSystem: replacingReleaseFileSystem,
+  });
+  assert.equal(replacementPublished, true, 'the release race must publish a replacement lock');
+  assert.equal(JSON.parse(readFileSync(lockPath, 'utf8')).token, replacementToken, 'release must remove only its quarantined lock, not the replacement path');
+  assert.equal(readFileSync(join(releaseReplacementRoot, 'install.sh'), 'utf8'), 'published-before-release-replacement:install.sh\n');
+  assert.equal(readFileSync(join(releaseReplacementRoot, 'install.ps1'), 'utf8'), 'published-before-release-replacement:install.ps1\n');
+} finally {
+  rmSync(releaseReplacementRoot, { recursive: true, force: true });
+}
+
+const releaseIdentityMismatchRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-lock-release-identity-'));
+try {
+  originalPair(releaseIdentityMismatchRoot);
+  const lockPath = join(releaseIdentityMismatchRoot, '.clawgod-installer-build.lock');
+  const foreignToken = 'foreign-lock-in-release-quarantine';
+  const foreignOwnerPath = join(releaseIdentityMismatchRoot, `.clawgod-installer-build.lock.owner-${foreignToken}`);
+  let quarantinePath;
+  const replacingQuarantineFileSystem = new Proxy(fsPromises, {
+    get(target, property) {
+      if (property === 'rename') {
+        return async (source, destination) => {
+          const result = await target.rename(source, destination);
+          if (!quarantinePath
+            && String(source) === lockPath
+            && String(destination).includes('.clawgod-installer-build.lock.release-')) {
+            quarantinePath = String(destination);
+            await target.unlink(quarantinePath);
+            await target.writeFile(foreignOwnerPath, JSON.stringify({
+              pid: process.pid,
+              token: foreignToken,
+              startedAt: Date.now(),
+            }), { flag: 'wx' });
+            await target.link(foreignOwnerPath, quarantinePath);
+          }
+          return result;
+        };
+      }
+      return Reflect.get(target, property);
+    },
+  });
+
+  await assert.rejects(
+    writeGeneratedPair(generatedPair('published-before-release-identity-change'), {
+      rootDir: releaseIdentityMismatchRoot,
+      fileSystem: replacingQuarantineFileSystem,
+    }),
+    /lock ownership changed during release/i,
+    'release must reject a quarantine whose identity and token changed after rename',
+  );
+  assert.equal(JSON.parse(readFileSync(lockPath, 'utf8')).token, foreignToken, 'a foreign regular-file lock must be restored without overwrite');
+  assert.equal(JSON.parse(readFileSync(quarantinePath, 'utf8')).token, foreignToken, 'an unverified quarantine must remain as explicit evidence');
+} finally {
+  rmSync(releaseIdentityMismatchRoot, { recursive: true, force: true });
 }
 
 const TRANSACTION_FILE = '.clawgod-installer-build.transaction.json';

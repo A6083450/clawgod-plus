@@ -102,6 +102,14 @@ async function removeIfPresent(fileSystem, path) {
   }
 }
 
+async function unlinkIfPresent(fileSystem, path) {
+  try {
+    await fileSystem.unlink(path);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+}
+
 function processIsAlive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try {
@@ -112,24 +120,160 @@ function processIsAlive(pid) {
   }
 }
 
-async function lockIsStale(fileSystem, lockPath, staleMs, isOwnerAlive) {
+function lockKind(status) {
+  if (status.isFile()) return 'file';
+  if (status.isDirectory()) return 'directory';
+  if (status.isSymbolicLink()) return 'symlink';
+  return 'other';
+}
+
+function sameFileIdentity(left, right) {
+  return left.kind === right.kind
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.birthtimeMs === right.birthtimeMs;
+}
+
+function lockIdentity(status) {
+  return {
+    kind: lockKind(status),
+    dev: String(status.dev),
+    ino: String(status.ino),
+    birthtimeMs: status.birthtimeMs,
+  };
+}
+
+function parseLockOwner(raw) {
   try {
-    const raw = await fileSystem.readFile(join(lockPath, 'owner.json'), 'utf8');
     const owner = JSON.parse(raw);
-    if (Number.isSafeInteger(owner?.pid) && typeof owner?.token === 'string') {
-      return !isOwnerAlive(owner.pid);
+    if (Number.isSafeInteger(owner?.pid)
+      && owner.pid > 0
+      && typeof owner?.token === 'string'
+      && owner.token.length > 0) {
+      return owner;
     }
   } catch (error) {
-    if (error?.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+    if (!(error instanceof SyntaxError)) throw error;
   }
+  return null;
+}
 
+async function observeLockPath(fileSystem, path) {
+  let status;
   try {
-    const status = await fileSystem.lstat(lockPath);
-    return Date.now() - status.mtimeMs >= staleMs;
+    status = await fileSystem.lstat(path);
   } catch (error) {
-    if (error?.code === 'ENOENT') return false;
+    if (error?.code === 'ENOENT') return null;
     throw error;
   }
+
+  const identity = lockIdentity(status);
+  let owner = null;
+  let detail = null;
+  if (identity.kind === 'file') {
+    let handle;
+    try {
+      handle = await fileSystem.open(path, 'r');
+      const openedIdentity = lockIdentity(await handle.stat());
+      const raw = await handle.readFile('utf8');
+      const currentIdentity = lockIdentity(await fileSystem.lstat(path));
+      if (!sameFileIdentity(identity, openedIdentity)
+        || !sameFileIdentity(openedIdentity, currentIdentity)) return { raced: true };
+      owner = parseLockOwner(raw);
+      detail = raw;
+    } catch (error) {
+      if (error?.code === 'ENOENT') return { raced: true };
+      throw error;
+    } finally {
+      await handle?.close();
+    }
+  } else if (identity.kind === 'directory') {
+    try {
+      const raw = await fileSystem.readFile(join(path, 'owner.json'), 'utf8');
+      owner = parseLockOwner(raw);
+      detail = raw;
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR' && !(error instanceof SyntaxError)) throw error;
+    }
+    let currentStatus;
+    try {
+      currentStatus = await fileSystem.lstat(path);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return { raced: true };
+      throw error;
+    }
+    if (!sameFileIdentity(identity, lockIdentity(currentStatus))) return { raced: true };
+  } else if (identity.kind === 'symlink') {
+    try {
+      detail = await fileSystem.readlink(path);
+      const currentIdentity = lockIdentity(await fileSystem.lstat(path));
+      if (!sameFileIdentity(identity, currentIdentity)) return { raced: true };
+    } catch (error) {
+      if (error?.code === 'ENOENT') return { raced: true };
+      throw error;
+    }
+  }
+
+  return { ...identity, mtimeMs: status.mtimeMs, owner, detail, raced: false };
+}
+
+function sameLockObservation(left, right) {
+  return Boolean(left && right && !left.raced && !right.raced)
+    && sameFileIdentity(left, right)
+    && left.detail === right.detail
+    && left.owner?.token === right.owner?.token
+    && left.owner?.pid === right.owner?.pid;
+}
+
+function lockIsStale(observation, staleMs, isOwnerAlive) {
+  if (observation?.raced || !observation) return false;
+  if (observation.owner) return !isOwnerAlive(observation.owner.pid);
+  return Date.now() - observation.mtimeMs >= staleMs;
+}
+
+async function preserveUnverifiedQuarantine(fileSystem, quarantine, lockPath) {
+  try {
+    const observation = await observeLockPath(fileSystem, quarantine);
+    if (observation?.kind === 'file') await fileSystem.link(quarantine, lockPath);
+  } catch (error) {
+    if (error?.code !== 'ENOENT' && error?.code !== 'EEXIST') throw error;
+  }
+}
+
+async function removeVerifiedQuarantine(fileSystem, quarantine, observation) {
+  const current = await observeLockPath(fileSystem, quarantine);
+  if (!sameLockObservation(observation, current)) {
+    throw new Error(`Installer build lock quarantine ownership changed: ${quarantine}`);
+  }
+  if (observation.kind === 'directory') {
+    await fileSystem.rm(quarantine, { recursive: true });
+  } else {
+    await fileSystem.unlink(quarantine);
+  }
+}
+
+async function reclaimStaleLock(fileSystem, rootDir, lockPath, observation) {
+  const quarantine = join(rootDir, `${BUILD_LOCK_NAME}.stale-${randomUUID()}`);
+  try {
+    await fileSystem.rename(lockPath, quarantine);
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'EEXIST' || error?.code === 'ENOTEMPTY') return false;
+    throw error;
+  }
+
+  const quarantined = await observeLockPath(fileSystem, quarantine);
+  if (!sameLockObservation(observation, quarantined)) {
+    await preserveUnverifiedQuarantine(fileSystem, quarantine, lockPath);
+    throw new Error(`Installer build lock changed while being reclaimed: ${lockPath}`);
+  }
+
+  await removeVerifiedQuarantine(fileSystem, quarantine, quarantined);
+  if (quarantined.kind === 'file' && quarantined.owner) {
+    const ownerPath = join(rootDir, `${BUILD_LOCK_NAME}.owner-${quarantined.owner.token}`);
+    const ownerAnchor = await observeLockPath(fileSystem, ownerPath);
+    if (sameLockObservation(quarantined, ownerAnchor)) await unlinkIfPresent(fileSystem, ownerPath);
+  }
+  return true;
 }
 
 async function acquireBuildLock(rootDir, fileSystem, {
@@ -140,55 +284,84 @@ async function acquireBuildLock(rootDir, fileSystem, {
 } = {}) {
   const lockPath = join(rootDir, BUILD_LOCK_NAME);
   const token = randomUUID();
+  const ownerPath = join(rootDir, `${BUILD_LOCK_NAME}.owner-${token}`);
+  const owner = {
+    pid: process.pid,
+    token,
+    startedAt: Date.now(),
+  };
   const deadline = Date.now() + timeoutMs;
+  let acquired = false;
+  let expectedOwnerAnchor;
 
-  while (true) {
-    try {
-      await fileSystem.mkdir(lockPath);
-      try {
-        await fileSystem.writeFile(join(lockPath, 'owner.json'), JSON.stringify({
-          pid: process.pid,
-          token,
-          startedAt: Date.now(),
-        }), { flag: 'wx', mode: 0o600 });
-      } catch (error) {
-        await removeIfPresent(fileSystem, lockPath);
-        throw error;
-      }
-      return { lockPath, token };
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error;
+  await fileSystem.writeFile(ownerPath, JSON.stringify(owner), { flag: 'wx', mode: 0o600 });
+  try {
+    const ownerAnchor = await observeLockPath(fileSystem, ownerPath);
+    if (ownerAnchor?.kind !== 'file'
+      || ownerAnchor.owner?.token !== token
+      || ownerAnchor.owner?.pid !== process.pid) {
+      throw new Error(`Cannot verify installer build lock owner record: ${ownerPath}`);
     }
+    expectedOwnerAnchor = ownerAnchor;
 
-    if (await lockIsStale(fileSystem, lockPath, staleMs, isOwnerAlive)) {
-      const quarantine = join(rootDir, `${BUILD_LOCK_NAME}.stale-${randomUUID()}`);
+    while (true) {
       try {
-        await fileSystem.rename(lockPath, quarantine);
-        await removeIfPresent(fileSystem, quarantine);
+        await fileSystem.link(ownerPath, lockPath);
+        const published = await observeLockPath(fileSystem, lockPath);
+        if (!sameLockObservation(ownerAnchor, published)) {
+          throw new Error(`Cannot verify published installer build lock: ${lockPath}`);
+        }
+        acquired = true;
+        return { lockPath, ownerPath, owner: ownerAnchor };
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+      }
+
+      const observation = await observeLockPath(fileSystem, lockPath);
+      if (observation?.raced || !observation) {
+        if (Date.now() >= deadline) throw new Error(`Timed out waiting for installer build lock: ${lockPath}`);
+        await new Promise(resolveDelay => setTimeout(resolveDelay, retryDelayMs));
         continue;
-      } catch (error) {
-        await removeIfPresent(fileSystem, quarantine);
-        if (error?.code === 'ENOENT' || error?.code === 'EEXIST') continue;
-        throw error;
+      }
+      if (lockIsStale(observation, staleMs, isOwnerAlive)
+        && await reclaimStaleLock(fileSystem, rootDir, lockPath, observation)) continue;
+
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for installer build lock: ${lockPath}`);
+      await new Promise(resolveDelay => setTimeout(resolveDelay, retryDelayMs));
+    }
+  } finally {
+    if (!acquired) {
+      const ownerAnchor = await observeLockPath(fileSystem, ownerPath);
+      if (sameLockObservation(expectedOwnerAnchor, ownerAnchor)) {
+        await unlinkIfPresent(fileSystem, ownerPath);
       }
     }
-
-    if (Date.now() >= deadline) throw new Error(`Timed out waiting for installer build lock: ${lockPath}`);
-    await new Promise(resolveDelay => setTimeout(resolveDelay, retryDelayMs));
   }
 }
 
 async function releaseBuildLock(fileSystem, lock) {
-  let owner;
-  try {
-    owner = JSON.parse(await fileSystem.readFile(join(lock.lockPath, 'owner.json'), 'utf8'));
-  } catch (error) {
-    throw new Error(`Cannot verify installer build lock ownership: ${error.message}`, { cause: error });
-  }
-  if (owner?.token !== lock.token || owner?.pid !== process.pid) {
+  const ownerAnchor = await observeLockPath(fileSystem, lock.ownerPath);
+  const published = await observeLockPath(fileSystem, lock.lockPath);
+  if (!sameLockObservation(lock.owner, ownerAnchor)
+    || !sameLockObservation(ownerAnchor, published)
+    || ownerAnchor.owner?.pid !== process.pid) {
     throw new Error(`Installer build lock ownership changed: ${lock.lockPath}`);
   }
-  await removeIfPresent(fileSystem, lock.lockPath);
+
+  const quarantine = `${lock.lockPath}.release-${randomUUID()}`;
+  await fileSystem.rename(lock.lockPath, quarantine);
+  const released = await observeLockPath(fileSystem, quarantine);
+  if (!sameLockObservation(ownerAnchor, released)) {
+    await preserveUnverifiedQuarantine(fileSystem, quarantine, lock.lockPath);
+    throw new Error(`Installer build lock ownership changed during release: ${lock.lockPath}`);
+  }
+  await removeVerifiedQuarantine(fileSystem, quarantine, released);
+
+  const finalOwnerAnchor = await observeLockPath(fileSystem, lock.ownerPath);
+  if (!sameLockObservation(ownerAnchor, finalOwnerAnchor)) {
+    throw new Error(`Installer build lock owner record changed during release: ${lock.ownerPath}`);
+  }
+  await fileSystem.unlink(lock.ownerPath);
 }
 
 function sha256(bytes) {
