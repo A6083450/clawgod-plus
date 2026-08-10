@@ -166,8 +166,8 @@ const windowsModule = powerShellTemplate('plugin-dependencies.mjs', '# --- Optio
 assert.equal(normalize(windowsModule), normalize(unixModule), 'Unix and Windows plugin-dependencies.mjs bodies must be identical');
 assert.match(unix, /PLUGIN_DEPENDENCIES_EOF\nchmod 700 "\$CLAWGOD_DIR\/plugin-dependencies\.mjs"/, 'install.sh must write plugin-dependencies.mjs with mode 0700');
 assert.match(windows, /Set-Content \(Join-Path \$ClawDir "plugin-dependencies\.mjs"\) -Encoding UTF8/, 'install.ps1 must write plugin-dependencies.mjs as UTF-8');
-assert.doesNotMatch(unix, /\$BUN_BIN[^\n]*plugin-dependencies\.mjs/, 'install.sh must not invoke plugin-dependencies.mjs yet');
-assert.doesNotMatch(windows, /& \$BunBin[^\n]*plugin-dependencies\.mjs/, 'install.ps1 must not invoke plugin-dependencies.mjs yet');
+assert.match(unix, /\$BUN_BIN[^\n]*plugin-dependencies\.mjs" ensure/, 'install.sh must invoke the generated plugin manager');
+assert.match(windows, /& \$BunBin[^\r\n]*plugin-dependencies\.mjs"\) ensure/, 'install.ps1 must invoke the generated plugin manager');
 
 const expected = {
   hud: {
@@ -222,6 +222,7 @@ try {
     configureClaudeMemBun,
     configureHud,
     downloadAndStage,
+    ensurePluginDependencies,
     ensureMarketplacePlugin,
     extractPluginArchive,
     parseSemver,
@@ -229,6 +230,7 @@ try {
     renderHudStatusLineModule,
     restoreManagedIntegrations,
     restoreHud,
+    shouldConfigurePluginDependency,
     selectInstalledRecord,
     sha256,
     validateArchive,
@@ -236,12 +238,75 @@ try {
 
   assert.equal(typeof extractPluginArchive, 'function', 'plugin-dependencies.mjs must export extractPluginArchive');
   assert.equal(typeof downloadAndStage, 'function', 'plugin-dependencies.mjs must export downloadAndStage');
+  assert.equal(typeof ensurePluginDependencies, 'function', 'plugin-dependencies.mjs must export ensurePluginDependencies');
   assert.equal(typeof ensureMarketplacePlugin, 'function', 'plugin-dependencies.mjs must export ensureMarketplacePlugin');
+  assert.equal(typeof shouldConfigurePluginDependency, 'function', 'plugin-dependencies.mjs must export its marketplace configuration gate');
   assert.equal(typeof configureClaudeMemBun, 'function', 'plugin-dependencies.mjs must export configureClaudeMemBun');
   assert.equal(typeof configureHud, 'function', 'plugin-dependencies.mjs must export configureHud');
   assert.equal(typeof renderHudStatusLineModule, 'function', 'plugin-dependencies.mjs must export renderHudStatusLineModule');
   assert.equal(typeof restoreHud, 'function', 'plugin-dependencies.mjs must export restoreHud for lifecycle composition');
   assert.equal(typeof restoreManagedIntegrations, 'function', 'plugin-dependencies.mjs must export shared managed integration restore');
+
+  function makeLifecycleFixture(label, hudVersion = PLUGIN_BASELINES.hud.version) {
+    const root = join(fixtureRoot, `lifecycle-${label}`);
+    const home = join(root, 'home');
+    const claudeConfigDir = join(root, 'claude-config');
+    const clawgodDir = join(root, 'clawgod');
+    const pluginRoot = join(claudeConfigDir, 'plugins');
+    const hudInstall = join(pluginRoot, 'cache', 'claude-hud', 'claude-hud', PLUGIN_BASELINES.hud.version);
+    const memoryInstall = join(pluginRoot, 'cache', 'thedotmack', 'claude-mem', PLUGIN_BASELINES.memory.version);
+    const superpowersInstall = join(pluginRoot, 'cache', 'superpowers-marketplace', 'superpowers', PLUGIN_BASELINES.superpowers.version);
+    mkdirSync(join(hudInstall, 'src'), { recursive: true });
+    mkdirSync(join(memoryInstall, 'hooks'), { recursive: true });
+    mkdirSync(superpowersInstall, { recursive: true });
+    mkdirSync(clawgodDir, { recursive: true });
+    writeFileSync(join(hudInstall, 'src', 'index.ts'), 'console.log("hud fixture");\n');
+    writeFileSync(join(memoryInstall, 'hooks', 'hooks.json'), claudeMemHookRaw());
+    writeFileSync(join(memoryInstall, '.mcp.json'), claudeMemMcpRaw());
+    writeFileSync(join(pluginRoot, 'installed_plugins.json'), `${JSON.stringify({
+      version: 2,
+      plugins: {
+        [PLUGIN_BASELINES.hud.id]: [{ scope: 'user', version: hudVersion, installPath: hudInstall }],
+        [PLUGIN_BASELINES.memory.id]: [{ scope: 'user', version: PLUGIN_BASELINES.memory.version, installPath: memoryInstall }],
+        [PLUGIN_BASELINES.superpowers.id]: [{ scope: 'user', version: PLUGIN_BASELINES.superpowers.version, installPath: superpowersInstall }],
+      },
+    }, null, 2)}\n`);
+    const lifecycleModule = join(clawgodDir, 'plugin-dependencies.mjs');
+    writeFileSync(lifecycleModule, unixModule, { mode: 0o700 });
+    writeFileSync(join(clawgodDir, 'cli.original.cjs'), 'process.exit(67);\n');
+    writeFileSync(join(clawgodDir, 'fetch-file.mjs'), 'process.exit(68);\n');
+    return {
+      root,
+      home,
+      claudeConfigDir,
+      clawgodDir,
+      lifecycleModule,
+      hudConfig: join(pluginRoot, 'claude-hud', 'config.json'),
+      statePath: join(clawgodDir, 'plugin-dependencies-state.json'),
+      statusLineModule: join(clawgodDir, 'claude-hud-statusline.mjs'),
+      env: {
+        HOME: home,
+        CLAUDE_CONFIG_DIR: claudeConfigDir,
+        CLAWGOD_DIR: clawgodDir,
+        CLAWGOD_BUN_BIN: process.execPath,
+        PATH: fixtureBin,
+      },
+    };
+  }
+
+  function runLifecycleCommand(fixture, command) {
+    return Bun.spawnSync({
+      cmd: [process.execPath, fixture.lifecycleModule, command],
+      cwd: fixture.root,
+      env: fixture.env,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+  }
+
+  function outputLines(result) {
+    return new TextDecoder().decode(result.stdout).trim().split('\n').filter(Boolean);
+  }
 
   const claudeMemHookCommands = [
     'node "$_P/scripts/version-check.js"',
@@ -269,6 +334,32 @@ try {
   function fixtureHash(bytes) {
     return new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
   }
+
+  const readyLifecycle = makeLifecycleFixture('ready');
+  const readyEnsure = runLifecycleCommand(readyLifecycle, 'ensure');
+  assert.equal(readyEnsure.exitCode, 0, new TextDecoder().decode(readyEnsure.stderr));
+  assert.deepEqual(outputLines(readyEnsure).slice(-1), ['Optional plugins: 3 ready, 0 warnings'], new TextDecoder().decode(readyEnsure.stdout));
+  assert.equal(outputLines(readyEnsure).length, 4, 'ensure must print exactly three plugin lines and one summary');
+  for (const id of Object.values(PLUGIN_BASELINES).map(spec => spec.id)) {
+    assert.equal(outputLines(readyEnsure).filter(line => line.includes(id)).length, 1, `${id} must have exactly one result line`);
+  }
+
+  const warningLifecycle = makeLifecycleFixture('warning', 'latest');
+  const warningEnsure = runLifecycleCommand(warningLifecycle, 'ensure');
+  assert.equal(warningEnsure.exitCode, 0, new TextDecoder().decode(warningEnsure.stderr));
+  assert.deepEqual(outputLines(warningEnsure).slice(-1), ['Optional plugins: 2 ready, 1 warning']);
+  assert.equal(outputLines(warningEnsure).length, 4, 'a warning must retain exactly three plugin lines and one summary');
+  assert.equal(existsSync(warningLifecycle.hudConfig), false, 'a marketplace warning must skip only its dependent HUD configuration');
+  const warningState = JSON.parse(readFileSync(warningLifecycle.statePath, 'utf8'));
+  assert.equal(Object.keys(warningState.claudeMem.files).length, 2, 'a HUD warning must not stop claude-mem configuration');
+
+  writeFileSync(readyLifecycle.hudConfig, '{"user":"changed after management"}\n');
+  const failedUninstall = runLifecycleCommand(readyLifecycle, 'uninstall');
+  assert.notEqual(failedUninstall.exitCode, 0, 'uninstall must fail closed when managed integration restoration conflicts');
+  assert.equal(existsSync(readyLifecycle.lifecycleModule), true, 'failed restoration must retain the plugin manager module');
+  assert.equal(existsSync(readyLifecycle.statusLineModule), true, 'failed restoration must retain the HUD status-line module');
+  assert.equal(existsSync(readyLifecycle.statePath), true, 'failed restoration must retain ownership state');
+
   function makeClaudeMemFixture(label, options = {}) {
     const root = join(fixtureRoot, `claude-mem-${label}`);
     const home = join(root, 'home');
@@ -2670,6 +2761,7 @@ process.exit(67);
   assert.equal(cleanupWarningResult.status, 'warning', 'backup cleanup failure must be reported as a warning');
   assert.equal(cleanupWarningResult.ready, true, 'backup cleanup failure must not roll back a verified plugin');
   assert.equal(cleanupWarningResult.version, hudSpec.version, 'backup cleanup warning must retain the verified baseline version');
+  assert.equal(shouldConfigurePluginDependency(cleanupWarningResult), false, 'any marketplace warning must block dependent configuration even when the plugin is ready');
   assert.equal(readFileSync(join(cleanupWarningFixture.context.env.FIXTURE_ATTACK_MARKETPLACE_OUTSIDE, 'outside-sentinel.txt'), 'utf8'), 'do not delete through cleanup replacement link\n', 'cleanup must not recurse through a concurrently replaced parent');
 } finally {
   for (const [key, value] of savedEnvironment) {

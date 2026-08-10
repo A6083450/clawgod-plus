@@ -343,6 +343,14 @@ if [ "$UNINSTALL" = "1" ]; then
       exit 1
     fi
   done
+  # Restore optional Claude plugin integrations before any managed cleanup.
+  if [ -f "$CLAWGOD_DIR/plugin-dependencies.mjs" ] && [ -f "$CLAWGOD_DIR/plugin-dependencies-state.json" ]; then
+    if ! CLAWGOD_BUN_BIN="$BUN_BIN" CLAWGOD_DIR="$CLAWGOD_DIR" \
+      "$BUN_BIN" "$CLAWGOD_DIR/plugin-dependencies.mjs" uninstall; then
+      warn "Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled"
+      exit 1
+    fi
+  fi
   if [ -f "$CLAWGOD_DIR/claude-mem-compat.cjs" ]; then
     if ! CLAWGOD_BUN_BIN="$BUN_BIN" "$BUN_BIN" "$CLAWGOD_DIR/claude-mem-compat.cjs" uninstall; then
       warn "Could not restore claude-mem compatibility settings; ClawGod Plus was not uninstalled"
@@ -370,7 +378,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh"
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache/claude-plugins" "$CLAWGOD_DIR/staging/claude-plugins" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh"
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -526,6 +534,7 @@ cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << 'PLUGIN_DEPENDENCIES_EOF'
  */
 
 import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, unlinkSync, writeSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const PLUGIN_BASELINES = Object.freeze({
@@ -1115,7 +1124,11 @@ export async function configureClaudeMemBun(context, state) {
     const selection = captureClaudeMemSelection(installedSnapshot, selected, context);
     const statePath = join(context.clawgodDir, 'plugin-dependencies-state.json');
     const stateSnapshot = hudFileSnapshot(context.clawgodDir, statePath, 'ownership state', true);
-    const nextState = validateManagedHudState(stateSnapshot.present ? stateSnapshot.value : state, !stateSnapshot.present);
+    const nextState = validateManagedHudState(
+      stateSnapshot.present ? stateSnapshot.value : state,
+      !stateSnapshot.present,
+      { modulePath: join(context.clawgodDir, 'claude-hud-statusline.mjs'), platform: context.platform || process.platform },
+    );
     validateClaudeMemOwnershipContext(nextState.claudeMem.files, context);
     const definitions = [
       { relativePath: 'hooks/hooks.json', targetPath: resolve(selected.installPath, 'hooks', 'hooks.json') },
@@ -3067,6 +3080,96 @@ export async function ensureMarketplacePlugin(spec, context) {
     spec.version,
     `${classification === 'missing' ? 'installed' : 'upgraded'} ${spec.version}`,
   );
+}
+
+function warningResult(spec, error) {
+  const detail = error instanceof Error ? error.message : 'plugin setup failed';
+  return pluginResult(spec, 'warning', false, null, detail);
+}
+
+export function shouldConfigurePluginDependency(result) {
+  return result?.ready === true && result.status !== 'warning';
+}
+
+export async function ensurePluginDependencies(context) {
+  const specs = [PLUGIN_BASELINES.hud, PLUGIN_BASELINES.memory, PLUGIN_BASELINES.superpowers];
+  const marketplaceResults = new Map();
+  for (const spec of specs) {
+    try {
+      marketplaceResults.set(spec.key, await ensureMarketplacePlugin(spec, context));
+    } catch (error) {
+      marketplaceResults.set(spec.key, warningResult(spec, error));
+    }
+  }
+
+  const state = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+  const results = [];
+  for (const spec of specs) {
+    const marketplace = marketplaceResults.get(spec.key);
+    if (!shouldConfigurePluginDependency(marketplace) || spec.key === 'superpowers') {
+      results.push(marketplace);
+      continue;
+    }
+    try {
+      results.push(spec.key === 'hud'
+        ? await configureHud(context, state)
+        : await configureClaudeMemBun(context, state));
+    } catch (error) {
+      results.push(warningResult(spec, error));
+    }
+  }
+  return results;
+}
+
+function pluginContext() {
+  const home = process.env.HOME || homedir();
+  const clawgodDir = process.env.CLAWGOD_DIR || join(home, '.clawgod');
+  return {
+    home,
+    claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || join(home, '.claude'),
+    clawgodDir,
+    bunPath: process.env.CLAWGOD_BUN_BIN || process.execPath,
+    claudeCliPath: join(clawgodDir, 'cli.original.cjs'),
+    fetchFilePath: join(clawgodDir, 'fetch-file.mjs'),
+    env: process.env,
+    spawnSyncImpl: Bun.spawnSync,
+  };
+}
+
+function printPluginResults(results) {
+  let warnings = 0;
+  for (const result of results) {
+    const warning = result.status === 'warning' || !result.ready;
+    if (warning) warnings += 1;
+    const detail = String(result.detail || '').replace(/\s+/g, ' ').trim();
+    console.log(`${result.id}: ${warning ? 'warning' : 'ready'}${detail ? ` - ${detail}` : ''}`);
+  }
+  console.log(`Optional plugins: ${results.length - warnings} ready, ${warnings} warning${warnings === 1 ? '' : 's'}`);
+}
+
+async function runPluginDependenciesCli(command) {
+  const context = pluginContext();
+  if (command === 'ensure') {
+    printPluginResults(await ensurePluginDependencies(context));
+    return;
+  }
+  if (command === 'uninstall') {
+    const restoration = await restoreManagedIntegrations(context);
+    if (restoration.conflicts.length > 0) {
+      throw new Error(`optional plugin restoration conflicts: ${restoration.conflicts.join(', ')}`);
+    }
+    return;
+  }
+  throw new Error('usage: plugin-dependencies.mjs <ensure|uninstall>');
+}
+
+if (import.meta.main) {
+  try {
+    await runPluginDependenciesCli(process.argv[2]);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : 'optional plugin lifecycle failed');
+    process.exitCode = 1;
+  }
 }
 PLUGIN_DEPENDENCIES_EOF
 chmod 700 "$CLAWGOD_DIR/plugin-dependencies.mjs"
@@ -6389,6 +6492,13 @@ fi
 #  - User restored claude.orig via uninstall but still wants the patched one
 write_launcher "$BIN_DIR/clawgod"
 info "Command 'clawgod' → patched ($BIN_DIR/clawgod)"
+
+# --- Ensure optional Claude plugins ---------------------------------
+
+if ! CLAWGOD_BUN_BIN="$BUN_BIN" CLAWGOD_DIR="$CLAWGOD_DIR" \
+  "$BUN_BIN" "$CLAWGOD_DIR/plugin-dependencies.mjs" ensure; then
+  warn "Optional Claude plugin setup could not complete; ClawGod Plus core install will continue"
+fi
 
 install_claude_mem_compat_helper
 if CLAWGOD_BUN_BIN="$BUN_BIN" CLAWGOD_CLAUDE_BIN="$CLAUDE_BIN" "$BUN_BIN" "$CLAWGOD_DIR/claude-mem-compat.cjs" install; then

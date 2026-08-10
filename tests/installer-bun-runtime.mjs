@@ -895,6 +895,114 @@ for (const [name, body] of Object.entries(unixTemplates)) {
   assert.match(windowsTemplates[name], /^#!\/usr\/bin\/env bun\n/, `install.ps1 ${name} must run with Bun`);
 }
 
+const lifecyclePositions = {
+  unix: {
+    bun: unix.indexOf('info "Bun: $("$BUN_BIN" --version)"'),
+    fetch: unix.indexOf('cat > "$CLAWGOD_DIR/fetch-file.mjs"'),
+    module: unix.indexOf('cat > "$CLAWGOD_DIR/plugin-dependencies.mjs"'),
+    smoke: unix.indexOf('info "Bun loads cli.original.cjs"'),
+    launcher: unix.indexOf('info "Command \'clawgod\' → patched'),
+    ensure: unix.indexOf('"$CLAWGOD_DIR/plugin-dependencies.mjs" ensure'),
+    memory: unix.indexOf('"$CLAWGOD_DIR/claude-mem-compat.cjs" install'),
+  },
+  windows: {
+    bun: windows.indexOf('Write-OK "Bun: $(& $BunBin --version)"'),
+    fetch: windows.indexOf('Install-FetchFileHelper', windows.indexOf('# ─── Bun prerequisite')),
+    module: windows.indexOf('# --- Optional Claude plugin dependencies'),
+    smoke: windows.indexOf('Write-OK "Bun loads cli.original.cjs"'),
+    launcher: windows.indexOf('Write-OK "Commands \'claude\' + \'clawgod\' → patched"'),
+    ensure: windows.indexOf('(Join-Path $ClawDir "plugin-dependencies.mjs") ensure'),
+    memory: windows.indexOf('(Join-Path $ClawDir "claude-mem-compat.cjs") install'),
+  },
+};
+for (const [name, positions] of Object.entries(lifecyclePositions)) {
+  assert.ok(positions.bun >= 0 && positions.bun < positions.fetch, `${name}: fetch helper must be generated after Bun is available`);
+  assert.ok(positions.fetch < positions.module, `${name}: plugin manager must be generated after fetch-file.mjs`);
+  assert.ok(positions.smoke >= 0 && positions.smoke < positions.launcher, `${name}: launcher creation must follow the cli.original.cjs smoke test`);
+  assert.ok(positions.launcher < positions.ensure, `${name}: plugin ensure must run after launcher creation`);
+  assert.ok(positions.ensure < positions.memory, `${name}: plugin ensure must run before claude-mem worker restart compatibility`);
+}
+
+const unixOptionalStart = unix.indexOf('# --- Ensure optional Claude plugins');
+const unixOptionalEnd = unix.indexOf('\ninstall_claude_mem_compat_helper', unixOptionalStart);
+assert.ok(unixOptionalStart >= 0 && unixOptionalEnd > unixOptionalStart, 'install.sh must retain an extractable optional plugin stage');
+const unixOptionalBlock = unix.slice(unixOptionalStart, unixOptionalEnd);
+const optionalLifecycleRoot = mkdtempSync(join(tmpdir(), 'clawgod plugin lifecycle '));
+assertTemporaryPath(optionalLifecycleRoot, 'plugin lifecycle fixture');
+try {
+  const home = join(optionalLifecycleRoot, 'home');
+  const clawgodDir = join(home, '.clawgod');
+  const fixtureBin = join(optionalLifecycleRoot, 'bin');
+  const fakeBun = join(fixtureBin, 'bun');
+  mkdirSync(clawgodDir, { recursive: true });
+  mkdirSync(fixtureBin, { recursive: true });
+  writeFileSync(join(clawgodDir, 'plugin-dependencies.mjs'), '// lifecycle fixture\n');
+  writeFileSync(fakeBun, '#!/bin/sh\n[ "$2" = "ensure" ] || exit 91\nprintf "fixture ensure warning\\n"\nexit 23\n');
+  chmodSync(fakeBun, 0o700);
+  const optional = spawnSync('/bin/bash', ['-c', `set -e\nwarn() { printf '%s\\n' "$*" >&2; }\n${unixOptionalBlock}\nprintf 'ClawGod Plus installed!\\n'`], {
+    encoding: 'utf8',
+    env: { HOME: home, CLAWGOD_DIR: clawgodDir, BUN_BIN: fakeBun, PATH: fixtureBin },
+  });
+  assert.equal(optional.status, 0, optional.stderr);
+  assert.match(optional.stderr, /Optional Claude plugin setup could not complete; ClawGod Plus core install will continue/);
+  assert.match(optional.stdout, /ClawGod Plus installed!/, 'an optional ensure warning must not skip the final core success message');
+} finally {
+  rmSync(optionalLifecycleRoot, { recursive: true, force: true });
+}
+
+const unixPluginRestoreStart = unixUninstall.indexOf('  # Restore optional Claude plugin integrations');
+const unixPluginRestoreEnd = unixUninstall.indexOf('  if [ -f "$CLAWGOD_DIR/claude-mem-compat.cjs" ]; then', unixPluginRestoreStart);
+assert.ok(unixPluginRestoreStart >= 0 && unixPluginRestoreEnd > unixPluginRestoreStart, 'install.sh must retain an extractable fail-closed plugin restore guard');
+const unixPluginRestoreBlock = unixUninstall.slice(unixPluginRestoreStart, unixPluginRestoreEnd);
+const uninstallLifecycleRoot = mkdtempSync(join(tmpdir(), 'clawgod plugin uninstall '));
+assertTemporaryPath(uninstallLifecycleRoot, 'plugin uninstall fixture');
+try {
+  const home = join(uninstallLifecycleRoot, 'home');
+  const clawgodDir = join(home, '.clawgod');
+  const fixtureBin = join(uninstallLifecycleRoot, 'bin');
+  const fakeBun = join(fixtureBin, 'bun');
+  const artifacts = [
+    join(clawgodDir, 'plugin-dependencies.mjs'),
+    join(clawgodDir, 'claude-hud-statusline.mjs'),
+    join(clawgodDir, 'plugin-dependencies-state.json'),
+    join(clawgodDir, 'cache', 'claude-plugins', 'archive.tar.gz'),
+    join(clawgodDir, 'staging', 'claude-plugins', '.transaction', 'evidence'),
+  ];
+  for (const artifact of artifacts) {
+    mkdirSync(dirname(artifact), { recursive: true });
+    writeFileSync(artifact, 'managed fixture\n');
+  }
+  mkdirSync(fixtureBin, { recursive: true });
+  writeFileSync(fakeBun, '#!/bin/sh\n[ "$2" = "uninstall" ] || exit 92\nexit 42\n');
+  chmodSync(fakeBun, 0o700);
+  const failedRestore = spawnSync('/bin/bash', ['-c', `set -e\nwarn() { printf '%s\\n' "$*" >&2; }\n${unixPluginRestoreBlock}\nrm -rf "$CLAWGOD_DIR"`], {
+    encoding: 'utf8',
+    env: { HOME: home, CLAWGOD_DIR: clawgodDir, BUN_BIN: fakeBun, PATH: fixtureBin },
+  });
+  assert.notEqual(failedRestore.status, 0, 'plugin restoration failure must abort uninstall');
+  assert.match(failedRestore.stderr, /Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled/);
+  for (const artifact of artifacts) assert.equal(existsSync(artifact), true, `failed restoration must retain ${artifact}`);
+} finally {
+  rmSync(uninstallLifecycleRoot, { recursive: true, force: true });
+}
+
+for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', windowsUninstall]]) {
+  const pluginRestore = uninstall.indexOf('plugin-dependencies.mjs');
+  const claudeMemRestore = uninstall.indexOf('claude-mem-compat.cjs');
+  const launcherRestore = uninstall.indexOf(name === 'install.sh' ? 'Original claude restored' : 'Original claude restored');
+  const cleanup = uninstall.indexOf(name === 'install.sh' ? 'rm -rf "$CLAWGOD_DIR/node_modules"' : 'foreach ($f in @(');
+  assert.ok(pluginRestore >= 0 && pluginRestore < claudeMemRestore, `${name}: plugin restoration must run before claude-mem compatibility restore`);
+  assert.ok(pluginRestore < launcherRestore, `${name}: plugin restoration must run before launcher restore`);
+  assert.ok(pluginRestore < cleanup, `${name}: plugin restoration must run before managed runtime cleanup`);
+  for (const artifact of ['plugin-dependencies.mjs', 'claude-hud-statusline.mjs', 'plugin-dependencies-state.json', 'cache/claude-plugins', 'staging/claude-plugins']) {
+    const expression = name === 'install.ps1' ? artifact.replaceAll('/', '\\') : artifact;
+    assert.ok(uninstall.indexOf(expression, cleanup) >= cleanup, `${name}: successful cleanup must remove ${expression}`);
+  }
+  for (const preserved of ['clawgod-marketplaces', 'installed_plugins.json', 'known_marketplaces.json', 'enabledPlugins']) {
+    assert.doesNotMatch(uninstall.slice(cleanup), new RegExp(preserved.replace('.', '\\.')), `${name}: managed cleanup must preserve ${preserved}`);
+  }
+}
+
 const unixApplyStart = unix.indexOf('dim "Applying patches ..."');
 const unixApplyEnd = unix.indexOf('\n# ─── Create default configs', unixApplyStart);
 assert.ok(unixApplyStart >= 0 && unixApplyEnd > unixApplyStart, 'install.sh must retain the patch application gate');
