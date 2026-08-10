@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -103,11 +103,50 @@ const withoutFirstTwoConfig = `{
   ]
 }
 `;
+function assertTemporaryPath(path, label, {
+  pathApi = { isAbsolute, relative, resolve, sep },
+  temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())],
+} = {}) {
+  const resolvedPath = pathApi.resolve(path);
+  const contained = temporaryRoots.some(rootPath => {
+    const relativePath = pathApi.relative(pathApi.resolve(rootPath), resolvedPath);
+    return relativePath !== ''
+      && relativePath !== '..'
+      && !relativePath.startsWith(`..${pathApi.sep}`)
+      && !pathApi.isAbsolute(relativePath);
+  });
+  assert.ok(contained, `${label} must remain temporary`);
+}
 
-function assertTemporaryPath(path, label) {
-  const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];
-  const resolvedPath = resolve(path);
-  assert.ok(temporaryRoots.some(candidate => resolvedPath.startsWith(`${candidate}/`)), `${label} must remain temporary`);
+{
+  const windowsTemporaryRoot = 'C:\\Users\\runneradmin\\AppData\\Local\\Temp';
+  for (const candidate of [
+    'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\clawgod-selection-123',
+    'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\nested\\clawgod-selection-456',
+  ]) {
+    assert.doesNotThrow(
+      () => assertTemporaryPath(candidate, 'synthetic Windows selection fixture', {
+        pathApi: win32,
+        temporaryRoots: [windowsTemporaryRoot],
+      }),
+      `Windows temporary descendant must be accepted: ${candidate}`,
+    );
+  }
+  for (const candidate of [
+    windowsTemporaryRoot,
+    'C:\\Users\\runneradmin\\AppData\\Local\\Temp-sibling\\clawgod-selection-123',
+    'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\..\\outside\\clawgod-selection-123',
+    'D:\\Temp\\clawgod-selection-123',
+  ]) {
+    assert.throws(
+      () => assertTemporaryPath(candidate, 'synthetic Windows selection escape', {
+        pathApi: win32,
+        temporaryRoots: [windowsTemporaryRoot],
+      }),
+      /must remain temporary/,
+      `Windows temporary boundary must reject: ${candidate}`,
+    );
+  }
 }
 
 function fixturePath(fixtureRoot) {
@@ -289,6 +328,25 @@ function cleanup(result) {
 }
 
 {
+  const fixture = createUnixFixture('clawgod-selection-explicit-over-saved-');
+  try {
+    const clawgod = join(fixture.home, '.clawgod');
+    mkdirSync(clawgod, { mode: 0o700 });
+    writeFileSync(join(clawgod, 'enhancements.json'), chromeBrandingConfig, { mode: 0o600 });
+    const run = spawnSync('/bin/bash', [fixture.script, '--choose-enhancements', '--enhancements', 'none'], {
+      encoding: 'utf8',
+      env: selectionEnvironment(fixture),
+    });
+    const output = `${run.stdout}${run.stderr}`;
+    assert.equal(run.status, 0, run.stderr);
+    assertOnlyConfig(fixture.home, noneConfig);
+    assert.doesNotMatch(output, /Choice:|interactive enhancement selection unavailable/i, 'Unix explicit CSV must override both saved config and choose');
+  } finally {
+    rmSync(fixture.fixtureRoot, { recursive: true, force: true });
+  }
+}
+
+{
   const result = runUnix([], { input: 'n\n', prefix: 'clawgod-selection-ordinary-' });
   try {
     assert.equal(result.run.status, 0, result.run.stderr);
@@ -372,12 +430,27 @@ function findScriptCommand() {
   return null;
 }
 
-function runUnixTtyCase(label, lines, expected) {
+function countOccurrences(output, literal) {
+  return output.split(literal).length - 1;
+}
+
+function runUnixTtyCase(label, lines, expected, {
+  args = ['--choose-enhancements'],
+  env = {},
+  expectedMenuCount = 1,
+  expectedPromptCount = expectedMenuCount,
+  expectedUnreadLine = null,
+  expectedWarnings = [],
+} = {}) {
   const fixture = createUnixFixture(`clawgod-selection-tty-${label}-`);
   const scriptCommand = findScriptCommand();
   assert.ok(scriptCommand, 'Unix interaction tests require the platform script utility for a controlling terminal');
   const runner = join(fixture.fixtureRoot, 'tty-runner');
-  writeFileSync(runner, `#!/bin/bash\nexec /bin/bash ${JSON.stringify(fixture.script)} --choose-enhancements\n`, 'utf8');
+  const installerCommand = `/bin/bash ${JSON.stringify(fixture.script)} ${args.map(value => JSON.stringify(value)).join(' ')}`;
+  const runnerSource = expectedUnreadLine === null
+    ? `#!/bin/bash\nexec ${installerCommand}\n`
+    : `#!/bin/bash\n${installerCommand}\nIFS= read -r clawgod_test_unread < /dev/tty\nprintf 'CLAWGOD_TEST_UNREAD=%s\\n' "$clawgod_test_unread"\n`;
+  writeFileSync(runner, runnerSource, 'utf8');
   chmodSync(runner, 0o700);
   try {
     const shellCommand = process.platform === 'darwin'
@@ -392,32 +465,80 @@ function runUnixTtyCase(label, lines, expected) {
       runner,
     ], {
       encoding: 'utf8',
-      env: selectionEnvironment(fixture),
+      env: selectionEnvironment(fixture, env),
       timeout: 10_000,
     });
     const output = `${run.stdout}${run.stderr}`;
     assert.equal(run.status, 0, `${label}: ${output}`);
-    assertOnlyConfig(fixture.home, expected);
-    const firstMenu = output.slice(0, output.indexOf('Choice:'));
-    let cursor = -1;
-    for (const [index, id] of expectedIds.entries()) {
-      const next = firstMenu.indexOf(`${index + 1})`, cursor + 1);
-      assert.ok(next > cursor, `${label}: prompt must keep manifest index ${index + 1}; output=${JSON.stringify(output)}`);
-      assert.ok(firstMenu.indexOf(id, next) >= next, `${label}: prompt must show stable ID ${id}`);
-      cursor = next;
+    assert.equal(countOccurrences(output, '  Enhancements'), expectedMenuCount, `${label}: exact menu count`);
+    assert.equal(countOccurrences(output, '  Choice: '), expectedPromptCount, `${label}: exact prompt count`);
+    for (const warning of expectedWarnings) {
+      assert.equal(countOccurrences(output, warning), 1, `${label}: exact warning count for ${warning}`);
     }
-    assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, `${label}: direct local TTY choose must not fall back`);
+    assert.equal(
+      countOccurrences(output, 'Invalid enhancement choice:'),
+      expectedWarnings.filter(warning => warning.startsWith('Invalid enhancement choice:')).length,
+      `${label}: no unexpected invalid-choice warnings`,
+    );
+    assert.equal(
+      countOccurrences(output, 'Interactive enhancement selection unavailable; using saved selection or all enhancements.'),
+      expectedWarnings.filter(warning => warning.startsWith('Interactive enhancement selection unavailable;')).length,
+      `${label}: no unexpected interaction warnings`,
+    );
+    if (expectedUnreadLine !== null) {
+      assert.equal(countOccurrences(output, `CLAWGOD_TEST_UNREAD=${expectedUnreadLine}`), 1, `${label}: installer must leave terminal input unread`);
+    }
+    if (expectedMenuCount > 0) {
+      const firstMenu = output.slice(0, output.indexOf('Choice:'));
+      let cursor = -1;
+      for (const [index, id] of expectedIds.entries()) {
+        const next = firstMenu.indexOf(`${index + 1})`, cursor + 1);
+        assert.ok(next > cursor, `${label}: prompt must keep manifest index ${index + 1}; output=${JSON.stringify(output)}`);
+        assert.ok(firstMenu.indexOf(id, next) >= next, `${label}: prompt must show stable ID ${id}`);
+        cursor = next;
+      }
+    }
+    assertOnlyConfig(fixture.home, expected);
+    return output;
   } finally {
     rmSync(fixture.fixtureRoot, { recursive: true, force: true });
   }
 }
 
 runUnixTtyCase('enter', [''], allConfig);
-runUnixTtyCase('numbers', ['1,2', ''], withoutFirstTwoConfig);
-runUnixTtyCase('none', ['n', ''], noneConfig);
-runUnixTtyCase('none-all', ['n,a', ''], allConfig);
-runUnixTtyCase('invalid-valid', ['99', 'n', ''], noneConfig);
-runUnixTtyCase('invalid-overflow-valid', ['999999999999999999999999999999999999', 'n', ''], noneConfig);
+runUnixTtyCase('numbers', ['1,2', ''], withoutFirstTwoConfig, { expectedMenuCount: 2 });
+runUnixTtyCase('leading-zero-numbers', ['01,02', ''], withoutFirstTwoConfig, { expectedMenuCount: 2 });
+runUnixTtyCase('none', ['n', ''], noneConfig, { expectedMenuCount: 2 });
+runUnixTtyCase('none-all', ['n,a', ''], allConfig, { expectedMenuCount: 2 });
+runUnixTtyCase('invalid-valid', ['99', 'n', ''], noneConfig, {
+  expectedMenuCount: 3,
+  expectedWarnings: ['Invalid enhancement choice: 99'],
+});
+runUnixTtyCase('invalid-overflow', ['18446744073709551617', ''], allConfig, {
+  expectedMenuCount: 2,
+  expectedWarnings: ['Invalid enhancement choice: 18446744073709551617'],
+});
+for (const [label, invalid] of [
+  ['empty-token', '1,'],
+  ['signed-token', '+1'],
+  ['whitespace-token', ' 1'],
+]) {
+  runUnixTtyCase(`invalid-${label}`, [invalid, ''], allConfig, {
+    expectedMenuCount: 2,
+    expectedWarnings: [`Invalid enhancement choice: ${invalid}`],
+  });
+}
+runUnixTtyCase('ci', ['ci-input-must-remain-unread'], allConfig, {
+  env: { CI: '1' },
+  expectedMenuCount: 0,
+  expectedUnreadLine: 'ci-input-must-remain-unread',
+  expectedWarnings: ['Interactive enhancement selection unavailable; using saved selection or all enhancements.'],
+});
+runUnixTtyCase('ordinary', ['ordinary-input-must-remain-unread'], allConfig, {
+  args: [],
+  expectedMenuCount: 0,
+  expectedUnreadLine: 'ordinary-input-must-remain-unread',
+});
 
 {
   const result = runUnix(['--choose-enhancements'], { env: { CI: '1' }, prefix: 'clawgod-selection-ci-' });
@@ -435,6 +556,14 @@ assert.match(windowsLifecycle, /\[switch\]\$ChooseEnhancements/, 'PowerShell lif
 assert.match(windowsLifecycle, /Read-Host/, 'PowerShell direct local interaction must use Read-Host');
 assert.match(windowsLifecycle, /IsInputRedirected/, 'PowerShell interaction must reject redirected input');
 assert.match(windowsLifecycle, /\[int\]::TryParse/, 'PowerShell menu parsing must reject integer overflow without terminating interaction');
+const windowsExplicitBranch = windowsLifecycle.indexOf('if ($EnhancementsSpecified)');
+const windowsChooseBranch = windowsLifecycle.indexOf('if ($ChooseEnhancements)', windowsExplicitBranch);
+const windowsExplicitWrite = windowsLifecycle.indexOf('Write-EnhancementSelection -Explicit $Enhancements', windowsExplicitBranch);
+assert.ok(windowsExplicitBranch >= 0 && windowsChooseBranch > windowsExplicitBranch, 'PowerShell explicit selection branch must precede choose');
+assert.ok(
+  windowsExplicitWrite >= windowsExplicitBranch && windowsExplicitWrite < windowsChooseBranch,
+  'PowerShell explicit branch must persist its CSV before choose can run',
+);
 for (const id of expectedIds) assert.match(windowsLifecycle, new RegExp(`['\"]${id}['\"]`), `PowerShell menu must include ${id}`);
 
 function findPwsh() {
@@ -468,6 +597,7 @@ if ($env:CLAWGOD_TEST_PROMPT_ANSWERS) {
         }
         $answer = [string]$script:ClawGodTestPromptAnswers[$script:ClawGodTestPromptIndex]
         $script:ClawGodTestPromptIndex++
+        Write-Host ('{0}:' -f $Prompt)
         return $answer
     }
 }
@@ -520,7 +650,13 @@ const pwsh = findPwsh();
 if (pwsh) {
   let output = runPowerShell(pwsh, 'explicit', ['-Enhancements', 'branding,chrome'], chromeBrandingConfig);
   assert.doesNotMatch(output, /Choice|interactive enhancement selection unavailable/i, 'PowerShell explicit CSV must not prompt');
-  output = runPowerShell(pwsh, 'explicit-precedence', ['-ChooseEnhancements', '-Enhancements', 'none'], noneConfig);
+  output = runPowerShell(pwsh, 'explicit-precedence', ['-ChooseEnhancements', '-Enhancements', 'none'], noneConfig, {
+    prepare(fixture) {
+      const clawgod = join(fixture.home, '.clawgod');
+      mkdirSync(clawgod, { mode: 0o700 });
+      writeFileSync(join(clawgod, 'enhancements.json'), chromeBrandingConfig, { mode: 0o600 });
+    },
+  });
   assert.doesNotMatch(output, /Choice|interactive enhancement selection unavailable/i, 'PowerShell explicit CSV must win over choose');
 
   runPowerShell(pwsh, 'ordinary', [], allConfig);
@@ -546,15 +682,20 @@ if (pwsh) {
   output = runPowerShell(pwsh, 'ci', ['-ChooseEnhancements'], allConfig, { env: { CI: '1' } });
   assert.equal((output.match(/interactive enhancement selection unavailable/gi) || []).length, 1, 'PowerShell CI choose must warn exactly once');
 
-  for (const [label, promptAnswers, expected] of [
-    ['enter', [''], allConfig],
-    ['numbers', ['1,2', ''], withoutFirstTwoConfig],
-    ['none', ['n', ''], noneConfig],
-    ['none-all', ['n,a', ''], allConfig],
-    ['invalid-valid', ['99', 'n', ''], noneConfig],
+  for (const [label, promptAnswers, expected, warnings] of [
+    ['enter', [''], allConfig, []],
+    ['numbers', ['1,2', ''], withoutFirstTwoConfig, []],
+    ['none', ['n', ''], noneConfig, []],
+    ['none-all', ['n,a', ''], allConfig, []],
+    ['invalid-valid', ['99', 'n', ''], noneConfig, ['Invalid enhancement choice: 99']],
+    ['invalid-overflow', ['18446744073709551617', ''], allConfig, ['Invalid enhancement choice: 18446744073709551617']],
   ]) {
     output = runPowerShell(pwsh, `prompt-${label}`, ['-ChooseEnhancements'], expected, { promptAnswers });
     assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, `PowerShell ${label} prompt must not fall back`);
+    assert.equal(countOccurrences(output, '  Enhancements'), promptAnswers.length, `PowerShell ${label} exact menu count`);
+    assert.equal(countOccurrences(output, '  Choice:'), promptAnswers.length, `PowerShell ${label} exact prompt count`);
+    for (const warning of warnings) assert.equal(countOccurrences(output, warning), 1, `PowerShell ${label} exact warning count`);
+    assert.equal(countOccurrences(output, 'Invalid enhancement choice:'), warnings.length, `PowerShell ${label} no unexpected invalid warnings`);
     if (label === 'enter') {
       let cursor = -1;
       for (const [index, id] of expectedIds.entries()) {

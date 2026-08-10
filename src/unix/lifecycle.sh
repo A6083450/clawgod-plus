@@ -134,7 +134,7 @@ choose_enhancements() {
   local count=${#CLAWGOD_ENHANCEMENT_IDS[@]}
   local -a selected
   local -a tokens
-  local answer token index invalid marker
+  local answer token index invalid marker normalized
   local i
   for ((i = 0; i < count; i++)); do selected[$i]=1; done
 
@@ -166,6 +166,9 @@ choose_enhancements() {
     invalid=""
     local IFS=,
     read -r -a tokens <<< "$answer"
+    case "$answer" in
+      ,*|*,|*,,*) invalid=1 ;;
+    esac
     for token in "${tokens[@]}"; do
       case "$token" in
         a)
@@ -176,8 +179,16 @@ choose_enhancements() {
           ;;
         *[!0-9]*|'') invalid=1 ;;
         *)
-          index=$((10#$token - 1))
-          if [ "$index" -lt 0 ] || [ "$index" -ge "$count" ]; then
+          normalized="${token#"${token%%[!0]*}"}"
+          [ -n "$normalized" ] || normalized=0
+          index=""
+          for ((i = 1; i <= count; i++)); do
+            if [ "$normalized" = "$i" ]; then
+              index=$((i - 1))
+              break
+            fi
+          done
+          if [ -z "$index" ]; then
             invalid=1
           elif [ "${candidate[$index]}" = "1" ]; then
             candidate[$index]=0
