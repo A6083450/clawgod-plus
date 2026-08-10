@@ -10,8 +10,10 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
@@ -24,6 +26,7 @@ const buildPath = join(root, 'build.mjs');
 const {
   GENERATED_HEADER,
   OUTPUTS,
+  checkGeneratedPair,
   placeholder,
   renderTemplate,
   writeGeneratedPair,
@@ -58,6 +61,21 @@ assert.throws(
   () => renderTemplate('@@CLAWGOD_DECLARED@@\n@@CLAWGOD_UNDECLARED@@\n', { DECLARED: 'value' }),
   /undeclared.*CLAWGOD_UNDECLARED/i,
   'renderTemplate must reject undeclared placeholders',
+);
+assert.throws(
+  () => renderTemplate('@@CLAWGOD_DECLARED@@\n@@CLAWGOD_lower@@\n', { DECLARED: 'value' }),
+  /invalid.*CLAWGOD_lower/i,
+  'renderTemplate must reject lowercase placeholder candidates',
+);
+assert.throws(
+  () => renderTemplate('@@CLAWGOD_DECLARED@@\n@@CLAWGOD_FEATURES-JSON@@\n', { DECLARED: 'value' }),
+  /invalid.*CLAWGOD_FEATURES-JSON/i,
+  'renderTemplate must reject malformed placeholder candidates',
+);
+assert.throws(
+  () => renderTemplate('@@CLAWGOD_DECLARED@@\n@@CLAWGOD_FEATURES@JSON@@\n', { DECLARED: 'value' }),
+  /invalid.*CLAWGOD_FEATURES@JSON/i,
+  'renderTemplate must reject malformed placeholder candidates containing at-signs',
 );
 
 function snapshot(path) {
@@ -149,8 +167,12 @@ try {
   await writeGeneratedPair(generatedPair(), { rootDir: transactionRoot });
   assert.equal(readFileSync(join(transactionRoot, 'install.sh'), 'utf8'), 'new:install.sh\n');
   assert.equal(readFileSync(join(transactionRoot, 'install.ps1'), 'utf8'), 'new:install.ps1\n');
-  assert.equal(statSync(join(transactionRoot, 'install.sh')).mode & 0o777, 0o755);
-  assert.equal(statSync(join(transactionRoot, 'install.ps1')).mode & 0o777, 0o644);
+  if (process.platform === 'win32') {
+    await checkGeneratedPair(generatedPair(), { rootDir: transactionRoot });
+  } else {
+    assert.equal(statSync(join(transactionRoot, 'install.sh')).mode & 0o777, 0o755);
+    assert.equal(statSync(join(transactionRoot, 'install.ps1')).mode & 0o777, 0o644);
+  }
   assert.deepEqual(readdirSync(transactionRoot).sort(), ['install.ps1', 'install.sh'], 'successful publication must clean transaction files');
 
   for (const fault of [
@@ -180,6 +202,300 @@ try {
   rmSync(transactionRoot, { recursive: true, force: true });
 }
 
+if (process.platform !== 'win32') {
+  const symlinkRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-symlink-'));
+  try {
+    const pair = generatedPair('symlink');
+    await writeGeneratedPair(pair, { rootDir: symlinkRoot });
+    renameSync(join(symlinkRoot, 'install.sh'), join(symlinkRoot, 'install.sh.target'));
+    symlinkSync('install.sh.target', join(symlinkRoot, 'install.sh'));
+    await assert.rejects(
+      checkGeneratedPair(pair, { rootDir: symlinkRoot }),
+      /stale.*install\.sh/i,
+      '--check must reject a generated output symlink even when target bytes and mode match',
+    );
+  } finally {
+    rmSync(symlinkRoot, { recursive: true, force: true });
+  }
+}
+
+const windowsModeRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-windows-mode-'));
+try {
+  const chmodCalls = [];
+  const windowsFileSystem = new Proxy(fsPromises, {
+    get(target, property) {
+      if (property === 'chmod') {
+        return async (path, mode) => {
+          chmodCalls.push({ path: String(path), mode });
+          return target.chmod(path, mode);
+        };
+      }
+      return Reflect.get(target, property);
+    },
+  });
+  const pair = generatedPair('windows-mode');
+  await writeGeneratedPair(pair, {
+    rootDir: windowsModeRoot,
+    fileSystem: windowsFileSystem,
+    platform: 'win32',
+  });
+  assert.deepEqual(
+    chmodCalls.map(call => call.mode),
+    [0o666, 0o666],
+    'Windows publication must normalize Unix executable bits to writable regular-file modes',
+  );
+  chmodSync(join(windowsModeRoot, 'install.sh'), 0o600);
+  chmodSync(join(windowsModeRoot, 'install.ps1'), 0o600);
+  await checkGeneratedPair(pair, { rootDir: windowsModeRoot, platform: 'win32' });
+  chmodSync(join(windowsModeRoot, 'install.sh'), 0o400);
+  await assert.rejects(
+    checkGeneratedPair(pair, { rootDir: windowsModeRoot, platform: 'win32' }),
+    /stale.*install\.sh/i,
+    'Windows --check must still reject a read-only output when the generated file is writable',
+  );
+} finally {
+  rmSync(windowsModeRoot, { recursive: true, force: true });
+}
+
+async function waitForAny(paths, label, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const found = paths.find(path => existsSync(path));
+    if (found) return found;
+    await Bun.sleep(10);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+async function childResult(child, label) {
+  const status = await child.exited;
+  const stdout = await new Response(child.stdout).text();
+  const stderr = await new Response(child.stderr).text();
+  assert.equal(status, 0, `${label} must exit cleanly\nstdout: ${stdout}\nstderr: ${stderr}`);
+}
+
+const concurrencyRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-concurrency-'));
+let concurrentA;
+let concurrentB;
+try {
+  originalPair(concurrencyRoot);
+  const signals = join(concurrencyRoot, 'signals');
+  mkdirSync(signals);
+  const worker = join(concurrencyRoot, 'build-worker.mjs');
+  writeFileSync(worker, `
+import * as fs from 'node:fs/promises';
+import { basename, join } from 'node:path';
+import { OUTPUTS, writeGeneratedPair } from ${JSON.stringify(pathToFileURL(buildPath).href)};
+
+const [root, generation, role] = process.argv.slice(2);
+const signals = join(root, 'signals');
+const signal = name => fs.writeFile(join(signals, name), '');
+const waitFor = async name => {
+  const path = join(signals, name);
+  while (true) {
+    try { await fs.access(path); return; } catch {}
+    await Bun.sleep(5);
+  }
+};
+const fileSystem = new Proxy(fs, {
+  get(target, property) {
+    if (property === 'mkdir') {
+      return async (path, ...args) => {
+        try {
+          return await target.mkdir(path, ...args);
+        } catch (error) {
+          if (role === 'B' && basename(String(path)) === '.clawgod-installer-build.lock' && error?.code === 'EEXIST') {
+            await signal('b-contended');
+          }
+          throw error;
+        }
+      };
+    }
+    if (property === 'writeFile') {
+      return async (path, ...args) => {
+        if (role === 'B' && String(path).includes('.stage-')) await signal('b-stage');
+        return target.writeFile(path, ...args);
+      };
+    }
+    if (property === 'rename') {
+      return async (source, destination) => {
+        const result = await target.rename(source, destination);
+        if (role === 'A' && String(source).includes('.install.sh.stage-') && String(destination).endsWith('install.sh')) {
+          await signal('a-first-published');
+          await waitFor('allow-a');
+        }
+        return result;
+      };
+    }
+    return Reflect.get(target, property);
+  },
+});
+
+await signal(\`\${role.toLowerCase()}-started\`);
+await writeGeneratedPair(OUTPUTS.map(entry => ({ ...entry, content: \`\${generation}:\${entry.output}\\n\` })), {
+  rootDir: root,
+  fileSystem,
+  lockOptions: { retryDelayMs: 5, timeoutMs: 5000 },
+});
+`);
+
+  concurrentA = Bun.spawn([process.execPath, worker, concurrencyRoot, 'generation-a', 'A'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  await waitForAny([join(signals, 'a-first-published')], 'generation A first publish');
+  concurrentB = Bun.spawn([process.execPath, worker, concurrencyRoot, 'generation-b', 'B'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  await waitForAny([join(signals, 'b-started')], 'generation B start');
+  const bObservation = await waitForAny(
+    [join(signals, 'b-contended'), join(signals, 'b-stage')],
+    'generation B contention or stage write',
+  );
+  writeFileSync(join(signals, 'allow-a'), '');
+  await Promise.all([
+    childResult(concurrentA, 'generation A'),
+    childResult(concurrentB, 'generation B'),
+  ]);
+  assert.equal(
+    bObservation,
+    join(signals, 'b-contended'),
+    'the second process must contend on the build lock before any stage write',
+  );
+  assert.equal(existsSync(join(signals, 'b-stage')), true, 'generation B must publish after generation A releases the lock');
+  assert.equal(readFileSync(join(concurrencyRoot, 'install.sh'), 'utf8'), 'generation-b:install.sh\n');
+  assert.equal(readFileSync(join(concurrencyRoot, 'install.ps1'), 'utf8'), 'generation-b:install.ps1\n');
+} finally {
+  const allow = join(concurrencyRoot, 'signals', 'allow-a');
+  if (existsSync(dirname(allow))) writeFileSync(allow, '');
+  if (concurrentA && concurrentA.exitCode === null) concurrentA.kill();
+  if (concurrentB && concurrentB.exitCode === null) concurrentB.kill();
+  rmSync(concurrencyRoot, { recursive: true, force: true });
+}
+
+const staleLockRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-stale-lock-'));
+try {
+  originalPair(staleLockRoot);
+  const lockPath = join(staleLockRoot, '.clawgod-installer-build.lock');
+  mkdirSync(lockPath);
+  writeFileSync(join(lockPath, 'owner.json'), JSON.stringify({
+    pid: 2147483647,
+    token: 'dead-owner',
+    startedAt: 1,
+  }));
+  await writeGeneratedPair(generatedPair('after-dead-owner'), {
+    rootDir: staleLockRoot,
+    lockOptions: { retryDelayMs: 5, timeoutMs: 1000 },
+  });
+  assert.equal(existsSync(lockPath), false, 'a lock whose owner process died must be reclaimed and released');
+  mkdirSync(lockPath);
+  await writeGeneratedPair(generatedPair('after-ownerless-lock'), {
+    rootDir: staleLockRoot,
+    lockOptions: { retryDelayMs: 5, timeoutMs: 1000, staleMs: 0 },
+  });
+  assert.equal(existsSync(lockPath), false, 'an ownerless stale lock must be reclaimed and released');
+} finally {
+  rmSync(staleLockRoot, { recursive: true, force: true });
+}
+
+const TRANSACTION_FILE = '.clawgod-installer-build.transaction.json';
+for (const recoveryFault of ['published-target-remove', 'backup-restore-rename']) {
+  const recoveryRoot = mkdtempSync(join(tmpdir(), `clawgod-build-recovery-${recoveryFault}-`));
+  try {
+    originalPair(recoveryRoot);
+    let publishFailed = false;
+    let recoveryFailed = false;
+    const faultingRecoveryFileSystem = new Proxy(fsPromises, {
+      get(target, property) {
+        if (property === 'rm' && recoveryFault === 'published-target-remove') {
+          return async (path, ...args) => {
+            if (!recoveryFailed && String(path) === join(recoveryRoot, 'install.sh')) {
+              recoveryFailed = true;
+              throw new Error('injected published-target removal failure');
+            }
+            return target.rm(path, ...args);
+          };
+        }
+        if (property === 'rename') {
+          return async (source, destination) => {
+            if (!publishFailed
+              && String(source).includes('.install.ps1.stage-')
+              && String(destination) === join(recoveryRoot, 'install.ps1')) {
+              publishFailed = true;
+              throw new Error('injected second-output publish failure');
+            }
+            if (String(source).includes('.backup-') && String(destination) === join(recoveryRoot, 'install.sh')) {
+              if (recoveryFault === 'backup-restore-rename' && !recoveryFailed) {
+                recoveryFailed = true;
+                throw new Error('injected backup restore rename failure');
+              }
+              if (recoveryFault === 'published-target-remove' && existsSync(destination)) {
+                const error = new Error('simulated Windows restore target exists');
+                error.code = 'EEXIST';
+                throw error;
+              }
+            }
+            return target.rename(source, destination);
+          };
+        }
+        return Reflect.get(target, property);
+      },
+    });
+
+    await assert.rejects(
+      writeGeneratedPair(generatedPair(`failed-${recoveryFault}`), {
+        rootDir: recoveryRoot,
+        fileSystem: faultingRecoveryFileSystem,
+      }),
+      /publication and rollback failed|publish failure/i,
+      `${recoveryFault} must be reported as a failed publication`,
+    );
+    assert.equal(recoveryFailed, true, `${recoveryFault} must execute the intended recovery fault`);
+    const journalPath = join(recoveryRoot, TRANSACTION_FILE);
+    assert.equal(existsSync(journalPath), true, `${recoveryFault} must retain explicit transaction evidence`);
+    const failedTransactionId = JSON.parse(readFileSync(journalPath, 'utf8')).id;
+    await assert.rejects(
+      checkGeneratedPair(generatedPair(`failed-${recoveryFault}`), { rootDir: recoveryRoot }),
+      /pending installer build transaction/i,
+      `${recoveryFault} transaction evidence must prevent --check from reporting clean`,
+    );
+
+    let observedRecoveredOldGeneration = false;
+    const recoveryObserverFileSystem = new Proxy(fsPromises, {
+      get(target, property) {
+        if (property === 'writeFile') {
+          return async (path, ...args) => {
+            if (!observedRecoveredOldGeneration && String(path).includes('.stage-')) {
+              assert.equal(readFileSync(join(recoveryRoot, 'install.sh'), 'utf8'), 'old:install.sh\n');
+              assert.equal(readFileSync(join(recoveryRoot, 'install.ps1'), 'utf8'), 'old:install.ps1\n');
+              const activeJournal = JSON.parse(readFileSync(journalPath, 'utf8'));
+              assert.notEqual(activeJournal.id, failedTransactionId, 'failed transaction must recover before the new transaction stages bytes');
+              observedRecoveredOldGeneration = true;
+            }
+            return target.writeFile(path, ...args);
+          };
+        }
+        return Reflect.get(target, property);
+      },
+    });
+    await writeGeneratedPair(generatedPair(`recovered-${recoveryFault}`), {
+      rootDir: recoveryRoot,
+      fileSystem: recoveryObserverFileSystem,
+    });
+    assert.equal(observedRecoveredOldGeneration, true, `${recoveryFault} must recover before new staging`);
+    assert.equal(readFileSync(join(recoveryRoot, 'install.sh'), 'utf8'), `recovered-${recoveryFault}:install.sh\n`);
+    assert.equal(readFileSync(join(recoveryRoot, 'install.ps1'), 'utf8'), `recovered-${recoveryFault}:install.ps1\n`);
+    assert.deepEqual(
+      readdirSync(recoveryRoot).sort(),
+      ['install.ps1', 'install.sh'],
+      `${recoveryFault} recovery must clean lock, journal, stage, backup, and commit evidence`,
+    );
+  } finally {
+    rmSync(recoveryRoot, { recursive: true, force: true });
+  }
+}
+
 const cliRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-cli-'));
 try {
   for (const path of ['build.mjs', 'src/template/install.sh', 'src/template/install.ps1', 'src/generic/features.json']) {
@@ -207,8 +523,10 @@ try {
 
   const currentCheck = spawnSync(process.execPath, ['build.mjs', '--check'], { cwd: cliRoot, encoding: 'utf8' });
   assert.equal(currentCheck.status, 0, `--check must pass after generation: ${currentCheck.stderr}`);
-  assert.equal(statSync(join(cliRoot, 'install.sh')).mode & 0o777, 0o755, 'generated install.sh must be executable');
-  assert.equal(statSync(join(cliRoot, 'install.ps1')).mode & 0o777, 0o644, 'generated install.ps1 must be mode 0644');
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(join(cliRoot, 'install.sh')).mode & 0o777, 0o755, 'generated install.sh must be executable');
+    assert.equal(statSync(join(cliRoot, 'install.ps1')).mode & 0o777, 0o644, 'generated install.ps1 must be mode 0644');
+  }
 } finally {
   rmSync(cliRoot, { recursive: true, force: true });
 }
@@ -233,7 +551,12 @@ for (const entry of OUTPUTS) {
   assert.equal(output.includes(placeholder('FEATURES_JSON')), false, `${entry.output} must not retain the features placeholder`);
   assert.equal(output.split(featuresJson.trimEnd()).length - 1, 1, `${entry.output} must embed canonical features.json exactly once`);
   assert.equal(output.split(GENERATED_HEADER).length - 1, 1, `${entry.output} must contain one generated-file header`);
-  assert.equal(statSync(join(root, entry.output)).mode & 0o777, entry.mode, `${entry.output} must use its declared mode`);
+  const actualMode = statSync(join(root, entry.output)).mode;
+  if (process.platform === 'win32') {
+    assert.equal(actualMode & 0o200, entry.mode & 0o200, `${entry.output} must preserve its writable attribute`);
+  } else {
+    assert.equal(actualMode & 0o777, entry.mode, `${entry.output} must use its declared mode`);
+  }
 }
 
-console.log('installer build contract tests passed (write/rename rollback verified)');
+console.log('installer build contract tests passed (lock, recovery, symlink, and mode policies verified)');
