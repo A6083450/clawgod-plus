@@ -4,15 +4,12 @@ import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mk
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { renderTemplate } from '../build.mjs';
 
 const unix = await Bun.file(new URL('../install.sh', import.meta.url)).text();
 const windows = await Bun.file(new URL('../install.ps1', import.meta.url)).text();
 const canonicalModulePath = fileURLToPath(new URL('../src/generic/runtime/plugin-dependencies.mjs', import.meta.url));
-const canonicalHudStatusLine = readFileSync(new URL('../src/generic/runtime/claude-hud-statusline.mjs', import.meta.url), 'utf8');
-const canonicalModule = renderTemplate(readFileSync(canonicalModulePath, 'utf8'), {
-  HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(canonicalHudStatusLine)).slice(1, -1),
-});
+const canonicalHudStatusLinePath = fileURLToPath(new URL('../src/generic/runtime/claude-hud-statusline.mjs', import.meta.url));
+const canonicalHudStatusLine = readFileSync(canonicalHudStatusLinePath, 'utf8');
 
 function records(id, version) {
   return { plugins: { [id]: [{ scope: 'user', version }] } };
@@ -144,7 +141,6 @@ function walkTextFiles(path, values = []) {
   return values;
 }
 
-const unixModule = canonicalModule;
 assert.match(unix, /PLUGIN_DEPENDENCIES_EOF\nchmod 700 "\$CLAWGOD_DIR\/plugin-dependencies\.mjs"/, 'install.sh must write plugin-dependencies.mjs with mode 0700');
 assert.match(windows, /\[System\.IO\.File\]::WriteAllBytes\([^\n]*\$PluginDependenciesBytes\)/, 'install.ps1 must write plugin-dependencies.mjs without text transcoding');
 assert.match(unix, /\$BUN_BIN[^\n]*plugin-dependencies\.mjs" ensure/, 'install.sh must invoke the generated plugin manager');
@@ -255,7 +251,9 @@ try {
       },
     }, null, 2)}\n`);
     const lifecycleModule = join(clawgodDir, 'plugin-dependencies.mjs');
-    writeFileSync(lifecycleModule, unixModule, { mode: 0o700 });
+    copyFileSync(canonicalModulePath, lifecycleModule);
+    chmodSync(lifecycleModule, 0o700);
+    copyFileSync(canonicalHudStatusLinePath, join(clawgodDir, 'claude-hud-statusline.mjs'));
     writeFileSync(join(clawgodDir, 'cli.original.cjs'), 'process.exit(67);\n');
     writeFileSync(join(clawgodDir, 'fetch-file.mjs'), 'process.exit(68);\n');
     return {

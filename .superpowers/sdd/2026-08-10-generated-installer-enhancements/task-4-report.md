@@ -162,3 +162,98 @@ Modified:
 - `patcher-worker-launch.mjs` still reverse-extracts the inline patcher because
   canonical patcher extraction belongs to Task 5. The gate passes unchanged;
   changing it here would either weaken coverage or violate the task boundary.
+
+## Fix Round 1: Direct raw canonical execution
+
+Review base: `a71f61a611d8c20b7c22e4a52f8f03869f5b2711`
+
+### Findings addressed
+
+- `patcher-claude-mem.mjs` no longer resolves the nested renderer token, writes
+  a rendered temporary plugin module, or imports that derivative. Its
+  `rewriteClaudeMemFile` hook/MCP behavior and smoke fixtures execute the raw
+  `src/generic/runtime/plugin-dependencies.mjs` URL directly.
+- `installer-plugin-dependencies.mjs` no longer labels a renderer-resolved
+  string as canonical or copies it into CLI lifecycle fixtures. Each isolated
+  lifecycle fixture copies the raw canonical plugin module and its adjacent raw
+  HUD source byte-for-byte, allowing the raw fallback to resolve relative to
+  `import.meta.url`.
+- Generated PowerShell/Unix byte parity remains centralized in
+  `installer-bun-runtime.mjs`; the behavior suites do not render their own
+  substitute payload.
+
+### Controlled RED
+
+The production fallback was temporarily mutated from URL-relative lookup to a
+realistic cwd-relative lookup:
+
+```js
+readFileSync('src/generic/runtime/claude-hud-statusline.mjs', 'utf8')
+```
+
+Before changing the tests, both old rendered-copy suites incorrectly passed:
+
+```text
+bun tests/patcher-claude-mem.mjs
+claude-mem compatibility checks passed
+
+bun tests/installer-plugin-dependencies.mjs
+installer plugin dependency tests passed
+```
+
+After the direct-raw test change, the same mutation produced the intended RED
+in the isolated CLI lifecycle:
+
+```text
+bun tests/installer-plugin-dependencies.mjs
+AssertionError: claude-hud@claude-hud: warning - ENOENT: no such file or directory,
+open 'src/generic/runtime/claude-hud-statusline.mjs'
+actual: Optional plugins: 2 ready, 1 warning
+expected: Optional plugins: 3 ready, 0 warnings
+```
+
+`patcher-claude-mem.mjs` remained green under that mutation because its direct
+raw behavior surface is rewrite/hook/MCP execution and does not consume the HUD
+fallback. The isolated plugin lifecycle is the non-vacuous fallback detector.
+The mutation was then fully reverted; no product source change remains.
+
+### GREEN and verification
+
+After restoring the URL-relative production fallback:
+
+```text
+bun tests/patcher-claude-mem.mjs
+claude-mem compatibility checks passed
+
+bun tests/installer-plugin-dependencies.mjs
+installer plugin dependency tests passed
+```
+
+The final round gate also runs:
+
+```text
+bun tests/installer-bun-runtime.mjs
+bun build.mjs --check
+git diff --check
+```
+
+All five final Round 1 commands exited `0`.
+
+Final modified-file SHA-256 values before commit:
+
+```text
+6caa862c0fd7908667f8d8352bc2432e4f790150e7dda0337e19b2fc692a53d4  tests/patcher-claude-mem.mjs
+ad6c8b49d391ca5cd6f0d43cb2bbef3c2a8628a20926a9147a10ebbb31471d19  tests/installer-plugin-dependencies.mjs
+```
+
+### Round 1 self-review
+
+- Confirmed neither behavior test imports `renderTemplate`.
+- Confirmed neither behavior test creates or executes a renderer-resolved
+  plugin module.
+- Confirmed the lifecycle copy preserves raw plugin and adjacent HUD bytes.
+- Confirmed the mutation distinguishes the old false-GREEN test from the new
+  direct-raw lifecycle test.
+- Confirmed `src/`, `build.mjs`, templates, and generated installers have no
+  Round 1 diff.
+- Confirmed no installer, network E2E, bare `claude`, or real HOME was used.

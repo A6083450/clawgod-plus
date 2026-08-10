@@ -4,16 +4,11 @@ import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
-import { renderTemplate } from '../build.mjs';
 
 const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
 const canonicalHelper = readFileSync(new URL('../src/generic/runtime/claude-mem-compat.cjs', import.meta.url), 'utf8');
-const canonicalPluginDependencies = renderTemplate(
-  readFileSync(new URL('../src/generic/runtime/plugin-dependencies.mjs', import.meta.url), 'utf8'),
-  { HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(readFileSync(new URL('../src/generic/runtime/claude-hud-statusline.mjs', import.meta.url), 'utf8'))).slice(1, -1) },
-);
+const canonicalPluginDependenciesUrl = new URL('../src/generic/runtime/plugin-dependencies.mjs', import.meta.url);
 const canonicalWrapper = readFileSync(new URL('../src/generic/runtime/wrapper.cjs', import.meta.url), 'utf8');
 assert.match(canonicalHelper, /^#!\/usr\/bin\/env bun\n/, 'claude-mem compatibility helper must run with Bun');
 assert.match(powerShellInstaller, /if \(\$LASTEXITCODE -ne 0\) \{ throw "claude-mem compatibility helper exited \$LASTEXITCODE" \}/, 'Windows uninstall must stop on helper failure');
@@ -392,9 +387,7 @@ for (const [installerName, helper] of [['canonical source', canonicalHelper]]) {
 {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'clawgod-claude-mem-rewrite-'));
   try {
-    const modulePath = join(fixtureRoot, 'plugin-dependencies.mjs');
-    writeFileSync(modulePath, canonicalPluginDependencies, 'utf8');
-    const { rewriteClaudeMemFile } = await import(`${pathToFileURL(modulePath).href}?test=${Date.now()}`);
+    const { rewriteClaudeMemFile } = await import(`${canonicalPluginDependenciesUrl.href}?test=${Date.now()}`);
     assert.equal(typeof rewriteClaudeMemFile, 'function', 'plugin-dependencies.mjs must export rewriteClaudeMemFile');
 
     const hookCommands = [
