@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const installer = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
@@ -57,7 +57,15 @@ const optionalEnd = installer.indexOf('\ninstall_claude_mem_compat_helper', opti
 assert.ok(optionalStart >= 0 && optionalEnd > optionalStart, 'install.sh must retain an extractable plugin health-check stage');
 const lifecycleSpan = installer.slice(0, optionalEnd);
 
-const dir = mkdtempSync(join(tmpdir(), 'clawgod-no-upgrade-'));
+function assertTemporaryPath(path, parent, label) {
+  const resolvedParent = realpathSync(parent);
+  const resolvedPath = realpathSync(path);
+  const child = relative(resolvedParent, resolvedPath);
+  assert.ok(child && child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child), `${label} must stay under its fixture root`);
+}
+
+const dir = mkdtempSync(join(tmpdir(), `clawgod lifecycle "quoted" 'update' `));
+assert.equal(realpathSync(dirname(dir)), realpathSync(tmpdir()), 'lifecycle fixture must be created directly under the system temporary directory');
 try {
   const fakeBin = join(dir, 'bin');
   const fakeBun = join(fakeBin, 'bun');
@@ -65,6 +73,23 @@ try {
   const fakeUname = join(fakeBin, 'uname');
   writeFileSync(fakeUname, '#!/bin/sh\n[ "$1" = "-s" ] && printf "Darwin\\n" || printf "arm64\\n"\n');
   chmodSync(fakeUname, 0o755);
+  for (const [name, target] of [
+    ['awk', '/usr/bin/awk'],
+    ['basename', '/usr/bin/basename'],
+    ['cat', '/bin/cat'],
+    ['chmod', '/bin/chmod'],
+    ['cp', '/bin/cp'],
+    ['dirname', '/usr/bin/dirname'],
+    ['head', '/usr/bin/head'],
+    ['mkdir', '/bin/mkdir'],
+    ['mktemp', '/usr/bin/mktemp'],
+    ['rm', '/bin/rm'],
+    ['sed', '/usr/bin/sed'],
+    ['sort', '/usr/bin/sort'],
+    ['stat', '/usr/bin/stat'],
+    ['touch', '/usr/bin/touch'],
+    ['tr', '/usr/bin/tr'],
+  ]) symlinkSync(target, join(fakeBin, name));
   writeFileSync(fakeBun, `#!${process.execPath}
 import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -90,7 +115,7 @@ if (name === 'install-ripgrep.mjs') {
   const [spec, output] = args;
   const version = spec.slice(spec.lastIndexOf('@') + 1);
   mkdirSync(join(output, 'package'), { recursive: true });
-  writeFileSync(join(output, 'package', 'claude'), new Uint8Array(10_000_001));
+  writeFileSync(join(output, 'package', 'claude'), new Uint8Array((10 * 1024 * 1024) + 1));
   writeFileSync(process.env.CLAUDE_RESOLVER_MARKER, spec + '\\n');
   console.log('VERSION=' + version);
 } else if (name === 'extract-natives.mjs') {
@@ -103,6 +128,8 @@ if (name === 'install-ripgrep.mjs') {
   rmSync(join(root, 'cli.original.js'), { force: true });
 } else if (name === 'patch.mjs') {
   console.log('fixture patch applied');
+  writeFileSync(process.env.PATCH_ARGS_MARKER, JSON.stringify(args) + '\\n');
+  process.exit(Number(process.env.PATCH_EXIT || 0));
 } else if (name === 'cli.cjs' && args[0] === '--version') {
   console.log('2.1.999');
 } else if (name === 'plugin-dependencies.mjs' && args[0] === 'ensure') {
@@ -114,17 +141,30 @@ if (name === 'install-ripgrep.mjs') {
 `, 'utf8');
   chmodSync(fakeBun, 0o755);
 
-  function runLifecycleCase(label, args) {
+  function runLifecycleCase(label, args, options = {}) {
     const root = join(dir, label);
     const home = join(root, 'home');
     const temp = join(root, 'tmp');
     const script = join(root, 'installer-lifecycle.sh');
     const pluginHealth = join(root, 'plugin-health.json');
     const claudeResolver = join(root, 'claude-resolver.txt');
+    const patchArgs = join(root, 'patch-args.json');
+    const configPath = join(home, '.clawgod', 'enhancements.json');
+    const target = join(home, '.clawgod', 'cli.original.cjs');
+    const sourceVersion = join(home, '.clawgod', '.source-version');
+    const savedConfig = '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n';
     mkdirSync(join(home, '.clawgod'), { recursive: true, mode: 0o700 });
     mkdirSync(temp, { recursive: true });
+    assertTemporaryPath(root, dir, `${label} case root`);
+    assertTemporaryPath(home, root, `${label} HOME`);
+    assertTemporaryPath(temp, root, `${label} TMPDIR`);
+    writeFileSync(configPath, savedConfig, { mode: 0o600 });
+    const configBefore = statSync(configPath);
     if (args.includes('--no-upgrade')) {
-      writeFileSync(join(home, '.clawgod', 'cli.original.cjs'), 'existing clean CLI fixture\n');
+      writeFileSync(target, 'existing clean CLI fixture\n');
+    } else if (options.priorRuntime) {
+      writeFileSync(target, options.priorRuntime, 'utf8');
+      writeFileSync(sourceVersion, '2.1.225\n', 'utf8');
     }
     writeFileSync(script, lifecycleSpan, 'utf8');
     chmodSync(script, 0o700);
@@ -134,12 +174,26 @@ if (name === 'install-ripgrep.mjs') {
       env: {
         HOME: home,
         TMPDIR: temp,
-        PATH: `${fakeBin}:/usr/bin:/bin`,
+        PATH: fakeBin,
         PLUGIN_HEALTH_MARKER: pluginHealth,
         CLAUDE_RESOLVER_MARKER: claudeResolver,
+        PATCH_ARGS_MARKER: patchArgs,
+        PATCH_EXIT: String(options.patchExit || 0),
       },
     });
-    return { run, pluginHealth, claudeResolver };
+    const configAfter = statSync(configPath);
+    return {
+      run,
+      pluginHealth,
+      claudeResolver,
+      patchArgs: existsSync(patchArgs) ? JSON.parse(readFileSync(patchArgs, 'utf8')) : null,
+      configPath,
+      configBytes: readFileSync(configPath, 'utf8'),
+      configBefore,
+      configAfter,
+      runtime: existsSync(target) ? readFileSync(target, 'utf8') : null,
+      sourceVersion: existsSync(sourceVersion) ? readFileSync(sourceVersion, 'utf8') : null,
+    };
   }
 
   const lifecycleCases = [
@@ -150,6 +204,11 @@ if (name === 'install-ripgrep.mjs') {
   for (const fixture of lifecycleCases) {
     const result = runLifecycleCase(fixture.label, fixture.args);
     assert.equal(result.run.status, 0, `${fixture.label}: ${result.run.stdout}${result.run.stderr}`);
+    assert.deepEqual(result.patchArgs, ['--enhancements-file', result.configPath], `${fixture.label}: patcher argv must contain the exact saved config path`);
+    assert.equal(result.configBytes, '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n', `${fixture.label}: version flow must preserve saved config bytes`);
+    assert.equal(result.configAfter.mode & 0o7777, result.configBefore.mode & 0o7777, `${fixture.label}: version flow must preserve saved config mode`);
+    assert.equal(result.configAfter.ino, result.configBefore.ino, `${fixture.label}: version flow must preserve saved config identity`);
+    assert.doesNotMatch(`${result.run.stdout}${result.run.stderr}`, /Choice:|Interactive enhancement/, `${fixture.label}: update inheritance must never prompt`);
     assert.equal(existsSync(result.pluginHealth), true, `${fixture.label}: plugin ensure must remain reachable from the real installer entry`);
     assert.deepEqual(JSON.parse(readFileSync(result.pluginHealth, 'utf8')), { args: ['ensure'], clawgodVersion: null }, `${fixture.label}: Claude version selection must not flow into plugin ensure`);
     if (fixture.expectedResolver === null) {
@@ -158,6 +217,17 @@ if (name === 'install-ripgrep.mjs') {
       assert.equal(readFileSync(result.claudeResolver, 'utf8'), `${fixture.expectedResolver}\n`, `${fixture.label}: the real parser must feed only the Claude package resolver`);
     }
   }
+
+  const failed = runLifecycleCase('mandatory-patch-failure', [], {
+    patchExit: 41,
+    priorRuntime: 'prior installed runtime\n',
+  });
+  assert.notEqual(failed.run.status, 0, 'enabled mandatory patch failure must return nonzero');
+  assert.deepEqual(failed.patchArgs, ['--enhancements-file', failed.configPath], 'failed patch must still use the exact saved config path');
+  assert.equal(failed.runtime, 'prior installed runtime\n', 'enabled mandatory patch failure must restore the prior installed runtime');
+  assert.equal(failed.sourceVersion, '2.1.225\n', 'enabled mandatory patch failure must restore the prior source marker');
+  assert.equal(failed.configBytes, '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n', 'failed patch must preserve saved config bytes');
+  assert.equal(failed.configAfter.ino, failed.configBefore.ino, 'failed patch must preserve saved config identity');
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

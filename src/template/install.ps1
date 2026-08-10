@@ -392,6 +392,22 @@ if ($LASTEXITCODE -ne 0) {
 $ripgrepOutput | ForEach-Object { Write-OK "$_" }
 
 # ─── Handle -NoUpgrade (skip download, re-patch only) ────────────────
+New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
+$RuntimeTarget = Join-Path $ClawDir "cli.original.cjs"
+$RuntimeSourceVersion = Join-Path $ClawDir ".source-version"
+$RuntimeRollbackDir = Join-Path $ClawDir (".runtime-rollback." + [Guid]::NewGuid().ToString("N"))
+$RuntimeHadTarget = Test-Path -LiteralPath $RuntimeTarget -PathType Leaf
+$RuntimeHadSourceVersion = Test-Path -LiteralPath $RuntimeSourceVersion -PathType Leaf
+$RuntimeTransactionCommitted = $false
+New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
+if ($RuntimeHadTarget) {
+    Copy-Item -LiteralPath $RuntimeTarget -Destination (Join-Path $RuntimeRollbackDir "cli.original.cjs")
+}
+if ($RuntimeHadSourceVersion) {
+    Copy-Item -LiteralPath $RuntimeSourceVersion -Destination (Join-Path $RuntimeRollbackDir ".source-version")
+}
+
+try {
 if ($NoUpgrade) {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
     New-Item -ItemType Directory -Force -Path $BinDir  | Out-Null
@@ -570,12 +586,28 @@ Write-OK "Patcher created (patch.mjs)"
 # ─── Apply patches ────────────────────────────────────
 
 Write-Dim "Applying patches ..."
-$patchOutput = & $BunBin (Join-Path $ClawDir "patch.mjs") 2>&1
+$patchOutput = & $BunBin (Join-Path $ClawDir "patch.mjs") --enhancements-file (Join-Path $ClawDir "enhancements.json") 2>&1
 $patchStatus = $LASTEXITCODE
 $patchOutput | ForEach-Object { Write-Host "  $_" }
 if ($patchStatus -ne 0) {
     Write-Err "Mandatory patching failed; installation stopped before launcher replacement."
     exit $patchStatus
+}
+$RuntimeTransactionCommitted = $true
+} finally {
+    if (-not $RuntimeTransactionCommitted) {
+        if ($RuntimeHadTarget) {
+            Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir "cli.original.cjs") -Destination $RuntimeTarget -Force
+        } else {
+            Remove-Item -LiteralPath $RuntimeTarget -Force -ErrorAction SilentlyContinue
+        }
+        if ($RuntimeHadSourceVersion) {
+            Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir ".source-version") -Destination $RuntimeSourceVersion -Force
+        } else {
+            Remove-Item -LiteralPath $RuntimeSourceVersion -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 Invoke-ChromePostInstallFix
 

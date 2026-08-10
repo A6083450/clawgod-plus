@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1261,6 +1261,7 @@ BUN_BIN=${JSON.stringify(fakeBun)}
 CLAWGOD_DIR=${JSON.stringify(home)}
 dim() { :; }
 warn() { printf '%s\n' "$*" >&2; }
+commit_runtime_transaction() { :; }
 run_claude_code_chrome_fix() { : > ${JSON.stringify(continued)}; }
 ${unixApplyBlock}
 : > ${JSON.stringify(success)}
@@ -1289,31 +1290,71 @@ const windowsApplyEnd = windows.indexOf('\n# ─── Create default configs', 
 assert.ok(windowsApplyStart >= 0 && windowsApplyEnd > windowsApplyStart, 'install.ps1 must retain the patch application gate');
 const windowsApplyBlock = windows.slice(windowsApplyStart, windowsApplyEnd);
 assert.match(windowsApplyBlock, /\$patchOutput\s*=\s*&\s*\$BunBin/, 'install.ps1 must capture patch output');
+assert.match(
+  windowsApplyBlock,
+  /\(Join-Path \$ClawDir "patch\.mjs"\)\s+--enhancements-file\s+\(Join-Path \$ClawDir "enhancements\.json"\)/,
+  'install.ps1 must pass the exact saved enhancement config path to patch.mjs',
+);
 assert.match(windowsApplyBlock, /\$patchStatus\s*=\s*\$LASTEXITCODE/, 'install.ps1 must preserve patch.mjs native exit status');
 assert.match(windowsApplyBlock, /if\s*\(\$patchStatus\s*-ne\s*0\)/, 'install.ps1 must stop on patch.mjs failure');
 assert.ok(windowsApplyBlock.indexOf('$patchStatus -ne 0') < windowsApplyBlock.indexOf('Invoke-ChromePostInstallFix'), 'install.ps1 must check patch status before Chrome/post-processing continuation');
 
-const repatchRoot = mkdtempSync(join(tmpdir(), 'clawgod repatch gate '));
+const repatchRoot = mkdtempSync(join(tmpdir(), `clawgod repatch "quoted" 'gate' `));
 assert.equal(realpathSync(dirname(repatchRoot)), realpathSync(tmpdir()), 'repatch fixture must be created directly under the system temporary directory');
 try {
+  const installedRoot = realpathSync(repatchRoot);
   const native = join(repatchRoot, '2.1.226');
   const repatch = join(repatchRoot, 'repatch.mjs');
+  const fixtureHome = join(repatchRoot, 'home');
+  const fixtureBin = join(repatchRoot, 'bin');
+  const target = join(repatchRoot, 'cli.original.cjs');
+  const sourceVersion = join(repatchRoot, '.source-version');
+  const enhancementsFile = join(installedRoot, 'enhancements.json');
+  const patchArgs = join(repatchRoot, 'patch-args.json');
+  const savedConfig = '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents"\n  ]\n}\n';
+  const priorRuntime = 'prior installed runtime\n';
+  const candidateRuntime = 'candidate runtime\n';
+  mkdirSync(fixtureHome);
+  mkdirSync(fixtureBin);
+  assertTemporaryPath(fixtureHome, 'repatch HOME');
+  assertTemporaryPath(fixtureBin, 'repatch PATH');
   writeFileSync(native, 'fixture native', 'utf8');
   writeFileSync(repatch, canonicalRuntime['repatcher.mjs'], 'utf8');
   writeFileSync(join(repatchRoot, 'extract-natives.mjs'), 'process.exit(0);\n', 'utf8');
-  writeFileSync(join(repatchRoot, 'post-process.mjs'), 'process.exit(0);\n', 'utf8');
-  writeFileSync(join(repatchRoot, 'patch.mjs'), 'process.exit(Number(process.env.PATCH_EXIT||0));\n', 'utf8');
+  writeFileSync(join(repatchRoot, 'post-process.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(target)}, ${JSON.stringify(candidateRuntime)}, 'utf8');\n`, 'utf8');
+  writeFileSync(join(repatchRoot, 'patch.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.PATCH_ARGS, JSON.stringify(process.argv.slice(2)), 'utf8');\nprocess.exit(Number(process.env.PATCH_EXIT||0));\n`, 'utf8');
+  writeFileSync(target, priorRuntime, 'utf8');
+  writeFileSync(sourceVersion, '2.1.225\n', 'utf8');
+  writeFileSync(enhancementsFile, savedConfig, { mode: 0o600 });
+  const configBefore = statSync(enhancementsFile);
   const runRepatch = patchExit => spawnSync(process.execPath, [repatch, native], {
     cwd: repatchRoot,
     encoding: 'utf8',
-    env: { HOME: repatchRoot, PATH: repatchRoot, PATCH_EXIT: String(patchExit) },
+    env: {
+      HOME: fixtureHome,
+      PATH: fixtureBin,
+      TMPDIR: repatchRoot,
+      BUN_INSTALL_CACHE_DIR: join(repatchRoot, 'bun-install-cache'),
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(repatchRoot, 'bun-transpiler-cache'),
+      XDG_CACHE_HOME: join(repatchRoot, 'xdg-cache'),
+      PATCH_ARGS: patchArgs,
+      PATCH_EXIT: String(patchExit),
+    },
   });
   const failed = runRepatch(41);
   assert.notEqual(failed.status, 0, 'repatch.mjs must propagate a mandatory patch failure');
-  assert.equal(existsSync(join(repatchRoot, '.source-version')), false, 'repatch.mjs must not record success after a mandatory patch failure');
+  assert.deepEqual(JSON.parse(readFileSync(patchArgs, 'utf8')), ['--enhancements-file', enhancementsFile], 'repatch.mjs must pass the exact saved config path as argv');
+  assert.equal(readFileSync(target, 'utf8'), priorRuntime, 'repatch.mjs must restore the prior runtime after mandatory patch failure');
+  assert.equal(readFileSync(sourceVersion, 'utf8'), '2.1.225\n', 'repatch.mjs must preserve the prior source marker after mandatory patch failure');
   const passed = runRepatch(0);
   assert.equal(passed.status, 0, passed.stderr);
-  assert.equal(readFileSync(join(repatchRoot, '.source-version'), 'utf8'), '2.1.226\n', 'repatch.mjs must retain its success marker after a zero-failure patch');
+  assert.deepEqual(JSON.parse(readFileSync(patchArgs, 'utf8')), ['--enhancements-file', enhancementsFile], 'successful repatch must use the same exact config argv');
+  assert.equal(readFileSync(target, 'utf8'), candidateRuntime, 'successful repatch must retain the candidate runtime');
+  assert.equal(readFileSync(sourceVersion, 'utf8'), '2.1.226\n', 'repatch.mjs must retain its success marker after a zero-failure patch');
+  const configAfter = statSync(enhancementsFile);
+  assert.equal(readFileSync(enhancementsFile, 'utf8'), savedConfig, 'repatch must not alter saved config bytes');
+  assert.equal(configAfter.mode & 0o7777, configBefore.mode & 0o7777, 'repatch must not alter saved config mode');
+  assert.equal(configAfter.ino, configBefore.ino, 'repatch must not replace saved config identity');
 } finally {
   rmSync(repatchRoot, { recursive: true, force: true });
 }

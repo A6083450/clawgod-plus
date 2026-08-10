@@ -1,4 +1,5 @@
-import enhancementManifest from '../enhancements.json' with { type: 'json' };
+import enhancementManifestSource from '../enhancements.json' with { type: 'text' };
+import { loadEnhancementManifest } from '../enhancement-config.mjs';
 import { coreRegistry } from './core.mjs';
 import { createAgentsRegistry } from './enhancements/agents.mjs';
 import { autoModeRegistry } from './enhancements/auto-mode.mjs';
@@ -11,6 +12,8 @@ import { privacyRegistry } from './enhancements/privacy.mjs';
 import { unrestrictedToolsRegistry } from './enhancements/unrestricted-tools.mjs';
 import { voiceRegistry } from './enhancements/voice.mjs';
 
+export const enhancementManifest = loadEnhancementManifest(enhancementManifestSource, { filename: 'enhancements.json' });
+
 const patchIds = enhancementManifest
   .filter(entry => entry.kind === 'patch')
   .map(entry => entry.id);
@@ -18,7 +21,6 @@ const patchIds = enhancementManifest
 const registryById = new Map([
   [chromeRegistry.id, chromeRegistry],
   [computerUseRegistry.id, computerUseRegistry],
-  ['agents', createAgentsRegistry({ chromeEnabled: patchIds.includes('chrome') })],
   [planningRegistry.id, planningRegistry],
   [voiceRegistry.id, voiceRegistry],
   [autoModeRegistry.id, autoModeRegistry],
@@ -28,11 +30,14 @@ const registryById = new Map([
   [brandingRegistry.id, brandingRegistry],
 ]);
 
-export const enhancementRegistries = Object.freeze(patchIds.map((id) => {
+function enhancementRegistry(id, enabledIds) {
+  if (id === 'agents') return createAgentsRegistry({ chromeEnabled: enabledIds.has('chrome') });
   const registry = registryById.get(id);
   if (!registry) throw new Error(`Missing patch registry for enhancement: ${id}`);
   return registry;
-}));
+}
+
+export const enhancementRegistries = Object.freeze(patchIds.map(id => enhancementRegistry(id, new Set(patchIds))));
 
 export const patchRegistries = Object.freeze([coreRegistry, ...enhancementRegistries]);
 
@@ -62,3 +67,26 @@ function orderedDescriptors(type) {
 
 export const patches = orderedDescriptors('regex');
 export const customPatches = orderedDescriptors('custom');
+
+function orderedRegistryDescriptors(registry, type) {
+  const descriptors = type === 'regex' ? registry.patches : registry.customPatches;
+  return [...descriptors].sort((left, right) => left.order - right.order);
+}
+
+export function createPatchSelection(enabled) {
+  if (!Array.isArray(enabled)) throw new TypeError('Enabled enhancements must be an array');
+  const enabledIds = new Set(enabled);
+  if (enabledIds.size !== enabled.length) throw new Error('Enabled enhancements must not contain duplicates');
+  for (const id of enabledIds) {
+    if (!enhancementManifest.some(entry => entry.id === id)) throw new Error(`Unknown enabled enhancement: ${id}`);
+  }
+
+  const selectedRegistries = patchIds
+    .filter(id => enabledIds.has(id))
+    .map(id => enhancementRegistry(id, enabledIds));
+  const registries = [coreRegistry, ...selectedRegistries];
+  return Object.freeze({
+    patches: Object.freeze(registries.flatMap(registry => orderedRegistryDescriptors(registry, 'regex'))),
+    customPatches: Object.freeze(registries.flatMap(registry => orderedRegistryDescriptors(registry, 'custom'))),
+  });
+}

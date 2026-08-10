@@ -9,6 +9,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -35,6 +36,12 @@ function patchUpdateBranch(label, patcher) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'clawgod update patch '));
   assertTemporaryPath(fixtureRoot, tmpdir(), `${label} patch fixture`);
   try {
+    const fixtureBin = join(fixtureRoot, 'fixture-only-bin');
+    const fixtureHome = join(fixtureRoot, 'home');
+    mkdirSync(fixtureBin);
+    mkdirSync(fixtureHome);
+    assertTemporaryPath(fixtureBin, fixtureRoot, `${label} patch PATH`);
+    assertTemporaryPath(fixtureHome, fixtureRoot, `${label} patch HOME`);
     writeFileSync(join(fixtureRoot, 'patch.mjs'), patcher, 'utf8');
     writeFileSync(
       join(fixtureRoot, 'no-fetch.cjs'),
@@ -45,7 +52,7 @@ function patchUpdateBranch(label, patcher) {
     const run = spawnSync(process.execPath, [join(fixtureRoot, 'no-fetch.cjs'), './patch.mjs'], {
       cwd: fixtureRoot,
       encoding: 'utf8',
-      env: { HOME: fixtureRoot, PATH: dirname(process.execPath), TMPDIR: fixtureRoot },
+      env: { HOME: fixtureHome, PATH: fixtureBin, TMPDIR: fixtureRoot },
     });
     assert.equal(run.status, 0, `${label} update fixture must patch cleanly: ${run.stdout}${run.stderr}`);
     return readFileSync(join(fixtureRoot, 'cli.original.cjs'), 'utf8');
@@ -72,11 +79,15 @@ function runUpdateCase(label, code, options = {}) {
   for (const path of [home, clawgod, bin, updateTmp]) assertTemporaryPath(path, fixtureRoot, `${label} ${basename(path)}`);
 
   const target = join(clawgod, 'cli.original.cjs');
+  const enhancementsFile = join(clawgod, 'enhancements.json');
+  const savedConfig = '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n';
   const fetchCapture = join(fixtureRoot, 'fetch.json');
   const runCapture = join(fixtureRoot, 'run.json');
   const installerFixture = join(fixtureRoot, options.windows ? 'remote installer.ps1' : 'remote installer.sh');
   writeFileSync(installerFixture, 'fixture installer', 'utf8');
   writeFileSync(target, options.windows ? code.replace("const _w=process.platform==='win32';", 'const _w=true;') : code, 'utf8');
+  writeFileSync(enhancementsFile, savedConfig, { mode: 0o600 });
+  const configBefore = statSync(enhancementsFile);
 
   makeExecutable(join(clawgod, 'fetch-file.mjs'), `
 import { copyFileSync } from 'node:fs';
@@ -126,6 +137,10 @@ process.exit(Number(process.env.RUN_EXIT||0));
     assert.doesNotMatch(`${run.stdout}${run.stderr}`, /forbidden downloader invoked/, `${label} must never execute a forbidden downloader`);
     const leftovers = readdirSync(updateTmp).filter(name => name.startsWith('clawgod-update-'));
     assert.deepEqual(leftovers, [], `${label} must clean its private update directory in finally`);
+    const configAfter = statSync(enhancementsFile);
+    assert.equal(readFileSync(enhancementsFile, 'utf8'), savedConfig, `${label} must preserve saved enhancement config bytes`);
+    assert.equal(configAfter.mode & 0o7777, configBefore.mode & 0o7777, `${label} must preserve saved enhancement config mode`);
+    assert.equal(configAfter.ino, configBefore.ino, `${label} must preserve saved enhancement config identity`);
     return {
       fixtureRoot,
       clawgod,

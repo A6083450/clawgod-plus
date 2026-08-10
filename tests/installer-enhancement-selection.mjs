@@ -374,14 +374,19 @@ function cleanup(result) {
   const fixture = createUnixFixture('clawgod-selection-saved-');
   try {
     const clawgod = join(fixture.home, '.clawgod');
+    const configPath = join(clawgod, 'enhancements.json');
     mkdirSync(clawgod, { mode: 0o700 });
-    writeFileSync(join(clawgod, 'enhancements.json'), chromeBrandingConfig, { mode: 0o600 });
+    writeFileSync(configPath, chromeBrandingConfig, { mode: 0o600 });
+    const before = statSync(configPath);
     const rerun = spawnSync('/bin/bash', [fixture.script], {
       encoding: 'utf8',
       env: selectionEnvironment(fixture),
     });
     assert.equal(rerun.status, 0, rerun.stderr);
     assertOnlyConfig(fixture.home, chromeBrandingConfig);
+    const after = statSync(configPath);
+    assert.equal(after.mode & 0o7777, before.mode & 0o7777, 'saved selection must preserve config mode');
+    assert.equal(after.ino, before.ino, 'saved selection must preserve config identity');
   } finally {
     rmSync(fixture.fixtureRoot, { recursive: true, force: true });
   }

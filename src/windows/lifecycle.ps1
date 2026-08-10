@@ -121,6 +121,10 @@ const [modulePath, manifestPath, homeDir, explicit] = process.argv.slice(1);
 const engine = await import(pathToFileURL(modulePath).href);
 const manifest = engine.loadEnhancementManifest(await readFile(manifestPath), { filename: "enhancements.json" });
 const stored = await engine.readEnhancementConfig({ homeDir, manifest });
+if (explicit === "__CLAWGOD_SAVED__" && stored !== null) {
+  engine.resolveEnhancementSelection({ stored }, manifest);
+  process.exit(0);
+}
 const selection = explicit === "__CLAWGOD_SAVED__"
   ? engine.resolveEnhancementSelection({ stored }, manifest)
   : engine.resolveEnhancementSelection({ explicit }, manifest);

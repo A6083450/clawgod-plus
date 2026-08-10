@@ -301,6 +301,46 @@ run_claude_code_chrome_fix() {
 # ─── Handle --no-upgrade (skip download, re-patch only) ──────────────
 mkdir -p "$CLAWGOD_DIR" "$BIN_DIR"
 
+RUNTIME_TRANSACTION_DIR=""
+RUNTIME_TRANSACTION_ACTIVE=0
+RUNTIME_HAD_TARGET=0
+RUNTIME_HAD_SOURCE_VERSION=0
+
+rollback_runtime_transaction() {
+  [ "$RUNTIME_TRANSACTION_ACTIVE" = "1" ] || return 0
+  if [ "$RUNTIME_HAD_TARGET" = "1" ]; then
+    cp -p "$RUNTIME_TRANSACTION_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs" 2>/dev/null || true
+  else
+    rm -f "$CLAWGOD_DIR/cli.original.cjs" 2>/dev/null || true
+  fi
+  if [ "$RUNTIME_HAD_SOURCE_VERSION" = "1" ]; then
+    cp -p "$RUNTIME_TRANSACTION_DIR/.source-version" "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
+  else
+    rm -f "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
+  fi
+  RUNTIME_TRANSACTION_ACTIVE=0
+  rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
+}
+
+commit_runtime_transaction() {
+  RUNTIME_TRANSACTION_ACTIVE=0
+  rm -rf "$RUNTIME_TRANSACTION_DIR"
+  trap - EXIT
+}
+
+RUNTIME_TRANSACTION_DIR=$(mktemp -d "$CLAWGOD_DIR/.runtime-rollback.XXXXXX")
+chmod 700 "$RUNTIME_TRANSACTION_DIR"
+if [ -f "$CLAWGOD_DIR/cli.original.cjs" ]; then
+  cp -p "$CLAWGOD_DIR/cli.original.cjs" "$RUNTIME_TRANSACTION_DIR/cli.original.cjs"
+  RUNTIME_HAD_TARGET=1
+fi
+if [ -f "$CLAWGOD_DIR/.source-version" ]; then
+  cp -p "$CLAWGOD_DIR/.source-version" "$RUNTIME_TRANSACTION_DIR/.source-version"
+  RUNTIME_HAD_SOURCE_VERSION=1
+fi
+RUNTIME_TRANSACTION_ACTIVE=1
+trap 'rollback_runtime_transaction' EXIT
+
 if [ "$NO_UPGRADE" = "1" ]; then
   if [ ! -f "$CLAWGOD_DIR/cli.original.cjs" ]; then
     warn "--no-upgrade requires an existing installation."
@@ -515,12 +555,13 @@ info "Patcher created (patch.mjs)"
 
 dim "Applying patches ..."
 patch_status=0
-patch_output=$("$BUN_BIN" "$CLAWGOD_DIR/patch.mjs" 2>&1) || patch_status=$?
+patch_output=$("$BUN_BIN" "$CLAWGOD_DIR/patch.mjs" --enhancements-file "$CLAWGOD_DIR/enhancements.json" 2>&1) || patch_status=$?
 while IFS= read -r line; do echo "  $line"; done <<< "$patch_output"
 if [ "$patch_status" -ne 0 ]; then
   err "Mandatory patching failed; installation stopped before launcher replacement."
   exit "$patch_status"
 fi
+commit_runtime_transaction
 run_claude_code_chrome_fix
 
 # ─── Create default configs ───────────────────────────

@@ -3,7 +3,7 @@
 // native Claude binary. Invoked by cli.cjs when it detects that
 // .source-version no longer matches the latest binary in versions/.
 import { spawnSync } from 'child_process';
-import { writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'fs';
+import { chmodSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -15,31 +15,57 @@ if (!nativeBin || !existsSync(nativeBin)) {
   process.exit(1);
 }
 
-const vendorDir = join(here, 'vendor');
-if (existsSync(vendorDir)) {
-  for (const entry of readdirSync(vendorDir)) {
-    if (entry !== 'ripgrep') rmSync(join(vendorDir, entry), { recursive: true, force: true });
-  }
-}
-rmSync(join(here, 'cli.original.js'), { force: true });
-
 const runtime = process.execPath;
 
 function run(label, args) {
   const r = spawnSync(runtime, args, { cwd: here, stdio: 'inherit' });
   if (r.status !== 0) {
-    console.error(`repatch: ${label} failed (exit ${r.status})`);
-    process.exit(1);
+    throw new Error(`repatch: ${label} failed (exit ${r.status})`);
   }
+}
+
+function snapshotFile(path) {
+  if (!existsSync(path)) return null;
+  const status = statSync(path);
+  return { bytes: readFileSync(path), mode: status.mode & 0o7777 };
+}
+
+function restoreFile(path, snapshot) {
+  if (snapshot === null) {
+    rmSync(path, { force: true });
+    return;
+  }
+  writeFileSync(path, snapshot.bytes);
+  chmodSync(path, snapshot.mode);
 }
 
 const extractor = join(here, 'extract-natives.mjs');
 const postProc = join(here, 'post-process.mjs');
 const patcher = join(here, 'patch.mjs');
+const target = join(here, 'cli.original.cjs');
+const sourceVersion = join(here, '.source-version');
+const enhancementsFile = join(here, 'enhancements.json');
+const targetSnapshot = snapshotFile(target);
+const sourceVersionSnapshot = snapshotFile(sourceVersion);
 
-run('extract', [extractor, nativeBin, here]);
-run('post-process', [postProc]);
-run('patcher', [patcher]);
+try {
+  const vendorDir = join(here, 'vendor');
+  if (existsSync(vendorDir)) {
+    for (const entry of readdirSync(vendorDir)) {
+      if (entry !== 'ripgrep') rmSync(join(vendorDir, entry), { recursive: true, force: true });
+    }
+  }
+  rmSync(join(here, 'cli.original.js'), { force: true });
 
-writeFileSync(join(here, '.source-version'), basename(nativeBin) + '\n');
-console.log(`[clawgod] re-patched to ${basename(nativeBin)}`);
+  run('extract', [extractor, nativeBin, here]);
+  run('post-process', [postProc]);
+  run('patcher', [patcher, '--enhancements-file', enhancementsFile]);
+
+  writeFileSync(sourceVersion, basename(nativeBin) + '\n');
+  console.log(`[clawgod] re-patched to ${basename(nativeBin)}`);
+} catch (error) {
+  restoreFile(target, targetSnapshot);
+  restoreFile(sourceVersion, sourceVersionSnapshot);
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}

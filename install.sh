@@ -233,6 +233,10 @@ const [modulePath, manifestPath, homeDir, explicit] = process.argv.slice(1);
 const engine = await import(pathToFileURL(modulePath).href);
 const manifest = engine.loadEnhancementManifest(await readFile(manifestPath), { filename: "enhancements.json" });
 const stored = await engine.readEnhancementConfig({ homeDir, manifest });
+if (explicit === "__CLAWGOD_SAVED__" && stored !== null) {
+  engine.resolveEnhancementSelection({ stored }, manifest);
+  process.exit(0);
+}
 const selection = explicit === "__CLAWGOD_SAVED__"
   ? engine.resolveEnhancementSelection({ stored }, manifest)
   : engine.resolveEnhancementSelection({ explicit }, manifest);
@@ -1313,7 +1317,20 @@ async function observeOrphanLockStaleEvidence(fileSystem, directoryPath, platfor
     const evidencePaths = [root];
     const status = await lstatIfPresent(fileSystem, root);
     if (status && configDirectoryStatusIsSafe(status, platform)) {
-      for (const entry of await fileSystem.readdir(root)) {
+      let entries;
+      try {
+        entries = await fileSystem.readdir(root);
+      } catch (error) {
+        if (error?.code === 'ENOENT') continue;
+        throw error;
+      }
+      const current = await lstatIfPresent(fileSystem, root);
+      if (!current) continue;
+      if (!sameIdentity(fileIdentity(current), fileIdentity(status))
+        || !configDirectoryStatusIsSafe(current, platform)) {
+        throw new Error('Enhancement config stale lock evidence changed during observation');
+      }
+      for (const entry of entries) {
         evidencePaths.push(join(root, entry));
       }
     }
@@ -5049,6 +5066,46 @@ run_claude_code_chrome_fix() {
 # ─── Handle --no-upgrade (skip download, re-patch only) ──────────────
 mkdir -p "$CLAWGOD_DIR" "$BIN_DIR"
 
+RUNTIME_TRANSACTION_DIR=""
+RUNTIME_TRANSACTION_ACTIVE=0
+RUNTIME_HAD_TARGET=0
+RUNTIME_HAD_SOURCE_VERSION=0
+
+rollback_runtime_transaction() {
+  [ "$RUNTIME_TRANSACTION_ACTIVE" = "1" ] || return 0
+  if [ "$RUNTIME_HAD_TARGET" = "1" ]; then
+    cp -p "$RUNTIME_TRANSACTION_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs" 2>/dev/null || true
+  else
+    rm -f "$CLAWGOD_DIR/cli.original.cjs" 2>/dev/null || true
+  fi
+  if [ "$RUNTIME_HAD_SOURCE_VERSION" = "1" ]; then
+    cp -p "$RUNTIME_TRANSACTION_DIR/.source-version" "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
+  else
+    rm -f "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
+  fi
+  RUNTIME_TRANSACTION_ACTIVE=0
+  rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
+}
+
+commit_runtime_transaction() {
+  RUNTIME_TRANSACTION_ACTIVE=0
+  rm -rf "$RUNTIME_TRANSACTION_DIR"
+  trap - EXIT
+}
+
+RUNTIME_TRANSACTION_DIR=$(mktemp -d "$CLAWGOD_DIR/.runtime-rollback.XXXXXX")
+chmod 700 "$RUNTIME_TRANSACTION_DIR"
+if [ -f "$CLAWGOD_DIR/cli.original.cjs" ]; then
+  cp -p "$CLAWGOD_DIR/cli.original.cjs" "$RUNTIME_TRANSACTION_DIR/cli.original.cjs"
+  RUNTIME_HAD_TARGET=1
+fi
+if [ -f "$CLAWGOD_DIR/.source-version" ]; then
+  cp -p "$CLAWGOD_DIR/.source-version" "$RUNTIME_TRANSACTION_DIR/.source-version"
+  RUNTIME_HAD_SOURCE_VERSION=1
+fi
+RUNTIME_TRANSACTION_ACTIVE=1
+trap 'rollback_runtime_transaction' EXIT
+
 if [ "$NO_UPGRADE" = "1" ]; then
   if [ ! -f "$CLAWGOD_DIR/cli.original.cjs" ]; then
     warn "--no-upgrade requires an existing installation."
@@ -5812,7 +5869,7 @@ cat > "$CLAWGOD_DIR/repatch.mjs" << 'REPATCH_EOF'
 // native Claude binary. Invoked by cli.cjs when it detects that
 // .source-version no longer matches the latest binary in versions/.
 import { spawnSync } from 'child_process';
-import { writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'fs';
+import { chmodSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -5824,34 +5881,60 @@ if (!nativeBin || !existsSync(nativeBin)) {
   process.exit(1);
 }
 
-const vendorDir = join(here, 'vendor');
-if (existsSync(vendorDir)) {
-  for (const entry of readdirSync(vendorDir)) {
-    if (entry !== 'ripgrep') rmSync(join(vendorDir, entry), { recursive: true, force: true });
-  }
-}
-rmSync(join(here, 'cli.original.js'), { force: true });
-
 const runtime = process.execPath;
 
 function run(label, args) {
   const r = spawnSync(runtime, args, { cwd: here, stdio: 'inherit' });
   if (r.status !== 0) {
-    console.error(`repatch: ${label} failed (exit ${r.status})`);
-    process.exit(1);
+    throw new Error(`repatch: ${label} failed (exit ${r.status})`);
   }
+}
+
+function snapshotFile(path) {
+  if (!existsSync(path)) return null;
+  const status = statSync(path);
+  return { bytes: readFileSync(path), mode: status.mode & 0o7777 };
+}
+
+function restoreFile(path, snapshot) {
+  if (snapshot === null) {
+    rmSync(path, { force: true });
+    return;
+  }
+  writeFileSync(path, snapshot.bytes);
+  chmodSync(path, snapshot.mode);
 }
 
 const extractor = join(here, 'extract-natives.mjs');
 const postProc = join(here, 'post-process.mjs');
 const patcher = join(here, 'patch.mjs');
+const target = join(here, 'cli.original.cjs');
+const sourceVersion = join(here, '.source-version');
+const enhancementsFile = join(here, 'enhancements.json');
+const targetSnapshot = snapshotFile(target);
+const sourceVersionSnapshot = snapshotFile(sourceVersion);
 
-run('extract', [extractor, nativeBin, here]);
-run('post-process', [postProc]);
-run('patcher', [patcher]);
+try {
+  const vendorDir = join(here, 'vendor');
+  if (existsSync(vendorDir)) {
+    for (const entry of readdirSync(vendorDir)) {
+      if (entry !== 'ripgrep') rmSync(join(vendorDir, entry), { recursive: true, force: true });
+    }
+  }
+  rmSync(join(here, 'cli.original.js'), { force: true });
 
-writeFileSync(join(here, '.source-version'), basename(nativeBin) + '\n');
-console.log(`[clawgod] re-patched to ${basename(nativeBin)}`);
+  run('extract', [extractor, nativeBin, here]);
+  run('post-process', [postProc]);
+  run('patcher', [patcher, '--enhancements-file', enhancementsFile]);
+
+  writeFileSync(sourceVersion, basename(nativeBin) + '\n');
+  console.log(`[clawgod] re-patched to ${basename(nativeBin)}`);
+} catch (error) {
+  restoreFile(target, targetSnapshot);
+  restoreFile(sourceVersion, sourceVersionSnapshot);
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}
 REPATCH_EOF
 chmod +x "$CLAWGOD_DIR/repatch.mjs"
 info "Re-patch helper installed (repatch.mjs)"
@@ -6436,20 +6519,847 @@ cat > "$CLAWGOD_DIR/patch.mjs" << 'PATCHER_EOF'
 
 // src/generic/patcher/entry.mjs
 import { copyFileSync, existsSync as existsSync2, readFileSync, writeFileSync as writeFileSync2 } from "fs";
-import { dirname as dirname2, join as join2 } from "path";
+import { dirname as dirname3, isAbsolute as isAbsolute2, join as join3 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
+
+// src/generic/enhancement-config.mjs
+import { randomUUID } from "crypto";
+import * as defaultFileSystem from "fs/promises";
+import { basename, dirname, isAbsolute, join } from "path";
+var ENHANCEMENT_CONFIG_DIRECTORY = ".clawgod";
+var ENHANCEMENT_CONFIG_FILENAME = "enhancements.json";
+var ENHANCEMENT_CONFIG_DIRECTORY_MODE = 448;
+var ENHANCEMENT_CONFIG_FILE_MODE = 384;
+var ENHANCEMENT_CONFIG_SCHEMA_VERSION = 1;
+var SAFE_JSON_FILENAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.json$/;
+var SAFE_ENHANCEMENT_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+var MAX_CONFIG_BYTES = 64 * 1024;
+var DEFAULT_LOCK_WAIT_MS = 5000;
+var LOCK_POLL_MS = 10;
+var LOCK_OWNER_PATTERN = /^([1-9][0-9]*):([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\n$/;
+var textDecoder = new TextDecoder("utf-8", { fatal: true });
+function canonicalJson(value) {
+  return `${JSON.stringify(value, null, 2)}
+`;
+}
+function canonicalManifestJson(entries) {
+  return `[
+${entries.map((entry) => `  { "id": ${JSON.stringify(entry.id)}, "kind": ${JSON.stringify(entry.kind)} }`).join(`,
+`)}
+]
+`;
+}
+function decodeSource(source, label) {
+  if (typeof source === "string")
+    return source;
+  if (source instanceof Uint8Array) {
+    try {
+      return textDecoder.decode(source);
+    } catch {
+      throw new Error(`Invalid ${label} UTF-8`);
+    }
+  }
+  throw new TypeError(`${label} source must be a string or Uint8Array`);
+}
+function isPlainRecord(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+function assertExactKeys(value, expected, label) {
+  if (!isPlainRecord(value))
+    throw new TypeError(`${label} must be an object`);
+  const actual = Object.keys(value);
+  const unknown = actual.filter((key) => !expected.includes(key));
+  if (unknown.length > 0)
+    throw new Error(`${label} has unknown key: ${unknown[0]}`);
+  const missing = expected.filter((key) => !actual.includes(key));
+  if (missing.length > 0)
+    throw new Error(`${label} is missing required key: ${missing[0]}`);
+}
+function assertSafeFilename(filename, label) {
+  if (typeof filename !== "string" || !SAFE_JSON_FILENAME.test(filename)) {
+    throw new Error(`Unsafe ${label} filename`);
+  }
+}
+function assertSafeEnhancementId(id) {
+  if (typeof id !== "string")
+    throw new TypeError("Enhancement ID must be a string");
+  if (!SAFE_ENHANCEMENT_ID.test(id))
+    throw new Error(`Unsafe enhancement ID: ${id}`);
+}
+function manifestIds(manifest) {
+  if (!Array.isArray(manifest) || manifest.length === 0)
+    throw new TypeError("Enhancement manifest must be a non-empty array");
+  const ids = [];
+  const seen = new Set;
+  for (const entry of manifest) {
+    if (!isPlainRecord(entry))
+      throw new TypeError("Enhancement manifest entry must be an object");
+    assertSafeEnhancementId(entry.id);
+    if (seen.has(entry.id))
+      throw new Error(`Duplicate enhancement ID: ${entry.id}`);
+    seen.add(entry.id);
+    ids.push(entry.id);
+  }
+  return ids;
+}
+function loadEnhancementManifest(source, { filename = ENHANCEMENT_CONFIG_FILENAME } = {}) {
+  assertSafeFilename(filename, "manifest");
+  const text = decodeSource(source, "enhancement manifest");
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error(`Invalid enhancement manifest JSON: ${filename}`);
+  }
+  if (!Array.isArray(value))
+    throw new TypeError("Enhancement manifest must be an array");
+  if (value.length === 0)
+    throw new Error("Enhancement manifest must not be empty");
+  const normalized = [];
+  const seen = new Set;
+  for (const entry of value) {
+    assertExactKeys(entry, ["id", "kind"], "Enhancement manifest entry");
+    assertSafeEnhancementId(entry.id);
+    if (seen.has(entry.id))
+      throw new Error(`Duplicate enhancement ID: ${entry.id}`);
+    seen.add(entry.id);
+    if (entry.kind !== "patch" && entry.kind !== "plugin") {
+      throw new Error(`Invalid enhancement kind for ${entry.id}`);
+    }
+    normalized.push({ id: entry.id, kind: entry.kind });
+  }
+  if (text !== canonicalManifestJson(normalized))
+    throw new Error(`Non-canonical enhancement manifest JSON: ${filename}`);
+  return Object.freeze(normalized.map((entry) => Object.freeze(entry)));
+}
+function normalizeEnhancementSelection(enabled, manifest) {
+  const ids = manifestIds(manifest);
+  if (!Array.isArray(enabled))
+    throw new TypeError("Enhancement selection must be an array");
+  const selected = new Set;
+  for (const id of enabled) {
+    assertSafeEnhancementId(id);
+    if (selected.has(id))
+      throw new Error(`Duplicate enhancement ID: ${id}`);
+    if (!ids.includes(id))
+      throw new Error(`Unknown enhancement ID: ${id}`);
+    selected.add(id);
+  }
+  return ids.filter((id) => selected.has(id));
+}
+function validateStoredEnhancementConfig(value, manifest) {
+  assertExactKeys(value, ["schemaVersion", "mode", "enabled"], "Enhancement config");
+  if (value.schemaVersion !== ENHANCEMENT_CONFIG_SCHEMA_VERSION) {
+    throw new Error(`Unsupported enhancement config schemaVersion: ${String(value.schemaVersion)}`);
+  }
+  if (value.mode !== "all" && value.mode !== "custom") {
+    throw new Error(`Invalid enhancement config mode: ${String(value.mode)}`);
+  }
+  const enabled = normalizeEnhancementSelection(value.enabled, manifest);
+  if (value.mode === "all" && enabled.length !== 0) {
+    throw new Error("Enhancement config mode all requires an empty enabled array");
+  }
+  if (value.mode === "custom" && enabled.length === manifest.length) {
+    throw new Error("A complete enhancement selection must use mode all");
+  }
+  return {
+    schemaVersion: ENHANCEMENT_CONFIG_SCHEMA_VERSION,
+    mode: value.mode,
+    enabled
+  };
+}
+function parseStoredEnhancementConfig(source, manifest) {
+  const text = decodeSource(source, "enhancement config");
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("Invalid enhancement config JSON");
+  }
+  const config = validateStoredEnhancementConfig(value, manifest);
+  if (text !== canonicalJson(config))
+    throw new Error("Non-canonical enhancement config JSON");
+  return config;
+}
+function selectionToStoredEnhancementConfig(selection, manifest) {
+  if (!isPlainRecord(selection))
+    throw new TypeError("Enhancement selection must be an object");
+  const unknown = Object.keys(selection).filter((key) => !["schemaVersion", "mode", "enabled"].includes(key));
+  if (unknown.length > 0)
+    throw new Error(`Enhancement selection has unknown key: ${unknown[0]}`);
+  if (Object.hasOwn(selection, "schemaVersion") && selection.schemaVersion !== ENHANCEMENT_CONFIG_SCHEMA_VERSION) {
+    throw new Error(`Unsupported enhancement selection schemaVersion: ${String(selection.schemaVersion)}`);
+  }
+  if (selection.mode !== "all" && selection.mode !== "custom") {
+    throw new Error(`Invalid enhancement selection mode: ${String(selection.mode)}`);
+  }
+  const enabled = normalizeEnhancementSelection(selection.enabled, manifest);
+  if (selection.mode === "all" && enabled.length !== 0 && enabled.length !== manifest.length) {
+    throw new Error("Enhancement selection mode all must contain none or every manifest ID");
+  }
+  if (selection.mode === "all" || enabled.length === manifest.length) {
+    return { schemaVersion: ENHANCEMENT_CONFIG_SCHEMA_VERSION, mode: "all", enabled: [] };
+  }
+  return { schemaVersion: ENHANCEMENT_CONFIG_SCHEMA_VERSION, mode: "custom", enabled };
+}
+function parseExplicitEnhancementSelection(explicit, manifest) {
+  if (typeof explicit !== "string")
+    throw new TypeError("Explicit enhancement selection must be a string");
+  if (explicit.length === 0)
+    throw new Error("Explicit enhancement selection must not be empty");
+  if (explicit === "none") {
+    return { schemaVersion: ENHANCEMENT_CONFIG_SCHEMA_VERSION, mode: "custom", enabled: [] };
+  }
+  const requested = explicit.split(",");
+  if (requested.some((id) => id.length === 0))
+    throw new Error("Invalid explicit CSV: empty enhancement ID");
+  const enabled = normalizeEnhancementSelection(requested, manifest);
+  return selectionToStoredEnhancementConfig({ mode: "custom", enabled }, manifest);
+}
+function resolveEnhancementSelection(input = {}, manifest) {
+  if (!isPlainRecord(input))
+    throw new TypeError("Enhancement resolution input must be an object");
+  const unknown = Object.keys(input).filter((key) => key !== "explicit" && key !== "stored");
+  if (unknown.length > 0)
+    throw new Error(`Enhancement resolution has unknown key: ${unknown[0]}`);
+  let config;
+  if (Object.hasOwn(input, "explicit") && input.explicit !== undefined) {
+    config = parseExplicitEnhancementSelection(input.explicit, manifest);
+  } else if (Object.hasOwn(input, "stored") && input.stored !== undefined && input.stored !== null) {
+    config = validateStoredEnhancementConfig(input.stored, manifest);
+  } else {
+    config = { schemaVersion: ENHANCEMENT_CONFIG_SCHEMA_VERSION, mode: "all", enabled: [] };
+  }
+  return {
+    mode: config.mode,
+    enabled: config.mode === "all" ? manifestIds(manifest) : [...config.enabled]
+  };
+}
+function enhancementConfigPath(homeDir, { filename = ENHANCEMENT_CONFIG_FILENAME } = {}) {
+  if (typeof homeDir !== "string" || !isAbsolute(homeDir))
+    throw new Error("Enhancement config requires an absolute HOME path");
+  if (filename !== ENHANCEMENT_CONFIG_FILENAME)
+    throw new Error("Unsafe enhancement config filename");
+  return join(homeDir, ENHANCEMENT_CONFIG_DIRECTORY, filename);
+}
+function fileMode(status) {
+  return status.mode & 511;
+}
+function permissionMode(status) {
+  return status.mode & 4095;
+}
+function fileIdentity(status) {
+  return { dev: status.dev, ino: status.ino };
+}
+function sameIdentity(left, right) {
+  return left?.dev === right?.dev && left?.ino === right?.ino;
+}
+async function lstatIfPresent(fileSystem, path) {
+  try {
+    return await fileSystem.lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT")
+      return null;
+    throw error;
+  }
+}
+function homeDirectoryStatusIsSafe(status, platform) {
+  if (status.isSymbolicLink() || !status.isDirectory())
+    return false;
+  if (platform === "win32")
+    return (fileMode(status) & 128) !== 0;
+  return (fileMode(status) & 18) === 0;
+}
+function configDirectoryStatusIsSafe(status, platform) {
+  if (status.isSymbolicLink() || !status.isDirectory())
+    return false;
+  if (platform === "win32")
+    return (fileMode(status) & 128) !== 0;
+  return permissionMode(status) === ENHANCEMENT_CONFIG_DIRECTORY_MODE;
+}
+function assertSafeHomeDirectoryStatus(status, platform) {
+  if (!homeDirectoryStatusIsSafe(status, platform)) {
+    throw new Error("Unsafe enhancement config HOME ancestor");
+  }
+}
+function assertSafeConfigDirectoryStatus(status, label, platform) {
+  if (!configDirectoryStatusIsSafe(status, platform)) {
+    throw new Error(`Unsafe enhancement config ${label} ancestor`);
+  }
+}
+function configModeMatches(mode, platform) {
+  return platform === "win32" ? (mode & 128) === (ENHANCEMENT_CONFIG_FILE_MODE & 128) : mode === ENHANCEMENT_CONFIG_FILE_MODE;
+}
+function assertSafeConfigStatus(status, label = "leaf", platform = process.platform, expectedNlink = 1) {
+  if (status.isSymbolicLink() || !status.isFile()) {
+    throw new Error(`Unsafe enhancement config ${label}`);
+  }
+  if (status.nlink !== expectedNlink) {
+    if (expectedNlink === 1)
+      throw new Error("Enhancement config leaf must be a regular single-link file; hardlinks are unsafe");
+    throw new Error(`Unexpected enhancement config ${label} link count`);
+  }
+  if (!configModeMatches(fileMode(status), platform)) {
+    throw new Error("Unsafe enhancement config mode; expected 0600");
+  }
+}
+async function inspectHome(fileSystem, homeDir, platform) {
+  const status = await lstatIfPresent(fileSystem, homeDir);
+  if (!status)
+    throw new Error("Unsafe enhancement config HOME ancestor: directory is missing");
+  assertSafeHomeDirectoryStatus(status, platform);
+  return status;
+}
+async function inspectConfigDirectory(fileSystem, homeDir, { missing = "allow", platform = process.platform } = {}) {
+  const homeStatus = await inspectHome(fileSystem, homeDir, platform);
+  const path = join(homeDir, ENHANCEMENT_CONFIG_DIRECTORY);
+  const status = await lstatIfPresent(fileSystem, path);
+  if (!status) {
+    if (missing === "reject")
+      throw new Error("Enhancement config directory is missing");
+    return { path, status: null, homeStatus };
+  }
+  assertSafeConfigDirectoryStatus(status, "directory", platform);
+  return { path, status, homeStatus };
+}
+async function assertReadDirectoryCurrent(fileSystem, homeDir, expected, platform) {
+  let current;
+  try {
+    current = await inspectConfigDirectory(fileSystem, homeDir, { platform });
+  } catch (error) {
+    throw markRestorationIncomplete(error, [homeDir, expected.path]);
+  }
+  const homeChanged = !sameIdentity(fileIdentity(current.homeStatus), fileIdentity(expected.homeStatus));
+  const directoryChanged = Boolean(current.status) !== Boolean(expected.status) || current.status && !sameIdentity(fileIdentity(current.status), fileIdentity(expected.status));
+  if (homeChanged || directoryChanged) {
+    throw markRestorationIncomplete(new Error("Enhancement config ancestor changed during read"), homeChanged ? [homeDir, expected.path] : [expected.path]);
+  }
+  return current;
+}
+async function readFileSnapshot(fileSystem, path, parentStatus, platform, expectedNlink = 1) {
+  const before = await lstatIfPresent(fileSystem, path);
+  if (!before) {
+    return {
+      path,
+      present: false,
+      parentIdentity: fileIdentity(parentStatus),
+      identity: null,
+      bytes: null,
+      mode: null,
+      nlink: null
+    };
+  }
+  assertSafeConfigStatus(before, "leaf", platform, expectedNlink);
+  if (before.size > MAX_CONFIG_BYTES)
+    throw new Error("Enhancement config exceeds the maximum safe size");
+  let handle;
+  try {
+    handle = await fileSystem.open(path, "r");
+    const opened = await handle.stat();
+    assertSafeConfigStatus(opened, "descriptor", platform, expectedNlink);
+    if (!sameIdentity(fileIdentity(before), fileIdentity(opened))) {
+      throw new Error("Enhancement config changed during update");
+    }
+    if (opened.size > MAX_CONFIG_BYTES)
+      throw new Error("Enhancement config exceeds the maximum safe size");
+    const bytes = await handle.readFile();
+    const after = await fileSystem.lstat(path);
+    assertSafeConfigStatus(after, "leaf", platform, expectedNlink);
+    if (!sameIdentity(fileIdentity(opened), fileIdentity(after)) || fileMode(opened) !== fileMode(after) || opened.nlink !== after.nlink || opened.size !== after.size) {
+      throw new Error("Enhancement config changed during update");
+    }
+    return {
+      path,
+      present: true,
+      parentIdentity: fileIdentity(parentStatus),
+      identity: fileIdentity(after),
+      bytes,
+      mode: fileMode(after),
+      nlink: after.nlink
+    };
+  } finally {
+    if (handle)
+      await handle.close();
+  }
+}
+function snapshotsEqual(left, right) {
+  if (left.present !== right.present || !sameIdentity(left.parentIdentity, right.parentIdentity))
+    return false;
+  if (!left.present)
+    return true;
+  return sameIdentity(left.identity, right.identity) && left.mode === right.mode && left.nlink === right.nlink && Buffer.from(left.bytes).equals(Buffer.from(right.bytes));
+}
+function snapshotMatchesIgnoringParent(saved, current, expectedNlink = saved?.nlink) {
+  return saved?.present === true && current?.present === true && sameIdentity(saved.identity, current.identity) && saved.mode === current.mode && current.nlink === expectedNlink && Buffer.from(saved.bytes).equals(Buffer.from(current.bytes));
+}
+async function stagePrivateFile(fileSystem, path, bytes, platform) {
+  let handle;
+  let identity = null;
+  try {
+    handle = await fileSystem.open(path, "wx", ENHANCEMENT_CONFIG_FILE_MODE);
+    const created = await handle.stat();
+    assertSafeConfigStatus(created, "temporary file", platform);
+    identity = fileIdentity(created);
+    await handle.writeFile(bytes);
+    await handle.sync();
+    const opened = await handle.stat();
+    assertSafeConfigStatus(opened, "temporary file", platform);
+    if (!sameIdentity(identity, fileIdentity(opened))) {
+      throw new Error("Enhancement config temporary descriptor changed during write");
+    }
+    if (opened.size !== bytes.byteLength)
+      throw new Error("Enhancement config temporary write was incomplete");
+    await handle.close();
+    handle = null;
+    const status = await fileSystem.lstat(path);
+    assertSafeConfigStatus(status, "temporary file", platform);
+    if (!sameIdentity(fileIdentity(opened), fileIdentity(status))) {
+      throw new Error("Enhancement config temporary file changed during write");
+    }
+    return { path, identity: fileIdentity(status), mode: fileMode(status), nlink: status.nlink };
+  } catch (error) {
+    if (handle) {
+      await handle.close().catch(() => {});
+      handle = null;
+    }
+    if (!identity)
+      throw markRestorationIncomplete(error, [path]);
+    try {
+      if (!await unlinkIfOwned(fileSystem, path, identity)) {
+        throw markRestorationIncomplete(error, [path]);
+      }
+    } catch (cleanupError) {
+      if (cleanupError?.restorationIncomplete)
+        throw cleanupError;
+      throw markRestorationIncomplete(error, [path]);
+    }
+    throw error;
+  } finally {
+    if (handle)
+      await handle.close();
+  }
+}
+async function syncDirectory(fileSystem, path, platform) {
+  if (platform === "win32")
+    return;
+  const handle = await fileSystem.open(path, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+async function createPrivateDirectory(fileSystem, path, platform, label) {
+  try {
+    await fileSystem.mkdir(path, { mode: ENHANCEMENT_CONFIG_DIRECTORY_MODE });
+  } catch (error) {
+    throw markRestorationIncomplete(error, [path]);
+  }
+  const status = await fileSystem.lstat(path);
+  if (!configDirectoryStatusIsSafe(status, platform)) {
+    throw markRestorationIncomplete(new Error(`Unsafe ${label} directory`), [path]);
+  }
+  return { path, status, identity: fileIdentity(status) };
+}
+async function moveKnownFileToPrivateDirectory(fileSystem, snapshot, directoryPath, platform, label) {
+  const ownedDirectory = await createPrivateDirectory(fileSystem, directoryPath, platform, label);
+  const destination = join(directoryPath, basename(directoryPath));
+  try {
+    const sourceParent = await fileSystem.lstat(dirname(snapshot.path));
+    const current = await readFileSnapshot(fileSystem, snapshot.path, sourceParent, platform, snapshot.nlink);
+    if (!snapshotsEqual(snapshot, current)) {
+      throw new Error(`${label} source changed before quarantine`);
+    }
+    await fileSystem.rename(snapshot.path, destination);
+    const directoryAfter = await fileSystem.lstat(directoryPath);
+    if (!sameIdentity(ownedDirectory.identity, fileIdentity(directoryAfter))) {
+      throw new Error(`${label} directory changed during quarantine`);
+    }
+    const moved = await readFileSnapshot(fileSystem, destination, directoryAfter, platform, snapshot.nlink);
+    if (!snapshotMatchesIgnoringParent(snapshot, moved)) {
+      let replacementRestored = false;
+      try {
+        replacementRestored = await restoreSnapshotExclusively(fileSystem, moved, snapshot.path, platform);
+        if (replacementRestored) {
+          await removeOwnedPrivateDirectory(fileSystem, ownedDirectory, platform, label);
+        }
+      } catch (restoreError) {
+        throw markRestorationIncomplete(restoreError, [snapshot.path, destination, directoryPath]);
+      }
+      if (!replacementRestored) {
+        throw markRestorationIncomplete(new Error(`${label} concurrent replacement could not be restored`), [snapshot.path, destination, directoryPath]);
+      }
+      throw markRestorationIncomplete(new Error(`${label} concurrent replacement detected during quarantine`), [snapshot.path]);
+    }
+    if (await lstatIfPresent(fileSystem, snapshot.path)) {
+      throw new Error(`${label} source was replaced during quarantine`);
+    }
+    return { moved, ownedDirectory };
+  } catch (error) {
+    throw markRestorationIncomplete(error, [snapshot.path, destination, directoryPath]);
+  }
+}
+async function removeOwnedPrivateDirectory(fileSystem, ownedDirectory, platform, label) {
+  if (!ownedDirectory)
+    return;
+  const status = await lstatIfPresent(fileSystem, ownedDirectory.path);
+  if (!status)
+    return;
+  if (!configDirectoryStatusIsSafe(status, platform) || !sameIdentity(fileIdentity(status), ownedDirectory.identity)) {
+    throw markRestorationIncomplete(new Error(`${label} directory changed during cleanup`), [ownedDirectory.path]);
+  }
+  try {
+    await fileSystem.rmdir(ownedDirectory.path);
+    await syncDirectory(fileSystem, dirname(ownedDirectory.path), platform);
+  } catch (error) {
+    throw markRestorationIncomplete(error, [ownedDirectory.path]);
+  }
+}
+async function unlinkIfOwned(fileSystem, path, identity) {
+  const status = await lstatIfPresent(fileSystem, path);
+  if (!status)
+    return true;
+  if (!sameIdentity(fileIdentity(status), identity))
+    return false;
+  await fileSystem.unlink(path);
+  return true;
+}
+function markRestorationIncomplete(error, evidencePaths) {
+  const failure = error instanceof Error ? error : new Error(String(error));
+  const combinedEvidence = [...new Set([...failure.evidencePaths || [], ...evidencePaths].filter(Boolean))];
+  failure.restorationIncomplete = true;
+  failure.evidencePaths = combinedEvidence;
+  failure.evidencePath = combinedEvidence.at(-1);
+  return failure;
+}
+function configLockPath(configPath) {
+  return join(dirname(configPath), `.${basename(configPath)}.lock`);
+}
+function configTransactionPaths(lock) {
+  const lockName = basename(lock.path);
+  const configPath = join(dirname(lock.path), lockName.slice(1, -".lock".length));
+  const prefix = join(dirname(configPath), `.${basename(configPath)}.${lock.ownerPid}.${lock.token}`);
+  const backupDirectory = `${prefix}.backup`;
+  const failedDirectory = `${prefix}.failed`;
+  const lockStaleDirectory = `${prefix}.lock.stale`;
+  return {
+    temporary: `${prefix}.tmp`,
+    backupDirectory,
+    backup: join(backupDirectory, basename(backupDirectory)),
+    failedDirectory,
+    failed: join(failedDirectory, basename(failedDirectory)),
+    lockStaleDirectory,
+    lockStale: join(lockStaleDirectory, basename(lockStaleDirectory))
+  };
+}
+function transactionOwnerFromStaleName(name, configName) {
+  const prefix = `.${configName}.`;
+  const suffix = ".lock.stale";
+  if (!name.startsWith(prefix) || !name.endsWith(suffix))
+    return null;
+  const owner = name.slice(prefix.length, -suffix.length);
+  const separator = owner.indexOf(".");
+  if (separator <= 0)
+    return null;
+  const ownerPid = owner.slice(0, separator);
+  const token = owner.slice(separator + 1);
+  return LOCK_OWNER_PATTERN.test(`${ownerPid}:${token}
+`) ? { ownerPid: Number(ownerPid), token } : null;
+}
+async function observeOrphanLockStaleEvidence(fileSystem, directoryPath, platform) {
+  const observations = [];
+  for (const name of await fileSystem.readdir(directoryPath)) {
+    const owner = transactionOwnerFromStaleName(name, ENHANCEMENT_CONFIG_FILENAME);
+    if (!owner)
+      continue;
+    const root = join(directoryPath, name);
+    const evidencePaths = [root];
+    const status = await lstatIfPresent(fileSystem, root);
+    if (status && configDirectoryStatusIsSafe(status, platform)) {
+      let entries;
+      try {
+        entries = await fileSystem.readdir(root);
+      } catch (error) {
+        if (error?.code === "ENOENT")
+          continue;
+        throw error;
+      }
+      const current = await lstatIfPresent(fileSystem, root);
+      if (!current)
+        continue;
+      if (!sameIdentity(fileIdentity(current), fileIdentity(status)) || !configDirectoryStatusIsSafe(current, platform)) {
+        throw new Error("Enhancement config stale lock evidence changed during observation");
+      }
+      for (const entry of entries) {
+        evidencePaths.push(join(root, entry));
+      }
+    }
+    observations.push({ ...owner, evidencePaths });
+  }
+  return observations;
+}
+async function waitForOrphanLockStaleEvidence(fileSystem, homeDir, expectedDirectory, deadline, platform, isProcessAlive) {
+  while (true) {
+    await assertReadDirectoryCurrent(fileSystem, homeDir, expectedDirectory, platform);
+    const observations = await observeOrphanLockStaleEvidence(fileSystem, expectedDirectory.path, platform);
+    await assertReadDirectoryCurrent(fileSystem, homeDir, expectedDirectory, platform);
+    if (observations.length === 0)
+      return;
+    const states = await Promise.all(observations.map(async (observation) => ({
+      observation,
+      alive: await isProcessAlive(observation.ownerPid)
+    })));
+    const evidencePaths = observations.flatMap((observation) => observation.evidencePaths);
+    if (states.some((state) => !state.alive)) {
+      throw markRestorationIncomplete(new Error("Enhancement config transaction has orphan stale lock evidence"), evidencePaths);
+    }
+    if (Date.now() >= deadline) {
+      throw markRestorationIncomplete(new Error("Timed out waiting for live enhancement config stale lock cleanup"), evidencePaths);
+    }
+    await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+  }
+}
+async function observeConfigLock(fileSystem, path, platform) {
+  const parentStatus = await fileSystem.lstat(dirname(path));
+  assertSafeConfigDirectoryStatus(parentStatus, "lock directory", platform);
+  const snapshot = await readFileSnapshot(fileSystem, path, parentStatus, platform);
+  if (!snapshot.present)
+    return null;
+  const text = decodeSource(snapshot.bytes, "enhancement config lock");
+  const match = LOCK_OWNER_PATTERN.exec(text);
+  if (!match)
+    throw new Error("Invalid enhancement config transaction lock");
+  const ownerPid = Number(match[1]);
+  if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0)
+    throw new Error("Invalid enhancement config transaction lock owner");
+  return { ...snapshot, ownerPid, token: match[2] };
+}
+function defaultIsProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+async function removeObservedFile(fileSystem, snapshot, platform, label) {
+  const transactionPaths = snapshot.ownerPid && snapshot.token ? configTransactionPaths(snapshot) : null;
+  const quarantine = transactionPaths?.lockStaleDirectory || join(dirname(snapshot.path), `.${basename(snapshot.path)}.${process.pid}.${randomUUID()}.stale`);
+  let moved;
+  try {
+    moved = await moveKnownFileToPrivateDirectory(fileSystem, snapshot, quarantine, platform, label);
+  } catch (error) {
+    if (error?.code === "ENOENT")
+      return false;
+    throw error;
+  }
+  try {
+    await fileSystem.unlink(moved.moved.path);
+    await fileSystem.rmdir(moved.ownedDirectory.path);
+    await syncDirectory(fileSystem, dirname(snapshot.path), platform);
+  } catch (error) {
+    try {
+      await stagePrivateFile(fileSystem, snapshot.path, Buffer.from(snapshot.bytes), platform);
+    } catch (restoreError) {
+      if (restoreError?.code !== "EEXIST") {
+        throw markRestorationIncomplete(restoreError, [moved.moved.path, quarantine, snapshot.path]);
+      }
+    }
+    throw markRestorationIncomplete(error, [moved.moved.path, quarantine, snapshot.path]);
+  }
+  return true;
+}
+async function reclaimDeadConfigLock(fileSystem, lock, platform, isProcessAlive) {
+  if (await isProcessAlive(lock.ownerPid))
+    return false;
+  const residuePaths = [];
+  const transactionPaths = configTransactionPaths(lock);
+  for (const path of [
+    transactionPaths.temporary,
+    transactionPaths.backupDirectory,
+    transactionPaths.failedDirectory,
+    transactionPaths.lockStaleDirectory
+  ]) {
+    const status = await lstatIfPresent(fileSystem, path);
+    if (!status)
+      continue;
+    residuePaths.push(path);
+    if (!status.isDirectory())
+      continue;
+    for (const name of await fileSystem.readdir(path)) {
+      residuePaths.push(join(path, name));
+    }
+  }
+  const legacyBackupName = basename(transactionPaths.backupDirectory);
+  const rejectedPrefix = `${legacyBackupName}.rejected-`;
+  for (const name of await fileSystem.readdir(dirname(lock.path))) {
+    if (name.startsWith(rejectedPrefix))
+      residuePaths.push(join(dirname(lock.path), name));
+  }
+  if (residuePaths.length > 0) {
+    throw markRestorationIncomplete(new Error("Dead enhancement config transaction has unresolved filesystem evidence"), [lock.path, ...residuePaths]);
+  }
+  if (!await removeObservedFile(fileSystem, lock, platform, "Enhancement config transaction lock")) {
+    throw new Error("Enhancement config transaction lock changed during reclamation");
+  }
+  return true;
+}
+async function waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive, homeDir = null, expectedDirectory = null) {
+  if (expectedDirectory) {
+    await waitForOrphanLockStaleEvidence(fileSystem, homeDir, expectedDirectory, deadline, platform, isProcessAlive);
+  }
+  const lock = await observeConfigLock(fileSystem, lockPath, platform);
+  if (expectedDirectory) {
+    await assertReadDirectoryCurrent(fileSystem, homeDir, expectedDirectory, platform);
+  }
+  if (!lock) {
+    if (expectedDirectory) {
+      await waitForOrphanLockStaleEvidence(fileSystem, homeDir, expectedDirectory, deadline, platform, isProcessAlive);
+    }
+    return false;
+  }
+  if (await reclaimDeadConfigLock(fileSystem, lock, platform, isProcessAlive))
+    return false;
+  if (Date.now() >= deadline)
+    throw new Error("Timed out waiting for enhancement config update");
+  await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+  return true;
+}
+async function rejectRollbackLink(fileSystem, source, target, platform, cause, expectedTarget = null) {
+  const before = await lstatIfPresent(fileSystem, target);
+  if (!before)
+    throw markRestorationIncomplete(cause, [source.path, target]);
+  const rejected = `${source.path}.rejected-${randomUUID()}`;
+  try {
+    await fileSystem.rename(target, rejected);
+  } catch (error) {
+    throw markRestorationIncomplete(error, [source.path, target, rejected]);
+  }
+  try {
+    const movedStatus = await fileSystem.lstat(rejected);
+    if (!sameIdentity(fileIdentity(before), fileIdentity(movedStatus))) {
+      throw new Error("Rejected enhancement config rollback link changed during quarantine");
+    }
+    if (expectedTarget) {
+      const parentStatus = await fileSystem.lstat(dirname(rejected));
+      const moved = await readFileSnapshot(fileSystem, rejected, parentStatus, platform, expectedTarget.nlink);
+      if (!snapshotMatchesIgnoringParent(expectedTarget, moved, expectedTarget.nlink)) {
+        throw new Error("Rejected enhancement config rollback link changed during quarantine");
+      }
+    }
+  } catch (error) {
+    throw markRestorationIncomplete(error, [source.path, target, rejected]);
+  }
+  throw markRestorationIncomplete(cause, [source.path, rejected]);
+}
+async function restoreSnapshotExclusively(fileSystem, source, target, platform) {
+  try {
+    await fileSystem.link(source.path, target);
+  } catch (error) {
+    if (error?.code === "EEXIST")
+      return false;
+    throw error;
+  }
+  const targetParentStatus = await fileSystem.lstat(dirname(target));
+  let linkedTarget;
+  try {
+    linkedTarget = await readFileSnapshot(fileSystem, target, targetParentStatus, platform, 2);
+  } catch (error) {
+    return rejectRollbackLink(fileSystem, source, target, platform, error);
+  }
+  let linkedSource;
+  try {
+    const sourceParentStatus = await fileSystem.lstat(dirname(source.path));
+    linkedSource = await readFileSnapshot(fileSystem, source.path, sourceParentStatus, platform, 2);
+  } catch (error) {
+    return rejectRollbackLink(fileSystem, source, target, platform, error, linkedTarget);
+  }
+  if (!snapshotMatchesIgnoringParent(source, linkedSource, 2) || !snapshotMatchesIgnoringParent(source, linkedTarget, 2)) {
+    return rejectRollbackLink(fileSystem, source, target, platform, new Error("Enhancement config rollback source changed before restoration"), linkedTarget);
+  }
+  if (!await unlinkIfOwned(fileSystem, source.path, source.identity)) {
+    return rejectRollbackLink(fileSystem, source, target, platform, new Error("Enhancement config rollback source changed during restoration"));
+  }
+  let restored;
+  try {
+    restored = await readFileSnapshot(fileSystem, target, targetParentStatus, platform);
+  } catch (error) {
+    return rejectRollbackLink(fileSystem, source, target, platform, error);
+  }
+  if (!snapshotMatchesIgnoringParent(source, restored, 1)) {
+    return rejectRollbackLink(fileSystem, source, target, platform, new Error("Enhancement config rollback changed after restoration"), restored);
+  }
+  return true;
+}
+async function readEnhancementConfig({
+  homeDir,
+  manifest,
+  filename = ENHANCEMENT_CONFIG_FILENAME,
+  fileSystem = defaultFileSystem,
+  platform = process.platform,
+  waitForUnlockMs = DEFAULT_LOCK_WAIT_MS,
+  isProcessAlive = defaultIsProcessAlive
+} = {}) {
+  const path = enhancementConfigPath(homeDir, { filename });
+  if (!Number.isSafeInteger(waitForUnlockMs) || waitForUnlockMs < 0) {
+    throw new TypeError("Enhancement config lock wait must be a non-negative safe integer");
+  }
+  if (typeof isProcessAlive !== "function")
+    throw new TypeError("Enhancement config process probe must be a function");
+  const lockPath = configLockPath(path);
+  const deadline = Date.now() + waitForUnlockMs;
+  while (true) {
+    const directory = await inspectConfigDirectory(fileSystem, homeDir, { platform });
+    if (!directory.status) {
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+      return null;
+    }
+    if (await waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive, homeDir, directory)) {
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+      continue;
+    }
+    await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+    let snapshot;
+    try {
+      snapshot = await readFileSnapshot(fileSystem, path, directory.status, platform);
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+    } catch (error) {
+      if (await waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive, homeDir, directory)) {
+        await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+        continue;
+      }
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+      throw error;
+    }
+    if (await waitForConfigUnlock(fileSystem, lockPath, deadline, platform, isProcessAlive, homeDir, directory)) {
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+      continue;
+    }
+    await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+    if (!snapshot.present) {
+      await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+      return null;
+    }
+    const config = parseStoredEnhancementConfig(snapshot.bytes, manifest);
+    await assertReadDirectoryCurrent(fileSystem, homeDir, directory, platform);
+    return config;
+  }
+}
 
 // src/generic/patcher/core.mjs
 import { existsSync, mkdirSync, renameSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { dirname as dirname2, join as join2 } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
-var PATCHER_DIR = dirname(fileURLToPath(import.meta.url));
+var PATCHER_DIR = dirname2(fileURLToPath(import.meta.url));
 var ACORN_URL = "https://unpkg.com/acorn@8.16.0/dist/acorn.js";
 async function loadAcorn(rootDir = PATCHER_DIR) {
-  const acornCache = join(rootDir, "vendor", "acorn.cjs");
+  const acornCache = join2(rootDir, "vendor", "acorn.cjs");
   try {
     if (!existsSync(acornCache)) {
-      mkdirSync(dirname(acornCache), { recursive: true });
+      mkdirSync(dirname2(acornCache), { recursive: true });
       const response = await fetch(ACORN_URL);
       if (!response.ok)
         return null;
@@ -6622,21 +7532,22 @@ var coreRegistry = Object.freeze({
 });
 
 // src/generic/enhancements.json
-var enhancements_default = [
-  { id: "chrome", kind: "patch" },
-  { id: "computer-use", kind: "patch" },
-  { id: "agents", kind: "patch" },
-  { id: "planning", kind: "patch" },
-  { id: "voice", kind: "patch" },
-  { id: "auto-mode", kind: "patch" },
-  { id: "unrestricted-tools", kind: "patch" },
-  { id: "paste-images", kind: "patch" },
-  { id: "privacy", kind: "patch" },
-  { id: "branding", kind: "patch" },
-  { id: "claude-hud", kind: "plugin" },
-  { id: "claude-mem", kind: "plugin" },
-  { id: "superpowers", kind: "plugin" }
-];
+var enhancements_default = `[
+  { "id": "chrome", "kind": "patch" },
+  { "id": "computer-use", "kind": "patch" },
+  { "id": "agents", "kind": "patch" },
+  { "id": "planning", "kind": "patch" },
+  { "id": "voice", "kind": "patch" },
+  { "id": "auto-mode", "kind": "patch" },
+  { "id": "unrestricted-tools", "kind": "patch" },
+  { "id": "paste-images", "kind": "patch" },
+  { "id": "privacy", "kind": "patch" },
+  { "id": "branding", "kind": "patch" },
+  { "id": "claude-hud", "kind": "plugin" },
+  { "id": "claude-mem", "kind": "plugin" },
+  { "id": "superpowers", "kind": "plugin" }
+]
+`;
 
 // src/generic/patcher/enhancements/agents.mjs
 var agentTeamsPatch = {
@@ -7316,11 +8227,11 @@ var voiceRegistry = Object.freeze({
 });
 
 // src/generic/patcher/registry.mjs
-var patchIds = enhancements_default.filter((entry) => entry.kind === "patch").map((entry) => entry.id);
+var enhancementManifest = loadEnhancementManifest(enhancements_default, { filename: "enhancements.json" });
+var patchIds = enhancementManifest.filter((entry) => entry.kind === "patch").map((entry) => entry.id);
 var registryById = new Map([
   [chromeRegistry.id, chromeRegistry],
   [computerUseRegistry.id, computerUseRegistry],
-  ["agents", createAgentsRegistry({ chromeEnabled: patchIds.includes("chrome") })],
   [planningRegistry.id, planningRegistry],
   [voiceRegistry.id, voiceRegistry],
   [autoModeRegistry.id, autoModeRegistry],
@@ -7329,12 +8240,15 @@ var registryById = new Map([
   [privacyRegistry.id, privacyRegistry],
   [brandingRegistry.id, brandingRegistry]
 ]);
-var enhancementRegistries = Object.freeze(patchIds.map((id) => {
+function enhancementRegistry(id, enabledIds) {
+  if (id === "agents")
+    return createAgentsRegistry({ chromeEnabled: enabledIds.has("chrome") });
   const registry = registryById.get(id);
   if (!registry)
     throw new Error(`Missing patch registry for enhancement: ${id}`);
   return registry;
-}));
+}
+var enhancementRegistries = Object.freeze(patchIds.map((id) => enhancementRegistry(id, new Set(patchIds))));
 var patchRegistries = Object.freeze([coreRegistry, ...enhancementRegistries]);
 var ownedDescriptors = patchRegistries.flatMap((registry) => [
   ...registry.patches.map((descriptor) => ({ descriptor, type: "regex" })),
@@ -7359,15 +8273,56 @@ function orderedDescriptors(type) {
 }
 var patches11 = orderedDescriptors("regex");
 var customPatches3 = orderedDescriptors("custom");
+function orderedRegistryDescriptors(registry, type) {
+  const descriptors = type === "regex" ? registry.patches : registry.customPatches;
+  return [...descriptors].sort((left, right) => left.order - right.order);
+}
+function createPatchSelection(enabled) {
+  if (!Array.isArray(enabled))
+    throw new TypeError("Enabled enhancements must be an array");
+  const enabledIds = new Set(enabled);
+  if (enabledIds.size !== enabled.length)
+    throw new Error("Enabled enhancements must not contain duplicates");
+  for (const id of enabledIds) {
+    if (!enhancementManifest.some((entry) => entry.id === id))
+      throw new Error(`Unknown enabled enhancement: ${id}`);
+  }
+  const selectedRegistries = patchIds.filter((id) => enabledIds.has(id)).map((id) => enhancementRegistry(id, enabledIds));
+  const registries = [coreRegistry, ...selectedRegistries];
+  return Object.freeze({
+    patches: Object.freeze(registries.flatMap((registry) => orderedRegistryDescriptors(registry, "regex"))),
+    customPatches: Object.freeze(registries.flatMap((registry) => orderedRegistryDescriptors(registry, "custom")))
+  });
+}
 
 // src/generic/patcher/entry.mjs
-var DEFAULT_ROOT = dirname2(fileURLToPath2(import.meta.url));
+var DEFAULT_ROOT = dirname3(fileURLToPath2(import.meta.url));
 async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.slice(2) } = {}) {
-  const target = join2(rootDir, "cli.original.cjs");
+  const target = join3(rootDir, "cli.original.cjs");
   const backup = target + ".bak";
   const dryRun = args.includes("--dry-run");
   const verify = args.includes("--verify");
   const revert = args.includes("--revert");
+  const enhancementFlagIndexes = args.map((argument, index) => argument === "--enhancements-file" ? index : -1).filter((index) => index >= 0);
+  if (enhancementFlagIndexes.length > 1)
+    throw new Error("--enhancements-file may only be provided once");
+  const enhancementFlagIndex = enhancementFlagIndexes[0];
+  let stored = null;
+  if (enhancementFlagIndex !== undefined) {
+    const configFile = args[enhancementFlagIndex + 1];
+    if (!configFile || configFile.startsWith("--"))
+      throw new Error("--enhancements-file requires a path");
+    if (!isAbsolute2(configFile))
+      throw new Error("--enhancements-file must be an absolute path");
+    const configDirectory = dirname3(configFile);
+    const homeDir = dirname3(configDirectory);
+    if (configFile !== enhancementConfigPath(homeDir) || configFile !== join3(homeDir, ".clawgod", ENHANCEMENT_CONFIG_FILENAME)) {
+      throw new Error("--enhancements-file must name the canonical enhancements.json path");
+    }
+    stored = await readEnhancementConfig({ homeDir, manifest: enhancementManifest });
+  }
+  const selection = resolveEnhancementSelection({ stored }, enhancementManifest);
+  const { patches: patches12, customPatches: customPatches4 } = createPatchSelection(selection.enabled);
   if (revert) {
     if (!existsSync2(backup)) {
       console.error("\u274C No backup found");
@@ -7388,12 +8343,13 @@ ${"\u2550".repeat(55)}`);
   console.log("  ClawGod Plus (universal)");
   console.log(`  Target: cli.original.cjs (v${version})`);
   console.log(`  Mode: ${dryRun ? "DRY RUN" : verify ? "VERIFY" : "APPLY"}`);
+  console.log(`  Enhancements: ${selection.enabled.length} enabled, ${enhancementManifest.length - selection.enabled.length} disabled`);
   console.log(`${"\u2550".repeat(55)}
 `);
   let applied = 0;
   let skipped = 0;
   let failed = 0;
-  for (const patch of patches11) {
+  for (const patch of patches12) {
     const matches = [...code.matchAll(patch.pattern)];
     let relevant = matches;
     if (patch.validate) {
@@ -7461,45 +8417,26 @@ ${"\u2550".repeat(55)}`);
       skipped++;
     }
   }
-  const contextLimitDescriptor = customPatches3.find((patch) => patch.name === "Context limit configurable");
-  const contextLimitPatch = await contextLimitDescriptor.apply(code, { dryRun, verify, rootDir });
-  if (contextLimitPatch.status === "applied") {
-    if (!dryRun)
-      code = contextLimitPatch.code;
-    console.log(`  \u2705 Context limit configurable (${contextLimitPatch.count} replacement${contextLimitPatch.count > 1 ? "s" : ""})`);
-    applied++;
-  } else if (contextLimitPatch.status === "verify") {
-    console.log(`  \u2B1A  Context limit configurable \u2014 ${contextLimitPatch.count} match(es), not yet applied`);
-    skipped++;
-  } else if (contextLimitPatch.status === "already") {
-    console.log(`  \u2705 Context limit configurable (${contextLimitPatch.detail})`);
-    applied++;
-  } else if (contextLimitPatch.status === "skipped") {
-    console.log(`  \u23ED  Context limit configurable (${contextLimitPatch.detail})`);
-    skipped++;
-  } else {
-    console.log(`  \u274C Context limit configurable \u2014 ${contextLimitPatch.detail}`);
-    failed++;
-  }
-  const chromeDescriptor = customPatches3.find((patch) => patch.name === "Claude in Chrome local socket fallback");
-  const chromePatch = await chromeDescriptor.apply(code, { dryRun, verify, rootDir });
-  if (chromePatch.status === "applied") {
-    if (!dryRun)
-      code = chromePatch.code;
-    console.log(`  \u2705 Claude in Chrome local socket fallback (${chromePatch.count} replacement${chromePatch.count > 1 ? "s" : ""})`);
-    applied++;
-  } else if (chromePatch.status === "verify") {
-    console.log(`  \u2B1A  Claude in Chrome local socket fallback \u2014 ${chromePatch.count} match(es), not yet applied`);
-    skipped++;
-  } else if (chromePatch.status === "already") {
-    console.log(`  \u2705 Claude in Chrome local socket fallback (${chromePatch.detail})`);
-    applied++;
-  } else if (chromePatch.status === "skipped") {
-    console.log(`  \u23ED  Claude in Chrome local socket fallback (${chromePatch.detail})`);
-    skipped++;
-  } else {
-    console.log(`  \u274C Claude in Chrome local socket fallback \u2014 ${chromePatch.detail}`);
-    failed++;
+  for (const descriptor of customPatches4) {
+    const result = await descriptor.apply(code, { dryRun, verify, rootDir });
+    if (result.status === "applied") {
+      if (!dryRun)
+        code = result.code;
+      console.log(`  \u2705 ${descriptor.name} (${result.count} replacement${result.count > 1 ? "s" : ""})`);
+      applied++;
+    } else if (result.status === "verify") {
+      console.log(`  \u2B1A  ${descriptor.name} \u2014 ${result.count} match(es), not yet applied`);
+      skipped++;
+    } else if (result.status === "already") {
+      console.log(`  \u2705 ${descriptor.name} (${result.detail})`);
+      applied++;
+    } else if (result.status === "skipped") {
+      console.log(`  \u23ED  ${descriptor.name} (${result.detail})`);
+      skipped++;
+    } else {
+      console.log(`  \u274C ${descriptor.name} \u2014 ${result.detail}`);
+      failed++;
+    }
   }
   console.log(`
 ${"\u2500".repeat(55)}`);
@@ -7519,7 +8456,7 @@ ${"\u2500".repeat(55)}`);
     process.exit(1);
 }
 await runPatcher({
-  rootDir: import.meta.main ? DEFAULT_ROOT : dirname2(process.argv[1] || fileURLToPath2(import.meta.url))
+  rootDir: import.meta.main ? DEFAULT_ROOT : dirname3(process.argv[1] || fileURLToPath2(import.meta.url))
 });
 export {
   runPatcher
@@ -7531,12 +8468,13 @@ info "Patcher created (patch.mjs)"
 
 dim "Applying patches ..."
 patch_status=0
-patch_output=$("$BUN_BIN" "$CLAWGOD_DIR/patch.mjs" 2>&1) || patch_status=$?
+patch_output=$("$BUN_BIN" "$CLAWGOD_DIR/patch.mjs" --enhancements-file "$CLAWGOD_DIR/enhancements.json" 2>&1) || patch_status=$?
 while IFS= read -r line; do echo "  $line"; done <<< "$patch_output"
 if [ "$patch_status" -ne 0 ]; then
   err "Mandatory patching failed; installation stopped before launcher replacement."
   exit "$patch_status"
 fi
+commit_runtime_transaction
 run_claude_code_chrome_fix
 
 # ─── Create default configs ───────────────────────────

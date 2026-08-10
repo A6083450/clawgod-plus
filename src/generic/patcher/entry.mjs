@@ -3,10 +3,16 @@
  * ClawGod Plus Universal Patcher — 正则模式匹配, 跨版本兼容
  */
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, isAbsolute, join } from 'path';
 import { fileURLToPath } from 'url';
+import {
+  ENHANCEMENT_CONFIG_FILENAME,
+  enhancementConfigPath,
+  readEnhancementConfig,
+  resolveEnhancementSelection,
+} from '../enhancement-config.mjs';
 import { inspectPatcherSource } from './core.mjs';
-import { customPatches, patches } from './registry.mjs';
+import { createPatchSelection, enhancementManifest } from './registry.mjs';
 
 const DEFAULT_ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -16,6 +22,26 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   const dryRun = args.includes('--dry-run');
   const verify = args.includes('--verify');
   const revert = args.includes('--revert');
+  const enhancementFlagIndexes = args
+    .map((argument, index) => argument === '--enhancements-file' ? index : -1)
+    .filter(index => index >= 0);
+  if (enhancementFlagIndexes.length > 1) throw new Error('--enhancements-file may only be provided once');
+  const enhancementFlagIndex = enhancementFlagIndexes[0];
+  let stored = null;
+  if (enhancementFlagIndex !== undefined) {
+    const configFile = args[enhancementFlagIndex + 1];
+    if (!configFile || configFile.startsWith('--')) throw new Error('--enhancements-file requires a path');
+    if (!isAbsolute(configFile)) throw new Error('--enhancements-file must be an absolute path');
+    const configDirectory = dirname(configFile);
+    const homeDir = dirname(configDirectory);
+    if (configFile !== enhancementConfigPath(homeDir)
+      || configFile !== join(homeDir, '.clawgod', ENHANCEMENT_CONFIG_FILENAME)) {
+      throw new Error('--enhancements-file must name the canonical enhancements.json path');
+    }
+    stored = await readEnhancementConfig({ homeDir, manifest: enhancementManifest });
+  }
+  const selection = resolveEnhancementSelection({ stored }, enhancementManifest);
+  const { patches, customPatches } = createPatchSelection(selection.enabled);
 
   if (revert) {
     if (!existsSync(backup)) {
@@ -39,6 +65,7 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   console.log('  ClawGod Plus (universal)');
   console.log(`  Target: cli.original.cjs (v${version})`);
   console.log(`  Mode: ${dryRun ? 'DRY RUN' : verify ? 'VERIFY' : 'APPLY'}`);
+  console.log(`  Enhancements: ${selection.enabled.length} enabled, ${enhancementManifest.length - selection.enabled.length} disabled`);
   console.log(`${'═'.repeat(55)}\n`);
 
   let applied = 0;
@@ -120,44 +147,25 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
     }
   }
 
-  const contextLimitDescriptor = customPatches.find(patch => patch.name === 'Context limit configurable');
-  const contextLimitPatch = await contextLimitDescriptor.apply(code, { dryRun, verify, rootDir });
-  if (contextLimitPatch.status === 'applied') {
-    if (!dryRun) code = contextLimitPatch.code;
-    console.log(`  ✅ Context limit configurable (${contextLimitPatch.count} replacement${contextLimitPatch.count > 1 ? 's' : ''})`);
-    applied++;
-  } else if (contextLimitPatch.status === 'verify') {
-    console.log(`  ⬚  Context limit configurable — ${contextLimitPatch.count} match(es), not yet applied`);
-    skipped++;
-  } else if (contextLimitPatch.status === 'already') {
-    console.log(`  ✅ Context limit configurable (${contextLimitPatch.detail})`);
-    applied++;
-  } else if (contextLimitPatch.status === 'skipped') {
-    console.log(`  ⏭  Context limit configurable (${contextLimitPatch.detail})`);
-    skipped++;
-  } else {
-    console.log(`  ❌ Context limit configurable — ${contextLimitPatch.detail}`);
-    failed++;
-  }
-
-  const chromeDescriptor = customPatches.find(patch => patch.name === 'Claude in Chrome local socket fallback');
-  const chromePatch = await chromeDescriptor.apply(code, { dryRun, verify, rootDir });
-  if (chromePatch.status === 'applied') {
-    if (!dryRun) code = chromePatch.code;
-    console.log(`  ✅ Claude in Chrome local socket fallback (${chromePatch.count} replacement${chromePatch.count > 1 ? 's' : ''})`);
-    applied++;
-  } else if (chromePatch.status === 'verify') {
-    console.log(`  ⬚  Claude in Chrome local socket fallback — ${chromePatch.count} match(es), not yet applied`);
-    skipped++;
-  } else if (chromePatch.status === 'already') {
-    console.log(`  ✅ Claude in Chrome local socket fallback (${chromePatch.detail})`);
-    applied++;
-  } else if (chromePatch.status === 'skipped') {
-    console.log(`  ⏭  Claude in Chrome local socket fallback (${chromePatch.detail})`);
-    skipped++;
-  } else {
-    console.log(`  ❌ Claude in Chrome local socket fallback — ${chromePatch.detail}`);
-    failed++;
+  for (const descriptor of customPatches) {
+    const result = await descriptor.apply(code, { dryRun, verify, rootDir });
+    if (result.status === 'applied') {
+      if (!dryRun) code = result.code;
+      console.log(`  ✅ ${descriptor.name} (${result.count} replacement${result.count > 1 ? 's' : ''})`);
+      applied++;
+    } else if (result.status === 'verify') {
+      console.log(`  ⬚  ${descriptor.name} — ${result.count} match(es), not yet applied`);
+      skipped++;
+    } else if (result.status === 'already') {
+      console.log(`  ✅ ${descriptor.name} (${result.detail})`);
+      applied++;
+    } else if (result.status === 'skipped') {
+      console.log(`  ⏭  ${descriptor.name} (${result.detail})`);
+      skipped++;
+    } else {
+      console.log(`  ❌ ${descriptor.name} — ${result.detail}`);
+      failed++;
+    }
   }
 
   console.log(`\n${'─'.repeat(55)}`);

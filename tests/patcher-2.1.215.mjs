@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
@@ -52,14 +52,37 @@ function attachments(q){if(userType()!=="ant"&&types.has(q.attachment.type))retu
 function privateDate(e){let t=rdp(),n=odp(t?.known??!1,t?.labKw??!1),r=t?.cnTZ?e.replaceAll("-","/"):e;return\`Today\${n}s date is \${r}.\`}
 `;
 
+const allConfig = '{\n  "schemaVersion": 1,\n  "mode": "all",\n  "enabled": []\n}\n';
+
+function assertTemporaryPath(path, parent, label) {
+  const resolvedParent = realpathSync(parent);
+  const resolvedPath = realpathSync(path);
+  const child = relative(resolvedParent, resolvedPath);
+  assert.ok(child && child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child), `${label} must stay under its fixture root`);
+}
+
 for (const [name, patcherSource] of await getPatcherSources()) {
   const dir = mkdtempSync(join(tmpdir(), 'clawgod-2.1.215-'));
   try {
+    const home = join(dir, 'home with spaces');
+    const clawgod = join(home, '.clawgod');
+    const enhancementsFile = join(clawgod, 'enhancements.json');
+    const fixtureBin = join(dir, 'fixture-only-bin');
+    mkdirSync(clawgod, { recursive: true, mode: 0o700 });
+    mkdirSync(fixtureBin);
+    assert.equal(realpathSync(dirname(dir)), realpathSync(tmpdir()), '2.1.215 fixture must be created directly under the system temporary directory');
+    assertTemporaryPath(home, dir, '2.1.215 HOME');
+    assertTemporaryPath(fixtureBin, dir, '2.1.215 PATH');
+    writeFileSync(enhancementsFile, allConfig, { mode: 0o600 });
     seedPatcherAcorn(dir);
     writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
     writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 
-    const first = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    const first = spawnSync(process.execPath, ['patch.mjs', '--enhancements-file', enhancementsFile], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: { HOME: home, PATH: fixtureBin, TMPDIR: dir },
+    });
     const firstOutput = first.stdout + first.stderr;
     assert.equal(first.status, 0, `${name}: ${firstOutput}`);
 
@@ -105,8 +128,13 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       `${name}: no unverifiable Computer Use alternative`,
     );
     assert.match(firstOutput, /Result: 26 applied, 34 skipped, 0 failed/, `${name}: default-all summary must remain canonical`);
+    assert.match(firstOutput, /Enhancements: 13 enabled, 0 disabled/, `${name}: default-all enhancement summary must be stable`);
 
-    const second = spawnSync(process.execPath, ['patch.mjs', '--dry-run'], { cwd: dir, encoding: 'utf8' });
+    const second = spawnSync(process.execPath, ['patch.mjs', '--dry-run', '--enhancements-file', enhancementsFile], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: { HOME: home, PATH: fixtureBin, TMPDIR: dir },
+    });
     const secondOutput = second.stdout + second.stderr;
     assert.equal(second.status, 0, `${name}: ${secondOutput}`);
     assert.match(secondOutput, /Result: \d+ applied, \d+ skipped, 0 failed/, `${name}: re-run is clean`);
