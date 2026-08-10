@@ -1,4 +1,5 @@
 #!/bin/bash
+# GENERATED FILE - edit src/ and run: bun build.mjs
 set -e
 
 # ─────────────────────────────────────────────────────────

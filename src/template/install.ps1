@@ -1,4 +1,3 @@
-# GENERATED FILE - edit src/ and run: bun build.mjs
 #Requires -Version 5.1
 <#
 .SYNOPSIS
@@ -6068,19 +6067,7 @@ Invoke-ChromePostInstallFix
 $featuresFile = Join-Path $ClawDir "features.json"
 if (-not (Test-Path $featuresFile)) {
     $featuresJson = @'
-{
-  "tengu_harbor": true,
-  "tengu_session_memory": true,
-  "tengu_amber_flint": true,
-  "tengu_auto_background_agents": true,
-  "tengu_destructive_command_warning": true,
-  "tengu_immediate_model_command": true,
-  "tengu_desktop_upsell": false,
-  "tengu_malort_pedway": {"enabled": true},
-  "tengu_amber_quartz_disabled": false,
-  "tengu_prompt_cache_1h_config": {"allowlist": ["*"]},
-  "tengu_amber_redwood3": "enabled"
-}
+@@CLAWGOD_FEATURES_JSON@@
 '@
     [System.IO.File]::WriteAllText($featuresFile, $featuresJson, (New-Object System.Text.UTF8Encoding $false))
     Write-OK "Default features.json created"
