@@ -86,10 +86,24 @@ function resolveOutput(rootDir, output) {
 }
 
 export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = defaultFileSystem } = {}) {
-  const featuresJson = await fileSystem.readFile(join(rootDir, 'src/generic/features.json'), 'utf8');
+  const sourceFiles = {
+    FEATURES_JSON: 'src/generic/features.json',
+    FETCH_FILE_MJS: 'src/generic/runtime/fetch-file.mjs',
+    FETCH_PACKAGE_MJS: 'src/generic/runtime/fetch-package.mjs',
+    INSTALL_RIPGREP_MJS: 'src/generic/runtime/install-ripgrep.mjs',
+    EXTRACTOR_MJS: 'src/generic/runtime/extractor.mjs',
+    POST_PROCESSOR_MJS: 'src/generic/runtime/post-processor.mjs',
+    REPATCHER_MJS: 'src/generic/runtime/repatcher.mjs',
+  };
+  const replacements = Object.fromEntries(await Promise.all(
+    Object.entries(sourceFiles).map(async ([name, path]) => [
+      name,
+      await fileSystem.readFile(join(rootDir, path), 'utf8'),
+    ]),
+  ));
   return Promise.all(OUTPUTS.map(async entry => {
     const template = await fileSystem.readFile(join(rootDir, entry.template), 'utf8');
-    const content = renderTemplate(template, { FEATURES_JSON: featuresJson });
+    const content = renderTemplate(template, replacements);
     return { ...entry, content: addGeneratedHeader(entry.output, content) };
   }));
 }

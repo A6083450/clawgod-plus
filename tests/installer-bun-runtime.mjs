@@ -7,6 +7,13 @@ import { dirname, join, resolve } from 'node:path';
 
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const canonicalRuntime = Object.fromEntries(
+  ['fetch-file.mjs', 'extractor.mjs', 'post-processor.mjs'].map(name => [
+    name,
+    readFileSync(new URL(`../src/generic/runtime/${name}`, import.meta.url), 'utf8'),
+  ]),
+);
+canonicalRuntime['repatcher.mjs'] = readFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), 'utf8');
 
 function assertTemporaryPath(path, label) {
   const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];
@@ -890,6 +897,19 @@ const windowsTemplates = {
   'plugin-dependencies.mjs': powerShellTemplate('plugin-dependencies.mjs', '#!/usr/bin/env bun\n/**\n * @typedef {{'),
 };
 
+for (const [generatedName, canonicalName] of [
+  ['fetch-file.mjs', 'fetch-file.mjs'],
+  ['extract-natives.mjs', 'extractor.mjs'],
+  ['post-process.mjs', 'post-processor.mjs'],
+]) {
+  const canonical = canonicalRuntime[canonicalName];
+  assert.deepEqual(
+    [`${unixTemplates[generatedName]}\n`, `${windowsTemplates[generatedName]}\n`],
+    [canonical, canonical],
+    `both generated installers must embed the canonical ${canonicalName} bytes`,
+  );
+}
+
 for (const [name, body] of Object.entries(unixTemplates)) {
   assert.match(body, /^#!\/usr\/bin\/env bun\n/, `install.sh ${name} must run with Bun`);
   assert.match(windowsTemplates[name], /^#!\/usr\/bin\/env bun\n/, `install.ps1 ${name} must run with Bun`);
@@ -1120,7 +1140,7 @@ try {
   const native = join(repatchRoot, '2.1.226');
   const repatch = join(repatchRoot, 'repatch.mjs');
   writeFileSync(native, 'fixture native', 'utf8');
-  writeFileSync(repatch, unixTemplates['repatch.mjs'], 'utf8');
+  writeFileSync(repatch, canonicalRuntime['repatcher.mjs'], 'utf8');
   writeFileSync(join(repatchRoot, 'extract-natives.mjs'), 'process.exit(0);\n', 'utf8');
   writeFileSync(join(repatchRoot, 'post-process.mjs'), 'process.exit(0);\n', 'utf8');
   writeFileSync(join(repatchRoot, 'patch.mjs'), 'process.exit(Number(process.env.PATCH_EXIT||0));\n', 'utf8');
@@ -1139,15 +1159,14 @@ try {
   rmSync(repatchRoot, { recursive: true, force: true });
 }
 
-for (const [installerName, fetchFile] of [['install.sh', unixTemplates['fetch-file.mjs']], ['install.ps1', windowsTemplates['fetch-file.mjs']]]) {
-  assert.match(fetchFile, /HTTPS_PROXY \|\| process\.env\.https_proxy/, `${installerName}: fetch-file must prefer HTTPS proxies`);
-  assert.match(fetchFile, /HTTP_PROXY \|\| process\.env\.http_proxy/, `${installerName}: fetch-file must support HTTP proxies`);
-  assert.match(fetchFile, /NO_PROXY \|\| process\.env\.no_proxy/, `${installerName}: fetch-file must honor NO_PROXY`);
-  assert.match(fetchFile, /AbortSignal\.timeout\(300000\)/, `${installerName}: fetch-file must use the five-minute timeout`);
-  assert.match(fetchFile, /redirects <= 5/, `${installerName}: fetch-file must cap redirects`);
-  assert.match(fetchFile, /response\.status !== 200/, `${installerName}: fetch-file must reject non-200 responses`);
-  assert.match(fetchFile, /renameSync\(temporary, destination\)/, `${installerName}: fetch-file must atomically replace completed downloads`);
-}
+const canonicalFetchFile = canonicalRuntime['fetch-file.mjs'];
+assert.match(canonicalFetchFile, /HTTPS_PROXY \|\| process\.env\.https_proxy/, 'fetch-file must prefer HTTPS proxies');
+assert.match(canonicalFetchFile, /HTTP_PROXY \|\| process\.env\.http_proxy/, 'fetch-file must support HTTP proxies');
+assert.match(canonicalFetchFile, /NO_PROXY \|\| process\.env\.no_proxy/, 'fetch-file must honor NO_PROXY');
+assert.match(canonicalFetchFile, /AbortSignal\.timeout\(300000\)/, 'fetch-file must use the five-minute timeout');
+assert.match(canonicalFetchFile, /redirects <= 5/, 'fetch-file must cap redirects');
+assert.match(canonicalFetchFile, /response\.status !== 200/, 'fetch-file must reject non-200 responses');
+assert.match(canonicalFetchFile, /renameSync\(temporary, destination\)/, 'fetch-file must atomically replace completed downloads');
 
 const proxyProbeDirectory = mkdtempSync(join(tmpdir(), 'clawgod-fetch-proxy-'));
 try {
@@ -1195,10 +1214,8 @@ const temporary = \`${'${destination}'}.${'${process.pid}'}.tmp\`;`,
     ['http://[::1]:8080/archive', '::1', null],
     ['http://[::1]:8080/archive', '[::1]:8081', 'http://proxy.test:3128'],
   ];
-  for (const [installerName, fetchFile] of [['install.sh', unixTemplates['fetch-file.mjs']], ['install.ps1', windowsTemplates['fetch-file.mjs']]]) {
-    for (const [url, noProxy, expected] of proxyCases) {
-      assert.equal(await proxyFor(fetchFile, url, noProxy), expected, `${installerName}: NO_PROXY=${noProxy} must select the expected proxy for ${url}`);
-    }
+  for (const [url, noProxy, expected] of proxyCases) {
+    assert.equal(await proxyFor(canonicalFetchFile, url, noProxy), expected, `NO_PROXY=${noProxy} must select the expected proxy for ${url}`);
   }
 } finally {
   rmSync(proxyProbeDirectory, { recursive: true, force: true });
@@ -1255,7 +1272,7 @@ try {
 const dir = mkdtempSync(join(tmpdir(), 'clawgod-fetch-file-'));
 try {
   const fetchFile = join(dir, 'fetch-file.mjs');
-  await Bun.write(fetchFile, unixTemplates['fetch-file.mjs']);
+  await Bun.write(fetchFile, canonicalFetchFile);
   chmodSync(fetchFile, 0o700);
   const server = Bun.serve({
     port: 0,

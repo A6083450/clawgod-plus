@@ -15,11 +15,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const canonicalRipgrepUrl = new URL('../src/generic/runtime/install-ripgrep.mjs', import.meta.url);
+const canonicalRipgrep = readFileSync(canonicalRipgrepUrl, 'utf8');
+const canonicalRepatch = readFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), 'utf8');
 
 function unixTemplate() {
   const marker = 'cat > "$CLAWGOD_DIR/install-ripgrep.mjs" << \'INSTALL_RIPGREP_EOF\'';
@@ -142,18 +144,21 @@ function zipFixture(entries, options = {}) {
   return new Uint8Array(Buffer.concat([Buffer.concat(locals), central, eocd]));
 }
 
-const unixModule = unixTemplate();
-const windowsModule = powerShellTemplate();
-const normalize = source => source.replace(/\r\n/g, '\n').trim();
-assert.equal(normalize(windowsModule), normalize(unixModule), 'Unix and Windows install-ripgrep.mjs bodies must be identical');
+assert.deepEqual(
+  [`${unixTemplate()}\n`, `${powerShellTemplate()}\n`],
+  [canonicalRipgrep, canonicalRipgrep],
+  'both generated installers must embed the canonical install-ripgrep.mjs bytes',
+);
+assert.deepEqual(
+  [`${unixRepatch()}\n`, `${powerShellRepatch()}\n`],
+  [canonicalRepatch, canonicalRepatch],
+  'both generated installers must embed the canonical repatcher.mjs bytes',
+);
 
 const fixtureDir = mkdtempSync(join(tmpdir(), 'clawgod-ripgrep-'));
 assert.equal(realpathSync(dirname(fixtureDir)), realpathSync(tmpdir()), 'ripgrep fixture must be created directly under the system temporary directory');
 try {
-  const modulePath = join(fixtureDir, 'install-ripgrep.mjs');
-  await Bun.write(modulePath, unixModule);
-  chmodSync(modulePath, 0o700);
-  const ripgrep = await import(`${pathToFileURL(modulePath).href}?test=${Date.now()}`);
+  const ripgrep = await import(`${canonicalRipgrepUrl.href}?test=${Date.now()}`);
   const {
     RIPGREP_ASSETS,
     RIPGREP_VERSION,
@@ -650,8 +655,8 @@ assert.match(windows, /"install-ripgrep\.mjs"/, 'install.ps1 generated-artifact 
 const repatchDir = mkdtempSync(join(tmpdir(), 'clawgod-ripgrep-repatch-'));
 assert.equal(realpathSync(dirname(repatchDir)), realpathSync(tmpdir()), 'ripgrep repatch fixture must be created directly under the system temporary directory');
 try {
-  for (const [name, repatch] of [['install.sh', unixRepatch()], ['install.ps1', powerShellRepatch()]]) {
-    const fixture = join(repatchDir, name.replace('.', '-'));
+  for (const [name, repatch] of [['canonical', canonicalRepatch]]) {
+    const fixture = join(repatchDir, name);
     const managed = join(fixture, 'vendor', 'ripgrep', 'bin', 'rg');
     const staleVendor = join(fixture, 'vendor', 'stale.node');
     mkdirSync(join(fixture, 'vendor', 'ripgrep', 'bin'), { recursive: true });

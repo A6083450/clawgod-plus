@@ -813,7 +813,18 @@ for (const recoveryFault of ['published-target-remove', 'backup-restore-rename']
 
 const cliRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-cli-'));
 try {
-  for (const path of ['build.mjs', 'src/template/install.sh', 'src/template/install.ps1', 'src/generic/features.json']) {
+  for (const path of [
+    'build.mjs',
+    'src/template/install.sh',
+    'src/template/install.ps1',
+    'src/generic/features.json',
+    'src/generic/runtime/fetch-file.mjs',
+    'src/generic/runtime/fetch-package.mjs',
+    'src/generic/runtime/install-ripgrep.mjs',
+    'src/generic/runtime/extractor.mjs',
+    'src/generic/runtime/post-processor.mjs',
+    'src/generic/runtime/repatcher.mjs',
+  ]) {
     const destination = join(cliRoot, path);
     mkdirSync(dirname(destination), { recursive: true });
     copyFileSync(join(root, path), destination);
