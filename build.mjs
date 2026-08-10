@@ -5,6 +5,8 @@ import * as defaultFileSystem from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { loadEnhancementManifest } from './src/generic/enhancement-config.mjs';
+
 export const GENERATED_HEADER = 'GENERATED FILE - edit src/ and run: bun build.mjs';
 export const OUTPUTS = Object.freeze([
   Object.freeze({ template: 'src/template/install.sh', output: 'install.sh', mode: 0o755 }),
@@ -152,7 +154,11 @@ function resolveOutput(rootDir, output) {
 }
 
 export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = defaultFileSystem } = {}) {
-  const featuresJson = await fileSystem.readFile(join(rootDir, 'src/generic/features.json'), 'utf8');
+  const [featuresJson, enhancementsJson] = await Promise.all([
+    fileSystem.readFile(join(rootDir, 'src/generic/features.json'), 'utf8'),
+    fileSystem.readFile(join(rootDir, 'src/generic/enhancements.json'), 'utf8'),
+  ]);
+  loadEnhancementManifest(enhancementsJson, { filename: 'enhancements.json' });
   const patcherBundle = await buildPatcherBundle({ rootDir });
   const runtimeSourceFiles = {
     FETCH_FILE_MJS: 'src/generic/runtime/fetch-file.mjs',

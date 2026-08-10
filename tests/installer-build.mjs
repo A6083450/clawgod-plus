@@ -824,6 +824,7 @@ try {
     'src/template/install.ps1',
     'src/generic/features.json',
     'src/generic/enhancements.json',
+    'src/generic/enhancement-config.mjs',
     'src/generic/runtime/fetch-file.mjs',
     'src/generic/runtime/fetch-package.mjs',
     'src/generic/runtime/install-ripgrep.mjs',
