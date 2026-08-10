@@ -31,6 +31,8 @@ const allowedReferences = [
   "import { readFileSync } from 'node:fs';",
   'require("node:path")',
   'vendor/native-addon.node',
+  'The node: protocol and native .node files are implementation details.',
+  'The Git.Exe executable is mentioned here as ordinary prose.',
   '@anthropic-ai/claude-code-linux-x64 from the npm Registry',
   'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24',
 ];
@@ -47,29 +49,90 @@ const allowedBadgePublishGitCommands = new Set([
 function findForbiddenDependencies(source, options = {}) {
   const matches = [];
   let inPowerShellBlockComment = false;
-  let inBadgePublishStep = false;
+  let badgeStepIndent = null;
+  let badgeRunIndent = null;
+  let heredocTerminator = null;
+  let lineIndent = 0;
   const add = (kind, lineNumber, line) => {
     const trimmed = line.trim();
     if (kind === 'system-git' && options.allowBadgePublishGit === true
-      && inBadgePublishStep && allowedBadgePublishGitCommands.has(trimmed)) return;
+      && badgeStepIndent !== null && badgeRunIndent !== null && lineIndent > badgeRunIndent
+      && allowedBadgePublishGitCommands.has(trimmed)) return;
     matches.push({ kind, lineNumber, line: trimmed });
   };
   const kindForProgram = program => {
-    const normalized = program.toLowerCase();
+    const normalized = program.replaceAll('\\', '/').split('/').at(-1).toLowerCase();
     if (normalized === 'git' || normalized === 'git.exe') return 'system-git';
-    if (normalized.startsWith('node')) return 'node';
-    if (normalized.startsWith('npm') || normalized.startsWith('npx')) return 'npm';
-    if (normalized === 'curl' || normalized === 'wget') return 'external-downloader';
+    if (normalized === 'node' || normalized === 'node.exe') return 'node';
+    if (/^(?:npm|npx)(?:\.cmd|\.exe)?$/.test(normalized)) return 'npm';
+    if (/^(?:curl|wget)(?:\.exe)?$/.test(normalized)) return 'external-downloader';
     if (normalized === 'invoke-webrequest' || normalized === 'irm') return 'external-downloader';
-    return 'system-ripgrep';
+    if (/^(?:rg|ripgrep)(?:\.exe)?$/.test(normalized)) return 'system-ripgrep';
+    return null;
+  };
+  const splitCommandSegments = line => {
+    const segments = [];
+    let start = 0;
+    let quote = '';
+    for (let index = 0; index < line.length; index += 1) {
+      const character = line[index];
+      if (quote) {
+        if (character === quote && line[index - 1] !== '\\') quote = '';
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character;
+        continue;
+      }
+      if (character === ';' || character === '|'
+        || (character === '&' && line[index + 1] === '&')) {
+        segments.push(line.slice(start, index));
+        if (line[index + 1] === character) index += 1;
+        start = index + 1;
+      }
+    }
+    segments.push(line.slice(start));
+    return segments;
+  };
+  const readCommandToken = segment => {
+    let remainder = segment.trim()
+      .replace(/^-\s+run:\s*/i, '')
+      .replace(/^run:\s*/i, '');
+    while (true) {
+      const before = remainder;
+      remainder = remainder.replace(/^(?:if|then|do|while|until|sudo|command|exec|time|nohup)\s+/i, '');
+      remainder = remainder.replace(/^env(?:\s+[A-Za-z_][\w]*=(?:"[^"]*"|'[^']*'|\S+))+\s+/i, '');
+      if (remainder === before) break;
+    }
+    remainder = remainder.replace(/^&\s+/, '');
+    const token = /^(?:"([^"]+)"|'([^']+)'|([^\s(){}]+))/.exec(remainder);
+    if (token && remainder.slice(token[0].length).trimStart().startsWith(':')) return '';
+    return token?.[1] ?? token?.[2] ?? token?.[3] ?? '';
   };
 
   for (const [offset, line] of source.split(/\r?\n/).entries()) {
     const lineNumber = offset + 1;
-    if (/^\s*-\s+name:\s+Publish supported-Claude-version badge\s*$/.test(line)) {
-      inBadgePublishStep = true;
-    } else if (/^\s*-\s+name:\s+/.test(line)) {
-      inBadgePublishStep = false;
+    if (heredocTerminator !== null && line.trim() === heredocTerminator) {
+      heredocTerminator = null;
+      continue;
+    }
+    const heredocStart = /<<-?\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?/.exec(line);
+    if (heredocTerminator === null && heredocStart) heredocTerminator = heredocStart[1];
+    lineIndent = /^\s*/.exec(line)[0].length;
+    const listItem = /^(\s*)-\s+/.exec(line);
+    if (badgeStepIndent !== null && listItem && listItem[1].length <= badgeStepIndent) {
+      badgeStepIndent = null;
+      badgeRunIndent = null;
+    } else if (badgeStepIndent !== null && line.trim() && lineIndent <= badgeStepIndent) {
+      badgeStepIndent = null;
+      badgeRunIndent = null;
+    }
+    const badgeStep = /^(\s*)-\s+name:\s+Publish supported-Claude-version badge\s*$/.exec(line);
+    if (badgeStep) {
+      badgeStepIndent = badgeStep[1].length;
+      badgeRunIndent = null;
+    } else if (badgeStepIndent !== null && /^\s*run:\s*\|\s*$/.test(line) && lineIndent > badgeStepIndent) {
+      badgeRunIndent = lineIndent;
     }
     if (inPowerShellBlockComment) {
       if (/#>/.test(line)) inPowerShellBlockComment = false;
@@ -84,23 +147,23 @@ function findForbiddenDependencies(source, options = {}) {
       continue;
     }
     if (/^\s*(?:#|\/\/|\*)/.test(line)) continue;
-    if (/^\s*(?:Write-(?:Err|Dim|Host)|warn|dim|info)\s+["']/.test(line)) continue;
 
     if (/^\s*uses:\s*actions\/setup-node@\S+/i.test(line)) add('node-setup', lineNumber, line);
     if (/^\s*node-version:\s*\S+/i.test(line)) add('node-version', lineNumber, line);
     if (/^\s*path:\s*~\/\.npm\s*$/i.test(line)) add('npm-cache', lineNumber, line);
 
-    const command = /(?:^|&&|\|\||;|\||\$\(|\{)\s*(?:(?:if|then|do|while|until|sudo|command|exec|time|nohup|cmd(?:\.exe)?\s+\/c)\s+|env(?:\s+[A-Za-z_][\w]*=(?:"[^"]*"|'[^']*'|\S+))*\s+)*(?:&\s*)?(git(?:\.exe)?|node(?:\.exe)?|npm(?:\.cmd)?|npx(?:\.cmd)?|rg(?:\.exe)?|ripgrep(?:\.exe)?|curl|wget|Invoke-WebRequest|irm)(?=\s|$)/g;
-    for (const match of line.matchAll(command)) {
-      add(kindForProgram(match[1]), lineNumber, line);
+    for (const segment of splitCommandSegments(line)) {
+      const kind = kindForProgram(readCommandToken(segment));
+      if (kind) add(kind, lineNumber, line);
     }
     if (/\[['"]bash['"],['"]-c['"],['"](?:curl|wget)\b/.test(line) || /\biex\(irm\b/i.test(line)) {
       add('external-downloader', lineNumber, line);
     }
 
-    const startProcess = /\bStart-Process\s+(?:-FilePath\s+)?(git(?:\.exe)?|node(?:\.exe)?)\b/i.exec(line);
+    const startProcess = /\bStart-Process\s+(?:-FilePath\s+)?(?:"([^"]+)"|'([^']+)'|([^\s]+))/i.exec(line);
     if (startProcess) {
-      add(kindForProgram(startProcess[1]), lineNumber, line);
+      const kind = kindForProgram(startProcess[1] ?? startProcess[2] ?? startProcess[3]);
+      if (kind) add(kind, lineNumber, line);
     }
     if (/&\s+\$Node(?:Bin|Path|Exe)?\b/i.test(line)) {
       add('node', lineNumber, line);
@@ -120,10 +183,6 @@ function findForbiddenDependencies(source, options = {}) {
     }
     if (/(?:^|&&|\|\||;|\||\$\(|\{)\s*(?:sudo\s+)?(?:apt(?:-get)?|brew|choco|winget|dnf|yum|apk|pacman)\b[^;|&]*\b(?:install|add)\b[^;|&]*\b(?:rg|ripgrep)\b/i.test(line)) {
       add('system-ripgrep', lineNumber, line);
-    }
-    const yamlCommand = /^\s*run:\s*(git(?:\.exe)?|node(?:\.exe)?|npm(?:\.cmd)?|npx(?:\.cmd)?|rg(?:\.exe)?|ripgrep(?:\.exe)?)(?=\s|$)/i.exec(line);
-    if (yamlCommand) {
-      add(kindForProgram(yamlCommand[1]), lineNumber, line);
     }
   }
 
@@ -148,6 +207,14 @@ const executableDependencyFixtures = [
   ['Cmd git wrapper', 'cmd /c git status --short', ['system-git']],
   ['Cmd quoted git wrapper', 'cmd.exe /c "git.exe status --short"', ['system-git']],
   ['YAML git command', 'run: git status --short', ['system-git']],
+  ['command after PowerShell log', 'Write-Host "checking"; git status --short', ['system-git']],
+  ['mixed-case Git executable', 'Git.Exe status --short', ['system-git']],
+  ['mixed-case Node executable', 'Node.Exe --version', ['node']],
+  ['nested mixed-case Git executable', 'PwSh -NoProfile -Command "Git.Exe status --short"', ['system-git']],
+  ['absolute Unix Git executable', '/usr/bin/git status --short', ['system-git']],
+  ['wrapped absolute Unix Git executable', 'env CI=1 /usr/bin/git status --short', ['system-git']],
+  ['absolute Unix Node executable', '/opt/homebrew/bin/node --version', ['node']],
+  ['absolute Windows Git executable', "& 'C:\\Program Files\\Git\\cmd\\git.exe' status --short", ['system-git']],
   ['node file', 'node ./helper.mjs', ['node']],
   ['node eval', 'node -e "console.log(1)"', ['node']],
   ['node executable', 'node.exe --version', ['node']],
@@ -163,6 +230,12 @@ const executableDependencyFixtures = [
   ['PowerShell call operator', '& node.exe --version', ['node']],
   ['PowerShell Start-Process node', 'Start-Process node -ArgumentList "--version"', ['node']],
   ['PowerShell Start-Process node executable', 'Start-Process -FilePath node.exe -ArgumentList "--version"', ['node']],
+  ['PowerShell Start-Process npm', 'Start-Process npm.cmd -ArgumentList "test"', ['npm']],
+  ['PowerShell Start-Process npx', 'Start-Process -FilePath npx.cmd -ArgumentList "tool"', ['npm']],
+  ['PowerShell Start-Process curl', 'Start-Process curl.exe -ArgumentList "https://example.test"', ['external-downloader']],
+  ['PowerShell Start-Process wget', 'Start-Process -FilePath wget.exe -ArgumentList "https://example.test"', ['external-downloader']],
+  ['PowerShell Start-Process ripgrep', 'Start-Process rg.exe -ArgumentList "pattern"', ['system-ripgrep']],
+  ['PowerShell Start-Process absolute Git', "Start-Process -FilePath 'C:\\Program Files\\Git\\cmd\\Git.Exe' -ArgumentList 'status'", ['system-git']],
   ['PowerShell variable call operator', '& $NodeBin ./helper.mjs', ['node']],
   ['PowerShell command wrapper', 'pwsh -NoProfile -c "node ./helper.mjs"', ['node']],
   ['PowerShell npm wrapper', 'powershell.exe -Command "npm ci"', ['npm']],
@@ -224,6 +297,23 @@ assert.deepEqual(
   findForbiddenDependencies('run: |\n  git add claude-version.json', { allowBadgePublishGit: true }).map(match => match.kind),
   ['system-git'],
   'a badge Git command outside the named badge-publish step must be rejected',
+);
+assert.deepEqual(
+  findForbiddenDependencies(`${badgePublishFixture}\n      - name: Other step\n        run: |\n${[...allowedBadgePublishGitCommands].map(command => `          ${command}`).join('\n')}`, { allowBadgePublishGit: true })
+    .map(match => match.kind),
+  Array(allowedBadgePublishGitCommands.size).fill('system-git'),
+  'every badge Git command must be rejected after the named badge-publish step ends',
+);
+assert.deepEqual(
+  findForbiddenDependencies(badgePublishFixture.replace('Publish supported-Claude-version badge', 'Publish another badge'), { allowBadgePublishGit: true })
+    .map(match => match.kind),
+  Array(6).fill('system-git'),
+  'the exact badge-publish name must be required for every allowed Git command',
+);
+assert.deepEqual(
+  findForbiddenDependencies(badgePublishFixture, { allowBadgePublishGit: false }).map(match => match.kind),
+  Array(6).fill('system-git'),
+  'a non-compat workflow must reject all badge-shaped Git commands',
 );
 
 for (const reference of allowedReferences) {
@@ -352,6 +442,9 @@ for (const command of ['-LeanOn', '-NoUpgrade -LeanOff', '-Uninstall']) {
 for (const dependency of ['node', 'npm', 'rg', 'tar', 'unzip', 'git', 'git.exe']) {
   assert.match(workflow, new RegExp(`['"]${dependency}['"]`), `Windows smoke must trap ${dependency} with a command shim`);
 }
+assert.match(workflow, /Join-Path\s+\$shimDir\s+['"]git\.exe['"]/, 'Windows smoke must create a real git.exe shim path');
+assert.match(workflow, /\$bunBin\s+build\s+--compile[\s\S]{0,240}\$gitExeShim/, 'Windows smoke must compile the real git.exe shim with Bun');
+assert.match(workflow, /Assert-ForbiddenShim[\s\S]{0,200}git\.cmd[\s\S]{0,200}Assert-ForbiddenShim[\s\S]{0,200}git\.exe/, 'Windows smoke must execute git and git.exe shims before the installer');
 assert.match(workflow, /\.clawgod\\vendor\\ripgrep\\bin\\rg\.exe/, 'Windows smoke must execute the private ripgrep binary');
 assert.match(workflow, /forbidden dependency invoked:/, 'compat smoke must fail on the forbidden dependency marker');
 assert.equal(workflow.match(/['"]tests\/\*\*['"]/g)?.length, 2, 'compat path filters must include all tests and fixtures for push and pull requests');
@@ -378,6 +471,14 @@ assert.match(workflow, /clawgod-settings-backup\.json/, 'Windows uninstall check
 assert.match(workflow, /clawgod-settings-state\.json/, 'Windows uninstall checks must cover claude-mem managed state');
 assert.match(workflow, /ConvertFrom-Json/, 'Windows plugin assertions must parse JSON with PowerShell APIs');
 assert.match(workflow, /claude-hud-current-style\.json/, 'Windows smoke must execute the committed HUD golden fixture');
+assert.match(workflow, /Assert-HudGoldenFixture\s+\$settings/, 'Windows HUD smoke must consume the persisted settings command');
+assert.match(workflow, /FileName\s*=\s*\$env:ComSpec/, 'Windows HUD smoke must execute through the cmd.exe command host');
+assert.match(workflow, /ArgumentList\.Add\(['"]\/d['"]\)[\s\S]{0,160}ArgumentList\.Add\(['"]\/s['"]\)[\s\S]{0,160}ArgumentList\.Add\(['"]\/c['"]\)/, 'Windows HUD smoke must use cmd.exe /d /s /c');
+assert.match(workflow, /CLAWGOD_E2E_CONTRACT['"]?\s*=\s*['"]plugin-retention['"]/, 'Windows smoke must invoke the shared Bun retention validator');
+assert.match(workflow, /CLAWGOD_E2E_CONTRACT['"]?\s*=\s*['"]plugin-selection['"]/, 'Windows smoke must consume the shared Bun strict-SemVer selection');
+assert.doesNotMatch(workflow, /\[version\]/i, 'Windows smoke must not use the looser PowerShell version parser');
+assert.match(workflow, /mcpSearch\.args\.Count\s+-ne\s+2/, 'Windows claude-mem checks must require exact MCP args');
+assert.match(workflow, /Assert-ClaudeMemMcpConsumer[\s\S]{0,4000}claude-mem: mcp server not found/, 'Windows smoke must execute the saved MCP command in its safe missing-server branch');
 assert.match(workflow, /expectedSettingsAfterUninstall/, 'Windows smoke must derive settings by removing only managed statusLine');
 for (const marker of [
   'Optional plugins: 3 ready, 0 warnings',
@@ -392,9 +493,9 @@ for (const path of readdirSync(join(root, '.github/workflows')).filter(path => /
   const source = read(`.github/workflows/${path}`);
   const matches = findForbiddenDependencies(source, { allowBadgePublishGit: path === 'compat-daily.yml' });
   assert.deepEqual(
-    path === 'compat-daily.yml' ? matches : matches.filter(match => match.kind !== 'system-git'),
+    matches,
     [],
-    `.github/workflows/${path} must not add a product Node, npm, downloader, or system ripgrep dependency; compat Git is limited to badge publishing`,
+    `.github/workflows/${path} must not add a product Node, npm, downloader, system Git, or system ripgrep dependency; compat Git is limited to badge publishing`,
   );
 }
 

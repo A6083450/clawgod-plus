@@ -23,50 +23,32 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve versions
-        id: versions
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          prev=$(git tag --sort=-version:refname | grep -v "^${tag}$" | head -n1)
-          echo "prev=${prev}" >> "$GITHUB_OUTPUT"
-          if [ -n "$prev" ]; then
-            echo "range=${prev}..${tag}" >> "$GITHUB_OUTPUT"
-          else
-            echo "range=${tag}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build release notes
-        id: notes
-        run: |
-          tag="${{ steps.versions.outputs.tag }}"
-          prev="${{ steps.versions.outputs.prev }}"
-          range="${{ steps.versions.outputs.range }}"
-          {
-            echo "## Changes"
-            echo
-            if [ -n "$prev" ]; then
-              git log --pretty='- %s (%h)' "$range"
-            else
-              git log --pretty='- %s (%h)' "$tag"
-            fi
-            echo
-            echo "## Install"
-            echo
-            echo '**macOS / Linux:**'
-            echo '```bash'
-            echo "curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash"
-            echo '```'
-            echo
-            echo '**Windows (PowerShell):**'
-            echo '```powershell'
-            echo "irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex"
-            echo '```'
-            if [ -n "$prev" ]; then
-              echo
-              echo "**Full changelog:** https://github.com/${{ github.repository }}/compare/${prev}...${tag}"
-            fi
-          } > release-notes.md
+      - name: Build release notes without system Git
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const currentTag = context.ref.replace('refs/tags/', '');
+            const { data: tags } = await github.rest.repos.listTags({ owner, repo, per_page: 100 });
+            const index = tags.findIndex((entry) => entry.name === currentTag);
+            const previousTag = index >= 0 ? tags[index + 1]?.name : undefined;
+            let commits;
+            if (previousTag) {
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                owner,
+                repo,
+                basehead: `${previousTag}...${currentTag}`,
+                per_page: 100,
+              });
+              commits = comparison.data.commits;
+            } else {
+              const history = await github.rest.repos.listCommits({ owner, repo, sha: currentTag, per_page: 100 });
+              commits = history.data;
+            }
+            const lines = commits.map((entry) => `- ${entry.commit.message.split('\n')[0]} (${entry.sha.slice(0, 7)})`);
+            fs.writeFileSync('release-notes.md', `${lines.join('\n')}\n`, 'utf8');
 
       - name: Inject version from tag
         run: |
@@ -81,7 +63,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="${{ steps.versions.outputs.tag }}"
+          tag="${GITHUB_REF_NAME}"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" install.sh install.ps1 apply-claude-code-chrome-fix.sh apply-claude-code-chrome-fix.ps1 --clobber
           else

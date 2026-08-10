@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -65,6 +65,35 @@ for (const [label, statusLine] of [
   assert.match(run.stderr, /HUD|statusLine|Bun|command|module/i, `${label} must explain the HUD validation failure`);
 }
 
+const hudConsumerRoot = mkdtempSync(join(realpathSync(tmpdir()), 'clawgod-hud-consumer-contract-'));
+try {
+  const consumerBin = join(hudConsumerRoot, 'bin');
+  const consumerBun = join(consumerBin, 'bun');
+  const nodeMarker = join(hudConsumerRoot, 'node-shim-used');
+  const consumerModule = join(hudConsumerRoot, 'statusline-consumer.mjs');
+  const expectedBytes = Buffer.from('\u001b[32mpersisted-consumer\u001b[0m\n', 'utf8');
+  mkdirSync(consumerBin);
+  symlinkSync(process.execPath, consumerBun);
+  writeFileSync(join(consumerBin, 'node'), `#!/bin/sh\nprintf used > '${nodeMarker}'\nexit 97\n`);
+  chmodSync(join(consumerBin, 'node'), 0o700);
+  writeFileSync(consumerModule, `if (process.env.CLAWGOD_CONSUMER_TOKEN !== 'from-persisted-command') process.exit(64);\nawait Bun.write(Bun.stdout, Uint8Array.from(${JSON.stringify([...expectedBytes])}));\n`);
+  const command = `CLAWGOD_CONSUMER_TOKEN=from-persisted-command '${consumerBun}' '${consumerModule}'`;
+  const consumer = runContract('hud-consumer', {
+    settings: { statusLine: { type: 'command', command } },
+    shell: '/bin/sh',
+    cwd: hudConsumerRoot,
+    env: { HOME: hudConsumerRoot, PATH: `${consumerBin}:/usr/bin:/bin` },
+    inputBase64: Buffer.from('{"fixture":true}\n').toString('base64'),
+    expectedBase64: expectedBytes.toString('base64'),
+    timeoutMs: 5_000,
+  });
+  assert.equal(consumer.status, 0, consumer.stderr);
+  assert.match(consumer.stdout, /^HUD consumer: persisted-command raw-bytes=exact$/m);
+  assert.equal(existsSync(nodeMarker), false, 'the persisted HUD consumer must not invoke the Node shim');
+} finally {
+  rmSync(hudConsumerRoot, { recursive: true, force: true });
+}
+
 const canonicalPluginIds = [
   'claude-hud@claude-hud',
   'claude-mem@thedotmack',
@@ -76,18 +105,32 @@ const retentionSpecs = [
   { id: canonicalPluginIds[2], marketplace: 'superpowers-marketplace', plugin: 'superpowers', version: '6.2.0' },
 ];
 const retentionHome = mkdtempSync(join(realpathSync(tmpdir()), 'clawgod-plugin-retention-contract-'));
+const retentionOutside = mkdtempSync(join(realpathSync(tmpdir()), 'clawgod-plugin-retention-outside-'));
 const retentionPluginRoot = join(retentionHome, '.claude', 'plugins');
 const retentionInstalledPath = join(retentionPluginRoot, 'installed_plugins.json');
 function writeRetentionFixture() {
+  rmSync(retentionPluginRoot, { recursive: true, force: true });
   const plugins = {};
   for (const spec of retentionSpecs) {
     const installPath = join(retentionPluginRoot, 'cache', spec.marketplace, spec.plugin, spec.version);
     mkdirSync(installPath, { recursive: true });
     mkdirSync(join(retentionPluginRoot, 'marketplaces', spec.marketplace), { recursive: true });
-    mkdirSync(join(retentionPluginRoot, 'clawgod-marketplaces', spec.marketplace, spec.version), { recursive: true });
+    const persistentSource = join(retentionPluginRoot, 'clawgod-marketplaces', spec.marketplace, spec.version);
+    mkdirSync(persistentSource, { recursive: true });
+    writeFileSync(join(persistentSource, 'source-marker.txt'), `${spec.id}\n`);
     plugins[spec.id] = [{ scope: 'user', version: spec.version, installPath }];
   }
   writeFileSync(retentionInstalledPath, `${JSON.stringify({ version: 2, plugins }, null, 2)}\n`);
+}
+function mutateRetentionState(mutate) {
+  const installed = JSON.parse(readFileSync(retentionInstalledPath, 'utf8'));
+  mutate(installed);
+  writeFileSync(retentionInstalledPath, `${JSON.stringify(installed, null, 2)}\n`);
+}
+function assertRetentionRejected(label, expected = /plugin|cache|marketplace|schema|path|version|unsafe|canonical/i) {
+  const run = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
+  assert.notEqual(run.status, 0, `${label} must fail retention validation`);
+  assert.match(run.stderr, expected, `${label} must explain the retention failure`);
 }
 try {
   writeRetentionFixture();
@@ -114,8 +157,79 @@ try {
   const missingMarketplace = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
   assert.notEqual(missingMarketplace.status, 0, 'a removed marketplace must fail retention validation');
   assert.match(missingMarketplace.stderr, /marketplace|superpowers|plugin/i);
+
+  writeRetentionFixture();
+  mutateRetentionState(installed => { installed.version = '2'; });
+  assertRetentionRejected('a string schema');
+
+  writeRetentionFixture();
+  mutateRetentionState(installed => {
+    installed.plugins[canonicalPluginIds[0]][0].installPath = join(retentionPluginRoot, 'cache', 'claude-hud', 'claude-hud');
+  });
+  assertRetentionRejected('the canonical cache root itself as installPath');
+
+  writeRetentionFixture();
+  mutateRetentionState(installed => { installed.plugins[canonicalPluginIds[0]][0].version = '0.8.0-rc.1'; });
+  assertRetentionRejected('a version/path mismatch');
+
+  writeRetentionFixture();
+  const fourPartPath = join(retentionPluginRoot, 'cache', 'claude-hud', 'claude-hud', '0.7.0.1');
+  mkdirSync(fourPartPath, { recursive: true });
+  mutateRetentionState(installed => {
+    installed.plugins[canonicalPluginIds[0]][0].version = '0.7.0.1';
+    installed.plugins[canonicalPluginIds[0]][0].installPath = fourPartPath;
+  });
+  assertRetentionRejected('a four-part plugin version');
+
+  writeRetentionFixture();
+  const prereleasePath = join(retentionPluginRoot, 'cache', 'claude-hud', 'claude-hud', '0.8.0-rc.1');
+  mkdirSync(prereleasePath, { recursive: true });
+  mutateRetentionState(installed => {
+    installed.plugins[canonicalPluginIds[0]][0].version = '0.8.0-rc.1';
+    installed.plugins[canonicalPluginIds[0]][0].installPath = prereleasePath;
+  });
+  const higherPrerelease = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
+  assert.equal(higherPrerelease.status, 0, higherPrerelease.stderr);
+  const prereleaseSelection = runContract('plugin-selection', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
+  assert.equal(prereleaseSelection.status, 0, prereleaseSelection.stderr);
+  assert.equal(JSON.parse(prereleaseSelection.stdout).hud.version, '0.8.0-rc.1', 'shared selection must return the legal higher prerelease');
+
+  writeRetentionFixture();
+  const pluginRootTarget = join(retentionOutside, 'plugins-root-target');
+  rmSync(pluginRootTarget, { recursive: true, force: true });
+  renameSync(retentionPluginRoot, pluginRootTarget);
+  symlinkSync(pluginRootTarget, retentionPluginRoot, process.platform === 'win32' ? 'junction' : 'dir');
+  assertRetentionRejected('a symlinked plugin root');
+
+  writeRetentionFixture();
+  const cacheTarget = join(retentionOutside, 'cache-ancestor-target');
+  rmSync(cacheTarget, { recursive: true, force: true });
+  renameSync(join(retentionPluginRoot, 'cache'), cacheTarget);
+  symlinkSync(cacheTarget, join(retentionPluginRoot, 'cache'), process.platform === 'win32' ? 'junction' : 'dir');
+  assertRetentionRejected('a symlinked cache ancestor');
+
+  writeRetentionFixture();
+  const installLeaf = join(retentionPluginRoot, 'cache', 'claude-hud', 'claude-hud', '0.7.0');
+  const installLeafTarget = join(retentionOutside, 'install-leaf-target');
+  rmSync(installLeafTarget, { recursive: true, force: true });
+  renameSync(installLeaf, installLeafTarget);
+  symlinkSync(installLeafTarget, installLeaf, process.platform === 'win32' ? 'junction' : 'dir');
+  assertRetentionRejected('a symlinked installPath leaf');
+
+  writeRetentionFixture();
+  const hardlinkPath = join(retentionOutside, 'installed_plugins-hardlink.json');
+  rmSync(hardlinkPath, { force: true });
+  linkSync(retentionInstalledPath, hardlinkPath);
+  assertRetentionRejected('a hardlinked installed plugin state');
+
+  writeRetentionFixture();
+  const outsideInstall = join(retentionOutside, 'outside-install');
+  mkdirSync(outsideInstall, { recursive: true });
+  mutateRetentionState(installed => { installed.plugins[canonicalPluginIds[0]][0].installPath = outsideInstall; });
+  assertRetentionRejected('an external temporary install path');
 } finally {
   rmSync(retentionHome, { recursive: true, force: true });
+  rmSync(retentionOutside, { recursive: true, force: true });
 }
 
 const claudeMemPrefix = 'export PATH="$($SHELL -lc \'echo $PATH\' 2>/dev/null):$PATH"; _P="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"; ';
@@ -140,11 +254,50 @@ const claudeMemEntrypoints = runContract('claude-mem-entrypoints', {
 assert.equal(claudeMemEntrypoints.status, 0, claudeMemEntrypoints.stderr);
 assert.match(claudeMemEntrypoints.stdout, /^claude-mem entrypoints: hooks=bun mcp=bun$/m);
 
+const claudeMemConsumerRoot = mkdtempSync(join(realpathSync(tmpdir()), 'clawgod-claude-mem-consumer-contract-'));
+try {
+  const consumerBin = join(claudeMemConsumerRoot, 'bin');
+  const consumerBun = join(consumerBin, 'bun');
+  const nodeMarker = join(claudeMemConsumerRoot, 'node-shim-used');
+  const pluginRoot = join(claudeMemConsumerRoot, 'plugin');
+  const versionCheck = join(pluginRoot, 'scripts', 'version-check.js');
+  mkdirSync(consumerBin);
+  mkdirSync(join(pluginRoot, 'scripts'), { recursive: true });
+  symlinkSync(process.execPath, consumerBun);
+  writeFileSync(join(consumerBin, 'node'), `#!/bin/sh\nprintf used > '${nodeMarker}'\nexit 97\n`);
+  chmodSync(join(consumerBin, 'node'), 0o700);
+  writeFileSync(versionCheck, `process.stdout.write('hook:' + process.execPath + '\\n');\n`);
+  const hookCommand = `_P='${pluginRoot}'; '${consumerBun}' "$_P/scripts/version-check.js"`;
+  const mcpProgram = `process.stdout.write('mcp:' + process.execPath + '\\n')`;
+  const consumer = runContract('claude-mem-consumer', {
+    hookCommand,
+    mcpServer: { type: 'stdio', command: consumerBun, args: ['-e', mcpProgram] },
+    shell: '/bin/sh',
+    cwd: claudeMemConsumerRoot,
+    env: { HOME: claudeMemConsumerRoot, PATH: `${consumerBin}:/usr/bin:/bin` },
+    timeoutMs: 5_000,
+    expectedHookStatus: 0,
+    expectedHookStdoutBase64: Buffer.from(`hook:${realpathSync(consumerBun)}\n`).toString('base64'),
+    expectedHookStderrBase64: '',
+    expectedMcpStatus: 0,
+    expectedMcpStdoutBase64: Buffer.from(`mcp:${realpathSync(consumerBun)}\n`).toString('base64'),
+    expectedMcpStderrBase64: '',
+  });
+  assert.equal(consumer.status, 0, consumer.stderr);
+  assert.match(consumer.stdout, /^claude-mem consumer: hook=bun mcp=bun node-shim=unused$/m);
+  assert.equal(existsSync(nodeMarker), false, 'the claude-mem consumers must not invoke the Node shim');
+} finally {
+  rmSync(claudeMemConsumerRoot, { recursive: true, force: true });
+}
+
 for (const [label, mutate] of [
   ['partial Hook rewrite', ({ hooksJson }) => { hooksJson.hooks.PostToolUse[0].hooks[0].command = `${claudeMemPrefix}node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code observation`; }],
   ['missing required Hook rewrite', ({ hooksJson }) => { delete hooksJson.hooks.SessionStart; delete hooksJson.hooks.PostToolUse; }],
   ['Node MCP command', ({ mcpJson }) => { mcpJson.mcpServers['mcp-search'].command = 'node'; }],
   ['wrong Bun path', ({ mcpJson }) => { mcpJson.mcpServers['mcp-search'].command = '/tmp/other/bin/bun'; }],
+  ['empty MCP program', ({ mcpJson }) => { mcpJson.mcpServers['mcp-search'].args = ['-e', '']; }],
+  ['extra MCP argument', ({ mcpJson }) => { mcpJson.mcpServers['mcp-search'].args.push('--unexpected'); }],
+  ['wrong MCP eval flag', ({ mcpJson }) => { mcpJson.mcpServers['mcp-search'].args[0] = '--eval'; }],
 ]) {
   const fixture = { hooksJson: structuredClone(managedClaudeMemHooks), mcpJson: structuredClone(managedClaudeMemMcp), bunPath: contractBunPath };
   mutate(fixture);

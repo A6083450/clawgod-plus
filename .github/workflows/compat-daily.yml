@@ -222,7 +222,7 @@ jobs:
           Get-ChildItem Env: | Where-Object { $_.Name -like 'ANTHROPIC_*' } | Remove-Item
           Remove-Item Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue
 
-          foreach ($name in @('node', 'npm', 'rg', 'tar', 'unzip', 'git', 'git.exe')) {
+          foreach ($name in @('node', 'npm', 'rg', 'tar', 'unzip', 'git')) {
             $shim = @"
           @echo off
           echo forbidden dependency invoked: $name 1>&2
@@ -230,6 +230,20 @@ jobs:
           exit /b 97
           "@
             [System.IO.File]::WriteAllText((Join-Path $shimDir "$name.cmd"), $shim, [System.Text.Encoding]::ASCII)
+          }
+          $gitExeSource = Join-Path $sandbox 'forbidden-git-exe.mjs'
+          $gitExeShim = Join-Path $shimDir 'git.exe'
+          $gitExeProgram = @'
+          const marker = process.env.CLAWGOD_FORBIDDEN_MARKER;
+          if (!marker) process.exit(96);
+          await Bun.write(marker, 'forbidden dependency invoked: git.exe\n');
+          console.error('forbidden dependency invoked: git.exe');
+          process.exit(97);
+          '@
+          [System.IO.File]::WriteAllText($gitExeSource, $gitExeProgram, [System.Text.UTF8Encoding]::new($false))
+          $gitExeBuild = & $bunBin build --compile $gitExeSource --outfile $gitExeShim 2>&1
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gitExeShim -PathType Leaf)) {
+            throw "Bun failed to compile the git.exe shim: $($gitExeBuild | Out-String)"
           }
 
           function Assert-NoForbiddenDependency([object[]]$Output) {
@@ -247,6 +261,20 @@ jobs:
             if ($exitCode -ne 0) { throw "$Label exited $exitCode" }
             return ,$output
           }
+
+          function Assert-ForbiddenShim([string]$Label, [string]$Executable) {
+            Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+            $output = & $Executable status --short 2>&1
+            $exitCode = $LASTEXITCODE
+            $text = $output | Out-String
+            if ($exitCode -ne 97 -or $text -notmatch 'forbidden dependency invoked:' -or -not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+              throw "$Label did not exit 97 and write the forbidden marker"
+            }
+            Remove-Item -LiteralPath $marker -Force
+          }
+
+          Assert-ForbiddenShim 'git command shim' (Join-Path $shimDir 'git.cmd')
+          Assert-ForbiddenShim 'git executable shim' (Join-Path $shimDir 'git.exe')
 
           function Assert-PatchSummary([string]$Label, [object[]]$Output) {
             $text = $Output | Out-String
@@ -275,23 +303,49 @@ jobs:
             return Get-Content $Path -Raw | ConvertFrom-Json
           }
 
+          function Assert-SharedPluginRetention([string]$Label) {
+            $contractInput = [ordered]@{
+              tempHome = $env:USERPROFILE
+              expectedCanonicalIds = @(
+                'claude-hud@claude-hud',
+                'claude-mem@thedotmack',
+                'superpowers@superpowers-marketplace'
+              )
+            } | ConvertTo-Json -Depth 10 -Compress
+            $contractScript = Join-Path $env:GITHUB_WORKSPACE 'tests\installer-e2e.mjs'
+            try {
+              $env:CLAWGOD_E2E_CONTRACT = 'plugin-retention'
+              $env:CLAWGOD_E2E_CONTRACT_INPUT = $contractInput
+              $retentionOutput = & $bunBin $contractScript 2>&1
+              $retentionExitCode = $LASTEXITCODE
+              $env:CLAWGOD_E2E_CONTRACT = 'plugin-selection'
+              $selectionOutput = & $bunBin $contractScript 2>&1
+              $selectionExitCode = $LASTEXITCODE
+            } finally {
+              Remove-Item Env:CLAWGOD_E2E_CONTRACT -ErrorAction SilentlyContinue
+              Remove-Item Env:CLAWGOD_E2E_CONTRACT_INPUT -ErrorAction SilentlyContinue
+            }
+            if ($retentionExitCode -ne 0 -or ($retentionOutput | Out-String).Trim() -cne 'plugin retention: hud=present memory=present superpowers=present') {
+              throw "$Label failed the shared Bun plugin validator: $($retentionOutput | Out-String)"
+            }
+            if ($selectionExitCode -ne 0) { throw "$Label failed the shared Bun plugin selection: $($selectionOutput | Out-String)" }
+            try {
+              return (($selectionOutput | Out-String).Trim() | ConvertFrom-Json)
+            } catch {
+              throw "$Label shared Bun plugin selection was not JSON: $($selectionOutput | Out-String)"
+            }
+          }
+
           function Assert-PluginState([string]$Label) {
-            $pluginRoot = Join-Path $env:USERPROFILE '.claude\plugins'
-            $installed = Read-JsonFile (Join-Path $pluginRoot 'installed_plugins.json')
-            if ($installed.version -ne 2) { throw "$Label installed plugin state is not schema 2" }
+            $validated = Assert-SharedPluginRetention $Label
             $settingsValue = Read-JsonFile (Join-Path $env:USERPROFILE '.claude\settings.json')
             $selected = @{}
             foreach ($spec in $pluginSpecs) {
-              $recordsProperty = $installed.plugins.PSObject.Properties[$spec.Id]
-              if ($null -eq $recordsProperty) { throw "$Label missing canonical plugin ID $($spec.Id)" }
-              $record = @($recordsProperty.Value | Where-Object { $_.scope -ceq 'user' -and $_.version -and $_.installPath } | Sort-Object { [version]$_.version } -Descending)[0]
-              if ($null -eq $record) { throw "$Label missing user plugin record for $($spec.Id)" }
-              if ([version]$record.version -lt [version]$spec.Version) { throw "$Label $($spec.Id) is below baseline $($spec.Version)" }
+              $recordProperty = $validated.PSObject.Properties[$spec.Key]
+              if ($null -eq $recordProperty) { throw "$Label shared validator omitted $($spec.Id)" }
+              $record = $recordProperty.Value
               $enabled = $settingsValue.enabledPlugins.PSObject.Properties[$spec.Id]
               if ($null -eq $enabled -or $enabled.Value -ne $true) { throw "$Label $($spec.Id) is not enabled" }
-              if (-not (Test-Path -LiteralPath $record.installPath -PathType Container)) { throw "$Label cache is missing for $($spec.Id)" }
-              if (-not (Test-Path -LiteralPath (Join-Path $pluginRoot "marketplaces\$($spec.Marketplace)") -PathType Container)) { throw "$Label marketplace is missing for $($spec.Id)" }
-              if (-not (Test-Path -LiteralPath (Join-Path $pluginRoot "clawgod-marketplaces\$($spec.Marketplace)\$($spec.Version)") -PathType Container)) { throw "$Label persistent source is missing for $($spec.Id)" }
               $selected[$spec.Key] = $record
             }
             return $selected
@@ -330,13 +384,65 @@ jobs:
             }
             if ($versionCount -lt 1 -or $runnerCount -lt 1) { throw 'claude-mem Hook rewrite is partial' }
             $mcpSearch = $mcp.mcpServers.'mcp-search'
-            if ($mcpSearch.type -cne 'stdio' -or $mcpSearch.command -cne $bunBin -or $mcpSearch.args[0] -cne '-e') {
+            if ($mcpSearch.type -cne 'stdio' -or $mcpSearch.command -cne $bunBin -or $mcpSearch.args.Count -ne 2
+              -or $mcpSearch.args[0] -cne '-e' -or [string]::IsNullOrEmpty([string]$mcpSearch.args[1])) {
               throw 'claude-mem MCP entrypoint is not Bun-managed'
             }
             Write-Host 'claude-mem entrypoints: hooks=bun mcp=bun'
           }
 
-          function Assert-HudGoldenFixture([string]$ModulePath) {
+          function Assert-ClaudeMemMcpConsumer([string]$InstallPath) {
+            $mcp = Read-JsonFile (Join-Path $InstallPath '.mcp.json')
+            $mcpSearch = $mcp.mcpServers.'mcp-search'
+            $smokeRoot = Join-Path $env:USERPROFILE 'claude-mem-mcp-smoke'
+            $mcpHome = Join-Path $smokeRoot 'home'
+            $mcpConfig = Join-Path $smokeRoot 'config'
+            $mcpCwd = Join-Path $smokeRoot 'cwd'
+            New-Item -ItemType Directory -Force -Path $mcpHome, $mcpConfig, $mcpCwd | Out-Null
+
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = [string]$mcpSearch.command
+            foreach ($argument in @($mcpSearch.args)) { $startInfo.ArgumentList.Add([string]$argument) }
+            $startInfo.WorkingDirectory = $mcpCwd
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            $startInfo.Environment.Clear()
+            $startInfo.Environment['HOME'] = $mcpHome
+            $startInfo.Environment['USERPROFILE'] = $mcpHome
+            $startInfo.Environment['APPDATA'] = $mcpHome
+            $startInfo.Environment['LOCALAPPDATA'] = $mcpHome
+            $startInfo.Environment['TEMP'] = $smokeRoot
+            $startInfo.Environment['TMP'] = $smokeRoot
+            $startInfo.Environment['PATH'] = $env:PATH
+            $startInfo.Environment['SystemRoot'] = $env:SystemRoot
+            $startInfo.Environment['ComSpec'] = $env:ComSpec
+            $startInfo.Environment['CLAWGOD_FORBIDDEN_MARKER'] = $marker
+            $startInfo.Environment['CLAUDE_CONFIG_DIR'] = $mcpConfig
+            $startInfo.Environment['CLAUDE_PLUGIN_ROOT'] = (Join-Path $smokeRoot 'missing-plugin')
+            $startInfo.Environment['PLUGIN_ROOT'] = (Join-Path $smokeRoot 'missing-plugin')
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            if (-not $process.Start()) { throw 'claude-mem MCP safe consumer did not start' }
+            $stdout = [System.IO.MemoryStream]::new()
+            $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdout)
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            $process.StandardInput.Close()
+            if (-not $process.WaitForExit(10000)) {
+              $process.Kill($true)
+              throw 'claude-mem MCP safe consumer timed out'
+            }
+            $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            if ($process.ExitCode -ne 1 -or $stdout.Length -ne 0 -or $stderr -cne "claude-mem: mcp server not found`n") {
+              throw "claude-mem MCP safe consumer did not take the missing-server branch: exit=$($process.ExitCode) stderr=$stderr"
+            }
+            Assert-NoForbiddenDependency @($stderr)
+            Write-Host 'claude-mem consumer windows: mcp=bun missing-server=safe node-shim=unused'
+          }
+
+          function Assert-HudGoldenFixture([object]$SettingsValue) {
             $fixture = Read-JsonFile (Join-Path $env:GITHUB_WORKSPACE 'tests\fixtures\claude-hud-current-style.json')
             $projectDir = Join-Path $env:USERPROFILE 'my-project'
             $transcriptPath = Join-Path $projectDir 'transcript.jsonl'
@@ -350,8 +456,11 @@ jobs:
             $stdinValue.workspace | Add-Member -NotePropertyName project_dir -NotePropertyValue $projectDir
 
             $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-            $startInfo.FileName = $bunBin
-            $startInfo.ArgumentList.Add($ModulePath)
+            $startInfo.FileName = $env:ComSpec
+            $startInfo.ArgumentList.Add('/d')
+            $startInfo.ArgumentList.Add('/s')
+            $startInfo.ArgumentList.Add('/c')
+            $startInfo.ArgumentList.Add('"' + $SettingsValue.statusLine.command + '"')
             $startInfo.WorkingDirectory = $projectDir
             $startInfo.UseShellExecute = $false
             $startInfo.RedirectStandardInput = $true
@@ -366,7 +475,10 @@ jobs:
             $stderrTask = $process.StandardError.ReadToEndAsync()
             $process.StandardInput.Write(($stdinValue | ConvertTo-Json -Depth 100 -Compress) + "`n")
             $process.StandardInput.Close()
-            $process.WaitForExit()
+            if (-not $process.WaitForExit(10000)) {
+              $process.Kill($true)
+              throw 'HUD golden fixture command host timed out'
+            }
             $stdoutTask.GetAwaiter().GetResult()
             $stderr = $stderrTask.GetAwaiter().GetResult()
             if ($process.ExitCode -ne 0) { throw "HUD golden fixture exited $($process.ExitCode): $stderr" }
@@ -399,7 +511,8 @@ jobs:
           $hudStatusLineModule = Join-Path $env:USERPROFILE '.clawgod\claude-hud-statusline.mjs'
           Assert-HudStatusLine $settings $hudStatusLineModule
           Assert-ClaudeMemEntrypoints $initialPlugins['memory'].installPath
-          Assert-HudGoldenFixture $hudStatusLineModule
+          Assert-ClaudeMemMcpConsumer $initialPlugins['memory'].installPath
+          Assert-HudGoldenFixture $settings
 
           $privateRg = Join-Path $env:USERPROFILE '.clawgod\vendor\ripgrep\bin\rg.exe'
           $rgVersion = Invoke-Checked 'private ripgrep version smoke' $privateRg @('--version')

@@ -2,9 +2,14 @@
 import assert from 'node:assert/strict';
 import {
   chmodSync,
+  closeSync,
+  constants as fsConstants,
   existsSync,
+  fstatSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -13,7 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -121,35 +126,155 @@ function validateHudStatusLine(settings, bunPath, managedModulePath) {
   return 'HUD statusline: bun-only current-style=exact';
 }
 
+function executePersistedHudCommand({ settings, shell, cwd, env, inputBase64, expectedBase64, timeoutMs }) {
+  assert.equal(settings?.statusLine?.type, 'command', 'HUD consumer requires a persisted command statusLine');
+  assert.equal(typeof settings.statusLine.command, 'string', 'HUD consumer requires the persisted statusLine.command string');
+  assert.equal(isAbsolute(shell), true, 'HUD consumer shell must be an absolute command host');
+  assert.equal(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 30_000, true, 'HUD consumer timeout must be bounded');
+  const result = spawnSync(shell, ['-c', settings.statusLine.command], {
+    cwd,
+    env,
+    input: Buffer.from(inputBase64, 'base64'),
+    timeout: timeoutMs,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  assert.equal(result.error, undefined, `persisted HUD consumer must complete before timeout: ${result.error?.message ?? ''}`);
+  assert.equal(result.status, 0, `persisted HUD consumer exited ${result.status}: ${Buffer.from(result.stderr ?? '').toString('utf8')}`);
+  assert.deepEqual(Buffer.from(result.stdout ?? ''), Buffer.from(expectedBase64, 'base64'), 'persisted HUD consumer stdout must match raw ANSI bytes exactly');
+  return 'HUD consumer: persisted-command raw-bytes=exact';
+}
+
 const canonicalPluginRetentionSpecs = [
   { key: 'hud', id: 'claude-hud@claude-hud', marketplace: 'claude-hud', plugin: 'claude-hud', version: '0.7.0' },
   { key: 'memory', id: 'claude-mem@thedotmack', marketplace: 'thedotmack', plugin: 'claude-mem', version: '13.14.0' },
   { key: 'superpowers', id: 'superpowers@superpowers-marketplace', marketplace: 'superpowers-marketplace', plugin: 'superpowers', version: '6.2.0' },
 ];
 
-function validatePluginRetention(tempHome, expectedCanonicalIds) {
+const strictSemverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+
+function parseStrictSemver(value) {
+  if (typeof value !== 'string') return null;
+  const match = strictSemverPattern.exec(value);
+  if (!match) return null;
+  const [major, minor, patch, prereleaseText] = match.slice(1);
+  const prerelease = prereleaseText ? prereleaseText.split('.').map(identifier => {
+    if (!/^\d+$/.test(identifier)) return identifier;
+    if (!/^(0|[1-9]\d*)$/.test(identifier)) return null;
+    const numeric = Number(identifier);
+    return Number.isSafeInteger(numeric) ? numeric : null;
+  }) : [];
+  if (prerelease.includes(null)) return null;
+  const core = [major, minor, patch].map(Number);
+  if (!core.every(Number.isSafeInteger)) return null;
+  return { major: core[0], minor: core[1], patch: core[2], prerelease };
+}
+
+function compareStrictSemver(left, right) {
+  const leftVersion = parseStrictSemver(left);
+  const rightVersion = parseStrictSemver(right);
+  if (!leftVersion || !rightVersion) return null;
+  for (const key of ['major', 'minor', 'patch']) {
+    if (leftVersion[key] !== rightVersion[key]) return leftVersion[key] < rightVersion[key] ? -1 : 1;
+  }
+  if (leftVersion.prerelease.length === 0 || rightVersion.prerelease.length === 0) {
+    if (leftVersion.prerelease.length === rightVersion.prerelease.length) return 0;
+    return leftVersion.prerelease.length === 0 ? 1 : -1;
+  }
+  const length = Math.min(leftVersion.prerelease.length, rightVersion.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftIdentifier = leftVersion.prerelease[index];
+    const rightIdentifier = rightVersion.prerelease[index];
+    if (leftIdentifier === rightIdentifier) continue;
+    if (typeof leftIdentifier === 'number' && typeof rightIdentifier === 'number') return leftIdentifier < rightIdentifier ? -1 : 1;
+    if (typeof leftIdentifier === 'number') return -1;
+    if (typeof rightIdentifier === 'number') return 1;
+    return leftIdentifier < rightIdentifier ? -1 : 1;
+  }
+  if (leftVersion.prerelease.length === rightVersion.prerelease.length) return 0;
+  return leftVersion.prerelease.length < rightVersion.prerelease.length ? -1 : 1;
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.nlink === right.nlink;
+}
+
+function assertTrustedDirectoryPath(tempHome, target, label) {
+  const anchor = resolve(tempHome);
+  const anchorStatus = lstatSync(anchor);
+  assert.equal(anchorStatus.isDirectory() && !anchorStatus.isSymbolicLink(), true, `${label}: temporary HOME must be a real directory, not a symlink or reparse point`);
+  assert.equal(realpathSync(anchor), anchor, `${label}: temporary HOME must be a real directory, not a symlink or reparse point`);
+  const offset = relative(anchor, resolve(target));
+  assert.ok(offset === '' || (!offset.startsWith(`..${sep}`) && offset !== '..' && !isAbsolute(offset)), `${label}: path must remain inside temporary HOME`);
+  const snapshots = [[anchor, anchorStatus]];
+  let current = anchor;
+  for (const component of offset === '' ? [] : offset.split(sep)) {
+    current = join(current, component);
+    const status = lstatSync(current);
+    assert.equal(status.isDirectory() && !status.isSymbolicLink(), true, `${label}: directory path contains a symlink, reparse point, or non-directory`);
+    assert.equal(realpathSync(current), current, `${label}: directory path escapes its canonical location`);
+    snapshots.push([current, status]);
+  }
+  for (const [path, before] of snapshots) {
+    assert.equal(sameFileIdentity(before, lstatSync(path)), true, `${label}: directory identity changed during validation`);
+  }
+  return resolve(target);
+}
+
+function readTrustedJson(tempHome, path, label) {
+  assertTrustedDirectoryPath(tempHome, dirname(path), `${label} parent`);
+  const before = lstatSync(path);
+  assert.equal(before.isFile() && !before.isSymbolicLink() && before.nlink === 1, true, `${label}: file must be regular, single-link, and not a symlink`);
+  const descriptor = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  try {
+    const opened = fstatSync(descriptor);
+    assert.equal(sameFileIdentity(before, opened), true, `${label}: file identity changed before reading`);
+    const value = JSON.parse(readFileSync(descriptor, 'utf8'));
+    assert.equal(sameFileIdentity(opened, fstatSync(descriptor)), true, `${label}: file identity changed while reading`);
+    assert.equal(sameFileIdentity(opened, lstatSync(path)), true, `${label}: path identity changed while reading`);
+    return value;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function selectCanonicalPluginRecord(installed, spec) {
+  const records = installed.plugins[spec.id];
+  assert.equal(Array.isArray(records), true, `retained plugin record is missing for ${spec.id}`);
+  const userRecords = records.filter(record => record?.scope === 'user');
+  assert.ok(userRecords.length > 0, `retained user plugin record is missing for ${spec.id}`);
+  for (const record of userRecords) {
+    assert.equal(typeof record.installPath, 'string', `retained installPath must be a string for ${spec.id}`);
+    assert.notEqual(parseStrictSemver(record.version), null, `retained plugin version must be strict SemVer for ${spec.id}`);
+  }
+  return userRecords.sort((left, right) => compareStrictSemver(right.version, left.version))[0];
+}
+
+function validatePluginRetention(tempHome, expectedCanonicalIds, returnSelection = false) {
   assert.deepEqual(
     [...expectedCanonicalIds].sort(),
     canonicalPluginRetentionSpecs.map(spec => spec.id).sort(),
     'plugin retention must use the three canonical plugin IDs',
   );
-  const pluginRoot = join(tempHome, '.claude', 'plugins');
-  const installed = JSON.parse(readFileSync(join(pluginRoot, 'installed_plugins.json'), 'utf8'));
-  assert.equal(installed?.version, 2, 'installed plugin state must use schema version 2');
+  const pluginRoot = join(resolve(tempHome), '.claude', 'plugins');
+  assertTrustedDirectoryPath(tempHome, pluginRoot, 'canonical plugin root');
+  const installed = readTrustedJson(tempHome, join(pluginRoot, 'installed_plugins.json'), 'installed plugin state');
+  assert.equal(installed !== null && typeof installed === 'object' && !Array.isArray(installed), true, 'installed plugin state must be an object');
+  assert.equal(Number.isSafeInteger(installed.version) && installed.version === 2, true, 'installed plugin state must use numeric schema version 2');
+  assert.equal(installed.plugins !== null && typeof installed.plugins === 'object' && !Array.isArray(installed.plugins), true, 'installed plugin state must contain a plugins object');
+  const selected = {};
   for (const spec of canonicalPluginRetentionSpecs) {
-    const records = installed?.plugins?.[spec.id];
-    assert.equal(Array.isArray(records), true, `retained plugin record is missing for ${spec.id}`);
-    const record = records.find(candidate => candidate?.scope === 'user' && typeof candidate.version === 'string' && typeof candidate.installPath === 'string');
-    assert.notEqual(record, undefined, `retained user plugin record is missing for ${spec.id}`);
-    const cacheRoot = join(pluginRoot, 'cache', spec.marketplace, spec.plugin);
-    assert.equal(existsSync(record.installPath), true, `retained plugin cache is missing for ${spec.id}`);
-    assert.equal(pathIsInside(realpathSync(cacheRoot), realpathSync(record.installPath)), true, `retained plugin cache is not canonical for ${spec.id}`);
-    assert.equal(existsSync(join(pluginRoot, 'marketplaces', spec.marketplace)), true, `retained marketplace is missing for ${spec.id}`);
-    const persistentMarketplace = join(pluginRoot, 'clawgod-marketplaces', spec.marketplace);
-    assert.equal(existsSync(persistentMarketplace), true, `retained persistent marketplace is missing for ${spec.id}`);
-    assert.ok(readdirSync(persistentMarketplace).length > 0, `retained persistent marketplace has no source for ${spec.id}`);
+    const record = selectCanonicalPluginRecord(installed, spec);
+    assert.ok(compareStrictSemver(record.version, spec.version) >= 0, `${spec.id} must be at its baseline or a preserved newer version`);
+    const expectedInstallPath = join(pluginRoot, 'cache', spec.marketplace, spec.plugin, record.version);
+    assert.equal(resolve(record.installPath), expectedInstallPath, `retained plugin installPath is not canonical for ${spec.id}`);
+    assertTrustedDirectoryPath(tempHome, expectedInstallPath, `retained plugin cache for ${spec.id}`);
+    assertTrustedDirectoryPath(tempHome, join(pluginRoot, 'marketplaces', spec.marketplace), `retained marketplace for ${spec.id}`);
+    const persistentSource = join(pluginRoot, 'clawgod-marketplaces', spec.marketplace, spec.version);
+    assertTrustedDirectoryPath(tempHome, persistentSource, `retained persistent source for ${spec.id}`);
+    assert.ok(readdirSync(persistentSource).length > 0, `retained persistent marketplace has no source for ${spec.id}`);
+    selected[spec.key] = record;
   }
-  return 'plugin retention: hud=present memory=present superpowers=present';
+  return returnSelection ? selected : 'plugin retention: hud=present memory=present superpowers=present';
 }
 
 function validateClaudeMemEntrypoints(hooksJson, mcpJson, bunPath) {
@@ -181,8 +306,49 @@ function validateClaudeMemEntrypoints(hooksJson, mcpJson, bunPath) {
   const mcpSearch = mcpJson?.mcpServers?.['mcp-search'];
   assert.equal(mcpSearch?.type, 'stdio', 'claude-mem MCP entrypoint must use stdio');
   assert.equal(mcpSearch?.command, bunPath, 'claude-mem MCP entrypoint must use the selected Bun path');
-  assert.equal(Array.isArray(mcpSearch?.args) && mcpSearch.args[0] === '-e' && typeof mcpSearch.args[1] === 'string', true, 'claude-mem MCP entrypoint arguments must retain the managed script');
+  assert.equal(Array.isArray(mcpSearch?.args) && mcpSearch.args.length === 2 && mcpSearch.args[0] === '-e'
+    && typeof mcpSearch.args[1] === 'string' && mcpSearch.args[1].length > 0, true, 'claude-mem MCP entrypoint arguments must be exactly [-e, program]');
   return 'claude-mem entrypoints: hooks=bun mcp=bun';
+}
+
+function executeClaudeMemConsumers(fixture) {
+  const {
+    hookCommand, mcpServer, shell, hookCwd, mcpCwd, hookEnv, mcpEnv, timeoutMs,
+    hookInputBase64 = '', mcpInputBase64 = '',
+    expectedHookStatus, expectedHookStdoutBase64, expectedHookStderrBase64,
+    expectedMcpStatus, expectedMcpStdoutBase64, expectedMcpStderrBase64,
+  } = fixture;
+  assert.equal(typeof hookCommand, 'string', 'claude-mem consumer requires a saved Hook command');
+  assert.equal(isAbsolute(shell), true, 'claude-mem Hook consumer requires an absolute shell host');
+  assert.equal(mcpServer?.type, 'stdio', 'claude-mem MCP consumer requires a stdio server');
+  assert.equal(typeof mcpServer.command, 'string', 'claude-mem MCP consumer requires a saved command');
+  assert.equal(Array.isArray(mcpServer.args) && mcpServer.args.length === 2
+    && mcpServer.args[0] === '-e' && typeof mcpServer.args[1] === 'string' && mcpServer.args[1].length > 0, true,
+  'claude-mem MCP consumer requires exact [-e, program] args');
+  assert.equal(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 30_000, true, 'claude-mem consumer timeout must be bounded');
+  const hook = spawnSync(shell, ['-c', hookCommand], {
+    cwd: hookCwd ?? fixture.cwd,
+    env: hookEnv ?? fixture.env,
+    input: Buffer.from(hookInputBase64, 'base64'),
+    timeout: timeoutMs,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  assert.equal(hook.error, undefined, `claude-mem Hook consumer must complete before timeout: ${hook.error?.message ?? ''}`);
+  assert.equal(hook.status, expectedHookStatus, `claude-mem Hook consumer exited ${hook.status}`);
+  assert.deepEqual(Buffer.from(hook.stdout ?? ''), Buffer.from(expectedHookStdoutBase64, 'base64'), 'claude-mem Hook stdout changed');
+  assert.deepEqual(Buffer.from(hook.stderr ?? ''), Buffer.from(expectedHookStderrBase64, 'base64'), 'claude-mem Hook stderr changed');
+  const mcp = spawnSync(mcpServer.command, mcpServer.args, {
+    cwd: mcpCwd ?? fixture.cwd,
+    env: mcpEnv ?? fixture.env,
+    input: Buffer.from(mcpInputBase64, 'base64'),
+    timeout: timeoutMs,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  assert.equal(mcp.error, undefined, `claude-mem MCP consumer must complete before timeout: ${mcp.error?.message ?? ''}`);
+  assert.equal(mcp.status, expectedMcpStatus, `claude-mem MCP consumer exited ${mcp.status}`);
+  assert.deepEqual(Buffer.from(mcp.stdout ?? ''), Buffer.from(expectedMcpStdoutBase64, 'base64'), 'claude-mem MCP stdout changed');
+  assert.deepEqual(Buffer.from(mcp.stderr ?? ''), Buffer.from(expectedMcpStderrBase64, 'base64'), 'claude-mem MCP stderr changed');
+  return 'claude-mem consumer: hook=bun mcp=bun node-shim=unused';
 }
 
 function validateVersionEquality(wrapperOutput, sourceVersion) {
@@ -239,12 +405,19 @@ if (process.env.CLAWGOD_E2E_CONTRACT) {
     } else if (process.env.CLAWGOD_E2E_CONTRACT === 'hud-statusline') {
       const fixture = JSON.parse(input);
       marker = validateHudStatusLine(fixture.settings, fixture.bunPath, fixture.managedModulePath);
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'hud-consumer') {
+      marker = executePersistedHudCommand(JSON.parse(input));
     } else if (process.env.CLAWGOD_E2E_CONTRACT === 'plugin-retention') {
       const fixture = JSON.parse(input);
       marker = validatePluginRetention(fixture.tempHome, fixture.expectedCanonicalIds);
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'plugin-selection') {
+      const fixture = JSON.parse(input);
+      marker = JSON.stringify(validatePluginRetention(fixture.tempHome, fixture.expectedCanonicalIds, true));
     } else if (process.env.CLAWGOD_E2E_CONTRACT === 'claude-mem-entrypoints') {
       const fixture = JSON.parse(input);
       marker = validateClaudeMemEntrypoints(fixture.hooksJson, fixture.mcpJson, fixture.bunPath);
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'claude-mem-consumer') {
+      marker = executeClaudeMemConsumers(JSON.parse(input));
     } else if (process.env.CLAWGOD_E2E_CONTRACT === 'patch-summary') {
       const fixture = JSON.parse(input);
       marker = validatePatchSummary(fixture.label, fixture.output);
@@ -352,44 +525,22 @@ function assertLeanOff() {
   assert.equal(existsSync(join(clawgodDir, '.lean-disabled')), true, '--lean-off must create the lean-disabled marker');
 }
 
-function compareStableVersions(left, right) {
-  const parse = value => {
-    const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value);
-    assert.notEqual(match, null, `plugin version must be stable strict SemVer: ${value}`);
-    return match.slice(1).map(Number);
-  };
-  const leftParts = parse(left);
-  const rightParts = parse(right);
-  for (let index = 0; index < 3; index += 1) {
-    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
-  }
-  return 0;
-}
-
 function validateInstalledPluginState(label) {
   const pluginRoot = join(tempHome, '.claude', 'plugins');
-  const installed = JSON.parse(readFileSync(join(pluginRoot, 'installed_plugins.json'), 'utf8'));
-  assert.equal(installed?.version, 2, `${label}: installed plugin state must use schema version 2`);
+  validatePluginRetention(tempHome, canonicalPluginRetentionSpecs.map(spec => spec.id));
+  const installed = readTrustedJson(tempHome, join(pluginRoot, 'installed_plugins.json'), `${label} installed plugin state`);
   const settings = readSettings();
   const selected = new Map();
   for (const spec of canonicalPluginRetentionSpecs) {
-    const records = installed?.plugins?.[spec.id];
-    assert.equal(Array.isArray(records), true, `${label}: canonical plugin record is missing for ${spec.id}`);
-    const record = records
-      .filter(candidate => candidate?.scope === 'user' && typeof candidate.version === 'string' && typeof candidate.installPath === 'string')
-      .sort((left, right) => compareStableVersions(right.version, left.version))[0];
-    assert.notEqual(record, undefined, `${label}: valid user plugin record is missing for ${spec.id}`);
-    assert.ok(compareStableVersions(record.version, spec.version) >= 0, `${label}: ${spec.id} must be at baseline ${spec.version} or a preserved newer version`);
+    const record = selectCanonicalPluginRecord(installed, spec);
+    assert.ok(compareStrictSemver(record.version, spec.version) >= 0, `${label}: ${spec.id} must be at baseline ${spec.version} or a preserved newer version`);
     assert.equal(settings.enabledPlugins?.[spec.id], true, `${label}: ${spec.id} must remain enabled`);
-    assert.equal(existsSync(record.installPath), true, `${label}: canonical cache is missing for ${spec.id}`);
-    assert.equal(existsSync(join(pluginRoot, 'marketplaces', spec.marketplace)), true, `${label}: marketplace is missing for ${spec.id}`);
-    assert.equal(existsSync(join(pluginRoot, 'clawgod-marketplaces', spec.marketplace, spec.version)), true, `${label}: persistent local source is missing for ${spec.id}`);
     selected.set(spec.key, record);
   }
   return selected;
 }
 
-function runHudGoldenFixture(bunPath, managedModulePath) {
+function runHudGoldenFixture(settings) {
   const fixture = JSON.parse(readFileSync(join(root, 'tests', 'fixtures', 'claude-hud-current-style.json'), 'utf8'));
   const projectDir = join(tempHome, 'my-project');
   const transcriptPath = join(projectDir, 'transcript.jsonl');
@@ -401,17 +552,81 @@ function runHudGoldenFixture(bunPath, managedModulePath) {
     transcript_path: transcriptPath,
     workspace: { ...fixture.stdin.workspace, current_dir: projectDir, project_dir: projectDir },
   };
-  const result = spawnSync(bunPath, [managedModulePath], {
+  const marker = executePersistedHudCommand({
+    settings,
+    shell: '/bin/sh',
     cwd: projectDir,
     env: isolatedEnv,
-    input: `${JSON.stringify(stdin)}\n`,
-    maxBuffer: 16 * 1024 * 1024,
+    inputBase64: Buffer.from(`${JSON.stringify(stdin)}\n`, 'utf8').toString('base64'),
+    expectedBase64: Buffer.from(fixture.expectedStdout, 'utf8').toString('base64'),
+    timeoutMs: 10_000,
   });
-  const stderr = Buffer.from(result.stderr ?? '').toString('utf8');
-  assertNoForbiddenDependency(stderr);
-  assert.equal(result.error, undefined, 'managed HUD golden fixture must start successfully');
-  assert.equal(result.status, 0, `managed HUD golden fixture exited ${result.status}: ${stderr}`);
-  assert.deepEqual(Buffer.from(result.stdout ?? ''), Buffer.from(fixture.expectedStdout, 'utf8'), 'managed HUD stdout must match the committed ANSI fixture byte-for-byte');
+  assertNoForbiddenDependency();
+  return marker;
+}
+
+function runClaudeMemConsumerSmoke(hooksJson, mcpJson, installPath, bunPath) {
+  const hookCommands = [];
+  for (const groups of Object.values(hooksJson.hooks)) {
+    for (const group of groups) {
+      for (const hook of group.hooks) {
+        if (hook.command.includes('$_P/scripts/bun-runner.js') && hook.command.includes(' hook claude-code context')) {
+          hookCommands.push(hook.command);
+        }
+      }
+    }
+  }
+  assert.equal(hookCommands.length, 1, 'claude-mem smoke requires exactly one saved context Hook command');
+  const smokeRoot = join(tempHome, 'claude-mem-entrypoint-smoke');
+  const safePluginRoot = join(smokeRoot, 'plugin');
+  const safeScripts = join(safePluginRoot, 'scripts');
+  const safeShell = join(smokeRoot, 'isolated-login-shell');
+  const emptyMcpHome = join(smokeRoot, 'mcp-home');
+  const emptyMcpConfig = join(smokeRoot, 'mcp-config');
+  const emptyMcpCwd = join(smokeRoot, 'mcp-cwd');
+  mkdirSync(safeScripts, { recursive: true });
+  mkdirSync(emptyMcpHome, { recursive: true });
+  mkdirSync(emptyMcpConfig, { recursive: true });
+  mkdirSync(emptyMcpCwd, { recursive: true });
+  writeFileSync(join(safeScripts, 'bun-runner.js'), readFileSync(join(installPath, 'scripts', 'bun-runner.js')));
+  writeFileSync(join(safeScripts, 'worker-service.cjs'), `const chunks=[];for await(const chunk of Bun.stdin.stream())chunks.push(chunk);if(chunks.length===0)process.exit(65);process.stdout.write('safe-hook:' + process.execPath + '\\n');\n`);
+  writeFileSync(safeShell, '#!/bin/sh\n[ "$1" = "-lc" ] || exit 97\nprintf "%s\\n" "$PATH"\n');
+  chmodSync(safeShell, 0o700);
+  const expectedHook = Buffer.from(`safe-hook:${realpathSync(bunPath)}\n`, 'utf8');
+  const marker = executeClaudeMemConsumers({
+    hookCommand: hookCommands[0],
+    mcpServer: mcpJson.mcpServers['mcp-search'],
+    shell: '/bin/bash',
+    hookCwd: smokeRoot,
+    mcpCwd: emptyMcpCwd,
+    hookEnv: {
+      ...isolatedEnv,
+      HOME: tempHome,
+      PATH: isolatedEnv.PATH,
+      SHELL: safeShell,
+      CLAUDE_CONFIG_DIR: join(tempHome, '.claude'),
+      CLAUDE_PLUGIN_ROOT: safePluginRoot,
+      PLUGIN_ROOT: safePluginRoot,
+    },
+    mcpEnv: {
+      ...isolatedEnv,
+      HOME: emptyMcpHome,
+      PATH: isolatedEnv.PATH,
+      CLAUDE_CONFIG_DIR: emptyMcpConfig,
+      CLAUDE_PLUGIN_ROOT: join(smokeRoot, 'missing-plugin'),
+      PLUGIN_ROOT: join(smokeRoot, 'missing-plugin'),
+    },
+    hookInputBase64: Buffer.from('{"hook_event_name":"SessionStart"}\n', 'utf8').toString('base64'),
+    timeoutMs: 10_000,
+    expectedHookStatus: 0,
+    expectedHookStdoutBase64: expectedHook.toString('base64'),
+    expectedHookStderrBase64: '',
+    expectedMcpStatus: 1,
+    expectedMcpStdoutBase64: '',
+    expectedMcpStderrBase64: Buffer.from('claude-mem: mcp server not found\n', 'utf8').toString('base64'),
+  });
+  assertNoForbiddenDependency();
+  return marker;
 }
 
 assertExactTemporaryHome(tempHome);
@@ -453,12 +668,11 @@ try {
   const managedHudModulePath = join(clawgodDir, 'claude-hud-statusline.mjs');
   console.log(validateHudStatusLine(readSettings(), isolatedRuntime.bunPath, managedHudModulePath));
   const memoryRecord = initialPlugins.get('memory');
-  console.log(validateClaudeMemEntrypoints(
-    JSON.parse(readFileSync(join(memoryRecord.installPath, 'hooks', 'hooks.json'), 'utf8')),
-    JSON.parse(readFileSync(join(memoryRecord.installPath, '.mcp.json'), 'utf8')),
-    isolatedRuntime.bunPath,
-  ));
-  runHudGoldenFixture(isolatedRuntime.bunPath, managedHudModulePath);
+  const initialMemoryHooks = JSON.parse(readFileSync(join(memoryRecord.installPath, 'hooks', 'hooks.json'), 'utf8'));
+  const initialMemoryMcp = JSON.parse(readFileSync(join(memoryRecord.installPath, '.mcp.json'), 'utf8'));
+  console.log(validateClaudeMemEntrypoints(initialMemoryHooks, initialMemoryMcp, isolatedRuntime.bunPath));
+  console.log(runClaudeMemConsumerSmoke(initialMemoryHooks, initialMemoryMcp, memoryRecord.installPath, isolatedRuntime.bunPath));
+  console.log(runHudGoldenFixture(readSettings()));
   console.log(validateWorkerResolver(readFileSync(join(clawgodDir, 'cli.original.cjs'), 'utf8')));
 
   assert.equal(existsSync(ripgrepPath), true, 'initial install must create the private ripgrep binary');
