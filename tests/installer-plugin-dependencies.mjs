@@ -361,6 +361,7 @@ try {
     let injected = false;
     let externalState = null;
     let sharedRestoreRun = null;
+    let concurrentCallerState = null;
     const callerState = new Proxy(emptyManagedState(), {
       ownKeys(target) {
         if (!injected) {
@@ -380,25 +381,35 @@ try {
               stdout: 'pipe',
               stderr: 'pipe',
             });
-            if (sharedRestoreRun.exitCode === 0) externalState = readFileSync(fixture.statePath);
+            if (sharedRestoreRun.exitCode === 0) {
+              externalState = readFileSync(fixture.statePath);
+              concurrentCallerState = JSON.parse(externalState);
+            }
           } else if (mutation === 'state-delete') {
             rmSync(fixture.statePath);
+            concurrentCallerState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
           } else if (mutation === 'state-replace') {
             const replacement = join(fixture.clawgodDir, 'external-state-replacement');
             externalState = Buffer.from('{"schemaVersion":2,"external":true}\n');
             writeFileSync(replacement, externalState);
             renameSync(replacement, fixture.statePath);
+            concurrentCallerState = { schemaVersion: 2, external: true };
           } else {
             const replacement = join(fixture.root, 'external-hook-replacement');
             writeFileSync(replacement, 'external no-op hook owner\n');
             renameSync(replacement, paths.hookPath);
+            concurrentCallerState = JSON.parse(managedState);
+            delete concurrentCallerState.claudeMem.files[resolve(paths.hookPath)];
           }
+          for (const key of Reflect.ownKeys(target)) delete target[key];
+          Object.assign(target, structuredClone(concurrentCallerState));
         }
         return Reflect.ownKeys(target);
       },
     });
     const result = await configureClaudeMemBun(fixture.context, callerState);
     assert.equal(injected, true, `${mutation}: the race must execute after no-op planning and before return`);
+    assert.deepEqual(JSON.parse(JSON.stringify(callerState)), concurrentCallerState, `${mutation}: a warning must preserve the caller state established by the concurrent action`);
     if (mutation === 'shared-restore') {
       assert.equal(sharedRestoreRun?.exitCode, 0, sharedRestoreRun?.stderr.toString());
       assert.deepEqual(JSON.parse(sharedRestoreRun.stdout.toString()).restored.sort(), [resolve(paths.hookPath), resolve(paths.mcpPath)].sort());
