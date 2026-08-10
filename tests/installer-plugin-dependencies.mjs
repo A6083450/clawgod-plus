@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const unix = await Bun.file(new URL('../install.sh', import.meta.url)).text();
@@ -219,6 +219,7 @@ try {
     PLUGIN_BASELINES,
     classifyPlugin,
     compareSemver,
+    configureClaudeMemBun,
     configureHud,
     downloadAndStage,
     ensureMarketplacePlugin,
@@ -226,6 +227,7 @@ try {
     parseSemver,
     quoteStatusLineArg,
     renderHudStatusLineModule,
+    restoreManagedIntegrations,
     restoreHud,
     selectInstalledRecord,
     sha256,
@@ -235,9 +237,269 @@ try {
   assert.equal(typeof extractPluginArchive, 'function', 'plugin-dependencies.mjs must export extractPluginArchive');
   assert.equal(typeof downloadAndStage, 'function', 'plugin-dependencies.mjs must export downloadAndStage');
   assert.equal(typeof ensureMarketplacePlugin, 'function', 'plugin-dependencies.mjs must export ensureMarketplacePlugin');
+  assert.equal(typeof configureClaudeMemBun, 'function', 'plugin-dependencies.mjs must export configureClaudeMemBun');
   assert.equal(typeof configureHud, 'function', 'plugin-dependencies.mjs must export configureHud');
   assert.equal(typeof renderHudStatusLineModule, 'function', 'plugin-dependencies.mjs must export renderHudStatusLineModule');
   assert.equal(typeof restoreHud, 'function', 'plugin-dependencies.mjs must export restoreHud for lifecycle composition');
+  assert.equal(typeof restoreManagedIntegrations, 'function', 'plugin-dependencies.mjs must export shared managed integration restore');
+
+  const claudeMemHookCommands = [
+    'node "$_P/scripts/version-check.js"',
+    'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" start',
+    'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code context',
+    'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code session-init',
+    'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code observation',
+    'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code file-context',
+    'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code summarize',
+  ];
+  const claudeMemHookNames = ['Setup', 'SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PreToolUse', 'Stop', 'SubagentStop'];
+  const claudeMemHookPrefix = 'export PATH="$($SHELL -lc \'echo $PATH\' 2>/dev/null):$PATH"; _C="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; _E="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"; _P="$_E"; [ -n "$_P" ] || exit 1; ';
+  function claudeMemHookRaw(description = 'Claude-mem memory system hooks') {
+    return `${JSON.stringify({
+      description,
+      hooks: Object.fromEntries(claudeMemHookNames.map((name, index) => [name, [{
+        matcher: index === 0 ? '*' : undefined,
+        hooks: [{ type: 'command', shell: 'bash', command: `${claudeMemHookPrefix}${claudeMemHookCommands[index]}`, timeout: 60 }],
+      }]])),
+    }, null, 2)}\n`;
+  }
+  function claudeMemMcpRaw(program = 'process.stdout.write(process.execPath)') {
+    return `${JSON.stringify({ mcpServers: { 'mcp-search': { type: 'stdio', command: 'node', args: ['-e', program] } } }, null, 2)}\n`;
+  }
+  function fixtureHash(bytes) {
+    return new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+  }
+  function makeClaudeMemFixture(label, options = {}) {
+    const root = join(fixtureRoot, `claude-mem-${label}`);
+    const home = join(root, 'home');
+    const claudeConfigDir = join(root, 'claude-config');
+    const clawgodDir = join(root, 'clawgod');
+    const pluginRoot = join(claudeConfigDir, 'plugins');
+    const cacheRoot = join(pluginRoot, 'cache', 'thedotmack', 'claude-mem');
+    const installedPath = join(pluginRoot, 'installed_plugins.json');
+    const statePath = join(clawgodDir, 'plugin-dependencies-state.json');
+    mkdirSync(home, { recursive: true });
+    mkdirSync(cacheRoot, { recursive: true });
+    mkdirSync(clawgodDir, { recursive: true });
+    const records = [];
+    const pathsByVersion = new Map();
+    function addVersion(version, rawOptions = {}) {
+      const installPath = join(cacheRoot, version);
+      const hookPath = join(installPath, 'hooks', 'hooks.json');
+      const mcpPath = join(installPath, '.mcp.json');
+      mkdirSync(dirname(hookPath), { recursive: true });
+      const hookRaw = rawOptions.hookRaw || claudeMemHookRaw(rawOptions.description);
+      const mcpRaw = rawOptions.mcpRaw || claudeMemMcpRaw(rawOptions.program);
+      writeFileSync(hookPath, hookRaw, 'utf8');
+      writeFileSync(mcpPath, mcpRaw, 'utf8');
+      const record = { scope: 'user', version, installPath };
+      records.push(record);
+      pathsByVersion.set(version, { installPath, hookPath, mcpPath, hookRaw, mcpRaw });
+      writeFileSync(installedPath, `${JSON.stringify({ version: 2, plugins: { 'claude-mem@thedotmack': records } }, null, 2)}\n`);
+      return pathsByVersion.get(version);
+    }
+    for (const version of options.versions || ['13.14.0']) addVersion(version);
+    const context = {
+      home,
+      claudeConfigDir,
+      clawgodDir,
+      bunPath: options.bunPath || process.execPath,
+      env: { HOME: home, CLAUDE_CONFIG_DIR: claudeConfigDir, PATH: join(root, 'fixture-only-bin') },
+    };
+    return { root, home, claudeConfigDir, clawgodDir, pluginRoot, cacheRoot, installedPath, statePath, records, pathsByVersion, addVersion, context };
+  }
+  function emptyManagedState() {
+    return { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+  }
+
+  const selectedClaudeMem = makeClaudeMemFixture('selected-highest', { versions: ['13.14.0', '13.15.0'] });
+  const lowerClaudeMem = selectedClaudeMem.pathsByVersion.get('13.14.0');
+  const higherClaudeMem = selectedClaudeMem.pathsByVersion.get('13.15.0');
+  const lowerBefore = snapshotTree(lowerClaudeMem.installPath);
+  const initialClaudeMemState = emptyManagedState();
+  const selectedClaudeMemResult = await configureClaudeMemBun(selectedClaudeMem.context, initialClaudeMemState);
+  assert.equal(selectedClaudeMemResult.ready, true, 'the highest valid user claude-mem install must be Bun-configured');
+  assert.equal(selectedClaudeMemResult.version, '13.15.0', 'the highest strict-SemVer claude-mem install must be selected');
+  assert.deepEqual(snapshotTree(lowerClaudeMem.installPath), lowerBefore, 'lower cached claude-mem versions must not be changed during selection');
+  assert.doesNotMatch(readFileSync(higherClaudeMem.hookPath, 'utf8'), /(^|[;&|]\s*)node\s+(?=["']?\$_P\/scripts\/)/m, 'selected hooks must retain no recognized executable Node entry');
+  assert.equal(JSON.parse(readFileSync(higherClaudeMem.mcpPath, 'utf8')).mcpServers['mcp-search'].command, process.execPath, 'selected MCP must run with the absolute Bun path');
+  const selectedState = JSON.parse(readFileSync(selectedClaudeMem.statePath, 'utf8'));
+  const selectedTargets = [resolve(higherClaudeMem.hookPath), resolve(higherClaudeMem.mcpPath)];
+  assert.deepEqual(Object.keys(selectedState.claudeMem.files).sort(), [...selectedTargets].sort(), 'ownership records must be keyed by normalized absolute target path');
+  for (const [relativePath, targetPath, originalRaw] of [
+    ['hooks/hooks.json', resolve(higherClaudeMem.hookPath), higherClaudeMem.hookRaw],
+    ['.mcp.json', resolve(higherClaudeMem.mcpPath), higherClaudeMem.mcpRaw],
+  ]) {
+    const record = selectedState.claudeMem.files[targetPath];
+    assert.deepEqual(Object.keys(record).sort(), ['managedSha256', 'originalBase64', 'originalSha256', 'pluginVersion', 'relativePath'].sort());
+    assert.equal(record.relativePath, relativePath);
+    assert.equal(record.pluginVersion, '13.15.0');
+    assert.equal(record.originalBase64, Buffer.from(originalRaw).toString('base64'));
+    assert.equal(record.originalSha256, fixtureHash(Buffer.from(originalRaw)));
+    assert.equal(record.managedSha256, fixtureHash(readFileSync(targetPath)));
+  }
+  const managedHookOnce = readFileSync(higherClaudeMem.hookPath);
+  const managedMcpOnce = readFileSync(higherClaudeMem.mcpPath);
+  const stateOnce = readFileSync(selectedClaudeMem.statePath);
+  const rerunClaudeMem = await configureClaudeMemBun(selectedClaudeMem.context, emptyManagedState());
+  assert.equal(rerunClaudeMem.ready, true, 'a fully managed claude-mem rerun must be a successful no-op');
+  assert.deepEqual(readFileSync(higherClaudeMem.hookPath), managedHookOnce);
+  assert.deepEqual(readFileSync(higherClaudeMem.mcpPath), managedMcpOnce);
+  assert.deepEqual(readFileSync(selectedClaudeMem.statePath), stateOnce, 'a fully managed rerun must not churn ownership bytes');
+
+  const updatedHookRaw = claudeMemHookRaw('plugin update becomes the new restore point');
+  const updatedMcpRaw = claudeMemMcpRaw('process.stdout.write("plugin-update:" + process.execPath)');
+  writeFileSync(higherClaudeMem.hookPath, updatedHookRaw);
+  writeFileSync(higherClaudeMem.mcpPath, updatedMcpRaw);
+  const updatedClaudeMem = await configureClaudeMemBun(selectedClaudeMem.context, emptyManagedState());
+  assert.equal(updatedClaudeMem.ready, true, 'plugin/user updates at the selected path must be revalidated and managed');
+  const updatedState = JSON.parse(readFileSync(selectedClaudeMem.statePath, 'utf8'));
+  assert.equal(updatedState.claudeMem.files[resolve(higherClaudeMem.hookPath)].originalBase64, Buffer.from(updatedHookRaw).toString('base64'), 'hook updates must replace the restore point');
+  assert.equal(updatedState.claudeMem.files[resolve(higherClaudeMem.mcpPath)].originalBase64, Buffer.from(updatedMcpRaw).toString('base64'), 'MCP updates must replace the restore point');
+
+  const multiVersionClaudeMem = makeClaudeMemFixture('append-new-version');
+  const firstVersionPaths = multiVersionClaudeMem.pathsByVersion.get('13.14.0');
+  await configureClaudeMemBun(multiVersionClaudeMem.context, emptyManagedState());
+  const firstVersionManagedHook = readFileSync(firstVersionPaths.hookPath);
+  const nextVersionPaths = multiVersionClaudeMem.addVersion('13.15.0', { description: 'new cached version' });
+  const nextVersionResult = await configureClaudeMemBun(multiVersionClaudeMem.context, emptyManagedState());
+  assert.equal(nextVersionResult.ready, true);
+  const multiVersionState = JSON.parse(readFileSync(multiVersionClaudeMem.statePath, 'utf8'));
+  assert.equal(Object.keys(multiVersionState.claudeMem.files).length, 4, 'a new version path must append two ownership records');
+  assert.deepEqual(readFileSync(firstVersionPaths.hookPath), firstVersionManagedHook, 'older still-managed cached versions must remain untouched');
+  assert.equal(multiVersionState.claudeMem.files[resolve(nextVersionPaths.hookPath)].pluginVersion, '13.15.0');
+  const multiVersionRestore = await restoreManagedIntegrations(multiVersionClaudeMem.context);
+  assert.deepEqual(multiVersionRestore.conflicts, []);
+  assert.deepEqual(multiVersionRestore.restored.sort(), [
+    resolve(firstVersionPaths.hookPath), resolve(firstVersionPaths.mcpPath),
+    resolve(nextVersionPaths.hookPath), resolve(nextVersionPaths.mcpPath),
+  ].sort(), 'uninstall must restore every still-owned cached claude-mem version');
+  assert.equal(readFileSync(firstVersionPaths.hookPath, 'utf8'), firstVersionPaths.hookRaw);
+  assert.equal(readFileSync(firstVersionPaths.mcpPath, 'utf8'), firstVersionPaths.mcpRaw);
+  assert.equal(readFileSync(nextVersionPaths.hookPath, 'utf8'), nextVersionPaths.hookRaw);
+  assert.equal(readFileSync(nextVersionPaths.mcpPath, 'utf8'), nextVersionPaths.mcpRaw);
+
+  const unknownStateClaudeMem = makeClaudeMemFixture('unknown-state');
+  writeFileSync(unknownStateClaudeMem.statePath, '{"schemaVersion":2,"hud":{},"claudeMem":{"files":{}}}\n');
+  const unknownStateBefore = snapshotTree(unknownStateClaudeMem.root);
+  const unknownStateResult = await configureClaudeMemBun(unknownStateClaudeMem.context, emptyManagedState());
+  assert.equal(unknownStateResult.status, 'warning');
+  assert.equal(unknownStateResult.ready, false);
+  assert.match(unknownStateResult.detail, /preserved but not Bun-verified/i);
+  assert.deepEqual(snapshotTree(unknownStateClaudeMem.root), unknownStateBefore, 'unknown ownership schema must preserve every byte');
+
+  const ambiguousStateClaudeMem = makeClaudeMemFixture('ambiguous-state-target');
+  const foreignTarget = resolve(ambiguousStateClaudeMem.root, 'foreign-cache', 'hooks', 'hooks.json');
+  const foreignBytes = Buffer.from(claudeMemHookRaw('foreign ownership record'));
+  mkdirSync(dirname(foreignTarget), { recursive: true });
+  writeFileSync(foreignTarget, foreignBytes);
+  writeFileSync(ambiguousStateClaudeMem.statePath, `${JSON.stringify({
+    schemaVersion: 1,
+    hud: {},
+    claudeMem: {
+      files: {
+        [foreignTarget]: {
+          relativePath: 'hooks/hooks.json',
+          pluginVersion: '13.14.0',
+          originalBase64: foreignBytes.toString('base64'),
+          originalSha256: fixtureHash(foreignBytes),
+          managedSha256: fixtureHash(foreignBytes),
+        },
+      },
+    },
+  }, null, 2)}\n`);
+  const ambiguousStateBefore = snapshotTree(ambiguousStateClaudeMem.root);
+  const ambiguousStateResult = await configureClaudeMemBun(ambiguousStateClaudeMem.context, emptyManagedState());
+  assert.equal(ambiguousStateResult.status, 'warning', 'an ownership record outside the canonical cache must be ambiguous');
+  assert.match(ambiguousStateResult.detail, /preserved but not Bun-verified/i);
+  assert.deepEqual(snapshotTree(ambiguousStateClaudeMem.root), ambiguousStateBefore, 'ambiguous ownership targets must preserve every byte');
+
+  for (const [label, mutate] of [
+    ['malformed-mcp', fixture => writeFileSync(fixture.pathsByVersion.get('13.14.0').mcpPath, '{broken json\n')],
+    ['missing-command', fixture => {
+      const paths = fixture.pathsByVersion.get('13.14.0');
+      const value = JSON.parse(paths.hookRaw);
+      delete value.hooks.Setup[0].hooks[0].command;
+      writeFileSync(paths.hookPath, JSON.stringify(value));
+    }],
+    ['target-symlink', fixture => {
+      const paths = fixture.pathsByVersion.get('13.14.0');
+      const outside = join(fixture.root, 'outside-hooks.json');
+      writeFileSync(outside, paths.hookRaw);
+      rmSync(paths.hookPath);
+      symlinkSync(outside, paths.hookPath);
+    }],
+  ]) {
+    const fixture = makeClaudeMemFixture(label);
+    mutate(fixture);
+    const before = snapshotTree(fixture.root);
+    const result = await configureClaudeMemBun(fixture.context, emptyManagedState());
+    assert.equal(result.status, 'warning', `${label} must produce a plugin warning`);
+    assert.equal(result.ready, false, `${label} must not be reported Bun-ready`);
+    assert.match(result.detail, /preserved but not Bun-verified/i, `${label} must report preservation without Bun verification`);
+    assert.deepEqual(snapshotTree(fixture.root), before, `${label} must preserve the fixture tree`);
+  }
+
+  const escapedClaudeMem = makeClaudeMemFixture('root-escape');
+  const escapedInstall = join(escapedClaudeMem.root, 'outside-install');
+  mkdirSync(join(escapedInstall, 'hooks'), { recursive: true });
+  writeFileSync(join(escapedInstall, 'hooks', 'hooks.json'), claudeMemHookRaw());
+  writeFileSync(join(escapedInstall, '.mcp.json'), claudeMemMcpRaw());
+  writeFileSync(escapedClaudeMem.installedPath, `${JSON.stringify({ version: 2, plugins: { 'claude-mem@thedotmack': [{ scope: 'user', version: '99.0.0', installPath: escapedInstall }] } }, null, 2)}\n`);
+  const escapedBefore = snapshotTree(escapedClaudeMem.root);
+  const escapedResult = await configureClaudeMemBun(escapedClaudeMem.context, emptyManagedState());
+  assert.equal(escapedResult.status, 'warning', 'a claude-mem cache-root escape must warn');
+  assert.match(escapedResult.detail, /preserved but not Bun-verified/i);
+  assert.deepEqual(snapshotTree(escapedClaudeMem.root), escapedBefore, 'a cache-root escape must write nothing');
+
+  const rollbackClaudeMem = makeClaudeMemFixture('second-write-rollback');
+  const rollbackPaths = rollbackClaudeMem.pathsByVersion.get('13.14.0');
+  const rollbackHookBefore = readFileSync(rollbackPaths.hookPath);
+  const rollbackMcpBefore = readFileSync(rollbackPaths.mcpPath);
+  rollbackClaudeMem.context.onClaudeMemWriting = ({ relativePath }) => {
+    if (relativePath === '.mcp.json') throw new Error('fixture second integration write failure');
+  };
+  const rollbackResult = await configureClaudeMemBun(rollbackClaudeMem.context, emptyManagedState());
+  assert.equal(rollbackResult.status, 'warning', 'a second integration write failure must warn');
+  assert.deepEqual(readFileSync(rollbackPaths.hookPath), rollbackHookBefore, 'the first integration file must roll back to original bytes');
+  assert.deepEqual(readFileSync(rollbackPaths.mcpPath), rollbackMcpBefore, 'the failed second integration file must retain original bytes');
+  assert.equal(existsSync(rollbackClaudeMem.statePath), false, 'rolled-back ownership state must not remain');
+
+  const concurrentClaudeMem = makeClaudeMemFixture('concurrent-edit');
+  const concurrentPaths = concurrentClaudeMem.pathsByVersion.get('13.14.0');
+  const concurrentBytes = Buffer.from(claudeMemHookRaw('concurrent plugin edit'));
+  concurrentClaudeMem.context.onClaudeMemWriting = ({ relativePath }) => {
+    if (relativePath === 'hooks/hooks.json') writeFileSync(concurrentPaths.hookPath, concurrentBytes);
+  };
+  const concurrentResult = await configureClaudeMemBun(concurrentClaudeMem.context, emptyManagedState());
+  assert.equal(concurrentResult.status, 'warning', 'an in-place edit before the first integration write must warn');
+  assert.deepEqual(readFileSync(concurrentPaths.hookPath), concurrentBytes, 'a concurrent plugin edit must not be overwritten');
+  assert.equal(existsSync(concurrentClaudeMem.statePath), false, 'ownership state must roll back after concurrent edit detection');
+
+  const restoreClaudeMem = makeClaudeMemFixture('restore-owned');
+  const restorePaths = restoreClaudeMem.pathsByVersion.get('13.14.0');
+  const restoreHookOriginal = readFileSync(restorePaths.hookPath);
+  const restoreMcpOriginal = readFileSync(restorePaths.mcpPath);
+  await configureClaudeMemBun(restoreClaudeMem.context, emptyManagedState());
+  const restoreOwned = await restoreManagedIntegrations(restoreClaudeMem.context);
+  assert.deepEqual(restoreOwned.restored.sort(), [resolve(restorePaths.hookPath), resolve(restorePaths.mcpPath)].sort(), 'still-owned claude-mem files must be restored');
+  assert.deepEqual(restoreOwned.conflicts, []);
+  assert.deepEqual(readFileSync(restorePaths.hookPath), restoreHookOriginal);
+  assert.deepEqual(readFileSync(restorePaths.mcpPath), restoreMcpOriginal);
+  assert.deepEqual(JSON.parse(readFileSync(restoreClaudeMem.statePath, 'utf8')).claudeMem.files, {}, 'successfully restored ownership records must be deleted');
+
+  const conflictClaudeMem = makeClaudeMemFixture('restore-conflicts');
+  const conflictPaths = conflictClaudeMem.pathsByVersion.get('13.14.0');
+  await configureClaudeMemBun(conflictClaudeMem.context, emptyManagedState());
+  const laterHookEdit = Buffer.from(claudeMemHookRaw('later user edit'));
+  writeFileSync(conflictPaths.hookPath, laterHookEdit);
+  rmSync(conflictPaths.mcpPath);
+  const restoreConflicts = await restoreManagedIntegrations(conflictClaudeMem.context);
+  assert.deepEqual(restoreConflicts.restored, []);
+  assert.deepEqual(restoreConflicts.conflicts.sort(), [resolve(conflictPaths.hookPath), resolve(conflictPaths.mcpPath)].sort(), 'edited and missing managed files must both be conflicts');
+  assert.deepEqual(readFileSync(conflictPaths.hookPath), laterHookEdit, 'later user/plugin edits must be preserved');
+  assert.equal(existsSync(conflictPaths.mcpPath), false, 'a missing managed file must remain missing');
+  assert.deepEqual(JSON.parse(readFileSync(conflictClaudeMem.statePath, 'utf8')).claudeMem.files, {}, 'confirmed ownership transfers must delete their records');
 
   const expectedHudConfig = `{
   "language": "zh",
@@ -469,6 +731,18 @@ try {
   assert.deepEqual(readFileSync(existingHud.configPath), changedConfig, 'uninstall must restore the latest user config bytes');
   assert.deepEqual(JSON.parse(readFileSync(existingHud.settingsPath, 'utf8')).statusLine, changedStatusLine, 'uninstall must restore only the user statusLine field');
   assert.equal(JSON.parse(readFileSync(existingHud.settingsPath, 'utf8')).later, true, 'uninstall must retain unrelated settings');
+
+  const sharedRestoreHud = makeHudFixture('shared-restore-entrypoint');
+  const sharedRestoreConfig = Buffer.from('{"shared":"original"}\n');
+  const sharedRestoreStatus = { type: 'command', command: 'shared-original' };
+  writeFileSync(sharedRestoreHud.configPath, sharedRestoreConfig);
+  writeFileSync(sharedRestoreHud.settingsPath, `${JSON.stringify({ keep: true, statusLine: sharedRestoreStatus }, null, 2)}\n`);
+  await configureHud(sharedRestoreHud.context, emptyManagedState());
+  const sharedRestoreResult = await restoreManagedIntegrations(sharedRestoreHud.context);
+  assert.deepEqual(sharedRestoreResult.conflicts, [], 'the shared restore entrypoint must restore owned HUD fields without conflicts');
+  assert.deepEqual(sharedRestoreResult.restored.sort(), ['hud config', 'statusLine'].sort(), 'the shared restore entrypoint must report both restored HUD fields');
+  assert.deepEqual(readFileSync(sharedRestoreHud.configPath), sharedRestoreConfig);
+  assert.deepEqual(JSON.parse(readFileSync(sharedRestoreHud.settingsPath, 'utf8')), { keep: true, statusLine: sharedRestoreStatus });
 
   const laterEditHud = makeHudFixture('later-edit');
   const laterEditState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };

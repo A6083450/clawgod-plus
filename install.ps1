@@ -651,6 +651,8 @@ Install-FetchFileHelper
  *   onHudWritten?: (write: { label: string }) => void,
  *   onHudRestoring?: (write: { label: string }) => void,
  *   onHudRestored?: (write: { label: string }) => void,
+ *   onClaudeMemWriting?: (write: { relativePath: string }) => void,
+ *   onClaudeMemWritten?: (write: { relativePath: string }) => void,
  * }} PluginContext
  */
 
@@ -898,6 +900,46 @@ function isCanonicalBase64(value) {
   return Buffer.from(value, 'base64').toString('base64') === value;
 }
 
+function validateClaudeMemOwnership(files) {
+  if (!isPlainRecord(files)) throw new Error('claude-mem: unsupported or malformed ownership state');
+  const hashPattern = /^[0-9a-f]{64}$/;
+  const seen = new Set();
+  for (const [targetPath, record] of Object.entries(files)) {
+    if (!isAbsolute(targetPath) || resolve(targetPath) !== targetPath || seen.has(targetPath)
+      || !hasExactKeys(record, ['relativePath', 'pluginVersion', 'originalBase64', 'originalSha256', 'managedSha256'])
+      || (record.relativePath !== 'hooks/hooks.json' && record.relativePath !== '.mcp.json')
+      || !parseSemver(record.pluginVersion)
+      || !isCanonicalBase64(record.originalBase64)
+      || !hashPattern.test(record.originalSha256)
+      || record.originalSha256 !== fileFingerprint(Buffer.from(record.originalBase64, 'base64'))
+      || !hashPattern.test(record.managedSha256)) {
+      throw new Error('claude-mem: unsupported or malformed ownership state');
+    }
+    const suffix = record.relativePath === 'hooks/hooks.json'
+      ? join('hooks', 'hooks.json') : '.mcp.json';
+    if ((record.relativePath === 'hooks/hooks.json' && !targetPath.endsWith(`${sep}${suffix}`))
+      || (record.relativePath === '.mcp.json' && basename(targetPath) !== suffix)) {
+      throw new Error('claude-mem: unsupported or malformed ownership state');
+    }
+    seen.add(targetPath);
+  }
+}
+
+function validateClaudeMemOwnershipContext(files, context) {
+  const cacheRoot = resolve(context.claudeConfigDir, 'plugins', 'cache', 'thedotmack', 'claude-mem');
+  for (const [targetPath, record] of Object.entries(files)) {
+    if (compareSemver(record.pluginVersion, PLUGIN_BASELINES.memory.version) < 0) {
+      throw new Error('claude-mem: ambiguous ownership state');
+    }
+    const expected = record.relativePath === 'hooks/hooks.json'
+      ? resolve(cacheRoot, record.pluginVersion, 'hooks', 'hooks.json')
+      : resolve(cacheRoot, record.pluginVersion, '.mcp.json');
+    if (targetPath !== expected || !pathIsContained(cacheRoot, targetPath)) {
+      throw new Error('claude-mem: ambiguous ownership state');
+    }
+  }
+}
+
 function managedStatusLineCommandIsValid(command, modulePath, platform = process.platform) {
   if (typeof command !== 'string' || typeof modulePath !== 'string') return false;
   let moduleArgument;
@@ -925,7 +967,8 @@ function validateManagedHudState(value, allowInitial = false, managedContext = n
     || !isPlainRecord(value.claudeMem) || !isPlainRecord(value.claudeMem.files) || !isPlainRecord(value.hud)) {
     throw new Error('hud: unsupported or malformed ownership state');
   }
-  if (allowInitial && Object.keys(value.hud).length === 0) return structuredClone(value);
+  validateClaudeMemOwnership(value.claudeMem.files);
+  if (Object.keys(value.hud).length === 0) return structuredClone(value);
   const config = value.hud.config;
   const statusLine = value.hud.statusLine;
   const hashPattern = /^[0-9a-f]{64}$/;
@@ -988,6 +1031,35 @@ function selectedHudInstall(installed, claudeConfigDir) {
   return valid[0] || null;
 }
 
+function validateClaudeMemInstallPath(record, cacheRoot, claudeConfigDir) {
+  if (record?.scope !== 'user' || !parseSemver(record.version) || typeof record.installPath !== 'string' || !isAbsolute(record.installPath)) return null;
+  const expectedPath = resolve(cacheRoot, record.version);
+  if (resolve(record.installPath) !== expectedPath) return null;
+  try {
+    if (!pathIsContained(cacheRoot, expectedPath)
+      || !hudDirectoryChainIsSafe(claudeConfigDir, cacheRoot)
+      || !hudDirectoryChainIsSafe(cacheRoot, expectedPath)) return null;
+    const cacheStatus = lstatSync(cacheRoot);
+    const installStatus = lstatSync(expectedPath);
+    if (cacheStatus.isSymbolicLink() || !cacheStatus.isDirectory() || installStatus.isSymbolicLink() || !installStatus.isDirectory()) return null;
+    const realCache = realpathSync(cacheRoot);
+    const realInstall = realpathSync(expectedPath);
+    if (!pathIsContained(realCache, realInstall) || realInstall === realCache || realInstall !== expectedPath) return null;
+    return { record, installPath: expectedPath };
+  } catch {
+    return null;
+  }
+}
+
+function selectedClaudeMemInstall(installed, claudeConfigDir) {
+  const records = Array.isArray(installed?.plugins?.['claude-mem@thedotmack'])
+    ? installed.plugins['claude-mem@thedotmack'] : [];
+  const cacheRoot = join(claudeConfigDir, 'plugins', 'cache', 'thedotmack', 'claude-mem');
+  const valid = records.map(record => validateClaudeMemInstallPath(record, cacheRoot, claudeConfigDir)).filter(Boolean);
+  valid.sort((left, right) => compareSemver(right.record.version, left.record.version));
+  return valid[0] || null;
+}
+
 export function quoteStatusLineArg(path, platform = process.platform) {
   if (typeof path !== 'string' || path.includes('\0') || path.includes('*') || path.includes('$(') || path.includes('`')) {
     throw new Error('hud: unsafe status-line path');
@@ -1000,6 +1072,169 @@ export function quoteStatusLineArg(path, platform = process.platform) {
   }
   if (!isAbsolute(path)) throw new Error('hud: status-line path must be absolute');
   return `'${path.replaceAll("'", `'"'"'`)}'`;
+}
+
+function claudeMemBunPath(path) {
+  if (typeof path !== 'string' || path.includes('\0') || path.includes('\r') || path.includes('\n')
+    || (!isAbsolute(path) && !/^[A-Za-z]:[\\/]/.test(path))) {
+    throw new Error('claude-mem: Bun path must be absolute');
+  }
+  const executable = path.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase();
+  if (executable !== 'bun' && executable !== 'bun.exe') throw new Error('claude-mem: executable is not Bun');
+  return path;
+}
+
+function quoteClaudeMemHookBun(path) {
+  return `'${claudeMemBunPath(path).replaceAll("'", `'"'"'`)}'`;
+}
+
+function parseClaudeMemJson(relativePath, raw) {
+  if (typeof raw !== 'string') throw new Error(`claude-mem: invalid ${relativePath} JSON`);
+  let value;
+  try { value = JSON.parse(raw); } catch { throw new Error(`claude-mem: invalid ${relativePath} JSON`); }
+  if (!isPlainRecord(value)) throw new Error(`claude-mem: invalid ${relativePath} schema`);
+  return value;
+}
+
+export function rewriteClaudeMemFile(relativePath, raw, bunPath) {
+  if (relativePath !== 'hooks/hooks.json' && relativePath !== '.mcp.json') {
+    throw new Error('claude-mem: unsupported integration path');
+  }
+  const value = parseClaudeMemJson(relativePath, raw);
+  claudeMemBunPath(bunPath);
+  if (relativePath === '.mcp.json') {
+    const server = isPlainRecord(value.mcpServers) ? value.mcpServers['mcp-search'] : null;
+    if (!isPlainRecord(server) || server.type !== 'stdio' || server.command !== 'node'
+      || !Array.isArray(server.args) || server.args.length < 2 || server.args[0] !== '-e' || typeof server.args[1] !== 'string') {
+      throw new Error('claude-mem: invalid mcp-search schema');
+    }
+    server.command = bunPath;
+    return { text: JSON.stringify(value, null, 2) + '\n', replacements: 1 };
+  }
+
+  if (!isPlainRecord(value.hooks)) throw new Error('claude-mem: invalid hooks schema');
+  const known = [
+    { token: 'node "$_P/scripts/version-check.js"', label: 'version-check' },
+    { token: 'node "$_P/scripts/bun-runner.js"', label: 'bun-runner' },
+  ];
+  const counts = { 'version-check': 0, 'bun-runner': 0 };
+  const quotedBun = quoteClaudeMemHookBun(bunPath);
+  for (const groups of Object.values(value.hooks)) {
+    if (!Array.isArray(groups)) throw new Error('claude-mem: invalid hooks schema');
+    for (const group of groups) {
+      if (!isPlainRecord(group) || !Array.isArray(group.hooks)) throw new Error('claude-mem: invalid hooks schema');
+      for (const hook of group.hooks) {
+        if (!isPlainRecord(hook) || typeof hook.command !== 'string') throw new Error('claude-mem: invalid hook command schema');
+        for (const entry of known) {
+          const escaped = entry.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const boundary = new RegExp(`(^|[;&|]\\s*)${escaped}`, 'g');
+          const matches = [...hook.command.matchAll(boundary)];
+          if (matches.length > 1) throw new Error(`claude-mem: duplicate ${entry.label} executable`);
+          if (matches.length === 1) {
+            hook.command = hook.command.replace(boundary, (_match, prefix) => `${prefix}${quotedBun}${entry.token.slice(4)}`);
+            counts[entry.label] += 1;
+          }
+        }
+        if (/(^|[;&|]\s*)node\s+(?=["']?\$_P\/scripts\/)/.test(hook.command)) {
+          throw new Error('claude-mem: remaining unknown Node executable');
+        }
+      }
+    }
+  }
+  if (counts['version-check'] < 1 || counts['bun-runner'] < 1) {
+    throw new Error('claude-mem: missing required hook replacement');
+  }
+  return { text: JSON.stringify(value, null, 2) + '\n', replacements: counts['version-check'] + counts['bun-runner'] };
+}
+
+export async function configureClaudeMemBun(context, state) {
+  const spec = PLUGIN_BASELINES.memory;
+  const completedWrites = [];
+  try {
+    claudeMemBunPath(context.bunPath);
+    const installedPath = join(context.claudeConfigDir, 'plugins', 'installed_plugins.json');
+    const installedSnapshot = hudFileSnapshot(context.claudeConfigDir, installedPath, 'installed plugin state', true);
+    if (!installedSnapshot.present || installedSnapshot.value.version !== 2 || !isPlainRecord(installedSnapshot.value.plugins)) {
+      throw new Error('claude-mem: unsupported installed plugin schema');
+    }
+    const selected = selectedClaudeMemInstall(installedSnapshot.value, context.claudeConfigDir);
+    if (!selected || compareSemver(selected.record.version, spec.version) < 0) {
+      throw new Error('claude-mem: no valid baseline user installation');
+    }
+    const statePath = join(context.clawgodDir, 'plugin-dependencies-state.json');
+    const stateSnapshot = hudFileSnapshot(context.clawgodDir, statePath, 'ownership state', true);
+    const nextState = validateManagedHudState(stateSnapshot.present ? stateSnapshot.value : state, !stateSnapshot.present);
+    validateClaudeMemOwnershipContext(nextState.claudeMem.files, context);
+    const definitions = [
+      { relativePath: 'hooks/hooks.json', targetPath: resolve(selected.installPath, 'hooks', 'hooks.json') },
+      { relativePath: '.mcp.json', targetPath: resolve(selected.installPath, '.mcp.json') },
+    ];
+    const plans = [];
+    for (const definition of definitions) {
+      const snapshot = hudFileSnapshot(selected.installPath, definition.targetPath, definition.relativePath);
+      if (!snapshot.present) throw new Error(`claude-mem: missing ${definition.relativePath}`);
+      const currentHash = fileFingerprint(snapshot.bytes);
+      const prior = nextState.claudeMem.files[definition.targetPath];
+      if (prior && currentHash === prior.managedSha256) {
+        plans.push({ ...definition, snapshot, bytes: snapshot.bytes, write: false });
+        continue;
+      }
+      const rewritten = rewriteClaudeMemFile(definition.relativePath, textDecoder.decode(snapshot.bytes), context.bunPath);
+      const managedBytes = Buffer.from(rewritten.text);
+      nextState.claudeMem.files[definition.targetPath] = {
+        relativePath: definition.relativePath,
+        pluginVersion: selected.record.version,
+        originalBase64: snapshot.bytes.toString('base64'),
+        originalSha256: currentHash,
+        managedSha256: fileFingerprint(managedBytes),
+      };
+      plans.push({ ...definition, snapshot, bytes: managedBytes, write: true });
+    }
+    if (plans.every(plan => !plan.write)) {
+      if (state && typeof state === 'object') {
+        for (const key of Object.keys(state)) delete state[key];
+        Object.assign(state, structuredClone(nextState));
+      }
+      return pluginResult(spec, 'configured', true, selected.record.version, `configured ${selected.record.version}`);
+    }
+
+    const writes = [{
+      root: context.clawgodDir,
+      snapshot: stateSnapshot,
+      bytes: Buffer.from(JSON.stringify(nextState, null, 2) + '\n'),
+      mode: stateSnapshot.present ? stateSnapshot.mode : 0o600,
+      label: 'ownership state',
+      relativePath: null,
+    }, ...plans.filter(plan => plan.write).map(plan => ({
+      root: selected.installPath,
+      snapshot: plan.snapshot,
+      bytes: plan.bytes,
+      mode: plan.snapshot.mode,
+      label: `claude-mem ${plan.relativePath}`,
+      relativePath: plan.relativePath,
+    }))];
+    for (const write of writes) {
+      if (write.relativePath) context.onClaudeMemWriting?.({ relativePath: write.relativePath });
+      atomicHudWrite(write.root, write.snapshot, write.bytes, write.mode, write.label);
+      completedWrites.push({ ...write, postWrite: hudFileSnapshot(write.root, write.snapshot.path, write.label) });
+      if (write.relativePath) context.onClaudeMemWritten?.({ relativePath: write.relativePath });
+    }
+    if (state && typeof state === 'object') {
+      for (const key of Object.keys(state)) delete state[key];
+      Object.assign(state, structuredClone(nextState));
+    }
+    return pluginResult(spec, 'configured', true, selected.record.version, `configured ${selected.record.version}`);
+  } catch (error) {
+    const rollbackErrors = [];
+    for (const write of completedWrites.reverse()) {
+      try { rollbackHudWrite(write); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); break; }
+    }
+    const message = rollbackErrors.length > 0
+      ? `rollback incomplete: ${rollbackErrors[0].message}`
+      : (error instanceof Error ? error.message : 'claude-mem configuration failed');
+    return pluginResult(spec, 'warning', false, null, `preserved but not Bun-verified: ${message}`);
+  }
 }
 
 function hudStatusLineCommand(context, modulePath) {
@@ -1236,6 +1471,7 @@ export async function restoreHud(context, state) {
     const stateSnapshot = hudFileSnapshot(context.clawgodDir, statePath, 'ownership state', true);
     if (!stateSnapshot.present) return { restored: [], conflicts: [], failures: [] };
     const ownershipState = currentHudState(stateSnapshot.value, true, context, modulePath);
+    if (Object.keys(ownershipState.hud).length === 0) return { restored: [], conflicts: [], failures: [] };
     const ownership = ownershipState.hud;
     const configSnapshot = hudFileSnapshot(context.claudeConfigDir, configPath, 'HUD config');
     const settingsSnapshot = hudFileSnapshot(context.claudeConfigDir, settingsPath, 'settings', true);
@@ -1308,6 +1544,104 @@ export async function restoreHud(context, state) {
       : (error instanceof Error ? error.message : 'hud: restore failed');
     return { restored: [], conflicts: [], failures: [message] };
   }
+}
+
+async function restoreClaudeMemIntegrations(context) {
+  const completedWrites = [];
+  try {
+    const statePath = join(context.clawgodDir, 'plugin-dependencies-state.json');
+    const stateSnapshot = hudFileSnapshot(context.clawgodDir, statePath, 'ownership state', true);
+    if (!stateSnapshot.present) return { restored: [], conflicts: [], failures: [] };
+    const modulePath = join(context.clawgodDir, 'claude-hud-statusline.mjs');
+    const ownershipState = currentHudState(stateSnapshot.value, true, context, modulePath);
+    const entries = Object.entries(ownershipState.claudeMem.files);
+    if (entries.length === 0) return { restored: [], conflicts: [], failures: [] };
+    const nextState = structuredClone(ownershipState);
+    const cacheRoot = resolve(context.claudeConfigDir, 'plugins', 'cache', 'thedotmack', 'claude-mem');
+    const restored = [];
+    const conflicts = [];
+    const operations = [];
+    for (const [targetPath, record] of entries) {
+      const expected = record.relativePath === 'hooks/hooks.json'
+        ? resolve(cacheRoot, record.pluginVersion, 'hooks', 'hooks.json')
+        : resolve(cacheRoot, record.pluginVersion, '.mcp.json');
+      if (targetPath !== expected || !pathIsContained(cacheRoot, targetPath)) {
+        throw new Error('claude-mem: ownership target escaped the canonical cache');
+      }
+      let status;
+      try { status = lstatSync(targetPath); }
+      catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+        conflicts.push(targetPath);
+        delete nextState.claudeMem.files[targetPath];
+        continue;
+      }
+      if (status.isSymbolicLink() || !status.isFile() || !hudDirectoryChainIsSafe(context.claudeConfigDir, dirname(targetPath))) {
+        conflicts.push(targetPath);
+        delete nextState.claudeMem.files[targetPath];
+        continue;
+      }
+      let snapshot;
+      try { snapshot = hudFileSnapshot(context.claudeConfigDir, targetPath, record.relativePath); }
+      catch {
+        conflicts.push(targetPath);
+        delete nextState.claudeMem.files[targetPath];
+        continue;
+      }
+      if (fileFingerprint(snapshot.bytes) !== record.managedSha256) {
+        conflicts.push(targetPath);
+        delete nextState.claudeMem.files[targetPath];
+        continue;
+      }
+      operations.push({
+        root: context.claudeConfigDir,
+        snapshot,
+        bytes: Buffer.from(record.originalBase64, 'base64'),
+        mode: snapshot.mode,
+        label: `claude-mem ${record.relativePath}`,
+        restoredLabel: targetPath,
+      });
+      delete nextState.claudeMem.files[targetPath];
+    }
+    for (const operation of operations) {
+      atomicHudWrite(operation.root, operation.snapshot, operation.bytes, operation.mode, operation.label);
+      completedWrites.push({ ...operation, postWrite: hudFileSnapshot(operation.root, operation.snapshot.path, operation.label) });
+      restored.push(operation.restoredLabel);
+    }
+    const stateBytes = Buffer.from(JSON.stringify(nextState, null, 2) + '\n');
+    if (!Buffer.from(stateSnapshot.bytes).equals(stateBytes)) {
+      const stateWrite = {
+        root: context.clawgodDir,
+        snapshot: stateSnapshot,
+        bytes: stateBytes,
+        mode: stateSnapshot.mode,
+        label: 'ownership state',
+      };
+      atomicHudWrite(stateWrite.root, stateWrite.snapshot, stateWrite.bytes, stateWrite.mode, stateWrite.label);
+      completedWrites.push({ ...stateWrite, postWrite: hudFileSnapshot(stateWrite.root, stateWrite.snapshot.path, stateWrite.label) });
+    }
+    return { restored, conflicts, failures: [] };
+  } catch (error) {
+    const rollbackErrors = [];
+    for (const write of completedWrites.reverse()) {
+      try { rollbackHudWrite(write); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); break; }
+    }
+    const message = rollbackErrors.length > 0
+      ? `claude-mem: rollback incomplete: ${rollbackErrors[0].message}`
+      : (error instanceof Error ? error.message : 'claude-mem: restore failed');
+    return { restored: [], conflicts: [], failures: [message] };
+  }
+}
+
+export async function restoreManagedIntegrations(context) {
+  const hud = await restoreHud(context);
+  if (hud.failures.length > 0) return { restored: [], conflicts: hud.failures.map(message => `hud: ${message}`) };
+  const memory = await restoreClaudeMemIntegrations(context);
+  return {
+    restored: [...hud.restored, ...memory.restored],
+    conflicts: [...hud.conflicts, ...memory.conflicts, ...memory.failures],
+  };
 }
 
 export function sha256(bytes) {
