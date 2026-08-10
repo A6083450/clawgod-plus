@@ -517,6 +517,9 @@ cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << 'PLUGIN_DEPENDENCIES_EOF'
  *   onCacheFailedInspected?: (transaction: object) => void,
  *   onCacheCleanupInventoried?: (transaction: object) => void,
  *   onHudWriting?: (write: { label: string }) => void,
+ *   onHudWritten?: (write: { label: string }) => void,
+ *   onHudRestoring?: (write: { label: string }) => void,
+ *   onHudRestored?: (write: { label: string }) => void,
  * }} PluginContext
  */
 
@@ -632,7 +635,7 @@ function hudFileSnapshot(root, path, label, parseJson = false) {
   let status;
   try { status = lstatSync(path); } catch (error) {
     if (error?.code === 'ENOENT') {
-      return { path, present: false, bytes: null, mode: null, identity: null, parentIdentity: { dev: parentStatus.dev, ino: parentStatus.ino } };
+      return { path, present: false, bytes: null, mode: null, nlink: null, identity: null, parentIdentity: { dev: parentStatus.dev, ino: parentStatus.ino } };
     }
     throw new Error(`hud: unsafe ${label}`);
   }
@@ -646,7 +649,7 @@ function hudFileSnapshot(root, path, label, parseJson = false) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`hud: invalid ${label} JSON`);
   }
   return {
-    path, present: true, bytes, value, mode: status.mode & 0o777,
+    path, present: true, bytes, value, mode: status.mode & 0o777, nlink: status.nlink,
     identity: { dev: status.dev, ino: status.ino },
     parentIdentity: { dev: parentStatus.dev, ino: parentStatus.ino },
   };
@@ -656,7 +659,7 @@ function assertHudSnapshotCurrent(snapshot, root, label) {
   const current = hudFileSnapshot(root, snapshot.path, label, false);
   if (current.present !== snapshot.present
     || (current.present && (current.identity.dev !== snapshot.identity.dev || current.identity.ino !== snapshot.identity.ino))
-    || (current.present && (current.mode !== snapshot.mode || !Buffer.from(current.bytes).equals(Buffer.from(snapshot.bytes))))
+    || (current.present && (current.mode !== snapshot.mode || current.nlink !== snapshot.nlink || !Buffer.from(current.bytes).equals(Buffer.from(snapshot.bytes))))
     || current.parentIdentity.dev !== snapshot.parentIdentity.dev
     || current.parentIdentity.ino !== snapshot.parentIdentity.ino) {
     throw new Error(`hud: ${label} changed during update`);
@@ -727,7 +730,8 @@ function removeCreatedHudConfigParent(createdParent) {
 
 function rollbackHudWrite(write) {
   const current = hudFileSnapshot(write.root, write.snapshot.path, write.label);
-  if (!current.present || fileFingerprint(current.bytes) !== fileFingerprint(write.bytes)) {
+  try { assertHudSnapshotCurrent(write.postWrite, write.root, write.label); }
+  catch {
     throw new Error(`hud: ${write.label} changed before rollback`);
   }
   if (write.snapshot.present) {
@@ -750,9 +754,73 @@ function fileFingerprint(bytes) {
   return sha256(bytes instanceof Uint8Array ? bytes : new TextEncoder().encode(bytes));
 }
 
-function currentHudState(state) {
-  if (state?.schemaVersion === 1 && state.hud && state.claudeMem?.files) return structuredClone(state);
-  return { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+function isPlainRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasExactKeys(value, keys) {
+  return isPlainRecord(value) && Object.keys(value).sort().join('\0') === [...keys].sort().join('\0');
+}
+
+function isCanonicalBase64(value) {
+  if (typeof value !== 'string' || value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return false;
+  return Buffer.from(value, 'base64').toString('base64') === value;
+}
+
+function managedStatusLineCommandIsValid(command, modulePath, platform = process.platform) {
+  if (typeof command !== 'string' || typeof modulePath !== 'string') return false;
+  let moduleArgument;
+  try { moduleArgument = quoteStatusLineArg(modulePath, platform); } catch { return false; }
+  const suffix = ` ${moduleArgument}`;
+  if (!command.endsWith(suffix)) return false;
+  const bunArgument = command.slice(0, -suffix.length);
+  let bunPath;
+  if (platform === 'win32') {
+    if (bunArgument.length < 2 || bunArgument[0] !== '"' || bunArgument.at(-1) !== '"') return false;
+    bunPath = bunArgument.slice(1, -1);
+  } else {
+    if (bunArgument.length < 2 || bunArgument[0] !== "'" || bunArgument.at(-1) !== "'") return false;
+    bunPath = bunArgument.slice(1, -1).replaceAll(`'"'"'`, "'");
+  }
+  try {
+    if (quoteStatusLineArg(bunPath, platform) !== bunArgument) return false;
+  } catch { return false; }
+  const executable = bunPath.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase();
+  return executable === 'bun' || executable === 'bun.exe';
+}
+
+function validateManagedHudState(value, allowInitial = false, managedContext = null) {
+  if (!hasExactKeys(value, ['schemaVersion', 'hud', 'claudeMem']) || value.schemaVersion !== 1
+    || !isPlainRecord(value.claudeMem) || !isPlainRecord(value.claudeMem.files) || !isPlainRecord(value.hud)) {
+    throw new Error('hud: unsupported or malformed ownership state');
+  }
+  if (allowInitial && Object.keys(value.hud).length === 0) return structuredClone(value);
+  const config = value.hud.config;
+  const statusLine = value.hud.statusLine;
+  const hashPattern = /^[0-9a-f]{64}$/;
+  if (!hasExactKeys(value.hud, ['config', 'statusLine'])
+    || !hasExactKeys(config, ['originalPresent', 'originalBase64', 'managedSha256'])
+    || typeof config.originalPresent !== 'boolean'
+    || !isCanonicalBase64(config.originalBase64)
+    || (!config.originalPresent && config.originalBase64 !== '')
+    || !hashPattern.test(config.managedSha256)
+    || config.managedSha256 !== fileFingerprint(HUD_CONFIG_TEXT)
+    || !hasExactKeys(statusLine, ['originalPresent', 'originalValue', 'managedValue', 'managedSha256'])
+    || typeof statusLine.originalPresent !== 'boolean'
+    || (!statusLine.originalPresent && statusLine.originalValue !== null)
+    || !hasExactKeys(statusLine.managedValue, ['type', 'command'])
+    || statusLine.managedValue.type !== 'command'
+    || typeof statusLine.managedValue.command !== 'string'
+    || !managedStatusLineCommandIsValid(statusLine.managedValue.command, managedContext?.modulePath, managedContext?.platform)
+    || !hashPattern.test(statusLine.managedSha256)
+    || statusLine.managedSha256 !== jsonFingerprint(statusLine.managedValue)) {
+    throw new Error('hud: unsupported or malformed ownership state');
+  }
+  return structuredClone(value);
+}
+
+function currentHudState(state, persisted, context, modulePath) {
+  return validateManagedHudState(state, !persisted, { modulePath, platform: context.platform || process.platform });
 }
 
 function validateHudInstallPath(record, cacheRoot, claudeConfigDir) {
@@ -771,7 +839,7 @@ function validateHudInstallPath(record, cacheRoot, claudeConfigDir) {
     const entry = join(source, 'index.ts');
     const sourceStatus = lstatSync(source);
     const entryStatus = lstatSync(entry);
-    if (sourceStatus.isSymbolicLink() || !sourceStatus.isDirectory() || entryStatus.isSymbolicLink() || !entryStatus.isFile()) return null;
+    if (sourceStatus.isSymbolicLink() || !sourceStatus.isDirectory() || entryStatus.isSymbolicLink() || !entryStatus.isFile() || entryStatus.nlink !== 1) return null;
     const realEntry = realpathSync(entry);
     if (!pathIsContained(realInstall, realEntry)) return null;
     return { record, entry: realEntry };
@@ -827,9 +895,15 @@ const semverPattern = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-([0-9A-
 function parseVersion(value) {
   const match = typeof value === 'string' ? semverPattern.exec(value) : null;
   if (!match) return null;
-  const prerelease = match[4] ? match[4].split('.').map(value => /^\\d+$/.test(value) ? Number(value) : value) : [];
-  if (prerelease.some((value, index) => typeof value === 'number' && !/^(0|[1-9]\\d*)$/.test(match[4].split('.')[index]))) return null;
-  return { core: match.slice(1, 4).map(Number), prerelease };
+  const core = match.slice(1, 4).map(Number);
+  if (!core.every(Number.isSafeInteger)) return null;
+  const prerelease = match[4] ? match[4].split('.').map(identifier => {
+    if (!/^\\d+$/.test(identifier)) return identifier;
+    if (!/^(0|[1-9]\\d*)$/.test(identifier)) return null;
+    const numeric = Number(identifier);
+    return Number.isSafeInteger(numeric) ? numeric : null;
+  }) : [];
+  return prerelease.includes(null) ? null : { core, prerelease };
 }
 function compare(left, right) {
   const a = parseVersion(left); const b = parseVersion(right);
@@ -850,48 +924,79 @@ function contained(root, path) {
   const child = relative(root, path);
   return child === '' || (!child.startsWith('..' + sep) && child !== '..' && !isAbsolute(child));
 }
-function safeDirectoryChain(root, target) {
-  if (!contained(root, target)) return false;
+function captureDirectoryChain(root, target) {
+  if (!contained(root, target)) return null;
+  const identities = [];
   let current = root;
   for (const part of ['', ...relative(root, target).split(sep).filter(Boolean)]) {
     if (part) current = join(current, part);
-    try { const status = lstatSync(current); if (status.isSymbolicLink() || !status.isDirectory()) return false; }
-    catch { return false; }
+    try {
+      const status = lstatSync(current);
+      if (status.isSymbolicLink() || !status.isDirectory()) return null;
+      identities.push({ path: current, dev: status.dev, ino: status.ino, mode: status.mode, nlink: status.nlink });
+    } catch { return null; }
   }
-  return true;
+  return identities;
 }
 function validEntry(record, cacheRoot) {
   if (record?.scope !== 'user' || !parseVersion(record.version) || typeof record.installPath !== 'string' || !isAbsolute(record.installPath)) return null;
   try {
-    if (!contained(cacheRoot, record.installPath) || !safeDirectoryChain(claudeConfigDir, cacheRoot) || !safeDirectoryChain(cacheRoot, record.installPath)) return null;
+    if (!contained(cacheRoot, record.installPath)) return null;
     const cacheStatus = lstatSync(cacheRoot); const installStatus = lstatSync(record.installPath);
     if (cacheStatus.isSymbolicLink() || !cacheStatus.isDirectory() || installStatus.isSymbolicLink() || !installStatus.isDirectory()) return null;
     const realCache = realpathSync(cacheRoot); const realInstall = realpathSync(record.installPath);
     if (realCache === realInstall || !contained(realCache, realInstall)) return null;
     const source = join(record.installPath, 'src'); const candidate = join(source, 'index.ts');
+    const directories = captureDirectoryChain(claudeConfigDir, source);
+    if (!directories) return null;
     const sourceStatus = lstatSync(source); const entryStatus = lstatSync(candidate);
-    if (sourceStatus.isSymbolicLink() || !sourceStatus.isDirectory() || entryStatus.isSymbolicLink() || !entryStatus.isFile()) return null;
+    if (sourceStatus.isSymbolicLink() || !sourceStatus.isDirectory() || entryStatus.isSymbolicLink() || !entryStatus.isFile() || entryStatus.nlink !== 1) return null;
     const entry = realpathSync(candidate);
-    return contained(realInstall, entry) ? { record, entry } : null;
+    return contained(realInstall, entry) ? {
+      record, entry, directories,
+      entryIdentity: {
+        dev: entryStatus.dev, ino: entryStatus.ino, mode: entryStatus.mode, nlink: entryStatus.nlink,
+        size: entryStatus.size, mtimeMs: entryStatus.mtimeMs,
+        sha256: new Bun.CryptoHasher('sha256').update(readFileSync(entry)).digest('hex'),
+      },
+    } : null;
   } catch { return null; }
 }
-let entry;
+function revalidate(selected) {
+  for (const expected of selected.directories) {
+    const status = lstatSync(expected.path);
+    if (status.isSymbolicLink() || !status.isDirectory() || status.dev !== expected.dev || status.ino !== expected.ino
+      || status.mode !== expected.mode || status.nlink !== expected.nlink) throw new Error('HUD directory changed before execution');
+  }
+  const status = lstatSync(selected.entry);
+  const expected = selected.entryIdentity;
+  if (status.isSymbolicLink() || !status.isFile() || status.nlink !== 1 || status.dev !== expected.dev || status.ino !== expected.ino
+    || status.mode !== expected.mode || status.nlink !== expected.nlink || status.size !== expected.size || status.mtimeMs !== expected.mtimeMs
+    || realpathSync(selected.entry) !== selected.entry
+    || new Bun.CryptoHasher('sha256').update(readFileSync(selected.entry)).digest('hex') !== expected.sha256) {
+    throw new Error('HUD entry changed before execution');
+  }
+}
+let selected;
 try {
   const installedPath = join(claudeConfigDir, 'plugins', 'installed_plugins.json');
   const installedStatus = lstatSync(installedPath);
   if (installedStatus.isSymbolicLink() || !installedStatus.isFile()) throw new Error('installed plugin state is unsafe');
   const installed = JSON.parse(readFileSync(installedPath, 'utf8'));
+  if (installed?.version !== 2 || !installed.plugins || typeof installed.plugins !== 'object' || Array.isArray(installed.plugins)) {
+    throw new Error('unsupported installed plugin schema');
+  }
   const records = Array.isArray(installed?.plugins?.[pluginId]) ? installed.plugins[pluginId] : [];
   const cacheRoot = join(claudeConfigDir, 'plugins', 'cache', 'claude-hud', 'claude-hud');
-  const selected = records.map(record => validEntry(record, cacheRoot)).filter(Boolean).sort((a, b) => compare(b.record.version, a.record.version))[0];
+  selected = records.map(record => validEntry(record, cacheRoot)).filter(Boolean).sort((a, b) => compare(b.record.version, a.record.version))[0];
   if (!selected) throw new Error('no valid user HUD installation in the canonical cache');
-  entry = selected.entry;
+  revalidate(selected);
 } catch (error) {
   console.error('claude-hud: ' + (error instanceof Error ? error.message : 'no valid user HUD installation'));
   process.exit(1);
 }
 const child = Bun.spawn({
-  cmd: [process.execPath, entry],
+  cmd: [process.execPath, selected.entry],
   stdin: 'inherit',
   stdout: 'inherit',
   stderr: 'inherit',
@@ -909,6 +1014,9 @@ export async function configureHud(context, state) {
     const installedPath = join(context.claudeConfigDir, 'plugins', 'installed_plugins.json');
     const installedSnapshot = hudFileSnapshot(context.claudeConfigDir, installedPath, 'installed plugin state', true);
     if (!installedSnapshot.present) throw new Error('hud: installed plugin state is missing');
+    if (installedSnapshot.value.version !== 2 || !isPlainRecord(installedSnapshot.value.plugins)) {
+      throw new Error('hud: unsupported installed plugin schema');
+    }
     const selected = selectedHudInstall(installedSnapshot.value, context.claudeConfigDir);
     if (!selected || compareSemver(selected.record.version, spec.version) < 0) throw new Error('hud: no valid baseline user HUD installation');
 
@@ -919,12 +1027,12 @@ export async function configureHud(context, state) {
     const settingsSnapshot = hudFileSnapshot(context.claudeConfigDir, settingsPath, 'settings', true);
     const moduleSnapshot = hudFileSnapshot(context.clawgodDir, modulePath, 'status-line module');
     const stateSnapshot = hudFileSnapshot(context.clawgodDir, statePath, 'ownership state', true);
+    const nextState = currentHudState(stateSnapshot.present ? stateSnapshot.value : state, stateSnapshot.present, context, modulePath);
     const configPlan = planHudConfigSnapshot(context.claudeConfigDir, configPath);
     const preparedConfig = createHudConfigParent(context.claudeConfigDir, configPlan);
     const configSnapshot = preparedConfig.snapshot;
     createdParent = preparedConfig.createdParent;
     const settings = settingsSnapshot.present ? settingsSnapshot.value : {};
-    const nextState = currentHudState(stateSnapshot.present ? stateSnapshot.value : state);
     const priorConfig = nextState.hud.config;
     if (!priorConfig?.managedSha256 || !configSnapshot.present || fileFingerprint(configSnapshot.bytes) !== priorConfig.managedSha256) {
       nextState.hud.config = {
@@ -965,7 +1073,8 @@ export async function configureHud(context, state) {
     for (const write of writes) {
       context.onHudWriting?.({ label: write.label });
       atomicHudWrite(write.root, write.snapshot, write.bytes, write.mode, write.label);
-      completedWrites.push(write);
+      completedWrites.push({ ...write, postWrite: hudFileSnapshot(write.root, write.snapshot.path, write.label) });
+      context.onHudWritten?.({ label: write.label });
     }
     if (state && typeof state === 'object') {
       for (const key of Object.keys(state)) delete state[key];
@@ -975,59 +1084,99 @@ export async function configureHud(context, state) {
   } catch (error) {
     const rollbackErrors = [];
     for (const write of completedWrites.reverse()) {
-      try { rollbackHudWrite(write); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      try { rollbackHudWrite(write); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); break; }
     }
-    try { removeCreatedHudConfigParent(createdParent); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    if (rollbackErrors.length === 0) {
+      try { removeCreatedHudConfigParent(createdParent); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
     if (rollbackErrors.length > 0) return pluginResult(spec, 'warning', false, null, `hud: rollback incomplete: ${rollbackErrors[0].message}`);
     return pluginResult(spec, 'warning', false, null, error.message);
   }
 }
 
 export async function restoreHud(context, state) {
-  const ownership = state?.schemaVersion === 1 ? state.hud : null;
-  if (!ownership?.config || !ownership?.statusLine) return { restored: [], conflicts: [] };
-  const configPath = join(context.claudeConfigDir, 'plugins', 'claude-hud', 'config.json');
-  const settingsPath = join(context.claudeConfigDir, 'settings.json');
-  const configSnapshot = hudFileSnapshot(context.claudeConfigDir, configPath, 'HUD config');
-  const settingsSnapshot = hudFileSnapshot(context.claudeConfigDir, settingsPath, 'settings', true);
-  const restored = [];
-  const conflicts = [];
-  const ownsConfig = configSnapshot.present && fileFingerprint(configSnapshot.bytes) === ownership.config.managedSha256;
-  if (!ownsConfig) conflicts.push('hud config');
-  const settings = settingsSnapshot.present ? settingsSnapshot.value : {};
-  const ownsStatusLine = Object.hasOwn(settings, 'statusLine')
-    && jsonFingerprint(settings.statusLine) === ownership.statusLine.managedSha256;
-  if (!ownsStatusLine) conflicts.push('statusLine');
+  const completedWrites = [];
+  try {
+    const statePath = join(context.clawgodDir, 'plugin-dependencies-state.json');
+    const modulePath = join(context.clawgodDir, 'claude-hud-statusline.mjs');
+    const configPath = join(context.claudeConfigDir, 'plugins', 'claude-hud', 'config.json');
+    const settingsPath = join(context.claudeConfigDir, 'settings.json');
+    const stateSnapshot = hudFileSnapshot(context.clawgodDir, statePath, 'ownership state', true);
+    if (!stateSnapshot.present) return { restored: [], conflicts: [], failures: [] };
+    const ownershipState = currentHudState(stateSnapshot.value, true, context, modulePath);
+    const ownership = ownershipState.hud;
+    const configSnapshot = hudFileSnapshot(context.claudeConfigDir, configPath, 'HUD config');
+    const settingsSnapshot = hudFileSnapshot(context.claudeConfigDir, settingsPath, 'settings', true);
+    const restored = [];
+    const conflicts = [];
+    const ownsConfig = configSnapshot.present && fileFingerprint(configSnapshot.bytes) === ownership.config.managedSha256;
+    if (!ownsConfig) conflicts.push('hud config');
+    const settings = settingsSnapshot.present ? settingsSnapshot.value : {};
+    const ownsStatusLine = Object.hasOwn(settings, 'statusLine')
+      && jsonFingerprint(settings.statusLine) === ownership.statusLine.managedSha256;
+    if (!ownsStatusLine) conflicts.push('statusLine');
+    if (!ownsConfig && !ownsStatusLine) return { restored, conflicts, failures: [] };
 
-  if (ownsConfig) {
-    if (ownership.config.originalPresent) {
-      const original = Buffer.from(ownership.config.originalBase64, 'base64');
-      atomicHudWrite(context.claudeConfigDir, configSnapshot, original, configSnapshot.mode, 'HUD config');
-    } else {
-      atomicHudRemove(context.claudeConfigDir, configSnapshot, 'HUD config');
+    const operations = [];
+    if (ownsStatusLine) {
+      const nextSettings = { ...settings };
+      if (ownership.statusLine.originalPresent) nextSettings.statusLine = structuredClone(ownership.statusLine.originalValue);
+      else delete nextSettings.statusLine;
+      operations.push({
+        root: context.claudeConfigDir,
+        snapshot: settingsSnapshot,
+        bytes: Buffer.from(JSON.stringify(nextSettings, null, 2) + '\n'),
+        mode: settingsSnapshot.mode || 0o600,
+        remove: !ownership.statusLine.originalPresent && Object.keys(nextSettings).length === 0,
+        label: 'settings',
+        restoredLabel: 'statusLine',
+      });
     }
-    restored.push('hud config');
-  }
-  if (ownsStatusLine) {
-    const nextSettings = { ...settings };
-    if (ownership.statusLine.originalPresent) nextSettings.statusLine = structuredClone(ownership.statusLine.originalValue);
-    else delete nextSettings.statusLine;
-    if (!ownership.statusLine.originalPresent && Object.keys(nextSettings).length === 0 && !settingsSnapshot.present) {
-      // An absent snapshot cannot own a current statusLine, so this branch is unreachable.
-    } else if (!ownership.statusLine.originalPresent && Object.keys(nextSettings).length === 0) {
-      atomicHudRemove(context.claudeConfigDir, settingsSnapshot, 'settings');
-    } else {
-      atomicHudWrite(
-        context.claudeConfigDir,
-        settingsSnapshot,
-        Buffer.from(JSON.stringify(nextSettings, null, 2) + '\n'),
-        settingsSnapshot.mode || 0o600,
-        'settings',
-      );
+    if (ownsConfig) {
+      operations.push({
+        root: context.claudeConfigDir,
+        snapshot: configSnapshot,
+        bytes: Buffer.from(ownership.config.originalBase64, 'base64'),
+        mode: configSnapshot.mode,
+        remove: !ownership.config.originalPresent,
+        label: 'HUD config',
+        restoredLabel: 'hud config',
+      });
     }
-    restored.push('statusLine');
+    operations.push({
+      root: context.clawgodDir,
+      snapshot: stateSnapshot,
+      bytes: stateSnapshot.bytes,
+      mode: stateSnapshot.mode,
+      remove: false,
+      label: 'ownership state',
+      restoredLabel: null,
+    });
+
+    for (const operation of operations) {
+      context.onHudRestoring?.({ label: operation.label });
+      if (operation.remove) atomicHudRemove(operation.root, operation.snapshot, operation.label);
+      else atomicHudWrite(operation.root, operation.snapshot, operation.bytes, operation.mode, operation.label);
+      completedWrites.push({
+        ...operation,
+        postWrite: hudFileSnapshot(operation.root, operation.snapshot.path, operation.label),
+      });
+      if (operation.restoredLabel) restored.push(operation.restoredLabel);
+      context.onHudRestored?.({ label: operation.label });
+    }
+    return { restored, conflicts, failures: [] };
+  } catch (error) {
+    const rollbackErrors = [];
+    for (const write of completedWrites.reverse()) {
+      try { rollbackHudWrite(write); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); break; }
+    }
+    const message = rollbackErrors.length > 0
+      ? `hud: rollback incomplete: ${rollbackErrors[0].message}`
+      : (error instanceof Error ? error.message : 'hud: restore failed');
+    return { restored: [], conflicts: [], failures: [message] };
   }
-  return { restored, conflicts };
 }
 
 export function sha256(bytes) {

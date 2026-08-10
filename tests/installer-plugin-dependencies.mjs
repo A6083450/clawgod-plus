@@ -382,6 +382,77 @@ try {
   assert.deepEqual(restartedExistingState.hud.statusLine.originalValue, restorePoint.statusLine.originalValue, 'a process-restart rerun must load and retain the persisted statusLine restore point');
   Object.assign(existingState, restartedExistingState);
 
+  async function assertInvalidHudStatePreserved(label, mutateRaw) {
+    const fixture = makeHudFixture(`invalid-state-${label}`);
+    const initialState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+    await configureHud(fixture.context, initialState);
+    const raw = readFileSync(fixture.statePath, 'utf8');
+    const changed = mutateRaw(raw);
+    writeFileSync(fixture.statePath, changed);
+    const before = snapshotTree(fixture.root);
+    const result = await configureHud(fixture.context, { schemaVersion: 1, hud: {}, claudeMem: { files: {} } });
+    assert.equal(result.status, 'warning', `${label} ownership state must be rejected`);
+    assert.deepEqual(snapshotTree(fixture.root), before, `${label} ownership state must leave every byte, mode, and path unchanged`);
+  }
+  const mutateState = mutation => raw => {
+    const value = JSON.parse(raw);
+    mutation(value);
+    return JSON.stringify(value, null, 2) + '\n';
+  };
+  await assertInvalidHudStatePreserved('unknown-schema', mutateState(value => { value.schemaVersion = 2; }));
+  await assertInvalidHudStatePreserved('malformed-json', () => '{invalid state\n');
+  await assertInvalidHudStatePreserved('missing-config-field', mutateState(value => { delete value.hud.config.originalPresent; }));
+  await assertInvalidHudStatePreserved('non-boolean', mutateState(value => { value.hud.config.originalPresent = 'false'; }));
+  await assertInvalidHudStatePreserved('short-hash', mutateState(value => { value.hud.config.managedSha256 = 'abc'; }));
+  await assertInvalidHudStatePreserved('uppercase-hash', mutateState(value => { value.hud.statusLine.managedSha256 = value.hud.statusLine.managedSha256.toUpperCase(); }));
+  await assertInvalidHudStatePreserved('invalid-base64', mutateState(value => { value.hud.config.originalPresent = true; value.hud.config.originalBase64 = '$not-base64$'; }));
+  await assertInvalidHudStatePreserved('noncanonical-base64', mutateState(value => { value.hud.config.originalPresent = true; value.hud.config.originalBase64 = 'YQ'; }));
+  await assertInvalidHudStatePreserved('absent-config-with-bytes', mutateState(value => { value.hud.config.originalPresent = false; value.hud.config.originalBase64 = 'YQ=='; }));
+  await assertInvalidHudStatePreserved('absent-status-with-value', mutateState(value => { value.hud.statusLine.originalPresent = false; value.hud.statusLine.originalValue = { user: true }; }));
+  await assertInvalidHudStatePreserved('invalid-managed-value', mutateState(value => { value.hud.statusLine.managedValue = ['command']; }));
+  await assertInvalidHudStatePreserved('mismatched-status-fingerprint', mutateState(value => { value.hud.statusLine.managedValue.command += ' changed'; }));
+  await assertInvalidHudStatePreserved('invalid-claude-mem-files', mutateState(value => { value.claudeMem.files = []; }));
+
+  const forgedCommandHud = makeHudFixture('invalid-state-self-consistent-command');
+  const forgedCommandState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+  await configureHud(forgedCommandHud.context, forgedCommandState);
+  const forgedPersisted = JSON.parse(readFileSync(forgedCommandHud.statePath, 'utf8'));
+  forgedPersisted.hud.statusLine.managedValue.command = 'bash -c evil';
+  forgedPersisted.hud.statusLine.managedSha256 = sha256(Buffer.from(JSON.stringify(forgedPersisted.hud.statusLine.managedValue)));
+  writeFileSync(forgedCommandHud.statePath, JSON.stringify(forgedPersisted, null, 2) + '\n');
+  const forgedCommandBefore = snapshotTree(forgedCommandHud.root);
+  const forgedCommandResult = await configureHud(forgedCommandHud.context, { schemaVersion: 1, hud: {}, claudeMem: { files: {} } });
+  assert.equal(forgedCommandResult.status, 'warning', 'a self-consistent non-managed statusLine command must be rejected');
+  assert.deepEqual(snapshotTree(forgedCommandHud.root), forgedCommandBefore, 'a forged managed command must not replace the true restore point');
+
+  const invalidMissingParentHud = makeHudFixture('invalid-state-missing-config-parent', { configParent: false });
+  writeFileSync(invalidMissingParentHud.statePath, '{"schemaVersion":2,"hud":{},"claudeMem":{"files":{}}}\n');
+  const invalidMissingParentBefore = snapshotTree(invalidMissingParentHud.root);
+  const invalidMissingParentResult = await configureHud(invalidMissingParentHud.context, { schemaVersion: 1, hud: {}, claudeMem: { files: {} } });
+  assert.equal(invalidMissingParentResult.status, 'warning', 'invalid state must be rejected before creating a missing HUD config parent');
+  assert.deepEqual(snapshotTree(invalidMissingParentHud.root), invalidMissingParentBefore, 'invalid state must perform zero writes when the HUD config parent is absent');
+
+  const changedBunHud = makeHudFixture('managed-command-bun-path-change');
+  const changedBunState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+  await configureHud(changedBunHud.context, changedBunState);
+  const changedBunRestorePoint = structuredClone(changedBunState.hud.statusLine.originalValue);
+  changedBunHud.context.bunPath = join(changedBunHud.root, 'new Bun path', 'bun');
+  const changedBunResult = await configureHud(changedBunHud.context, { schemaVersion: 1, hud: {}, claudeMem: { files: {} } });
+  assert.equal(changedBunResult.ready, true, 'a previous direct Bun command must remain valid after the Bun path changes');
+  const changedBunPersisted = JSON.parse(readFileSync(changedBunHud.statePath, 'utf8'));
+  assert.deepEqual(changedBunPersisted.hud.statusLine.originalValue, changedBunRestorePoint, 'a Bun path change must retain the true statusLine restore point');
+
+  const invalidRestoreHud = makeHudFixture('invalid-state-restore');
+  const invalidRestoreState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+  await configureHud(invalidRestoreHud.context, invalidRestoreState);
+  const invalidRestorePersisted = JSON.parse(readFileSync(invalidRestoreHud.statePath, 'utf8'));
+  invalidRestorePersisted.schemaVersion = 2;
+  writeFileSync(invalidRestoreHud.statePath, JSON.stringify(invalidRestorePersisted, null, 2) + '\n');
+  const invalidRestoreBefore = snapshotTree(invalidRestoreHud.root);
+  const invalidRestoreResult = await restoreHud(invalidRestoreHud.context, invalidRestoreState);
+  assert.equal(invalidRestoreResult.failures?.length, 1, 'restore must reject unsupported persisted ownership state');
+  assert.deepEqual(snapshotTree(invalidRestoreHud.root), invalidRestoreBefore, 'invalid persisted restore state must leave every byte, mode, and path unchanged');
+
   const changedConfig = Buffer.from('{"user":"changed-after-management"}\n');
   const changedStatusLine = { type: 'command', command: "'/new/user/status line'" };
   writeFileSync(existingHud.configPath, changedConfig);
@@ -420,6 +491,48 @@ try {
   writeFileSync(unrelatedHud.settingsPath, JSON.stringify(unrelatedSettings, null, 2) + '\n');
   await restoreHud(unrelatedHud.context, unrelatedState);
   assert.deepEqual(JSON.parse(readFileSync(unrelatedHud.settingsPath, 'utf8')), { addedLater: { preserve: true } }, 'an originally absent settings file with later keys must lose only managed statusLine');
+
+  for (const failureLabel of ['HUD config', 'settings', 'ownership state']) {
+    const fixture = makeHudFixture(`restore-transaction-${failureLabel.replaceAll(' ', '-')}`);
+    const originalConfig = Buffer.from(`{"restore":"${failureLabel}"}\n`);
+    const originalStatus = { type: 'command', command: `user-${failureLabel}` };
+    writeFileSync(fixture.configPath, originalConfig);
+    writeFileSync(fixture.settingsPath, JSON.stringify({ keep: failureLabel, statusLine: originalStatus }, null, 2) + '\n');
+    const state = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+    await configureHud(fixture.context, state);
+    const managedTree = snapshotTree(fixture.root);
+    fixture.context.onHudRestoring = ({ label }) => {
+      if (label === failureLabel) throw new Error(`fixture restore failure: ${label}`);
+    };
+    const failed = await restoreHud(fixture.context, state);
+    assert.equal(failed.failures?.length, 1, `${failureLabel} restore failure must be reported`);
+    assert.deepEqual(snapshotTree(fixture.root), managedTree, `${failureLabel} restore failure must reverse every completed restore write`);
+    delete fixture.context.onHudRestoring;
+    const retried = await restoreHud(fixture.context, state);
+    assert.deepEqual(retried.failures, [], `${failureLabel} restore must remain retryable`);
+    assert.deepEqual(readFileSync(fixture.configPath), originalConfig, `${failureLabel} retry must restore config bytes`);
+    assert.deepEqual(JSON.parse(readFileSync(fixture.settingsPath, 'utf8')).statusLine, originalStatus, `${failureLabel} retry must restore statusLine`);
+  }
+
+  const restoreConflictHud = makeHudFixture('restore-rollback-identity');
+  writeFileSync(restoreConflictHud.configPath, '{"restore":"identity"}\n');
+  writeFileSync(restoreConflictHud.settingsPath, JSON.stringify({ statusLine: { type: 'command', command: 'identity-original' } }, null, 2) + '\n');
+  const restoreConflictState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+  await configureHud(restoreConflictHud.context, restoreConflictState);
+  restoreConflictHud.context.onHudRestored = ({ label }) => {
+    if (label !== 'settings') return;
+    const replacement = join(restoreConflictHud.root, 'restore-settings-replacement');
+    writeFileSync(replacement, readFileSync(restoreConflictHud.settingsPath));
+    renameSync(replacement, restoreConflictHud.settingsPath);
+  };
+  restoreConflictHud.context.onHudRestoring = ({ label }) => {
+    if (label === 'HUD config') throw new Error('fixture restore failure after concurrent replacement');
+  };
+  const restoreConflictResult = await restoreHud(restoreConflictHud.context, restoreConflictState);
+  assert.equal(restoreConflictResult.failures?.length, 1, 'restore rollback ownership conflict must be reported');
+  assert.match(restoreConflictResult.failures[0], /rollback incomplete/i, 'restore rollback identity mismatch must be explicit');
+  assert.equal(existsSync(restoreConflictHud.statePath), true, 'restore rollback conflict must retain ownership state for retry');
+  assert.equal(existsSync(restoreConflictHud.modulePath), true, 'restore rollback conflict must retain managed support for retry');
 
   async function assertUnsafeHudPreserved(label, mutate) {
     const fixture = makeHudFixture(`unsafe-${label}`);
@@ -483,6 +596,37 @@ try {
   assert.equal(existsSync(concurrentEditHud.statePath), false, 'rolled-back ownership state must not remain');
   assert.equal(existsSync(concurrentEditHud.modulePath), false, 'rolled-back status-line module must not remain');
 
+  for (const mutation of ['same-bytes-new-inode', 'chmod', 'hardlink']) {
+    const fixture = makeHudFixture(`rollback-identity-${mutation}`);
+    writeFileSync(fixture.configPath, '{"original":"config"}\n');
+    let replacementPath = null;
+    fixture.context.onHudWritten = ({ label }) => {
+      if (label !== 'HUD config') return;
+      if (mutation === 'same-bytes-new-inode') {
+        replacementPath = join(fixture.root, 'same-bytes-replacement');
+        writeFileSync(replacementPath, readFileSync(fixture.configPath));
+        renameSync(replacementPath, fixture.configPath);
+      } else if (mutation === 'chmod') {
+        chmodSync(fixture.configPath, 0o640);
+      } else {
+        replacementPath = join(fixture.root, 'managed-config-hardlink');
+        linkSync(fixture.configPath, replacementPath);
+      }
+    };
+    fixture.context.onHudWriting = ({ label }) => {
+      if (label === 'settings') throw new Error(`fixture ${mutation} rollback trigger`);
+    };
+    const result = await configureHud(fixture.context, { schemaVersion: 1, hud: {}, claudeMem: { files: {} } });
+    assert.equal(result.status, 'warning', `${mutation} rollback conflict must warn`);
+    assert.match(result.detail, /rollback incomplete/i, `${mutation} rollback conflict must be explicit`);
+    assert.equal(existsSync(fixture.statePath), true, `${mutation} rollback conflict must retain ownership state for retry`);
+    assert.equal(existsSync(fixture.modulePath), true, `${mutation} rollback conflict must retain the managed runner for retry`);
+    assert.equal(readFileSync(fixture.configPath, 'utf8'), expectedHudConfig, `${mutation} concurrent managed bytes must be preserved`);
+    if (mutation === 'same-bytes-new-inode') assert.equal(existsSync(replacementPath), false, 'replacement must occupy the canonical path');
+    if (mutation === 'chmod') assert.equal(lstatSync(fixture.configPath).mode & 0o777, 0o640, 'concurrent chmod must survive rollback');
+    if (mutation === 'hardlink') assert.equal(lstatSync(fixture.configPath).nlink, 2, 'concurrent hardlink must survive rollback');
+  }
+
   const unixQuoted = quoteStatusLineArg("/tmp/Bun path/it's [valid]?/bun", 'linux');
   assert.equal(unixQuoted, "'/tmp/Bun path/it'\"'\"'s [valid]?/bun'", 'Unix quoting must preserve spaces, quotes, brackets, and question marks');
   assert.equal(quoteStatusLineArg('C:\\Program Files\\Bun\\bun.exe', 'win32'), '"C:\\Program Files\\Bun\\bun.exe"', 'Windows paths must be double quoted');
@@ -509,11 +653,11 @@ try {
     assert.deepEqual(snapshotTree(unsafeCommandHud.root), before, `${label} must not change HUD state`);
   }
 
-  async function runManagedHud(label, records, setup) {
+  async function runManagedHud(label, records, setup, installedVersion = 2) {
     const fixture = makeHudFixture(`runner-${label}`, { versions: [], clawgodName: 'clawgod-runner' });
     setup?.(fixture);
     writeFileSync(join(fixture.pluginRoot, 'installed_plugins.json'), JSON.stringify({
-      version: 2,
+      version: installedVersion,
       plugins: { 'claude-hud@claude-hud': records(fixture) },
     }, null, 2) + '\n');
     writeFileSync(fixture.modulePath, renderHudStatusLineModule(fixture.context));
@@ -540,14 +684,42 @@ try {
     writeFileSync(join(installPath, 'src', 'index.ts'), `const bytes = new Uint8Array(await new Response(Bun.stdin.stream()).arrayBuffer());\nawait Bun.write(Bun.stdout, ${JSON.stringify(marker)} + new TextDecoder().decode(bytes));\nawait Bun.write(Bun.stderr, ${JSON.stringify(`stderr:${marker}`)});\nprocess.exit(${exitCode});\n`);
     return { scope: 'user', version, installPath };
   }
-  const forwarded = await runManagedHud('highest', fixture => [
-    fakeHudEntry(fixture, '0.7.0', 'older:', 11),
-    { scope: 'project', version: '99.0.0', installPath: join(fixture.root, 'ignored-project') },
-    fakeHudEntry(fixture, '0.10.0', 'higher:', 37),
-  ]);
-  assert.equal(forwarded.exitCode, 37, `the managed module must forward the highest valid HUD exit code: ${forwarded.stderr}`);
-  assert.deepEqual(forwarded.stdout, Buffer.concat([Buffer.from('higher:'), forwarded.input]), 'the managed module must forward stdin/stdout bytes unchanged');
-  assert.deepEqual(forwarded.stderr, Buffer.from('stderr:higher:'), 'the managed module must forward stderr bytes unchanged');
+  const persistedForwardFixture = makeHudFixture('persisted-command-forward', { versions: [], clawgodName: 'clawgod-runner' });
+  const binaryInput = Buffer.from([0x00, 0xff, 0xfe, 0x80, 0x41, 0x00, 0xc3]);
+  const binaryStdoutPrefix = Buffer.from([0x00, 0x81, 0xff, 0x53]);
+  const binaryStderr = Buffer.from([0xfe, 0x00, 0x45, 0x80]);
+  const higherRecord = fakeHudEntry(persistedForwardFixture, '0.10.0', 'unused', 37);
+  const olderRecord = fakeHudEntry(persistedForwardFixture, '0.7.0', 'older', 11);
+  writeFileSync(join(higherRecord.installPath, 'src', 'index.ts'), `
+const input = new Uint8Array(await new Response(Bun.stdin.stream()).arrayBuffer());
+if (process.env.HUD_FORWARD_SENTINEL !== 'forwarded-exactly') process.exit(91);
+await Bun.write(Bun.stdout, new Uint8Array([...${JSON.stringify([...binaryStdoutPrefix])}, ...input]));
+await Bun.write(Bun.stderr, new Uint8Array(${JSON.stringify([...binaryStderr])}));
+process.exit(37);
+`);
+  writeFileSync(join(persistedForwardFixture.pluginRoot, 'installed_plugins.json'), JSON.stringify({
+    version: 2,
+    plugins: { 'claude-hud@claude-hud': [olderRecord, higherRecord] },
+  }, null, 2) + '\n');
+  const persistedState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+  const persistedResult = await configureHud(persistedForwardFixture.context, persistedState);
+  assert.equal(persistedResult.ready, true, 'the persisted forwarding fixture must configure');
+  const persistedCommand = JSON.parse(readFileSync(persistedForwardFixture.settingsPath, 'utf8')).statusLine.command;
+  assert.equal(persistedCommand, `${quoteStatusLineArg(process.execPath)} ${quoteStatusLineArg(persistedForwardFixture.modulePath)}`, 'the executed command must be the exact persisted Unix statusLine');
+  const persistedChild = Bun.spawn({
+    cmd: ['/bin/sh', '-c', persistedCommand],
+    cwd: persistedForwardFixture.root,
+    env: { ...persistedForwardFixture.context.env, HUD_FORWARD_SENTINEL: 'forwarded-exactly' },
+    stdin: new Blob([binaryInput]),
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const persistedExit = await persistedChild.exited;
+  const persistedStdout = Buffer.from(await new Response(persistedChild.stdout).arrayBuffer());
+  const persistedStderr = Buffer.from(await new Response(persistedChild.stderr).arrayBuffer());
+  assert.equal(persistedExit, 37, 'the exact persisted command must forward the selected HUD exit code');
+  assert.deepEqual(persistedStdout, Buffer.concat([binaryStdoutPrefix, binaryInput]), 'the persisted command must forward invalid UTF-8 and NUL stdin/stdout bytes exactly');
+  assert.deepEqual(persistedStderr, binaryStderr, 'the persisted command must forward raw binary stderr exactly');
 
   const escaped = await runManagedHud('escaped', fixture => [{ scope: 'user', version: '9.0.0', installPath: join(fixture.root, 'outside-hud') }], fixture => {
     mkdirSync(join(fixture.root, 'outside-hud', 'src'), { recursive: true });
@@ -566,6 +738,64 @@ try {
   });
   assert.notEqual(linked.exitCode, 0, 'a symlinked HUD entry must fail');
   assert.match(linked.stderr.toString(), /valid user HUD|regular/i);
+
+  const hardlinked = await runManagedHud('hardlinked-entry', fixture => {
+    const record = fakeHudEntry(fixture, '1.0.0', 'hardlinked:', 0);
+    linkSync(join(record.installPath, 'src', 'index.ts'), join(fixture.root, 'entry-hardlink.ts'));
+    return [record];
+  });
+  assert.notEqual(hardlinked.exitCode, 0, 'a hardlinked HUD entry must fail');
+  assert.match(hardlinked.stderr.toString(), /valid user HUD|regular|link/i);
+
+  const substituted = await runManagedHud('substituted-source', fixture => {
+    const installPath = join(fixture.hudCacheRoot, '1.0.0');
+    const outsideSource = join(fixture.root, 'outside-source');
+    mkdirSync(outsideSource, { recursive: true });
+    writeFileSync(join(outsideSource, 'index.ts'), 'process.exit(0);\n');
+    mkdirSync(installPath, { recursive: true });
+    symlinkSync(outsideSource, join(installPath, 'src'), process.platform === 'win32' ? 'junction' : 'dir');
+    return [{ scope: 'user', version: '1.0.0', installPath }];
+  });
+  assert.notEqual(substituted.exitCode, 0, 'a substituted HUD source directory must fail');
+  assert.match(substituted.stderr.toString(), /valid user HUD|canonical cache/i);
+
+  const unsupportedSchema = await runManagedHud('unsupported-schema', fixture => [fakeHudEntry(fixture, '1.0.0', 'schema:', 0)], undefined, 1);
+  assert.notEqual(unsupportedSchema.exitCode, 0, 'an unsupported installed_plugins schema must fail');
+  assert.match(unsupportedSchema.stderr.toString(), /schema|valid user HUD/i);
+
+  for (const version of ['9007199254740992.0.0', '1.0.0-9007199254740992']) {
+    const unsafeVersion = await runManagedHud(`unsafe-version-${version.replaceAll('.', '-')}`, fixture => [fakeHudEntry(fixture, version, 'unsafe-version:', 0)]);
+    assert.notEqual(unsafeVersion.exitCode, 0, `${version} must fail strict safe-integer SemVer validation`);
+    assert.match(unsafeVersion.stderr.toString(), /valid user HUD/i);
+  }
+
+  const inPlaceFixture = makeHudFixture('runner-in-place-entry-substitution', { versions: [], clawgodName: 'clawgod-runner' });
+  const inPlaceRecord = fakeHudEntry(inPlaceFixture, '1.0.0', 'unused', 9);
+  const originalEntry = "await Bun.write(Bun.stdout, 'ORIGINAL'); process.exit(9);\n";
+  const replacedEntry = "await Bun.write(Bun.stdout, 'REPLACED'); process.exit(0);\n";
+  assert.equal(Buffer.byteLength(originalEntry), Buffer.byteLength(replacedEntry), 'the in-place substitution fixture must retain file size');
+  writeFileSync(join(inPlaceRecord.installPath, 'src', 'index.ts'), originalEntry);
+  writeFileSync(join(inPlaceFixture.pluginRoot, 'installed_plugins.json'), JSON.stringify({
+    version: 2,
+    plugins: { 'claude-hud@claude-hud': [inPlaceRecord] },
+  }, null, 2) + '\n');
+  const inPlaceModule = renderHudStatusLineModule(inPlaceFixture.context)
+    .replace('readFileSync, realpathSync', 'readFileSync, realpathSync, writeFileSync')
+    .replace('  revalidate(selected);', `  writeFileSync(selected.entry, ${JSON.stringify(replacedEntry)});\n  revalidate(selected);`);
+  assert.match(inPlaceModule, /writeFileSync\(selected\.entry/, 'the race fixture must mutate the entry after initial validation');
+  writeFileSync(inPlaceFixture.modulePath, inPlaceModule);
+  const inPlaceChild = Bun.spawn({
+    cmd: [process.execPath, inPlaceFixture.modulePath],
+    cwd: inPlaceFixture.root,
+    env: inPlaceFixture.context.env,
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const inPlaceExit = await inPlaceChild.exited;
+  const inPlaceStdout = Buffer.from(await new Response(inPlaceChild.stdout).arrayBuffer());
+  assert.notEqual(inPlaceExit, 0, 'an in-place HUD entry substitution must fail before execution');
+  assert.notDeepEqual(inPlaceStdout, Buffer.from('REPLACED'), 'substituted same-inode entry bytes must never execute');
 
   for (const [label, recordsFactory] of [
     ['malformed', () => [{ scope: 'user', version: 'latest', installPath: 7 }]],
