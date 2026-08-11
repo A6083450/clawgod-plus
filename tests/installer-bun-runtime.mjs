@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildPatcherBundle, renderTemplate } from '../build.mjs';
+import { publishVendorTransaction } from '../src/generic/runtime/vendor-transaction.mjs';
 
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
@@ -35,6 +36,106 @@ function assertTemporaryPath(path, label) {
   const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];
   const resolvedPath = resolve(path);
   assert.ok(temporaryRoots.some(root => resolvedPath.startsWith(`${root}/`)), `${label} must stay under the system temporary directory`);
+}
+
+const vendorTransactionRoot = mkdtempSync(join(tmpdir(), 'clawgod-vendor-transaction-'));
+try {
+  const missingLiveCase = join(vendorTransactionRoot, 'missing-live');
+  const missingLiveTransaction = join(missingLiveCase, 'transaction');
+  const missingLiveCandidate = join(missingLiveTransaction, 'candidate', 'vendor');
+  const missingLive = join(missingLiveCase, 'runtime', 'vendor');
+  mkdirSync(missingLiveCandidate, { recursive: true });
+  mkdirSync(dirname(missingLive), { recursive: true });
+  let missingLiveError;
+  try {
+    publishVendorTransaction({ liveVendor: missingLive, candidateVendor: missingLiveCandidate, transactionDir: missingLiveTransaction });
+  } catch (error) {
+    missingLiveError = error;
+  }
+  assert.equal(missingLiveError?.rollbackComplete, true, 'missing live root must report verified pre-mutation rollback');
+  assert.equal(existsSync(missingLive), false, 'missing live root rejection must not create vendor state');
+
+  const missingCandidateCase = join(vendorTransactionRoot, 'missing-candidate');
+  const missingCandidateTransaction = join(missingCandidateCase, 'transaction');
+  const missingCandidate = join(missingCandidateTransaction, 'candidate', 'vendor');
+  const missingCandidateLive = join(missingCandidateCase, 'runtime', 'vendor');
+  mkdirSync(join(missingCandidateTransaction, 'candidate'), { recursive: true });
+  mkdirSync(missingCandidateLive, { recursive: true });
+  writeFileSync(join(missingCandidateLive, 'ripgrep'), Buffer.from([0x72, 0x67]));
+  let missingCandidateError;
+  try {
+    publishVendorTransaction({ liveVendor: missingCandidateLive, candidateVendor: missingCandidate, transactionDir: missingCandidateTransaction });
+  } catch (error) {
+    missingCandidateError = error;
+  }
+  assert.equal(missingCandidateError?.rollbackComplete, true, 'missing candidate root must report verified pre-mutation rollback');
+  assert.deepEqual(readdirSync(missingCandidateLive), ['ripgrep'], 'missing candidate rejection must not mutate live vendor');
+
+  const symlinkCase = join(vendorTransactionRoot, 'candidate-symlink');
+  const symlinkTransaction = join(symlinkCase, 'transaction');
+  const symlinkCandidate = join(symlinkTransaction, 'candidate', 'vendor');
+  const symlinkLive = join(symlinkCase, 'runtime', 'vendor');
+  const symlinkExternal = join(symlinkCase, 'external');
+  const symlinkSentinel = join(symlinkExternal, 'sentinel.bin');
+  mkdirSync(join(symlinkTransaction, 'candidate'), { recursive: true });
+  mkdirSync(symlinkLive, { recursive: true });
+  mkdirSync(symlinkExternal);
+  writeFileSync(join(symlinkLive, 'ripgrep'), Buffer.from([0x72, 0x67]));
+  writeFileSync(symlinkSentinel, Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  const symlinkSentinelBefore = lstatSync(symlinkSentinel);
+  symlinkSync(symlinkExternal, symlinkCandidate);
+  let symlinkError;
+  try {
+    publishVendorTransaction({ liveVendor: symlinkLive, candidateVendor: symlinkCandidate, transactionDir: symlinkTransaction });
+  } catch (error) {
+    symlinkError = error;
+  }
+  assert.equal(symlinkError?.rollbackComplete, true, 'candidate symlink rejection must report verified pre-mutation rollback');
+  assert.equal(symlinkError?.cleanupSafe, false, 'candidate symlink rejection must retain unsafe transaction data');
+  assert.deepEqual(readdirSync(symlinkExternal), ['sentinel.bin'], 'candidate symlink rejection must not mutate the external directory');
+  assert.deepEqual(readFileSync(symlinkSentinel), Buffer.from([0x5a, 0x00, 0xa5]), 'candidate symlink rejection must preserve external bytes');
+  assert.equal(lstatSync(symlinkSentinel).ino, symlinkSentinelBefore.ino, 'candidate symlink rejection must preserve external identity');
+  assert.deepEqual(readdirSync(symlinkLive), ['ripgrep'], 'candidate symlink rejection must not mutate live vendor');
+
+  const raceCase = join(vendorTransactionRoot, 'root-race');
+  const raceTransaction = join(raceCase, 'transaction');
+  const raceCandidate = join(raceTransaction, 'candidate', 'vendor');
+  const raceLive = join(raceCase, 'runtime', 'vendor');
+  const raceReplacement = join(raceCase, 'replacement');
+  const raceDisplaced = join(raceCase, 'displaced');
+  const raceSentinel = join(raceReplacement, 'sentinel.bin');
+  mkdirSync(join(raceCandidate, 'a-first'), { recursive: true });
+  mkdirSync(join(raceCandidate, 'z-second'), { recursive: true });
+  mkdirSync(raceLive, { recursive: true });
+  mkdirSync(raceReplacement);
+  writeFileSync(join(raceCandidate, 'a-first', 'native.node'), Buffer.from([0x01]));
+  writeFileSync(join(raceCandidate, 'z-second', 'native.node'), Buffer.from([0x02]));
+  writeFileSync(join(raceLive, 'old-native.node'), Buffer.from([0x03]));
+  writeFileSync(join(raceLive, 'ripgrep'), Buffer.from([0x72, 0x67]));
+  writeFileSync(raceSentinel, Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  const raceSentinelBefore = lstatSync(raceSentinel);
+  let raceError;
+  try {
+    publishVendorTransaction({
+      liveVendor: raceLive,
+      candidateVendor: raceCandidate,
+      transactionDir: raceTransaction,
+      afterPublish: ({ publishedCount }) => {
+        if (publishedCount !== 1) return;
+        renameSync(raceLive, raceDisplaced);
+        renameSync(raceReplacement, raceLive);
+      },
+    });
+  } catch (error) {
+    raceError = error;
+  }
+  assert.equal(raceError?.rollbackComplete, false, 'live root identity replacement must report a rollback conflict');
+  assert.deepEqual(readdirSync(raceLive), ['sentinel.bin'], 'root conflict rollback must not mutate the unknown replacement directory');
+  assert.deepEqual(readFileSync(join(raceLive, 'sentinel.bin')), Buffer.from([0x5a, 0x00, 0xa5]), 'root conflict rollback must preserve replacement bytes');
+  assert.equal(lstatSync(join(raceLive, 'sentinel.bin')).ino, raceSentinelBefore.ino, 'root conflict rollback must preserve replacement identity');
+  assert.equal(existsSync(join(raceTransaction, 'vendor-rollback-conflict.json')), true, 'root conflict must retain recovery evidence');
+} finally {
+  rmSync(vendorTransactionRoot, { recursive: true, force: true });
 }
 
 function isolatedUnixPath(root) {
@@ -1032,6 +1133,13 @@ try {
   assert.deepEqual(readFileSync(join(output, 'cli.original.js')), cliBytes, 'canonical extractor must emit the entry module bytes');
   assert.deepEqual(readFileSync(join(output, 'vendor', 'image', 'x64-win32', 'image.node')), napiBytes, 'canonical extractor must emit the napi module bytes');
 
+  const noNapiBinary = join(extractorFixture, 'no-napi.exe');
+  const noNapiOutput = join(extractorFixture, 'no-napi-output');
+  writeFileSync(noNapiBinary, peBunFixture([{ name: 'entry.js', content: cliBytes, loader: 1 }]));
+  const noNapiExtracted = spawnSync(process.execPath, [extractorPath, noNapiBinary, noNapiOutput], { encoding: 'utf8' });
+  assert.equal(noNapiExtracted.status, 0, noNapiExtracted.stderr);
+  assert.equal(lstatSync(join(noNapiOutput, 'vendor')).isDirectory(), true, 'canonical extractor must emit a real vendor root when no napi modules exist');
+
   const invalidOutput = join(extractorFixture, 'invalid-output');
   const invalidBinary = join(extractorFixture, 'invalid.exe');
   writeFileSync(invalidBinary, 'not a native binary');
@@ -1304,7 +1412,7 @@ assert.ok(windowsApplyBlock.indexOf('$patchStatus -ne 0') < windowsApplyBlock.in
 assert.match(windows, /\$RuntimeCandidateDir\s*=\s*Join-Path\s+\$RuntimeRollbackDir\s+"candidate"/, 'install.ps1 must stage candidate runtime files in its same-filesystem transaction');
 assert.match(windows, /&\s+\$BunBin\s+\$extractorPath\s+\$NativeBin\s+\$RuntimeCandidateDir/, 'install.ps1 must extract candidate native modules outside the live vendor');
 assert.match(windowsApplyBlock, /vendor-transaction\.mjs"\) publish \$RuntimeVendorDir \$RuntimeCandidateVendor \$RuntimeRollbackDir/, 'install.ps1 must publish candidate native modules through the shared transaction helper only after mandatory patches pass');
-assert.match(windowsApplyBlock, /\.vendor-rollback-complete/, 'install.ps1 must restore the prior CLI only after the shared helper confirms complete vendor rollback');
+assert.match(windowsApplyBlock, /\$VendorRollbackComplete\s*=\s*\$vendorStatus\s*-eq\s*20\s*-or\s*\$vendorStatus\s*-eq\s*22/, 'install.ps1 must restore the prior CLI only after the shared helper reports verified rollback');
 assert.doesNotMatch(windowsApplyBlock, /Move-Item[\s\S]*\$RuntimeCandidateVendor/, 'install.ps1 must not maintain a second native publication implementation');
 
 const repatchRoot = mkdtempSync(join(tmpdir(), `clawgod repatch "quoted" 'gate' `));

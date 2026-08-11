@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -115,7 +115,7 @@ process.exit(child.status ?? 1);
   writeFileSync(fakeBun, `#!${process.execPath}
 import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 const [target, ...args] = process.argv.slice(2);
 if (target === '--version') {
@@ -144,16 +144,30 @@ if (name === 'install-ripgrep.mjs') {
 } else if (name === 'extract-natives.mjs') {
   const output = args[1];
   const native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');
-  mkdirSync(dirname(native), { recursive: true });
   writeFileSync(join(output, 'cli.original.js'), '(function(exports,require,module,__filename,__dirname){})');
-  writeFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));
-  chmodSync(native, 0o751);
+  if (process.env.CANDIDATE_VENDOR_SYMLINK === '1') {
+    symlinkSync(process.env.EXTERNAL_VENDOR_ROOT, join(output, 'vendor'));
+  } else {
+    mkdirSync(dirname(native), { recursive: true });
+    writeFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));
+    chmodSync(native, 0o751);
+  }
   if (process.env.VENDOR_PUBLISH_FAULT === '1') {
     const blocked = join(output, 'vendor', 'zz-blocked', 'arm64-darwin', 'zz-blocked.node');
     mkdirSync(dirname(blocked), { recursive: true });
     writeFileSync(blocked, Buffer.from([0xba, 0xdd, 0xca, 0xfe]));
   }
 } else if (name === 'vendor-transaction.mjs') {
+  if (process.env.VENDOR_PREFLIGHT_FAULT === '1') {
+    writeFileSync(join(args[3], 'old-vendor'), 'preflight blocker\\n');
+    const child = spawnSync(process.execPath, [target, ...args], { env: process.env, stdio: 'inherit' });
+    process.exit(child.status ?? 1);
+  }
+  if (process.env.OLD_VENDOR_SYMLINK === '1') {
+    symlinkSync(process.env.EXTERNAL_VENDOR_ROOT, join(args[3], 'old-vendor'));
+    const child = spawnSync(process.execPath, [target, ...args], { env: process.env, stdio: 'inherit' });
+    process.exit(child.status ?? 1);
+  }
   if (process.env.VENDOR_PUBLISH_FAULT !== '1') {
     const child = spawnSync(process.execPath, [target, ...args], { env: process.env, stdio: 'inherit' });
     process.exit(child.status ?? 1);
@@ -166,6 +180,12 @@ if (name === 'install-ripgrep.mjs') {
       transactionDir: args[3],
       afterPublish: ({ path, publishedCount }) => {
         if (publishedCount !== 1) return;
+        if (process.env.VENDOR_ROOT_REPLACE_FAULT === '1') {
+          renameSync(args[1], process.env.DISPLACED_VENDOR_ROOT);
+          renameSync(process.env.EXTERNAL_VENDOR_ROOT, args[1]);
+          rmSync(join(args[2], 'zz-blocked'), { recursive: true, force: true });
+          return;
+        }
         rmSync(path, { recursive: true, force: true });
         mkdirSync(process.env.UNKNOWN_REPLACEMENT_DIR, { recursive: true });
         writeFileSync(process.env.UNKNOWN_REPLACEMENT_PATH, Buffer.from([0x99, 0x00, 0xfe]));
@@ -218,6 +238,9 @@ if (name === 'install-ripgrep.mjs') {
     const ripgrep = join(vendor, 'ripgrep', 'bin', 'rg');
     const externalReplacement = join(vendor, 'external-replacement', 'data.bin');
     const publishMarker = join(root, 'vendor-publish.marker');
+    const externalVendorRoot = join(root, 'external-vendor');
+    const externalSentinel = join(externalVendorRoot, 'sentinel.bin');
+    const displacedVendorRoot = join(root, 'displaced-live-vendor');
     const savedConfig = '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n';
     mkdirSync(join(home, '.clawgod'), { recursive: true, mode: 0o700 });
     mkdirSync(temp, { recursive: true });
@@ -231,9 +254,19 @@ if (name === 'install-ripgrep.mjs') {
     writeFileSync(oldNative, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
     writeFileSync(oldOnly, Buffer.from([0xde, 0xad, 0xbe, 0xef]), { mode: 0o605 });
     writeFileSync(ripgrep, Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+    if (options.liveVendorSymlink) {
+      writeFileSync(join(vendor, 'sentinel.bin'), Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+      renameSync(vendor, externalVendorRoot);
+      symlinkSync(externalVendorRoot, vendor);
+    } else if (options.candidateVendorSymlink || options.oldVendorSymlink || options.rootReplacementFault) {
+      mkdirSync(externalVendorRoot);
+      writeFileSync(externalSentinel, Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+    }
     const configBefore = statSync(configPath);
     const oldNativeBefore = lstatSync(oldNative);
     const ripgrepBefore = lstatSync(ripgrep);
+    const externalSentinelBefore = existsSync(externalSentinel) ? lstatSync(externalSentinel) : null;
+    const externalEntriesBefore = existsSync(externalVendorRoot) ? readdirSync(externalVendorRoot).sort() : null;
     if (args.includes('--no-upgrade')) {
       writeFileSync(target, 'existing clean CLI fixture\n');
     } else if (options.priorRuntime) {
@@ -254,7 +287,14 @@ if (name === 'install-ripgrep.mjs') {
         PATCH_ARGS_MARKER: patchArgs,
         PATCH_EXIT: String(options.patchExit || 0),
         EXTERNAL_REPLACEMENT: externalReplacement,
-        VENDOR_PUBLISH_FAULT: options.publishFault ? '1' : '0',
+        VENDOR_PUBLISH_FAULT: options.publishFault || options.rootReplacementFault ? '1' : '0',
+        VENDOR_PREFLIGHT_FAULT: options.preflightFault ? '1' : '0',
+        VENDOR_ROOT_REPLACE_FAULT: options.rootReplacementFault ? '1' : '0',
+        CANDIDATE_VENDOR_SYMLINK: options.candidateVendorSymlink ? '1' : '0',
+        OLD_VENDOR_SYMLINK: options.oldVendorSymlink ? '1' : '0',
+        EXTERNAL_VENDOR_ROOT: externalVendorRoot,
+        EXTERNAL_SENTINEL_PATH: externalSentinel,
+        DISPLACED_VENDOR_ROOT: displacedVendorRoot,
         VENDOR_PUBLISH_MARKER: publishMarker,
         UNKNOWN_REPLACEMENT_DIR: dirname(candidateNative),
         UNKNOWN_REPLACEMENT_PATH: candidateNative,
@@ -265,6 +305,8 @@ if (name === 'install-ripgrep.mjs') {
     const evidence = transactionDirectories.length === 1
       ? join(home, '.clawgod', transactionDirectories[0], 'vendor-rollback-conflict.json')
       : null;
+    const observedExternalRoot = options.rootReplacementFault ? vendor : externalVendorRoot;
+    const observedExternalSentinel = join(observedExternalRoot, 'sentinel.bin');
     return {
       run,
       pluginHealth,
@@ -281,13 +323,25 @@ if (name === 'install-ripgrep.mjs') {
         oldOnly: existsSync(oldOnly) ? { bytes: readFileSync(oldOnly), mode: statSync(oldOnly).mode & 0o7777 } : null,
         candidate: existsSync(candidateNative) ? { bytes: readFileSync(candidateNative), mode: statSync(candidateNative).mode & 0o7777 } : null,
         blocked: existsSync(blockedNative) ? readFileSync(blockedNative) : null,
-        ripgrep: { bytes: readFileSync(ripgrep), mode: statSync(ripgrep).mode & 0o7777, ino: lstatSync(ripgrep).ino },
+        ripgrep: existsSync(ripgrep) ? { bytes: readFileSync(ripgrep), mode: statSync(ripgrep).mode & 0o7777, ino: lstatSync(ripgrep).ino } : null,
         oldNativeBefore,
         ripgrepBefore,
         externalReplacement: existsSync(externalReplacement) ? readFileSync(externalReplacement) : null,
       },
       transactionDirectories,
       recoveryEvidence: evidence && existsSync(evidence) ? JSON.parse(readFileSync(evidence, 'utf8')) : null,
+      external: {
+        sentinel: existsSync(observedExternalSentinel) ? {
+          bytes: readFileSync(observedExternalSentinel),
+          mode: statSync(observedExternalSentinel).mode & 0o7777,
+          ino: lstatSync(observedExternalSentinel).ino,
+          type: lstatSync(observedExternalSentinel).isFile() ? 'file' : 'other',
+        } : null,
+        sentinelBefore: externalSentinelBefore,
+        entriesBefore: externalEntriesBefore,
+        entries: existsSync(observedExternalRoot) ? readdirSync(observedExternalRoot).sort() : null,
+        displacedEntries: existsSync(displacedVendorRoot) ? readdirSync(displacedVendorRoot).sort() : null,
+      },
     };
   }
 
@@ -342,6 +396,53 @@ if (name === 'install-ripgrep.mjs') {
   assert.deepEqual(failed.transactionDirectories, [], 'failed patch must remove staged candidate transaction data');
   assert.equal(failed.configBytes, '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n', 'failed patch must preserve saved config bytes');
   assert.equal(failed.configAfter.ino, failed.configBefore.ino, 'failed patch must preserve saved config identity');
+
+  const preflightFailed = runLifecycleCase('vendor-preflight-failure', [], {
+    priorRuntime: 'prior installed runtime\n',
+    preflightFault: true,
+  });
+  assert.notEqual(preflightFailed.run.status, 0, 'vendor preflight failure must return nonzero');
+  assert.equal(preflightFailed.runtime, 'prior installed runtime\n', 'pre-mutation vendor failure must restore the prior CLI');
+  assert.equal(preflightFailed.sourceVersion, '2.1.225\n', 'pre-mutation vendor failure must restore the prior source marker');
+  assert.deepEqual(preflightFailed.vendor.oldNative.bytes, Buffer.from([0x00, 0x11, 0x80, 0xff]), 'pre-mutation vendor failure must preserve prior native bytes');
+  assert.equal(preflightFailed.vendor.oldNative.ino, preflightFailed.vendor.oldNativeBefore.ino, 'pre-mutation vendor failure must preserve prior native identity');
+  assert.equal(preflightFailed.vendor.candidate, null, 'pre-mutation vendor failure must not publish candidate modules');
+  assert.deepEqual(preflightFailed.vendor.ripgrep.bytes, Buffer.from([0x72, 0x67, 0x00, 0xff]), 'pre-mutation vendor failure must preserve ripgrep bytes');
+  assert.equal(preflightFailed.vendor.ripgrep.ino, preflightFailed.vendor.ripgrepBefore.ino, 'pre-mutation vendor failure must preserve ripgrep identity');
+  assert.deepEqual(preflightFailed.transactionDirectories, [], 'verified pre-mutation rollback must clean staged transaction data');
+
+  for (const fixture of [
+    { label: 'live-vendor-symlink', option: 'liveVendorSymlink' },
+    { label: 'candidate-vendor-symlink', option: 'candidateVendorSymlink' },
+    { label: 'old-vendor-symlink', option: 'oldVendorSymlink' },
+  ]) {
+    const symlinkFailed = runLifecycleCase(fixture.label, [], {
+      priorRuntime: 'prior installed runtime\n',
+      [fixture.option]: true,
+    });
+    assert.notEqual(symlinkFailed.run.status, 0, `${fixture.label}: symlink root must be rejected`);
+    assert.equal(symlinkFailed.runtime, 'prior installed runtime\n', `${fixture.label}: pre-mutation rejection must restore prior CLI`);
+    assert.equal(symlinkFailed.sourceVersion, '2.1.225\n', `${fixture.label}: pre-mutation rejection must restore prior source marker`);
+    assert.deepEqual(symlinkFailed.external.sentinel?.bytes, Buffer.from([0x5a, 0x00, 0xa5]), `${fixture.label}: external sentinel bytes must remain unchanged`);
+    assert.equal(symlinkFailed.external.sentinel?.mode, 0o604, `${fixture.label}: external sentinel mode must remain unchanged`);
+    assert.equal(symlinkFailed.external.sentinel?.ino, symlinkFailed.external.sentinelBefore?.ino, `${fixture.label}: external sentinel identity must remain unchanged`);
+    assert.equal(symlinkFailed.external.sentinel?.type, 'file', `${fixture.label}: external sentinel type must remain a file`);
+    assert.deepEqual(symlinkFailed.external.entries, symlinkFailed.external.entriesBefore, `${fixture.label}: helper must not mutate the external directory`);
+    assert.equal(symlinkFailed.transactionDirectories.length, fixture.option === 'liveVendorSymlink' ? 0 : 1, `${fixture.label}: unsafe transaction roots must be retained instead of recursively cleaned`);
+  }
+
+  const rootReplaced = runLifecycleCase('live-vendor-root-replacement', [], {
+    priorRuntime: 'prior installed runtime\n',
+    rootReplacementFault: true,
+  });
+  assert.notEqual(rootReplaced.run.status, 0, 'live vendor identity replacement must fail publication');
+  assert.notEqual(rootReplaced.runtime, 'prior installed runtime\n', 'root identity conflict must not restore the prior CLI');
+  assert.deepEqual(rootReplaced.external.sentinel?.bytes, Buffer.from([0x5a, 0x00, 0xa5]), 'replacement-root sentinel bytes must remain unchanged');
+  assert.equal(rootReplaced.external.sentinel?.mode, 0o604, 'replacement-root sentinel mode must remain unchanged');
+  assert.equal(rootReplaced.external.sentinel?.ino, rootReplaced.external.sentinelBefore?.ino, 'replacement-root sentinel identity must remain unchanged');
+  assert.equal(rootReplaced.external.sentinel?.type, 'file', 'replacement-root sentinel type must remain a file');
+  assert.deepEqual(rootReplaced.external.entries, rootReplaced.external.entriesBefore, 'rollback must not add entries to an unknown replacement root');
+  assert.equal(rootReplaced.transactionDirectories.length, 1, 'root identity conflict must retain transaction evidence');
 
   const publishFailed = runLifecycleCase('vendor-publish-failure', [], {
     priorRuntime: 'prior installed runtime\n',

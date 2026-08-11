@@ -42,7 +42,7 @@ try {
   writeFileSync(native, 'fixture native', 'utf8');
   writeFileSync(repatcher, repatcherSource, 'utf8');
   writeFileSync(join(fixtureRoot, 'vendor-transaction.mjs'), vendorTransactionSource, 'utf8');
-  writeFileSync(join(fixtureRoot, 'extract-natives.mjs'), `import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nconst output = process.argv.at(-1);\nconst native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');\nmkdirSync(join(output, 'vendor', 'candidate-addon', 'arm64-darwin'), { recursive: true });\nwriteFileSync(join(output, 'cli.original.js'), 'candidate source');\nwriteFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));\nchmodSync(native, 0o751);\n`, 'utf8');
+  writeFileSync(join(fixtureRoot, 'extract-natives.mjs'), `import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nconst output = process.argv.at(-1);\nconst native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');\nwriteFileSync(join(output, 'cli.original.js'), 'candidate source');\nif (process.env.CANDIDATE_VENDOR_MISSING !== '1') {\n  mkdirSync(join(output, 'vendor', 'candidate-addon', 'arm64-darwin'), { recursive: true });\n  writeFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));\n  chmodSync(native, 0o751);\n}\n`, 'utf8');
   writeFileSync(join(fixtureRoot, 'post-process.mjs'), `import { writeFileSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\nwriteFileSync(join(dirname(import.meta.path), 'cli.original.cjs'), ${JSON.stringify(candidateRuntime)}, 'utf8');\n`, 'utf8');
   writeFileSync(join(fixtureRoot, 'patch.mjs'), `import { mkdirSync, writeFileSync } from 'node:fs';\nimport { dirname } from 'node:path';\nwriteFileSync(process.env.PATCH_ARGS, JSON.stringify(process.argv.slice(2)), 'utf8');\nif (process.env.PATCH_EXIT !== '0') { mkdirSync(dirname(process.env.EXTERNAL_REPLACEMENT), { recursive: true }); writeFileSync(process.env.EXTERNAL_REPLACEMENT, Buffer.from([0x55, 0xaa])); }\nprocess.exit(Number(process.env.PATCH_EXIT || 0));\n`, 'utf8');
   writeFileSync(target, priorRuntime, 'utf8');
@@ -56,9 +56,10 @@ try {
   symlinkSync('old-only/nested/data.bin', oldLink);
   writeFileSync(ripgrep, ripgrepBytes, { mode: 0o711 });
   const configBefore = statSync(enhancementsFile);
+  const oldNativeBefore = lstatSync(oldNative);
   const ripgrepBefore = lstatSync(ripgrep);
 
-  const run = patchExit => spawnSync(process.execPath, [repatcher, native], {
+  const run = (patchExit, extraEnv = {}) => spawnSync(process.execPath, [repatcher, native], {
     cwd: fixtureRoot,
     encoding: 'utf8',
     env: {
@@ -71,6 +72,7 @@ try {
       PATCH_ARGS: patchArgs,
       PATCH_EXIT: String(patchExit),
       EXTERNAL_REPLACEMENT: externalReplacement,
+      ...extraEnv,
     },
   });
 
@@ -89,6 +91,15 @@ try {
   assert.equal(lstatSync(ripgrep).ino, ripgrepBefore.ino, 'failed repatch must not replace managed ripgrep');
   assert.deepEqual(readFileSync(externalReplacement), Buffer.from([0x55, 0xaa]), 'failed repatch must preserve an unknown live vendor replacement');
   assert.deepEqual(readdirSync(fixtureRoot).filter(name => name.startsWith('.runtime-rollback.')), [], 'failed repatch must remove staged candidate transaction data');
+
+  const preflightFailed = run(0, { CANDIDATE_VENDOR_MISSING: '1' });
+  assert.notEqual(preflightFailed.status, 0, 'repatch must propagate vendor preflight failure');
+  assert.equal(readFileSync(target, 'utf8'), priorRuntime, 'vendor preflight failure must restore the prior runtime');
+  assert.equal(readFileSync(sourceVersion, 'utf8'), '2.1.225\n', 'vendor preflight failure must restore the prior source marker');
+  assert.deepEqual(readFileSync(oldNative), oldNativeBytes, 'vendor preflight failure must preserve prior native bytes');
+  assert.equal(lstatSync(oldNative).ino, oldNativeBefore.ino, 'vendor preflight failure must preserve prior native identity');
+  assert.deepEqual(readFileSync(ripgrep), ripgrepBytes, 'vendor preflight failure must preserve managed ripgrep bytes');
+  assert.deepEqual(readdirSync(fixtureRoot).filter(name => name.startsWith('.runtime-rollback.')), [], 'verified vendor preflight rollback must clean transaction data');
 
   const passed = run(0);
   assert.equal(passed.status, 0, `${passed.stdout}${passed.stderr}`);

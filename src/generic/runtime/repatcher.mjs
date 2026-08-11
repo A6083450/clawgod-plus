@@ -6,7 +6,7 @@ import { spawnSync } from 'child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
-import { publishVendorTransaction, VENDOR_ROLLBACK_COMPLETE } from './vendor-transaction.mjs';
+import { publishVendorTransaction } from './vendor-transaction.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const nativeBin = process.argv[2];
@@ -72,11 +72,12 @@ try {
   rmSync(transactionDir, { recursive: true, force: true });
   console.log(`[clawgod] re-patched to ${basename(nativeBin)}`);
 } catch (error) {
-  const vendorRestored = !vendorPublishAttempted || existsSync(join(transactionDir, VENDOR_ROLLBACK_COMPLETE));
+  const vendorRestored = !vendorPublishAttempted || error?.rollbackComplete === true;
   if (vendorRestored) {
     restoreFile(target, targetSnapshot);
     restoreFile(sourceVersion, sourceVersionSnapshot);
-    rmSync(transactionDir, { recursive: true, force: true });
+    if (!vendorPublishAttempted || error?.cleanupSafe !== false) rmSync(transactionDir, { recursive: true, force: true });
+    else console.error(`repatch: prior CLI restored; untrusted transaction data retained at ${transactionDir}`);
   } else {
     console.error(`repatch: vendor rollback conflict; prior CLI was not restored; recovery data retained at ${transactionDir}`);
   }

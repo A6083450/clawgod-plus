@@ -312,10 +312,12 @@ RUNTIME_HAD_TARGET=0
 RUNTIME_HAD_SOURCE_VERSION=0
 RUNTIME_HAS_CANDIDATE_VENDOR=0
 RUNTIME_VENDOR_PUBLISH_STARTED=0
+RUNTIME_VENDOR_ROLLBACK_COMPLETE=0
+RUNTIME_TRANSACTION_CLEANUP_SAFE=1
 
 rollback_runtime_transaction() {
   [ "$RUNTIME_TRANSACTION_ACTIVE" = "1" ] || return 0
-  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ] && [ ! -f "$RUNTIME_TRANSACTION_DIR/.vendor-rollback-complete" ]; then
+  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ] && [ "$RUNTIME_VENDOR_ROLLBACK_COMPLETE" != "1" ]; then
     RUNTIME_TRANSACTION_ACTIVE=0
     printf '%s\n' "clawgod: vendor rollback conflict; prior CLI was not restored; recovery data retained at $RUNTIME_TRANSACTION_DIR" >&2
     return 0
@@ -331,13 +333,25 @@ rollback_runtime_transaction() {
     rm -f "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
-  rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
+  if [ "$RUNTIME_TRANSACTION_CLEANUP_SAFE" = "1" ]; then
+    rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
+  else
+    printf '%s\n' "clawgod: prior CLI restored; untrusted transaction data retained at $RUNTIME_TRANSACTION_DIR" >&2
+  fi
 }
 
 commit_runtime_transaction() {
   if [ "$RUNTIME_HAS_CANDIDATE_VENDOR" = "1" ]; then
     RUNTIME_VENDOR_PUBLISH_STARTED=1
-    "$BUN_BIN" "$CLAWGOD_DIR/vendor-transaction.mjs" publish "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$RUNTIME_TRANSACTION_DIR"
+    vendor_status=0
+    "$BUN_BIN" "$CLAWGOD_DIR/vendor-transaction.mjs" publish "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$RUNTIME_TRANSACTION_DIR" || vendor_status=$?
+    if [ "$vendor_status" -ne 0 ]; then
+      if [ "$vendor_status" -eq 20 ] || [ "$vendor_status" -eq 22 ]; then
+        RUNTIME_VENDOR_ROLLBACK_COMPLETE=1
+        [ "$vendor_status" -eq 22 ] && RUNTIME_TRANSACTION_CLEANUP_SAFE=0
+      fi
+      return "$vendor_status"
+    fi
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
   rm -rf "$RUNTIME_TRANSACTION_DIR"

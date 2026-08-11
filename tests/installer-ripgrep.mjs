@@ -596,7 +596,7 @@ try {
     writeFileSync(managed, 'managed ripgrep');
     writeFileSync(staleVendor, 'stale native');
     writeFileSync(join(fixture, 'native'), 'native fixture');
-    writeFileSync(join(fixture, 'extract-natives.mjs'), '#!/usr/bin/env bun\nimport { writeFileSync } from "node:fs";import { join } from "node:path";writeFileSync(join(process.argv.at(-1), "cli.original.js"), "fixture");\n');
+    writeFileSync(join(fixture, 'extract-natives.mjs'), '#!/usr/bin/env bun\nimport { mkdirSync, writeFileSync } from "node:fs";import { join } from "node:path";const output=process.argv.at(-1);mkdirSync(join(output, "vendor"));writeFileSync(join(output, "cli.original.js"), "fixture");\n');
     writeFileSync(join(fixture, 'post-process.mjs'), '#!/usr/bin/env bun\nimport { writeFileSync } from "node:fs";import { dirname, join } from "node:path";writeFileSync(join(dirname(import.meta.path), "cli.original.cjs"), "fixture");\n');
     writeFileSync(join(fixture, 'patch.mjs'), '#!/usr/bin/env bun\n');
     writeFileSync(join(fixture, 'repatch.mjs'), repatch);

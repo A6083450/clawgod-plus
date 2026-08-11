@@ -406,6 +406,7 @@ $RuntimeHadSourceVersion = Test-Path -LiteralPath $RuntimeSourceVersion -PathTyp
 $RuntimeTransactionCommitted = $false
 $RuntimeVendorPublishStarted = $false
 $VendorRollbackComplete = $false
+$RuntimeTransactionCleanupSafe = $true
 New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
 if ($RuntimeHadTarget) {
     Copy-Item -LiteralPath $RuntimeTarget -Destination (Join-Path $RuntimeRollbackDir "cli.original.cjs")
@@ -604,14 +605,17 @@ if ($patchStatus -ne 0) {
 if (-not $NoUpgrade) {
     $RuntimeVendorPublishStarted = $true
     & $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir
-    if ($LASTEXITCODE -ne 0) {
+    $vendorStatus = $LASTEXITCODE
+    if ($vendorStatus -ne 0) {
+        $VendorRollbackComplete = $vendorStatus -eq 20 -or $vendorStatus -eq 22
+        if ($vendorStatus -eq 22) { $RuntimeTransactionCleanupSafe = $false }
         throw "Native vendor publication failed."
     }
 }
 $RuntimeTransactionCommitted = $true
 } finally {
     if (-not $RuntimeTransactionCommitted) {
-        $VendorRollbackComplete = -not $RuntimeVendorPublishStarted -or (Test-Path -LiteralPath (Join-Path $RuntimeRollbackDir ".vendor-rollback-complete") -PathType Leaf)
+        if (-not $RuntimeVendorPublishStarted) { $VendorRollbackComplete = $true }
         if ($VendorRollbackComplete) {
             if ($RuntimeHadTarget) {
                 Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir "cli.original.cjs") -Destination $RuntimeTarget -Force
@@ -627,8 +631,10 @@ $RuntimeTransactionCommitted = $true
             Write-Err "Vendor rollback conflict; prior CLI was not restored; recovery data retained at $RuntimeRollbackDir"
         }
     }
-    if ($RuntimeTransactionCommitted -or $VendorRollbackComplete) {
+    if ($RuntimeTransactionCommitted -or ($VendorRollbackComplete -and $RuntimeTransactionCleanupSafe)) {
         Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
+    } elseif ($VendorRollbackComplete) {
+        Write-Err "Prior CLI restored; untrusted transaction data retained at $RuntimeRollbackDir"
     }
 }
 Invoke-ChromePostInstallFix

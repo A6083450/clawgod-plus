@@ -327,6 +327,7 @@ function main() {
   console.log(`Modules: ${modules.length} (entry id=${offsets.entry_point_id})`);
 
   mkdirSync(outputDir, { recursive: true });
+  mkdirSync(join(outputDir, 'vendor'));
 
   let cliCount = 0, napiCount = 0, dropped = 0;
   for (const m of modules) {
