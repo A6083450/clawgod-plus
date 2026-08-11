@@ -5070,9 +5070,26 @@ RUNTIME_TRANSACTION_DIR=""
 RUNTIME_TRANSACTION_ACTIVE=0
 RUNTIME_HAD_TARGET=0
 RUNTIME_HAD_SOURCE_VERSION=0
+RUNTIME_HAS_CANDIDATE_VENDOR=0
+RUNTIME_VENDOR_PUBLISH_STARTED=0
+
+move_vendor_entries() {
+  local source="$1" destination="$2" skip_ripgrep="${3:-0}" entry
+  [ -d "$source" ] || return 0
+  mkdir -p "$destination"
+  for entry in "$source"/* "$source"/.[!.]* "$source"/..?*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    [ "$skip_ripgrep" = "1" ] && [ "${entry##*/}" = "ripgrep" ] && continue
+    mv -- "$entry" "$destination/"
+  done
+}
 
 rollback_runtime_transaction() {
   [ "$RUNTIME_TRANSACTION_ACTIVE" = "1" ] || return 0
+  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ]; then
+    move_vendor_entries "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/failed-vendor" 1 || true
+    move_vendor_entries "$RUNTIME_TRANSACTION_DIR/old-vendor" "$CLAWGOD_DIR/vendor" || true
+  fi
   if [ "$RUNTIME_HAD_TARGET" = "1" ]; then
     cp -p "$RUNTIME_TRANSACTION_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs" 2>/dev/null || true
   else
@@ -5084,10 +5101,20 @@ rollback_runtime_transaction() {
     rm -f "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
-  rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
+  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ]; then
+    printf '%s\n' "clawgod: vendor publish rollback retained recovery data at $RUNTIME_TRANSACTION_DIR" >&2
+  else
+    rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
+  fi
 }
 
 commit_runtime_transaction() {
+  if [ "$RUNTIME_HAS_CANDIDATE_VENDOR" = "1" ]; then
+    mkdir -p "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/old-vendor"
+    RUNTIME_VENDOR_PUBLISH_STARTED=1
+    move_vendor_entries "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/old-vendor" 1
+    move_vendor_entries "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$CLAWGOD_DIR/vendor"
+  fi
   RUNTIME_TRANSACTION_ACTIVE=0
   rm -rf "$RUNTIME_TRANSACTION_DIR"
   trap - EXIT
@@ -5780,23 +5807,19 @@ EXTRACTOR_EOF
 # so the wrapper's drift detector can re-run them when the user upgrades
 # their native Claude binary.
 
-# Single extractor pass: writes cli.original.js to $CLAWGOD_DIR and creates
+# Single extractor pass: stages cli.original.js and native modules in the
+# same-filesystem runtime transaction until mandatory patches pass.
 # vendor/<name>/<arch>-<os>/<name>.node for every napi module in one go.
-if [ -d "$CLAWGOD_DIR/vendor" ]; then
-  for vendor_entry in "$CLAWGOD_DIR/vendor"/* "$CLAWGOD_DIR/vendor"/.[!.]* "$CLAWGOD_DIR/vendor"/..?*; do
-    [ -e "$vendor_entry" ] || continue
-    [ "${vendor_entry##*/}" = "ripgrep" ] && continue
-    rm -rf -- "$vendor_entry"
-  done
-fi
 rm -f "$CLAWGOD_DIR/cli.original.js" 2>/dev/null
+RUNTIME_CANDIDATE_DIR="$RUNTIME_TRANSACTION_DIR/candidate"
+mkdir -p "$RUNTIME_CANDIDATE_DIR"
 
 dim "Extracting cli.js + napi modules from $(echo "$NATIVE_BIN_LABEL") ..."
-if ! "$BUN_BIN" "$CLAWGOD_DIR/extract-natives.mjs" "$NATIVE_BIN" "$CLAWGOD_DIR" 2>&1 | while IFS= read -r line; do echo "  $line"; done; then
+if ! "$BUN_BIN" "$CLAWGOD_DIR/extract-natives.mjs" "$NATIVE_BIN" "$RUNTIME_CANDIDATE_DIR" 2>&1 | while IFS= read -r line; do echo "  $line"; done; then
   err "Failed to extract from native binary"
   exit 1
 fi
-[ -f "$CLAWGOD_DIR/cli.original.js" ] || { err "cli.js missing after extraction"; exit 1; }
+[ -f "$RUNTIME_CANDIDATE_DIR/cli.original.js" ] || { err "cli.js missing after extraction"; exit 1; }
 
 # ─── Post-process cli.js for Bun runtime ──────────────────────
 # 0. Strip leading @bun pragma comments so Bun recognises the CJS wrapper
@@ -5845,8 +5868,11 @@ writeFileSync(dst, code);
 unlinkSync(src);
 console.log(`cli.original.cjs: ${code.length} bytes`);
 POSTPROC_EOF
-"$BUN_BIN" "$CLAWGOD_DIR/post-process.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
-[ -f "$CLAWGOD_DIR/cli.original.cjs" ] || { err "Post-process failed"; exit 1; }
+cp "$CLAWGOD_DIR/post-process.mjs" "$RUNTIME_CANDIDATE_DIR/post-process.mjs"
+"$BUN_BIN" "$RUNTIME_CANDIDATE_DIR/post-process.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
+[ -f "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" ] || { err "Post-process failed"; exit 1; }
+mv "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs"
+RUNTIME_HAS_CANDIDATE_VENDOR=1
 
 # Stamp the source version so the wrapper can detect drift on next launch
 echo "$NATIVE_BIN_LABEL" > "$CLAWGOD_DIR/.source-version"
@@ -5869,7 +5895,7 @@ cat > "$CLAWGOD_DIR/repatch.mjs" << 'REPATCH_EOF'
 // native Claude binary. Invoked by cli.cjs when it detects that
 // .source-version no longer matches the latest binary in versions/.
 import { spawnSync } from 'child_process';
-import { chmodSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -5913,25 +5939,77 @@ const sourceVersion = join(here, '.source-version');
 const enhancementsFile = join(here, 'enhancements.json');
 const targetSnapshot = snapshotFile(target);
 const sourceVersionSnapshot = snapshotFile(sourceVersion);
+const transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
+const candidateDir = join(transactionDir, 'candidate');
+const candidateVendor = join(candidateDir, 'vendor');
+const oldVendor = join(transactionDir, 'old-vendor');
+const vendorDir = join(here, 'vendor');
+const publishedVendor = [];
+
+function vendorEntries(path, skipRipgrep = false) {
+  if (!existsSync(path)) return [];
+  return readdirSync(path).filter(entry => !skipRipgrep || entry !== 'ripgrep');
+}
+
+function publishCandidateVendor() {
+  mkdirSync(vendorDir, { recursive: true });
+  mkdirSync(oldVendor);
+  for (const entry of vendorEntries(vendorDir, true)) {
+    renameSync(join(vendorDir, entry), join(oldVendor, entry));
+  }
+  for (const entry of vendorEntries(candidateVendor)) {
+    const destination = join(vendorDir, entry);
+    renameSync(join(candidateVendor, entry), destination);
+    const status = lstatSync(destination);
+    publishedVendor.push({ entry, dev: status.dev, ino: status.ino });
+  }
+}
+
+function rollbackPublishedVendor() {
+  let conflict = false;
+  for (const published of publishedVendor.reverse()) {
+    const path = join(vendorDir, published.entry);
+    if (!existsSync(path)) continue;
+    const status = lstatSync(path);
+    if (status.dev !== published.dev || status.ino !== published.ino) {
+      conflict = true;
+      continue;
+    }
+    rmSync(path, { recursive: true, force: true });
+  }
+  for (const entry of vendorEntries(oldVendor)) {
+    const destination = join(vendorDir, entry);
+    if (existsSync(destination)) {
+      conflict = true;
+      continue;
+    }
+    renameSync(join(oldVendor, entry), destination);
+  }
+  return !conflict;
+}
 
 try {
-  const vendorDir = join(here, 'vendor');
-  if (existsSync(vendorDir)) {
-    for (const entry of readdirSync(vendorDir)) {
-      if (entry !== 'ripgrep') rmSync(join(vendorDir, entry), { recursive: true, force: true });
-    }
-  }
+  mkdirSync(candidateDir);
   rmSync(join(here, 'cli.original.js'), { force: true });
 
-  run('extract', [extractor, nativeBin, here]);
-  run('post-process', [postProc]);
+  run('extract', [extractor, nativeBin, candidateDir]);
+  const candidatePostProc = join(candidateDir, 'post-process.mjs');
+  copyFileSync(postProc, candidatePostProc);
+  run('post-process', [candidatePostProc]);
+  rmSync(target, { force: true });
+  renameSync(join(candidateDir, 'cli.original.cjs'), target);
   run('patcher', [patcher, '--enhancements-file', enhancementsFile]);
 
+  publishCandidateVendor();
   writeFileSync(sourceVersion, basename(nativeBin) + '\n');
+  rmSync(transactionDir, { recursive: true, force: true });
   console.log(`[clawgod] re-patched to ${basename(nativeBin)}`);
 } catch (error) {
   restoreFile(target, targetSnapshot);
   restoreFile(sourceVersion, sourceVersionSnapshot);
+  const vendorRestored = rollbackPublishedVendor();
+  if (vendorRestored) rmSync(transactionDir, { recursive: true, force: true });
+  else console.error(`repatch: vendor rollback conflict; recovery data retained at ${transactionDir}`);
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 }

@@ -595,9 +595,9 @@ try {
     writeFileSync(managed, 'managed ripgrep');
     writeFileSync(staleVendor, 'stale native');
     writeFileSync(join(fixture, 'native'), 'native fixture');
-    for (const helper of ['extract-natives.mjs', 'post-process.mjs', 'patch.mjs']) {
-      writeFileSync(join(fixture, helper), '#!/usr/bin/env bun\n');
-    }
+    writeFileSync(join(fixture, 'extract-natives.mjs'), '#!/usr/bin/env bun\nimport { writeFileSync } from "node:fs";import { join } from "node:path";writeFileSync(join(process.argv.at(-1), "cli.original.js"), "fixture");\n');
+    writeFileSync(join(fixture, 'post-process.mjs'), '#!/usr/bin/env bun\nimport { writeFileSync } from "node:fs";import { dirname, join } from "node:path";writeFileSync(join(dirname(import.meta.path), "cli.original.cjs"), "fixture");\n');
+    writeFileSync(join(fixture, 'patch.mjs'), '#!/usr/bin/env bun\n');
     writeFileSync(join(fixture, 'repatch.mjs'), repatch);
     const child = Bun.spawn([process.execPath, join(fixture, 'repatch.mjs'), join(fixture, 'native')], {
       stdout: 'pipe',

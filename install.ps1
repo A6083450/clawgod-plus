@@ -547,9 +547,14 @@ New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
 $RuntimeTarget = Join-Path $ClawDir "cli.original.cjs"
 $RuntimeSourceVersion = Join-Path $ClawDir ".source-version"
 $RuntimeRollbackDir = Join-Path $ClawDir (".runtime-rollback." + [Guid]::NewGuid().ToString("N"))
+$RuntimeCandidateDir = Join-Path $RuntimeRollbackDir "candidate"
+$RuntimeCandidateVendor = Join-Path $RuntimeCandidateDir "vendor"
+$RuntimeVendorDir = Join-Path $ClawDir "vendor"
+$RuntimeOldVendor = Join-Path $RuntimeRollbackDir "old-vendor"
 $RuntimeHadTarget = Test-Path -LiteralPath $RuntimeTarget -PathType Leaf
 $RuntimeHadSourceVersion = Test-Path -LiteralPath $RuntimeSourceVersion -PathType Leaf
 $RuntimeTransactionCommitted = $false
+$RuntimeVendorPublishStarted = $false
 New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
 if ($RuntimeHadTarget) {
     Copy-Item -LiteralPath $RuntimeTarget -Destination (Join-Path $RuntimeRollbackDir "cli.original.cjs")
@@ -664,18 +669,15 @@ $ExtractorBytes = [Convert]::FromBase64String('IyEvdXNyL2Jpbi9lbnYgYnVuCi8qKgogK
 
 # ─── Extract cli.js + native modules from Bun binary ──────────
 
-# Single extractor pass: writes cli.original.js to $ClawDir and creates
-# vendor\<name>\<arch>-<os>\<name>.node for every napi module in one go.
-$VendorDir = Join-Path $ClawDir "vendor"
-if (Test-Path $VendorDir) {
-    Get-ChildItem -Force $VendorDir | Where-Object { $_.Name -ne "ripgrep" } | Remove-Item -Recurse -Force
-}
+# Single extractor pass: stages cli.original.js and native modules in the
+# same-filesystem runtime transaction until mandatory patches pass.
+New-Item -ItemType Directory -Path $RuntimeCandidateDir | Out-Null
 
-$dstCli = Join-Path $ClawDir "cli.original.js"
+$dstCli = Join-Path $RuntimeCandidateDir "cli.original.js"
 if (Test-Path $dstCli) { Remove-Item -Force $dstCli }
 
 Write-Dim "Extracting cli.js + napi modules from $NativeBinLabel ..."
-& $BunBin $extractorPath $NativeBin $ClawDir 2>&1 | ForEach-Object { Write-Host "  $_" }
+& $BunBin $extractorPath $NativeBin $RuntimeCandidateDir 2>&1 | ForEach-Object { Write-Host "  $_" }
 if (-not (Test-Path $dstCli)) {
     Write-Err "Failed to extract cli.js from native binary"
     exit 1
@@ -689,11 +691,15 @@ Write-Dim "Rewriting bunfs paths and IIFE invocation ..."
 $postProc = Join-Path $ClawDir "post-process.mjs"
 $PostProcessorBytes = [Convert]::FromBase64String('IyEvdXNyL2Jpbi9lbnYgYnVuCmltcG9ydCB7IHJlYWRGaWxlU3luYywgd3JpdGVGaWxlU3luYywgdW5saW5rU3luYyB9IGZyb20gJ2ZzJzsKaW1wb3J0IHsgZGlybmFtZSB9IGZyb20gJ3BhdGgnOwppbXBvcnQgeyBmaWxlVVJMVG9QYXRoIH0gZnJvbSAndXJsJzsKCmNvbnN0IGhlcmUgPSBkaXJuYW1lKGZpbGVVUkxUb1BhdGgoaW1wb3J0Lm1ldGEudXJsKSk7CmNvbnN0IHNyYyA9IGAke2hlcmV9L2NsaS5vcmlnaW5hbC5qc2A7CmNvbnN0IGRzdCA9IGAke2hlcmV9L2NsaS5vcmlnaW5hbC5janNgOwoKbGV0IGNvZGUgPSByZWFkRmlsZVN5bmMoc3JjLCAndXRmOCcpOwoKLy8gU3RyaXAgbGVhZGluZyBAYnVuIHByYWdtYSBjb21tZW50cyAoZS5nLiAiLy8gQGJ1biBAYnl0ZWNvZGUgQGJ1bi1janNcbiIpCi8vIEJ1biByZXF1aXJlcyB0aGUgZmlsZSB0byBzdGFydCBkaXJlY3RseSB3aXRoICIoZnVuY3Rpb24iIHRvIHJlY29nbml6ZQovLyB0aGUgQ29tbW9uSlMgd3JhcHBlcjsgYW55IHByZWNlZGluZyBjb21tZW50IGJyZWFrcyB0aGF0IGRldGVjdGlvbi4KY29kZSA9IGNvZGUucmVwbGFjZSgvXig/OlwvXC9bXlxuXSpcbikrLywgJycpOwoKLy8gKDEpIGJ1bmZzIC5ub2RlIG1vZHVsZSBwYXRocyDihpIgcnVudGltZSB2ZW5kb3IgbG9va3VwCmNvZGUgPSBjb2RlLnJlcGxhY2UoCiAgL3JlcXVpcmVcKFsnIl0oXC9cJGJ1bmZzXC9yb290XC8oW1x3LV0rKVwubm9kZSlbJyJdXCkvZywKICAobSwgX2Z1bGwsIG5hbWUpID0+CiAgICBgcmVxdWlyZShyZXF1aXJlKCdwYXRoJykuam9pbihfX2Rpcm5hbWUsJ3ZlbmRvcicsJHtKU09OLnN0cmluZ2lmeShuYW1lKX0sXGBcJHtwcm9jZXNzLmFyY2g9PT0nYXJtNjQnPydhcm02NCc6J3g2NCd9LVwke3Byb2Nlc3MucGxhdGZvcm09PT0nZGFyd2luJz8nZGFyd2luJzpwcm9jZXNzLnBsYXRmb3JtPT09J2xpbnV4Jz8nbGludXgnOid3aW4zMid9XGAsJHtKU09OLnN0cmluZ2lmeShuYW1lICsgJy5ub2RlJyl9KSlgLAopOwoKLy8gKDIpIGJ1aWxkLXRpbWUgZmlsZVVSTFRvUGF0aCgpIGxlYWtzIOKGkiB1c2UgY2xpLmNqcydzIG93biBfX2ZpbGVuYW1lCmNvZGUgPSBjb2RlLnJlcGxhY2UoCiAgL1tcdyRdK1wuZmlsZVVSTFRvUGF0aFwoImZpbGU6XC9cL1wvaG9tZVwvcnVubmVyXC93b3JrXC9jbGF1ZGUtY2xpLWludGVybmFsXC9jbGF1ZGUtY2xpLWludGVybmFsXC9bXiJdKiJcKS9nLAogICgpID0+ICdfX2ZpbGVuYW1lJywKKTsKCi8vICgzKSBtYWtlIHRoZSBvdXRlciAoZnVuY3Rpb24oLi4uKXsuLi59KSBhY3R1YWxseSBydW4KY29kZSA9IGNvZGUucmVwbGFjZSgvXH1cKVxzKiQvLCAnfSkoZXhwb3J0cywgcmVxdWlyZSwgbW9kdWxlLCBfX2ZpbGVuYW1lLCBfX2Rpcm5hbWUpJyk7Cgp3cml0ZUZpbGVTeW5jKGRzdCwgY29kZSk7CnVubGlua1N5bmMoc3JjKTsKY29uc29sZS5sb2coYGNsaS5vcmlnaW5hbC5janM6ICR7Y29kZS5sZW5ndGh9IGJ5dGVzYCk7Cg==')
 [System.IO.File]::WriteAllBytes($postProc, $PostProcessorBytes)
-& $BunBin $postProc 2>&1 | ForEach-Object { Write-Host "  $_" }
-if (-not (Test-Path (Join-Path $ClawDir "cli.original.cjs"))) {
+$candidatePostProc = Join-Path $RuntimeCandidateDir "post-process.mjs"
+Copy-Item -LiteralPath $postProc -Destination $candidatePostProc
+& $BunBin $candidatePostProc 2>&1 | ForEach-Object { Write-Host "  $_" }
+$candidateCli = Join-Path $RuntimeCandidateDir "cli.original.cjs"
+if (-not (Test-Path $candidateCli)) {
     Write-Err "Post-process failed"
     exit 1
 }
+Move-Item -LiteralPath $candidateCli -Destination $RuntimeTarget -Force
 
 # Stamp source version so wrapper can detect drift on next launch
 Set-Content -Path (Join-Path $ClawDir ".source-version") -Value $NativeBinLabel -Encoding ASCII
@@ -710,7 +716,7 @@ Write-OK "cli.original.cjs ready ($NativeBinLabel)"
 
 # ─── Write re-patch helper (used by wrapper on version drift) ─────────
 
-$RepatcherBytes = [Convert]::FromBase64String('IyEvdXNyL2Jpbi9lbnYgYnVuCi8vIFJlLWV4dHJhY3QgKyBwb3N0LXByb2Nlc3MgKyBwYXRjaCB0aGUgdXNlcidzIGN1cnJlbnRseS1pbnN0YWxsZWQKLy8gbmF0aXZlIENsYXVkZSBiaW5hcnkuIEludm9rZWQgYnkgY2xpLmNqcyB3aGVuIGl0IGRldGVjdHMgdGhhdAovLyAuc291cmNlLXZlcnNpb24gbm8gbG9uZ2VyIG1hdGNoZXMgdGhlIGxhdGVzdCBiaW5hcnkgaW4gdmVyc2lvbnMvLgppbXBvcnQgeyBzcGF3blN5bmMgfSBmcm9tICdjaGlsZF9wcm9jZXNzJzsKaW1wb3J0IHsgY2htb2RTeW5jLCBleGlzdHNTeW5jLCByZWFkRmlsZVN5bmMsIHJlYWRkaXJTeW5jLCBybVN5bmMsIHN0YXRTeW5jLCB3cml0ZUZpbGVTeW5jIH0gZnJvbSAnZnMnOwppbXBvcnQgeyBkaXJuYW1lLCBqb2luLCBiYXNlbmFtZSB9IGZyb20gJ3BhdGgnOwppbXBvcnQgeyBmaWxlVVJMVG9QYXRoIH0gZnJvbSAndXJsJzsKCmNvbnN0IGhlcmUgPSBkaXJuYW1lKGZpbGVVUkxUb1BhdGgoaW1wb3J0Lm1ldGEudXJsKSk7CmNvbnN0IG5hdGl2ZUJpbiA9IHByb2Nlc3MuYXJndlsyXTsKCmlmICghbmF0aXZlQmluIHx8ICFleGlzdHNTeW5jKG5hdGl2ZUJpbikpIHsKICBjb25zb2xlLmVycm9yKCdyZXBhdGNoOiBuYXRpdmUgYmluYXJ5IHBhdGggcmVxdWlyZWQgYW5kIG11c3QgZXhpc3QnKTsKICBwcm9jZXNzLmV4aXQoMSk7Cn0KCmNvbnN0IHJ1bnRpbWUgPSBwcm9jZXNzLmV4ZWNQYXRoOwoKZnVuY3Rpb24gcnVuKGxhYmVsLCBhcmdzKSB7CiAgY29uc3QgciA9IHNwYXduU3luYyhydW50aW1lLCBhcmdzLCB7IGN3ZDogaGVyZSwgc3RkaW86ICdpbmhlcml0JyB9KTsKICBpZiAoci5zdGF0dXMgIT09IDApIHsKICAgIHRocm93IG5ldyBFcnJvcihgcmVwYXRjaDogJHtsYWJlbH0gZmFpbGVkIChleGl0ICR7ci5zdGF0dXN9KWApOwogIH0KfQoKZnVuY3Rpb24gc25hcHNob3RGaWxlKHBhdGgpIHsKICBpZiAoIWV4aXN0c1N5bmMocGF0aCkpIHJldHVybiBudWxsOwogIGNvbnN0IHN0YXR1cyA9IHN0YXRTeW5jKHBhdGgpOwogIHJldHVybiB7IGJ5dGVzOiByZWFkRmlsZVN5bmMocGF0aCksIG1vZGU6IHN0YXR1cy5tb2RlICYgMG83Nzc3IH07Cn0KCmZ1bmN0aW9uIHJlc3RvcmVGaWxlKHBhdGgsIHNuYXBzaG90KSB7CiAgaWYgKHNuYXBzaG90ID09PSBudWxsKSB7CiAgICBybVN5bmMocGF0aCwgeyBmb3JjZTogdHJ1ZSB9KTsKICAgIHJldHVybjsKICB9CiAgd3JpdGVGaWxlU3luYyhwYXRoLCBzbmFwc2hvdC5ieXRlcyk7CiAgY2htb2RTeW5jKHBhdGgsIHNuYXBzaG90Lm1vZGUpOwp9Cgpjb25zdCBleHRyYWN0b3IgPSBqb2luKGhlcmUsICdleHRyYWN0LW5hdGl2ZXMubWpzJyk7CmNvbnN0IHBvc3RQcm9jID0gam9pbihoZXJlLCAncG9zdC1wcm9jZXNzLm1qcycpOwpjb25zdCBwYXRjaGVyID0gam9pbihoZXJlLCAncGF0Y2gubWpzJyk7CmNvbnN0IHRhcmdldCA9IGpvaW4oaGVyZSwgJ2NsaS5vcmlnaW5hbC5janMnKTsKY29uc3Qgc291cmNlVmVyc2lvbiA9IGpvaW4oaGVyZSwgJy5zb3VyY2UtdmVyc2lvbicpOwpjb25zdCBlbmhhbmNlbWVudHNGaWxlID0gam9pbihoZXJlLCAnZW5oYW5jZW1lbnRzLmpzb24nKTsKY29uc3QgdGFyZ2V0U25hcHNob3QgPSBzbmFwc2hvdEZpbGUodGFyZ2V0KTsKY29uc3Qgc291cmNlVmVyc2lvblNuYXBzaG90ID0gc25hcHNob3RGaWxlKHNvdXJjZVZlcnNpb24pOwoKdHJ5IHsKICBjb25zdCB2ZW5kb3JEaXIgPSBqb2luKGhlcmUsICd2ZW5kb3InKTsKICBpZiAoZXhpc3RzU3luYyh2ZW5kb3JEaXIpKSB7CiAgICBmb3IgKGNvbnN0IGVudHJ5IG9mIHJlYWRkaXJTeW5jKHZlbmRvckRpcikpIHsKICAgICAgaWYgKGVudHJ5ICE9PSAncmlwZ3JlcCcpIHJtU3luYyhqb2luKHZlbmRvckRpciwgZW50cnkpLCB7IHJlY3Vyc2l2ZTogdHJ1ZSwgZm9yY2U6IHRydWUgfSk7CiAgICB9CiAgfQogIHJtU3luYyhqb2luKGhlcmUsICdjbGkub3JpZ2luYWwuanMnKSwgeyBmb3JjZTogdHJ1ZSB9KTsKCiAgcnVuKCdleHRyYWN0JywgW2V4dHJhY3RvciwgbmF0aXZlQmluLCBoZXJlXSk7CiAgcnVuKCdwb3N0LXByb2Nlc3MnLCBbcG9zdFByb2NdKTsKICBydW4oJ3BhdGNoZXInLCBbcGF0Y2hlciwgJy0tZW5oYW5jZW1lbnRzLWZpbGUnLCBlbmhhbmNlbWVudHNGaWxlXSk7CgogIHdyaXRlRmlsZVN5bmMoc291cmNlVmVyc2lvbiwgYmFzZW5hbWUobmF0aXZlQmluKSArICdcbicpOwogIGNvbnNvbGUubG9nKGBbY2xhd2dvZF0gcmUtcGF0Y2hlZCB0byAke2Jhc2VuYW1lKG5hdGl2ZUJpbil9YCk7Cn0gY2F0Y2ggKGVycm9yKSB7CiAgcmVzdG9yZUZpbGUodGFyZ2V0LCB0YXJnZXRTbmFwc2hvdCk7CiAgcmVzdG9yZUZpbGUoc291cmNlVmVyc2lvbiwgc291cmNlVmVyc2lvblNuYXBzaG90KTsKICBjb25zb2xlLmVycm9yKGVycm9yIGluc3RhbmNlb2YgRXJyb3IgPyBlcnJvci5tZXNzYWdlIDogU3RyaW5nKGVycm9yKSk7CiAgcHJvY2Vzcy5leGl0Q29kZSA9IDE7Cn0K')
+$RepatcherBytes = [Convert]::FromBase64String('IyEvdXNyL2Jpbi9lbnYgYnVuCi8vIFJlLWV4dHJhY3QgKyBwb3N0LXByb2Nlc3MgKyBwYXRjaCB0aGUgdXNlcidzIGN1cnJlbnRseS1pbnN0YWxsZWQKLy8gbmF0aXZlIENsYXVkZSBiaW5hcnkuIEludm9rZWQgYnkgY2xpLmNqcyB3aGVuIGl0IGRldGVjdHMgdGhhdAovLyAuc291cmNlLXZlcnNpb24gbm8gbG9uZ2VyIG1hdGNoZXMgdGhlIGxhdGVzdCBiaW5hcnkgaW4gdmVyc2lvbnMvLgppbXBvcnQgeyBzcGF3blN5bmMgfSBmcm9tICdjaGlsZF9wcm9jZXNzJzsKaW1wb3J0IHsgY2htb2RTeW5jLCBjb3B5RmlsZVN5bmMsIGV4aXN0c1N5bmMsIGxzdGF0U3luYywgbWtkaXJTeW5jLCBta2R0ZW1wU3luYywgcmVhZEZpbGVTeW5jLCByZWFkZGlyU3luYywgcmVuYW1lU3luYywgcm1TeW5jLCBzdGF0U3luYywgd3JpdGVGaWxlU3luYyB9IGZyb20gJ2ZzJzsKaW1wb3J0IHsgZGlybmFtZSwgam9pbiwgYmFzZW5hbWUgfSBmcm9tICdwYXRoJzsKaW1wb3J0IHsgZmlsZVVSTFRvUGF0aCB9IGZyb20gJ3VybCc7Cgpjb25zdCBoZXJlID0gZGlybmFtZShmaWxlVVJMVG9QYXRoKGltcG9ydC5tZXRhLnVybCkpOwpjb25zdCBuYXRpdmVCaW4gPSBwcm9jZXNzLmFyZ3ZbMl07CgppZiAoIW5hdGl2ZUJpbiB8fCAhZXhpc3RzU3luYyhuYXRpdmVCaW4pKSB7CiAgY29uc29sZS5lcnJvcigncmVwYXRjaDogbmF0aXZlIGJpbmFyeSBwYXRoIHJlcXVpcmVkIGFuZCBtdXN0IGV4aXN0Jyk7CiAgcHJvY2Vzcy5leGl0KDEpOwp9Cgpjb25zdCBydW50aW1lID0gcHJvY2Vzcy5leGVjUGF0aDsKCmZ1bmN0aW9uIHJ1bihsYWJlbCwgYXJncykgewogIGNvbnN0IHIgPSBzcGF3blN5bmMocnVudGltZSwgYXJncywgeyBjd2Q6IGhlcmUsIHN0ZGlvOiAnaW5oZXJpdCcgfSk7CiAgaWYgKHIuc3RhdHVzICE9PSAwKSB7CiAgICB0aHJvdyBuZXcgRXJyb3IoYHJlcGF0Y2g6ICR7bGFiZWx9IGZhaWxlZCAoZXhpdCAke3Iuc3RhdHVzfSlgKTsKICB9Cn0KCmZ1bmN0aW9uIHNuYXBzaG90RmlsZShwYXRoKSB7CiAgaWYgKCFleGlzdHNTeW5jKHBhdGgpKSByZXR1cm4gbnVsbDsKICBjb25zdCBzdGF0dXMgPSBzdGF0U3luYyhwYXRoKTsKICByZXR1cm4geyBieXRlczogcmVhZEZpbGVTeW5jKHBhdGgpLCBtb2RlOiBzdGF0dXMubW9kZSAmIDBvNzc3NyB9Owp9CgpmdW5jdGlvbiByZXN0b3JlRmlsZShwYXRoLCBzbmFwc2hvdCkgewogIGlmIChzbmFwc2hvdCA9PT0gbnVsbCkgewogICAgcm1TeW5jKHBhdGgsIHsgZm9yY2U6IHRydWUgfSk7CiAgICByZXR1cm47CiAgfQogIHdyaXRlRmlsZVN5bmMocGF0aCwgc25hcHNob3QuYnl0ZXMpOwogIGNobW9kU3luYyhwYXRoLCBzbmFwc2hvdC5tb2RlKTsKfQoKY29uc3QgZXh0cmFjdG9yID0gam9pbihoZXJlLCAnZXh0cmFjdC1uYXRpdmVzLm1qcycpOwpjb25zdCBwb3N0UHJvYyA9IGpvaW4oaGVyZSwgJ3Bvc3QtcHJvY2Vzcy5tanMnKTsKY29uc3QgcGF0Y2hlciA9IGpvaW4oaGVyZSwgJ3BhdGNoLm1qcycpOwpjb25zdCB0YXJnZXQgPSBqb2luKGhlcmUsICdjbGkub3JpZ2luYWwuY2pzJyk7CmNvbnN0IHNvdXJjZVZlcnNpb24gPSBqb2luKGhlcmUsICcuc291cmNlLXZlcnNpb24nKTsKY29uc3QgZW5oYW5jZW1lbnRzRmlsZSA9IGpvaW4oaGVyZSwgJ2VuaGFuY2VtZW50cy5qc29uJyk7CmNvbnN0IHRhcmdldFNuYXBzaG90ID0gc25hcHNob3RGaWxlKHRhcmdldCk7CmNvbnN0IHNvdXJjZVZlcnNpb25TbmFwc2hvdCA9IHNuYXBzaG90RmlsZShzb3VyY2VWZXJzaW9uKTsKY29uc3QgdHJhbnNhY3Rpb25EaXIgPSBta2R0ZW1wU3luYyhqb2luKGhlcmUsICcucnVudGltZS1yb2xsYmFjay4nKSk7CmNvbnN0IGNhbmRpZGF0ZURpciA9IGpvaW4odHJhbnNhY3Rpb25EaXIsICdjYW5kaWRhdGUnKTsKY29uc3QgY2FuZGlkYXRlVmVuZG9yID0gam9pbihjYW5kaWRhdGVEaXIsICd2ZW5kb3InKTsKY29uc3Qgb2xkVmVuZG9yID0gam9pbih0cmFuc2FjdGlvbkRpciwgJ29sZC12ZW5kb3InKTsKY29uc3QgdmVuZG9yRGlyID0gam9pbihoZXJlLCAndmVuZG9yJyk7CmNvbnN0IHB1Ymxpc2hlZFZlbmRvciA9IFtdOwoKZnVuY3Rpb24gdmVuZG9yRW50cmllcyhwYXRoLCBza2lwUmlwZ3JlcCA9IGZhbHNlKSB7CiAgaWYgKCFleGlzdHNTeW5jKHBhdGgpKSByZXR1cm4gW107CiAgcmV0dXJuIHJlYWRkaXJTeW5jKHBhdGgpLmZpbHRlcihlbnRyeSA9PiAhc2tpcFJpcGdyZXAgfHwgZW50cnkgIT09ICdyaXBncmVwJyk7Cn0KCmZ1bmN0aW9uIHB1Ymxpc2hDYW5kaWRhdGVWZW5kb3IoKSB7CiAgbWtkaXJTeW5jKHZlbmRvckRpciwgeyByZWN1cnNpdmU6IHRydWUgfSk7CiAgbWtkaXJTeW5jKG9sZFZlbmRvcik7CiAgZm9yIChjb25zdCBlbnRyeSBvZiB2ZW5kb3JFbnRyaWVzKHZlbmRvckRpciwgdHJ1ZSkpIHsKICAgIHJlbmFtZVN5bmMoam9pbih2ZW5kb3JEaXIsIGVudHJ5KSwgam9pbihvbGRWZW5kb3IsIGVudHJ5KSk7CiAgfQogIGZvciAoY29uc3QgZW50cnkgb2YgdmVuZG9yRW50cmllcyhjYW5kaWRhdGVWZW5kb3IpKSB7CiAgICBjb25zdCBkZXN0aW5hdGlvbiA9IGpvaW4odmVuZG9yRGlyLCBlbnRyeSk7CiAgICByZW5hbWVTeW5jKGpvaW4oY2FuZGlkYXRlVmVuZG9yLCBlbnRyeSksIGRlc3RpbmF0aW9uKTsKICAgIGNvbnN0IHN0YXR1cyA9IGxzdGF0U3luYyhkZXN0aW5hdGlvbik7CiAgICBwdWJsaXNoZWRWZW5kb3IucHVzaCh7IGVudHJ5LCBkZXY6IHN0YXR1cy5kZXYsIGlubzogc3RhdHVzLmlubyB9KTsKICB9Cn0KCmZ1bmN0aW9uIHJvbGxiYWNrUHVibGlzaGVkVmVuZG9yKCkgewogIGxldCBjb25mbGljdCA9IGZhbHNlOwogIGZvciAoY29uc3QgcHVibGlzaGVkIG9mIHB1Ymxpc2hlZFZlbmRvci5yZXZlcnNlKCkpIHsKICAgIGNvbnN0IHBhdGggPSBqb2luKHZlbmRvckRpciwgcHVibGlzaGVkLmVudHJ5KTsKICAgIGlmICghZXhpc3RzU3luYyhwYXRoKSkgY29udGludWU7CiAgICBjb25zdCBzdGF0dXMgPSBsc3RhdFN5bmMocGF0aCk7CiAgICBpZiAoc3RhdHVzLmRldiAhPT0gcHVibGlzaGVkLmRldiB8fCBzdGF0dXMuaW5vICE9PSBwdWJsaXNoZWQuaW5vKSB7CiAgICAgIGNvbmZsaWN0ID0gdHJ1ZTsKICAgICAgY29udGludWU7CiAgICB9CiAgICBybVN5bmMocGF0aCwgeyByZWN1cnNpdmU6IHRydWUsIGZvcmNlOiB0cnVlIH0pOwogIH0KICBmb3IgKGNvbnN0IGVudHJ5IG9mIHZlbmRvckVudHJpZXMob2xkVmVuZG9yKSkgewogICAgY29uc3QgZGVzdGluYXRpb24gPSBqb2luKHZlbmRvckRpciwgZW50cnkpOwogICAgaWYgKGV4aXN0c1N5bmMoZGVzdGluYXRpb24pKSB7CiAgICAgIGNvbmZsaWN0ID0gdHJ1ZTsKICAgICAgY29udGludWU7CiAgICB9CiAgICByZW5hbWVTeW5jKGpvaW4ob2xkVmVuZG9yLCBlbnRyeSksIGRlc3RpbmF0aW9uKTsKICB9CiAgcmV0dXJuICFjb25mbGljdDsKfQoKdHJ5IHsKICBta2RpclN5bmMoY2FuZGlkYXRlRGlyKTsKICBybVN5bmMoam9pbihoZXJlLCAnY2xpLm9yaWdpbmFsLmpzJyksIHsgZm9yY2U6IHRydWUgfSk7CgogIHJ1bignZXh0cmFjdCcsIFtleHRyYWN0b3IsIG5hdGl2ZUJpbiwgY2FuZGlkYXRlRGlyXSk7CiAgY29uc3QgY2FuZGlkYXRlUG9zdFByb2MgPSBqb2luKGNhbmRpZGF0ZURpciwgJ3Bvc3QtcHJvY2Vzcy5tanMnKTsKICBjb3B5RmlsZVN5bmMocG9zdFByb2MsIGNhbmRpZGF0ZVBvc3RQcm9jKTsKICBydW4oJ3Bvc3QtcHJvY2VzcycsIFtjYW5kaWRhdGVQb3N0UHJvY10pOwogIHJtU3luYyh0YXJnZXQsIHsgZm9yY2U6IHRydWUgfSk7CiAgcmVuYW1lU3luYyhqb2luKGNhbmRpZGF0ZURpciwgJ2NsaS5vcmlnaW5hbC5janMnKSwgdGFyZ2V0KTsKICBydW4oJ3BhdGNoZXInLCBbcGF0Y2hlciwgJy0tZW5oYW5jZW1lbnRzLWZpbGUnLCBlbmhhbmNlbWVudHNGaWxlXSk7CgogIHB1Ymxpc2hDYW5kaWRhdGVWZW5kb3IoKTsKICB3cml0ZUZpbGVTeW5jKHNvdXJjZVZlcnNpb24sIGJhc2VuYW1lKG5hdGl2ZUJpbikgKyAnXG4nKTsKICBybVN5bmModHJhbnNhY3Rpb25EaXIsIHsgcmVjdXJzaXZlOiB0cnVlLCBmb3JjZTogdHJ1ZSB9KTsKICBjb25zb2xlLmxvZyhgW2NsYXdnb2RdIHJlLXBhdGNoZWQgdG8gJHtiYXNlbmFtZShuYXRpdmVCaW4pfWApOwp9IGNhdGNoIChlcnJvcikgewogIHJlc3RvcmVGaWxlKHRhcmdldCwgdGFyZ2V0U25hcHNob3QpOwogIHJlc3RvcmVGaWxlKHNvdXJjZVZlcnNpb24sIHNvdXJjZVZlcnNpb25TbmFwc2hvdCk7CiAgY29uc3QgdmVuZG9yUmVzdG9yZWQgPSByb2xsYmFja1B1Ymxpc2hlZFZlbmRvcigpOwogIGlmICh2ZW5kb3JSZXN0b3JlZCkgcm1TeW5jKHRyYW5zYWN0aW9uRGlyLCB7IHJlY3Vyc2l2ZTogdHJ1ZSwgZm9yY2U6IHRydWUgfSk7CiAgZWxzZSBjb25zb2xlLmVycm9yKGByZXBhdGNoOiB2ZW5kb3Igcm9sbGJhY2sgY29uZmxpY3Q7IHJlY292ZXJ5IGRhdGEgcmV0YWluZWQgYXQgJHt0cmFuc2FjdGlvbkRpcn1gKTsKICBjb25zb2xlLmVycm9yKGVycm9yIGluc3RhbmNlb2YgRXJyb3IgPyBlcnJvci5tZXNzYWdlIDogU3RyaW5nKGVycm9yKSk7CiAgcHJvY2Vzcy5leGl0Q29kZSA9IDE7Cn0K')
 [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "repatch.mjs"), $RepatcherBytes)
 Write-OK "Re-patch helper installed (repatch.mjs)"
 
@@ -744,9 +750,36 @@ if ($patchStatus -ne 0) {
     Write-Err "Mandatory patching failed; installation stopped before launcher replacement."
     exit $patchStatus
 }
+if (-not $NoUpgrade) {
+    New-Item -ItemType Directory -Force -Path $RuntimeVendorDir | Out-Null
+    New-Item -ItemType Directory -Path $RuntimeOldVendor | Out-Null
+    $RuntimeVendorPublishStarted = $true
+    Get-ChildItem -Force $RuntimeVendorDir | Where-Object { $_.Name -ne "ripgrep" } | ForEach-Object {
+        Move-Item -LiteralPath $_.FullName -Destination $RuntimeOldVendor
+    }
+    if (Test-Path -LiteralPath $RuntimeCandidateVendor -PathType Container) {
+        Get-ChildItem -Force $RuntimeCandidateVendor | ForEach-Object {
+            Move-Item -LiteralPath $_.FullName -Destination $RuntimeVendorDir
+        }
+    }
+}
 $RuntimeTransactionCommitted = $true
 } finally {
     if (-not $RuntimeTransactionCommitted) {
+        if ($RuntimeVendorPublishStarted) {
+            $failedVendor = Join-Path $RuntimeRollbackDir "failed-vendor"
+            New-Item -ItemType Directory -Path $failedVendor -ErrorAction SilentlyContinue | Out-Null
+            if (Test-Path -LiteralPath $RuntimeVendorDir -PathType Container) {
+                Get-ChildItem -Force $RuntimeVendorDir | Where-Object { $_.Name -ne "ripgrep" } | ForEach-Object {
+                    Move-Item -LiteralPath $_.FullName -Destination $failedVendor -ErrorAction SilentlyContinue
+                }
+            }
+            if (Test-Path -LiteralPath $RuntimeOldVendor -PathType Container) {
+                Get-ChildItem -Force $RuntimeOldVendor | ForEach-Object {
+                    Move-Item -LiteralPath $_.FullName -Destination $RuntimeVendorDir -ErrorAction SilentlyContinue
+                }
+            }
+        }
         if ($RuntimeHadTarget) {
             Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir "cli.original.cjs") -Destination $RuntimeTarget -Force
         } else {
@@ -758,7 +791,11 @@ $RuntimeTransactionCommitted = $true
             Remove-Item -LiteralPath $RuntimeSourceVersion -Force -ErrorAction SilentlyContinue
         }
     }
-    Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not $RuntimeVendorPublishStarted -or $RuntimeTransactionCommitted) {
+        Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Err "Vendor publish rollback retained recovery data at $RuntimeRollbackDir"
+    }
 }
 Invoke-ChromePostInstallFix
 

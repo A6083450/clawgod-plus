@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -83,6 +83,7 @@ try {
     ['head', '/usr/bin/head'],
     ['mkdir', '/bin/mkdir'],
     ['mktemp', '/usr/bin/mktemp'],
+    ['mv', '/bin/mv'],
     ['rm', '/bin/rm'],
     ['sed', '/usr/bin/sed'],
     ['sort', '/usr/bin/sort'],
@@ -120,8 +121,11 @@ if (name === 'install-ripgrep.mjs') {
   console.log('VERSION=' + version);
 } else if (name === 'extract-natives.mjs') {
   const output = args[1];
-  mkdirSync(output, { recursive: true });
+  const native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');
+  mkdirSync(dirname(native), { recursive: true });
   writeFileSync(join(output, 'cli.original.js'), '(function(exports,require,module,__filename,__dirname){})');
+  writeFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));
+  chmodSync(native, 0o751);
 } else if (name === 'post-process.mjs') {
   const root = dirname(target);
   writeFileSync(join(root, 'cli.original.cjs'), '(function(exports,require,module,__filename,__dirname){})');
@@ -129,6 +133,10 @@ if (name === 'install-ripgrep.mjs') {
 } else if (name === 'patch.mjs') {
   console.log('fixture patch applied');
   writeFileSync(process.env.PATCH_ARGS_MARKER, JSON.stringify(args) + '\\n');
+  if (process.env.PATCH_EXIT !== '0') {
+    mkdirSync(dirname(process.env.EXTERNAL_REPLACEMENT), { recursive: true });
+    writeFileSync(process.env.EXTERNAL_REPLACEMENT, Buffer.from([0x55, 0xaa]));
+  }
   process.exit(Number(process.env.PATCH_EXIT || 0));
 } else if (name === 'cli.cjs' && args[0] === '--version') {
   console.log('2.1.999');
@@ -152,6 +160,12 @@ if (name === 'install-ripgrep.mjs') {
     const configPath = join(home, '.clawgod', 'enhancements.json');
     const target = join(home, '.clawgod', 'cli.original.cjs');
     const sourceVersion = join(home, '.clawgod', '.source-version');
+    const vendor = join(home, '.clawgod', 'vendor');
+    const oldNative = join(vendor, 'native-addon', 'arm64-darwin', 'native-addon.node');
+    const oldOnly = join(vendor, 'old-only', 'nested', 'data.bin');
+    const candidateNative = join(vendor, 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');
+    const ripgrep = join(vendor, 'ripgrep', 'bin', 'rg');
+    const externalReplacement = join(vendor, 'external-replacement', 'data.bin');
     const savedConfig = '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n';
     mkdirSync(join(home, '.clawgod'), { recursive: true, mode: 0o700 });
     mkdirSync(temp, { recursive: true });
@@ -159,7 +173,15 @@ if (name === 'install-ripgrep.mjs') {
     assertTemporaryPath(home, root, `${label} HOME`);
     assertTemporaryPath(temp, root, `${label} TMPDIR`);
     writeFileSync(configPath, savedConfig, { mode: 0o600 });
+    mkdirSync(dirname(oldNative), { recursive: true });
+    mkdirSync(dirname(oldOnly), { recursive: true });
+    mkdirSync(dirname(ripgrep), { recursive: true });
+    writeFileSync(oldNative, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+    writeFileSync(oldOnly, Buffer.from([0xde, 0xad, 0xbe, 0xef]), { mode: 0o605 });
+    writeFileSync(ripgrep, Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
     const configBefore = statSync(configPath);
+    const oldNativeBefore = lstatSync(oldNative);
+    const ripgrepBefore = lstatSync(ripgrep);
     if (args.includes('--no-upgrade')) {
       writeFileSync(target, 'existing clean CLI fixture\n');
     } else if (options.priorRuntime) {
@@ -179,6 +201,7 @@ if (name === 'install-ripgrep.mjs') {
         CLAUDE_RESOLVER_MARKER: claudeResolver,
         PATCH_ARGS_MARKER: patchArgs,
         PATCH_EXIT: String(options.patchExit || 0),
+        EXTERNAL_REPLACEMENT: externalReplacement,
       },
     });
     const configAfter = statSync(configPath);
@@ -193,6 +216,16 @@ if (name === 'install-ripgrep.mjs') {
       configAfter,
       runtime: existsSync(target) ? readFileSync(target, 'utf8') : null,
       sourceVersion: existsSync(sourceVersion) ? readFileSync(sourceVersion, 'utf8') : null,
+      vendor: {
+        oldNative: existsSync(oldNative) ? { bytes: readFileSync(oldNative), mode: statSync(oldNative).mode & 0o7777, ino: lstatSync(oldNative).ino } : null,
+        oldOnly: existsSync(oldOnly) ? { bytes: readFileSync(oldOnly), mode: statSync(oldOnly).mode & 0o7777 } : null,
+        candidate: existsSync(candidateNative) ? { bytes: readFileSync(candidateNative), mode: statSync(candidateNative).mode & 0o7777 } : null,
+        ripgrep: { bytes: readFileSync(ripgrep), mode: statSync(ripgrep).mode & 0o7777, ino: lstatSync(ripgrep).ino },
+        oldNativeBefore,
+        ripgrepBefore,
+        externalReplacement: existsSync(externalReplacement) ? readFileSync(externalReplacement) : null,
+      },
+      transactionDirectories: readdirSync(join(home, '.clawgod')).filter(name => name.startsWith('.runtime-rollback.')),
     };
   }
 
@@ -213,9 +246,19 @@ if (name === 'install-ripgrep.mjs') {
     assert.deepEqual(JSON.parse(readFileSync(result.pluginHealth, 'utf8')), { args: ['ensure'], clawgodVersion: null }, `${fixture.label}: Claude version selection must not flow into plugin ensure`);
     if (fixture.expectedResolver === null) {
       assert.equal(existsSync(result.claudeResolver), false, '--no-upgrade must skip the Claude package resolver boundary');
+      assert.deepEqual(result.vendor.oldNative.bytes, Buffer.from([0x00, 0x11, 0x80, 0xff]), '--no-upgrade must preserve prior native bytes');
+      assert.equal(result.vendor.oldNative.mode, 0o640, '--no-upgrade must preserve prior native mode');
+      assert.equal(result.vendor.oldNative.ino, result.vendor.oldNativeBefore.ino, '--no-upgrade must not move prior native modules');
+      assert.equal(result.vendor.candidate, null, '--no-upgrade must not publish candidate native modules');
     } else {
       assert.equal(readFileSync(result.claudeResolver, 'utf8'), `${fixture.expectedResolver}\n`, `${fixture.label}: the real parser must feed only the Claude package resolver`);
+      assert.equal(result.vendor.oldNative, null, `${fixture.label}: successful upgrade must remove prior native versions`);
+      assert.equal(result.vendor.oldOnly, null, `${fixture.label}: successful upgrade must remove old-only vendor trees`);
+      assert.deepEqual(result.vendor.candidate.bytes, Buffer.from([0xca, 0xfe, 0xba, 0xbe]), `${fixture.label}: successful upgrade must publish candidate native bytes`);
+      assert.equal(result.vendor.candidate.mode, 0o751, `${fixture.label}: successful upgrade must publish candidate native mode`);
     }
+    assert.deepEqual(result.vendor.ripgrep.bytes, Buffer.from([0x72, 0x67, 0x00, 0xff]), `${fixture.label}: managed ripgrep bytes must remain unchanged`);
+    assert.equal(result.vendor.ripgrep.ino, result.vendor.ripgrepBefore.ino, `${fixture.label}: managed ripgrep identity must remain unchanged`);
   }
 
   const failed = runLifecycleCase('mandatory-patch-failure', [], {
@@ -226,6 +269,15 @@ if (name === 'install-ripgrep.mjs') {
   assert.deepEqual(failed.patchArgs, ['--enhancements-file', failed.configPath], 'failed patch must still use the exact saved config path');
   assert.equal(failed.runtime, 'prior installed runtime\n', 'enabled mandatory patch failure must restore the prior installed runtime');
   assert.equal(failed.sourceVersion, '2.1.225\n', 'enabled mandatory patch failure must restore the prior source marker');
+  assert.deepEqual(failed.vendor.oldNative.bytes, Buffer.from([0x00, 0x11, 0x80, 0xff]), 'failed patch must restore prior native bytes');
+  assert.equal(failed.vendor.oldNative.mode, 0o640, 'failed patch must restore prior native mode');
+  assert.deepEqual(failed.vendor.oldOnly.bytes, Buffer.from([0xde, 0xad, 0xbe, 0xef]), 'failed patch must restore nested old-only vendor bytes');
+  assert.equal(failed.vendor.oldOnly.mode, 0o605, 'failed patch must restore nested old-only vendor mode');
+  assert.equal(failed.vendor.candidate, null, 'failed patch must not leave candidate native modules');
+  assert.deepEqual(failed.vendor.ripgrep.bytes, Buffer.from([0x72, 0x67, 0x00, 0xff]), 'failed patch must preserve managed ripgrep bytes');
+  assert.equal(failed.vendor.ripgrep.ino, failed.vendor.ripgrepBefore.ino, 'failed patch must preserve managed ripgrep identity');
+  assert.deepEqual(failed.vendor.externalReplacement, Buffer.from([0x55, 0xaa]), 'failed patch rollback must preserve an unknown live vendor replacement');
+  assert.deepEqual(failed.transactionDirectories, [], 'failed patch must remove staged candidate transaction data');
   assert.equal(failed.configBytes, '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n', 'failed patch must preserve saved config bytes');
   assert.equal(failed.configAfter.ino, failed.configBefore.ino, 'failed patch must preserve saved config identity');
 } finally {

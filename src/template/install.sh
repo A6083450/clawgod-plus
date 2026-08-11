@@ -305,9 +305,26 @@ RUNTIME_TRANSACTION_DIR=""
 RUNTIME_TRANSACTION_ACTIVE=0
 RUNTIME_HAD_TARGET=0
 RUNTIME_HAD_SOURCE_VERSION=0
+RUNTIME_HAS_CANDIDATE_VENDOR=0
+RUNTIME_VENDOR_PUBLISH_STARTED=0
+
+move_vendor_entries() {
+  local source="$1" destination="$2" skip_ripgrep="${3:-0}" entry
+  [ -d "$source" ] || return 0
+  mkdir -p "$destination"
+  for entry in "$source"/* "$source"/.[!.]* "$source"/..?*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    [ "$skip_ripgrep" = "1" ] && [ "${entry##*/}" = "ripgrep" ] && continue
+    mv -- "$entry" "$destination/"
+  done
+}
 
 rollback_runtime_transaction() {
   [ "$RUNTIME_TRANSACTION_ACTIVE" = "1" ] || return 0
+  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ]; then
+    move_vendor_entries "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/failed-vendor" 1 || true
+    move_vendor_entries "$RUNTIME_TRANSACTION_DIR/old-vendor" "$CLAWGOD_DIR/vendor" || true
+  fi
   if [ "$RUNTIME_HAD_TARGET" = "1" ]; then
     cp -p "$RUNTIME_TRANSACTION_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs" 2>/dev/null || true
   else
@@ -319,10 +336,20 @@ rollback_runtime_transaction() {
     rm -f "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
-  rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
+  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ]; then
+    printf '%s\n' "clawgod: vendor publish rollback retained recovery data at $RUNTIME_TRANSACTION_DIR" >&2
+  else
+    rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
+  fi
 }
 
 commit_runtime_transaction() {
+  if [ "$RUNTIME_HAS_CANDIDATE_VENDOR" = "1" ]; then
+    mkdir -p "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/old-vendor"
+    RUNTIME_VENDOR_PUBLISH_STARTED=1
+    move_vendor_entries "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/old-vendor" 1
+    move_vendor_entries "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$CLAWGOD_DIR/vendor"
+  fi
   RUNTIME_TRANSACTION_ACTIVE=0
   rm -rf "$RUNTIME_TRANSACTION_DIR"
   trap - EXIT
@@ -458,23 +485,19 @@ EXTRACTOR_EOF
 # so the wrapper's drift detector can re-run them when the user upgrades
 # their native Claude binary.
 
-# Single extractor pass: writes cli.original.js to $CLAWGOD_DIR and creates
+# Single extractor pass: stages cli.original.js and native modules in the
+# same-filesystem runtime transaction until mandatory patches pass.
 # vendor/<name>/<arch>-<os>/<name>.node for every napi module in one go.
-if [ -d "$CLAWGOD_DIR/vendor" ]; then
-  for vendor_entry in "$CLAWGOD_DIR/vendor"/* "$CLAWGOD_DIR/vendor"/.[!.]* "$CLAWGOD_DIR/vendor"/..?*; do
-    [ -e "$vendor_entry" ] || continue
-    [ "${vendor_entry##*/}" = "ripgrep" ] && continue
-    rm -rf -- "$vendor_entry"
-  done
-fi
 rm -f "$CLAWGOD_DIR/cli.original.js" 2>/dev/null
+RUNTIME_CANDIDATE_DIR="$RUNTIME_TRANSACTION_DIR/candidate"
+mkdir -p "$RUNTIME_CANDIDATE_DIR"
 
 dim "Extracting cli.js + napi modules from $(echo "$NATIVE_BIN_LABEL") ..."
-if ! "$BUN_BIN" "$CLAWGOD_DIR/extract-natives.mjs" "$NATIVE_BIN" "$CLAWGOD_DIR" 2>&1 | while IFS= read -r line; do echo "  $line"; done; then
+if ! "$BUN_BIN" "$CLAWGOD_DIR/extract-natives.mjs" "$NATIVE_BIN" "$RUNTIME_CANDIDATE_DIR" 2>&1 | while IFS= read -r line; do echo "  $line"; done; then
   err "Failed to extract from native binary"
   exit 1
 fi
-[ -f "$CLAWGOD_DIR/cli.original.js" ] || { err "cli.js missing after extraction"; exit 1; }
+[ -f "$RUNTIME_CANDIDATE_DIR/cli.original.js" ] || { err "cli.js missing after extraction"; exit 1; }
 
 # ─── Post-process cli.js for Bun runtime ──────────────────────
 # 0. Strip leading @bun pragma comments so Bun recognises the CJS wrapper
@@ -489,8 +512,11 @@ dim "Rewriting bunfs paths and IIFE invocation ..."
 cat > "$CLAWGOD_DIR/post-process.mjs" << 'POSTPROC_EOF'
 @@CLAWGOD_POST_PROCESSOR_MJS@@
 POSTPROC_EOF
-"$BUN_BIN" "$CLAWGOD_DIR/post-process.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
-[ -f "$CLAWGOD_DIR/cli.original.cjs" ] || { err "Post-process failed"; exit 1; }
+cp "$CLAWGOD_DIR/post-process.mjs" "$RUNTIME_CANDIDATE_DIR/post-process.mjs"
+"$BUN_BIN" "$RUNTIME_CANDIDATE_DIR/post-process.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
+[ -f "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" ] || { err "Post-process failed"; exit 1; }
+mv "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs"
+RUNTIME_HAS_CANDIDATE_VENDOR=1
 
 # Stamp the source version so the wrapper can detect drift on next launch
 echo "$NATIVE_BIN_LABEL" > "$CLAWGOD_DIR/.source-version"

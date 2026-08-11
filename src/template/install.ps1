@@ -396,9 +396,14 @@ New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
 $RuntimeTarget = Join-Path $ClawDir "cli.original.cjs"
 $RuntimeSourceVersion = Join-Path $ClawDir ".source-version"
 $RuntimeRollbackDir = Join-Path $ClawDir (".runtime-rollback." + [Guid]::NewGuid().ToString("N"))
+$RuntimeCandidateDir = Join-Path $RuntimeRollbackDir "candidate"
+$RuntimeCandidateVendor = Join-Path $RuntimeCandidateDir "vendor"
+$RuntimeVendorDir = Join-Path $ClawDir "vendor"
+$RuntimeOldVendor = Join-Path $RuntimeRollbackDir "old-vendor"
 $RuntimeHadTarget = Test-Path -LiteralPath $RuntimeTarget -PathType Leaf
 $RuntimeHadSourceVersion = Test-Path -LiteralPath $RuntimeSourceVersion -PathType Leaf
 $RuntimeTransactionCommitted = $false
+$RuntimeVendorPublishStarted = $false
 New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
 if ($RuntimeHadTarget) {
     Copy-Item -LiteralPath $RuntimeTarget -Destination (Join-Path $RuntimeRollbackDir "cli.original.cjs")
@@ -513,18 +518,15 @@ $ExtractorBytes = [Convert]::FromBase64String('@@CLAWGOD_EXTRACTOR_MJS_BASE64@@'
 
 # ─── Extract cli.js + native modules from Bun binary ──────────
 
-# Single extractor pass: writes cli.original.js to $ClawDir and creates
-# vendor\<name>\<arch>-<os>\<name>.node for every napi module in one go.
-$VendorDir = Join-Path $ClawDir "vendor"
-if (Test-Path $VendorDir) {
-    Get-ChildItem -Force $VendorDir | Where-Object { $_.Name -ne "ripgrep" } | Remove-Item -Recurse -Force
-}
+# Single extractor pass: stages cli.original.js and native modules in the
+# same-filesystem runtime transaction until mandatory patches pass.
+New-Item -ItemType Directory -Path $RuntimeCandidateDir | Out-Null
 
-$dstCli = Join-Path $ClawDir "cli.original.js"
+$dstCli = Join-Path $RuntimeCandidateDir "cli.original.js"
 if (Test-Path $dstCli) { Remove-Item -Force $dstCli }
 
 Write-Dim "Extracting cli.js + napi modules from $NativeBinLabel ..."
-& $BunBin $extractorPath $NativeBin $ClawDir 2>&1 | ForEach-Object { Write-Host "  $_" }
+& $BunBin $extractorPath $NativeBin $RuntimeCandidateDir 2>&1 | ForEach-Object { Write-Host "  $_" }
 if (-not (Test-Path $dstCli)) {
     Write-Err "Failed to extract cli.js from native binary"
     exit 1
@@ -538,11 +540,15 @@ Write-Dim "Rewriting bunfs paths and IIFE invocation ..."
 $postProc = Join-Path $ClawDir "post-process.mjs"
 $PostProcessorBytes = [Convert]::FromBase64String('@@CLAWGOD_POST_PROCESSOR_MJS_BASE64@@')
 [System.IO.File]::WriteAllBytes($postProc, $PostProcessorBytes)
-& $BunBin $postProc 2>&1 | ForEach-Object { Write-Host "  $_" }
-if (-not (Test-Path (Join-Path $ClawDir "cli.original.cjs"))) {
+$candidatePostProc = Join-Path $RuntimeCandidateDir "post-process.mjs"
+Copy-Item -LiteralPath $postProc -Destination $candidatePostProc
+& $BunBin $candidatePostProc 2>&1 | ForEach-Object { Write-Host "  $_" }
+$candidateCli = Join-Path $RuntimeCandidateDir "cli.original.cjs"
+if (-not (Test-Path $candidateCli)) {
     Write-Err "Post-process failed"
     exit 1
 }
+Move-Item -LiteralPath $candidateCli -Destination $RuntimeTarget -Force
 
 # Stamp source version so wrapper can detect drift on next launch
 Set-Content -Path (Join-Path $ClawDir ".source-version") -Value $NativeBinLabel -Encoding ASCII
@@ -593,9 +599,36 @@ if ($patchStatus -ne 0) {
     Write-Err "Mandatory patching failed; installation stopped before launcher replacement."
     exit $patchStatus
 }
+if (-not $NoUpgrade) {
+    New-Item -ItemType Directory -Force -Path $RuntimeVendorDir | Out-Null
+    New-Item -ItemType Directory -Path $RuntimeOldVendor | Out-Null
+    $RuntimeVendorPublishStarted = $true
+    Get-ChildItem -Force $RuntimeVendorDir | Where-Object { $_.Name -ne "ripgrep" } | ForEach-Object {
+        Move-Item -LiteralPath $_.FullName -Destination $RuntimeOldVendor
+    }
+    if (Test-Path -LiteralPath $RuntimeCandidateVendor -PathType Container) {
+        Get-ChildItem -Force $RuntimeCandidateVendor | ForEach-Object {
+            Move-Item -LiteralPath $_.FullName -Destination $RuntimeVendorDir
+        }
+    }
+}
 $RuntimeTransactionCommitted = $true
 } finally {
     if (-not $RuntimeTransactionCommitted) {
+        if ($RuntimeVendorPublishStarted) {
+            $failedVendor = Join-Path $RuntimeRollbackDir "failed-vendor"
+            New-Item -ItemType Directory -Path $failedVendor -ErrorAction SilentlyContinue | Out-Null
+            if (Test-Path -LiteralPath $RuntimeVendorDir -PathType Container) {
+                Get-ChildItem -Force $RuntimeVendorDir | Where-Object { $_.Name -ne "ripgrep" } | ForEach-Object {
+                    Move-Item -LiteralPath $_.FullName -Destination $failedVendor -ErrorAction SilentlyContinue
+                }
+            }
+            if (Test-Path -LiteralPath $RuntimeOldVendor -PathType Container) {
+                Get-ChildItem -Force $RuntimeOldVendor | ForEach-Object {
+                    Move-Item -LiteralPath $_.FullName -Destination $RuntimeVendorDir -ErrorAction SilentlyContinue
+                }
+            }
+        }
         if ($RuntimeHadTarget) {
             Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir "cli.original.cjs") -Destination $RuntimeTarget -Force
         } else {
@@ -607,7 +640,11 @@ $RuntimeTransactionCommitted = $true
             Remove-Item -LiteralPath $RuntimeSourceVersion -Force -ErrorAction SilentlyContinue
         }
     }
-    Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not $RuntimeVendorPublishStarted -or $RuntimeTransactionCommitted) {
+        Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Err "Vendor publish rollback retained recovery data at $RuntimeRollbackDir"
+    }
 }
 Invoke-ChromePostInstallFix
 
