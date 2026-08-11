@@ -3672,7 +3672,7 @@ if [ ! -x "$IMPORT_BIN" ]; then
   esac
   if [ -n "$IMPORT_SUFFIX" ]; then
     IMPORT_URL="https://github.com/0Chencc/clawgod/releases/latest/download/clawgod-import-$IMPORT_SUFFIX"
-    if "$BUN_BIN" "$CLAWGOD_DIR/fetch-file.mjs" "$IMPORT_URL" "$IMPORT_BIN"; then
+    if "$BUN_BIN" "$CLAWGOD_DIR/fetch-file.mjs" "$IMPORT_URL" "$IMPORT_BIN" 2>/dev/null; then
       chmod +x "$IMPORT_BIN"
       info "Provider import tool installed (clawgod-import)"
     else
