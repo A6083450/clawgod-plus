@@ -2651,6 +2651,7 @@ const patches = [
     replacer: (m, fn, next) =>
       `function ${fn}(){return null}${next}`,
     selectIndex: 0,
+    optional: true,  // v2.1.215+ GrowthBook functions restructured; pattern no longer matches
     validate: (match, code) => {
       const pos = code.indexOf(match);
       const nearby = code.substring(Math.max(0, pos - 500), pos + 500);
