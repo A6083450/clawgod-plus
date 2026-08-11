@@ -8,31 +8,16 @@ ClawGod Plus extracts the JavaScript embedded in Claude Code's Bun standalone bi
 
 ![ClawGod Plus patched runtime](bypass.png)
 
-## How far this branch is ahead
+## Features
 
-The comparison below audits enhanced feature snapshot `b4ed6a1` against upstream **v1.7.5** at commit [`507405a`](https://github.com/0Chencc/clawgod/commit/507405a053c917c3a27c162e3f66c3d1897d4591), verified on **2026-07-30**. The documentation rewrite itself is intentionally excluded from the engineering totals.
-
-| Measurable difference | Enhanced branch | Upstream v1.7.5 |
-|---|---:|---:|
-| Branch-only commits | **23** | 0 |
-| Changed files | **26** | 0 |
-| Source diff | **+6,631 / -101 lines** | Baseline |
-| Patch regression scripts | **8** | 0 |
-| Standalone patch source scripts | **5 across 3 patch families** | 0 |
-| Documented enhancement areas | **6** | Baseline feature set |
-
-These numbers come from `git rev-list upstream/main..b4ed6a1`, `git diff --shortstat upstream/main...b4ed6a1`, and the tracked files under `tests/` at that snapshot. They measure engineering distance from the stated upstream snapshot, not an invented performance or quality multiplier.
-
-## What is better than upstream
-
-| Enhancement | Source | Practical improvement |
-|---|---|---|
-| **claude-mem compatibility** | Local integration | Reuses the configured ClawGod Plus provider for claude-mem without copying credentials into its `.env`; backs up managed settings, respects later user edits, restarts the worker, cleans stale Chroma processes, and restores settings on uninstall. |
-| **Claude in Chrome for API-key mode** | **Patch family by 哈雷佬, integrated here** | Uses the local Chrome extension socket or named pipe without requiring the OAuth subscription bridge; preserves `--chrome` and `--no-chrome` through agent dispatch. |
-| **Computer Use by default** | **Patch family by 哈雷佬, with local launcher integration** | Externalizes the feature gate, enables Computer Use by default, and makes it available to noninteractive workers such as cmux and stream-json sessions. Automatic `--chrome` injection is suppressed for machine-oriented commands, preventing repeated blank tabs. |
-| **Configurable context limit** | **Patch family by 哈雷佬, integrated here** | Replaces the hardcoded local 200K fallback with `CLAUDE_CODE_CONTEXT_LIMIT`, then `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, then 200K. Includes check and restore modes. |
-| **Bun and worker-runtime hardening** | Local integration | Targets old and new minified worker resolver shapes while preserving Bun's shared standalone-executable semantics, so daemon, fork, MCP, and background worker paths do not break each other. |
-| **Installer and runtime reliability** | Local integration | Adds `--no-upgrade` control-flow coverage, local-installer update routing, macOS TIFF clipboard-path recognition, broader CI triggers, and isolated regression fixtures for patch drift. |
+| Feature | Description |
+|---|---|
+| **claude-mem compatibility** | Reuses the configured ClawGod Plus provider for claude-mem without copying credentials into its `.env`; backs up managed settings, respects later user edits, restarts the worker, cleans stale Chroma processes, and restores settings on uninstall. |
+| **Claude in Chrome for API-key mode** | Uses the local Chrome extension socket or named pipe without requiring the OAuth subscription bridge; preserves `--chrome` and `--no-chrome` through agent dispatch. |
+| **Computer Use by default** | Externalizes the feature gate, enables Computer Use by default, and makes it available to noninteractive workers such as cmux and stream-json sessions. Automatic `--chrome` injection is suppressed for machine-oriented commands, preventing repeated blank tabs. |
+| **Configurable context limit** | Replaces the hardcoded local 200K fallback with `CLAUDE_CODE_CONTEXT_LIMIT`, then `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, then 200K. Includes check and restore modes. |
+| **Bun and worker-runtime hardening** | Targets old and new minified worker resolver shapes while preserving Bun's shared standalone-executable semantics, so daemon, fork, MCP, and background worker paths do not break each other. |
+| **Installer and runtime reliability** | Adds `--no-upgrade` control-flow coverage, local-installer update routing, macOS TIFF clipboard-path recognition, broader CI triggers, and isolated regression fixtures for patch drift. |
 
 ### Attribution for integrated patch work
 
@@ -43,17 +28,6 @@ The relevant source files are:
 - [`apply-claude-code-chrome-fix.sh`](apply-claude-code-chrome-fix.sh) and [`apply-claude-code-chrome-fix.ps1`](apply-claude-code-chrome-fix.ps1)
 - [`apply-claude-code-computer-use-fix.sh`](apply-claude-code-computer-use-fix.sh)
 - [`apply-claude-code-context-limit-patch/`](apply-claude-code-context-limit-patch/)
-
-## Upstream changes already merged
-
-This is not a stale fork. The branch includes the upstream line through v1.7.5, including:
-
-| Upstream range | Changes retained in this branch |
-|---|---|
-| **v1.3.0** | Geo-steganography neutralization for date punctuation, timezone/proxy/provider detection, and apostrophe selection. |
-| **v1.6.0 - v1.6.1** | Lean settings controls and macOS image-paste fallback improvements. |
-| **v1.7.0 - v1.7.2** | OpenAI-compatible proxy support, provider import, remote control for third-party providers, and release version injection. |
-| **v1.7.3 - v1.7.5** | Bun runtime compatibility, Windows uninstall cleanup, and correct newer-version update notices. |
 
 ## Complete capability set
 
@@ -329,7 +303,7 @@ The GitHub compatibility workflow additionally performs an end-to-end Unix insta
 ## Credits and license
 
 - [A6083450](https://github.com/A6083450): maintainer of the ClawGod Plus enhanced branch.
-- [0Chencc/clawgod](https://github.com/0Chencc/clawgod): upstream project and v1.7.5 baseline.
+- [0Chencc/clawgod](https://github.com/0Chencc/clawgod): upstream project.
 - **哈雷佬**: author of the `apply-claude-code-*` patch families and the corresponding patch approaches integrated into this branch.
 - Anthropic: official Claude Code runtime patched by this project; ClawGod Plus is not affiliated with Anthropic.
 

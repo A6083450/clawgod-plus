@@ -8,31 +8,16 @@ ClawGod Plus 从 Claude Code 的 Bun standalone 二进制中提取内嵌 JavaScr
 
 ![ClawGod Plus 补丁运行时](bypass.png)
 
-## 本分支领先上游多少
+## 功能
 
-下表以增强功能快照 `b4ed6a1` 对比上游 **v1.7.5**（提交 [`507405a`](https://github.com/0Chencc/clawgod/commit/507405a053c917c3a27c162e3f66c3d1897d4591)），核验日期为 **2026-07-30**。本次 README 重写不计入工程量统计。
-
-| 可量化差异 | 增强分支 | 上游 v1.7.5 |
-|---|---:|---:|
-| 分支独有提交 | **23** | 0 |
-| 改动文件 | **26** | 0 |
-| 代码差异 | **+6,631 / -101 行** | 基线 |
-| 补丁回归脚本 | **8** | 0 |
-| 独立补丁源码脚本 | **5 个，覆盖 3 类补丁** | 0 |
-| 已说明的增强领域 | **6** | 上游基础功能集 |
-
-这些数字来自 `git rev-list upstream/main..b4ed6a1`、`git diff --shortstat upstream/main...b4ed6a1`，以及该快照下 `tests/` 目录中被 Git 跟踪的文件。它们衡量的是相对指定上游快照的工程差异，不是虚构的性能或质量倍数。
-
-## 相较上游的改进
-
-| 增强项 | 来源 | 实际改进 |
-|---|---|---|
-| **claude-mem 兼容** | 本地集成 | claude-mem 可复用已配置的 ClawGod Plus Provider，无需把凭据复制到自身 `.env`；支持托管设置备份、保留用户后续修改、重启 Worker、清理失效 Chroma 进程，以及卸载时恢复设置。 |
-| **API Key 模式下的 Claude in Chrome** | **哈雷佬的补丁系列，本分支完成集成** | 通过本地 Chrome 扩展 socket 或 named pipe 工作，无需 OAuth 订阅桥接；Agent 派发时保留 `--chrome` 和 `--no-chrome`。 |
-| **Computer Use 默认开启** | **哈雷佬的补丁系列，并完成本地 Launcher 集成** | 将 Feature Gate 外置、默认启用 Computer Use，并让 cmux、stream-json 等非交互 Worker 也能使用。面向机器的命令不会被自动注入 `--chrome`，避免反复打开空白页。 |
-| **可配置上下文上限** | **哈雷佬的补丁系列，本分支完成集成** | 将写死的本地 200K fallback 改为依次读取 `CLAUDE_CODE_CONTEXT_LIMIT`、`CLAUDE_CODE_MAX_CONTEXT_TOKENS`，最后回退到 200K，并提供检查与恢复模式。 |
-| **Bun 与 Worker 运行时加固** | 本地集成 | 同时适配新旧压缩变量形态的 Worker Resolver，并保留 Bun 共享的 standalone-executable 语义，避免 daemon、fork、MCP 和后台 Worker 互相破坏。 |
-| **安装器与运行可靠性** | 本地集成 | 增加 `--no-upgrade` 控制流覆盖、本地安装器更新路由、macOS TIFF 剪贴板路径识别、更完整的 CI 触发条件，以及用于发现补丁漂移的独立回归 Fixture。 |
+| 功能 | 说明 |
+|---|---|
+| **claude-mem 兼容** | claude-mem 可复用已配置的 ClawGod Plus Provider，无需把凭据复制到自身 `.env`；支持托管设置备份、保留用户后续修改、重启 Worker、清理失效 Chroma 进程，以及卸载时恢复设置。 |
+| **API Key 模式下的 Claude in Chrome** | 通过本地 Chrome 扩展 socket 或 named pipe 工作，无需 OAuth 订阅桥接；Agent 派发时保留 `--chrome` 和 `--no-chrome`。 |
+| **Computer Use 默认开启** | 将 Feature Gate 外置、默认启用 Computer Use，并让 cmux、stream-json 等非交互 Worker 也能使用。面向机器的命令不会被自动注入 `--chrome`，避免反复打开空白页。 |
+| **可配置上下文上限** | 将写死的本地 200K fallback 改为依次读取 `CLAUDE_CODE_CONTEXT_LIMIT`、`CLAUDE_CODE_MAX_CONTEXT_TOKENS`，最后回退到 200K，并提供检查与恢复模式。 |
+| **Bun 与 Worker 运行时加固** | 同时适配新旧压缩变量形态的 Worker Resolver，并保留 Bun 共享的 standalone-executable 语义，避免 daemon、fork、MCP 和后台 Worker 互相破坏。 |
+| **安装器与运行可靠性** | 增加 `--no-upgrade` 控制流覆盖、本地安装器更新路由、macOS TIFF 剪贴板路径识别、更完整的 CI 触发条件，以及用于发现补丁漂移的独立回归 Fixture。 |
 
 ### 融合补丁的作者归属
 
@@ -43,17 +28,6 @@ ClawGod Plus 从 Claude Code 的 Bun standalone 二进制中提取内嵌 JavaScr
 - [`apply-claude-code-chrome-fix.sh`](apply-claude-code-chrome-fix.sh) 和 [`apply-claude-code-chrome-fix.ps1`](apply-claude-code-chrome-fix.ps1)
 - [`apply-claude-code-computer-use-fix.sh`](apply-claude-code-computer-use-fix.sh)
 - [`apply-claude-code-context-limit-patch/`](apply-claude-code-context-limit-patch/)
-
-## 已融合的上游改动
-
-这不是一个停滞的 Fork。本分支已包含上游至 v1.7.5 的完整演进，包括：
-
-| 上游版本范围 | 本分支保留的改动 |
-|---|---|
-| **v1.3.0** | 日期标点、时区/代理/Provider 检测和撇号选择相关的地区隐写中和。 |
-| **v1.6.0 - v1.6.1** | Lean Settings 控制和 macOS 图片粘贴 fallback 改进。 |
-| **v1.7.0 - v1.7.2** | OpenAI 兼容代理、Provider 导入、第三方 Provider 的 Remote Control，以及 Release 版本注入。 |
-| **v1.7.3 - v1.7.5** | Bun 运行时兼容、Windows 卸载清理，以及只在远端版本更高时提示更新。 |
 
 ## 完整能力集
 
@@ -329,7 +303,7 @@ GitHub 兼容性工作流还会执行完整的 Unix 安装和运行时检查。�
 ## 致谢与许可证
 
 - [A6083450](https://github.com/A6083450)：ClawGod Plus 增强分支维护者。
-- [0Chencc/clawgod](https://github.com/0Chencc/clawgod)：上游项目及 v1.7.5 比较基线。
+- [0Chencc/clawgod](https://github.com/0Chencc/clawgod)：上游项目。
 - **哈雷佬**：`apply-claude-code-*` 补丁系列，以及本分支所融合对应补丁思路的作者。
 - Anthropic：本项目所修改的官方 Claude Code 运行时；ClawGod Plus 与 Anthropic 没有关联。
 

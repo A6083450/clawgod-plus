@@ -8,31 +8,16 @@ ClawGod Plus は Claude Code の Bun standalone バイナリに埋め込まれ�
 
 ![ClawGod Plus パッチ済みランタイム](bypass.png)
 
-## このブランチは上流よりどれだけ先行しているか
+## 機能
 
-以下は拡張機能スナップショット `b4ed6a1` と、上流 **v1.7.5** のコミット [`507405a`](https://github.com/0Chencc/clawgod/commit/507405a053c917c3a27c162e3f66c3d1897d4591) を比較した結果です。確認日は **2026-07-30** です。今回の README 書き直しはエンジニアリング量の集計から除外しています。
-
-| 測定可能な差分 | 拡張ブランチ | 上流 v1.7.5 |
-|---|---:|---:|
-| ブランチ固有コミット | **23** | 0 |
-| 変更ファイル数 | **26** | 0 |
-| ソース差分 | **+6,631 / -101 行** | ベースライン |
-| パッチ回帰スクリプト | **8** | 0 |
-| 独立パッチソース | **3 系統・5 本** | 0 |
-| 文書化済み拡張領域 | **6** | 上流の基本機能セット |
-
-数値は `git rev-list upstream/main..b4ed6a1`、`git diff --shortstat upstream/main...b4ed6a1`、および同スナップショットの `tests/` 配下にある追跡対象ファイルから算出しています。これは指定した上流スナップショットとの差分を示すものであり、性能や品質が何倍という根拠のない主張ではありません。
-
-## 上流より改善されている点
-
-| 拡張項目 | 出所 | 実用上の改善 |
-|---|---|---|
-| **claude-mem 互換性** | ローカル統合 | claude-mem の `.env` に資格情報をコピーせず、設定済み ClawGod Plus Provider を再利用できます。管理対象設定のバックアップ、後から行ったユーザー変更の保持、Worker 再起動、古い Chroma プロセスの整理、アンインストール時の復元にも対応します。 |
-| **API キーモードの Claude in Chrome** | **哈雷佬によるパッチ系列を統合** | OAuth サブスクリプションブリッジを使わず、ローカル Chrome 拡張の socket または named pipe を利用します。Agent ディスパッチでも `--chrome` と `--no-chrome` を維持します。 |
-| **Computer Use をデフォルト有効化** | **哈雷佬によるパッチ系列とローカル Launcher 統合** | Feature Gate を外部設定化し、Computer Use をデフォルトで有効にします。cmux や stream-json などの非対話 Worker でも利用でき、機械処理向けコマンドには `--chrome` を自動注入しないため、空白タブの反復生成を防ぎます。 |
-| **設定可能なコンテキスト上限** | **哈雷佬によるパッチ系列を統合** | ハードコードされたローカル 200K fallback を、`CLAUDE_CODE_CONTEXT_LIMIT`、`CLAUDE_CODE_MAX_CONTEXT_TOKENS`、200K の順で解決するよう変更し、チェックと復元モードも提供します。 |
-| **Bun と Worker ランタイムの堅牢化** | ローカル統合 | 新旧の圧縮済み Worker Resolver 形状を対象にしつつ、Bun 共有の standalone-executable セマンティクスを維持し、daemon、fork、MCP、バックグラウンド Worker の相互破損を防ぎます。 |
-| **インストーラとランタイムの信頼性** | ローカル統合 | `--no-upgrade` 制御フローの検証、ローカルインストーラへの更新ルーティング、macOS TIFF クリップボードパス認識、CI トリガー拡張、パッチドリフト検出用の独立 Fixture を追加しています。 |
+| 機能 | 説明 |
+|---|---|
+| **claude-mem 互換性** | claude-mem の `.env` に資格情報をコピーせず、設定済み ClawGod Plus Provider を再利用できます。管理対象設定のバックアップ、後から行ったユーザー変更の保持、Worker 再起動、古い Chroma プロセスの整理、アンインストール時の復元にも対応します。 |
+| **API キーモードの Claude in Chrome** | OAuth サブスクリプションブリッジを使わず、ローカル Chrome 拡張の socket または named pipe を利用します。Agent ディスパッチでも `--chrome` と `--no-chrome` を維持します。 |
+| **Computer Use をデフォルト有効化** | Feature Gate を外部設定化し、Computer Use をデフォルトで有効にします。cmux や stream-json などの非対話 Worker でも利用でき、機械処理向けコマンドには `--chrome` を自動注入しないため、空白タブの反復生成を防ぎます。 |
+| **設定可能なコンテキスト上限** | ハードコードされたローカル 200K fallback を、`CLAUDE_CODE_CONTEXT_LIMIT`、`CLAUDE_CODE_MAX_CONTEXT_TOKENS`、200K の順で解決するよう変更し、チェックと復元モードも提供します。 |
+| **Bun と Worker ランタイムの堅牢化** | 新旧の圧縮済み Worker Resolver 形状を対象にしつつ、Bun 共有の standalone-executable セマンティクスを維持し、daemon、fork、MCP、バックグラウンド Worker の相互破損を防ぎます。 |
+| **インストーラとランタイムの信頼性** | `--no-upgrade` 制御フローの検証、ローカルインストーラへの更新ルーティング、macOS TIFF クリップボードパス認識、CI トリガー拡張、パッチドリフト検出用の独立 Fixture を追加しています。 |
 
 ### 統合パッチの作者帰属
 
@@ -43,17 +28,6 @@ ClawGod Plus は Claude Code の Bun standalone バイナリに埋め込まれ�
 - [`apply-claude-code-chrome-fix.sh`](apply-claude-code-chrome-fix.sh) と [`apply-claude-code-chrome-fix.ps1`](apply-claude-code-chrome-fix.ps1)
 - [`apply-claude-code-computer-use-fix.sh`](apply-claude-code-computer-use-fix.sh)
 - [`apply-claude-code-context-limit-patch/`](apply-claude-code-context-limit-patch/)
-
-## 統合済みの上流変更
-
-これは更新が止まった Fork ではありません。上流 v1.7.5 までの変更を取り込んでいます。
-
-| 上流バージョン範囲 | このブランチに維持されている変更 |
-|---|---|
-| **v1.3.0** | 日付句読点、タイムゾーン/プロキシ/Provider 検出、アポストロフィ選択に関する地域ステガノグラフィー無効化。 |
-| **v1.6.0 - v1.6.1** | Lean Settings 制御と macOS 画像貼り付け fallback の改善。 |
-| **v1.7.0 - v1.7.2** | OpenAI 互換プロキシ、Provider インポート、サードパーティ Provider の Remote Control、Release バージョン注入。 |
-| **v1.7.3 - v1.7.5** | Bun ランタイム互換性、Windows アンインストール時の整理、リモート版が新しい場合だけ表示する更新通知。 |
 
 ## 全機能
 
@@ -329,7 +303,7 @@ GitHub 互換性ワークフローでは、さらに Unix の完全インスト�
 ## クレジットとライセンス
 
 - [A6083450](https://github.com/A6083450)：ClawGod Plus 拡張ブランチのメンテナ。
-- [0Chencc/clawgod](https://github.com/0Chencc/clawgod)：上流プロジェクトおよび v1.7.5 比較ベースライン。
+- [0Chencc/clawgod](https://github.com/0Chencc/clawgod)：上流プロジェクト。
 - **哈雷佬**：`apply-claude-code-*` パッチ系列と、このブランチへ統合された対応パッチ手法の作者。
 - Anthropic：このプロジェクトがパッチする公式 Claude Code ランタイム。ClawGod Plus は Anthropic と提携していません。
 
