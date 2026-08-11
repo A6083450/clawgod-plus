@@ -44,6 +44,7 @@ NC='\033[0m'
 info()  { echo -e "  ${GREEN}✓${NC} $1"; }
 warn()  { echo -e "  ${RED}✗${NC} $1"; }
 dim()   { echo -e "  ${DIM}$1${NC}"; }
+err()   { echo -e "  ${RED}✗${NC} $1"; }
 
 install_claude_mem_compat_helper() {
   cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << 'CLAUDE_MEM_COMPAT_EOF'
@@ -2927,7 +2928,7 @@ const patches = [
     // Escape hatch printed on every run: `install.sh --uninstall` restores
     // claude.orig and lets vanilla `claude update` work again.
     name: "Redirect `claude update` to clawgod self-update",
-    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\(async\(\)=>\{)/g,
+    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\((?:[a-z]\()?async\([^)]*\)=>\{)/g,
     replacer: (m, chain, action) => {
       return (
         chain + '.allowUnknownOption()' + action +
