@@ -170,7 +170,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache/claude-plugins" "$CLAWGOD_DIR/staging/claude-plugins" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh"
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache/claude-plugins" "$CLAWGOD_DIR/staging/claude-plugins" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh"
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -246,6 +246,11 @@ cat > "$CLAWGOD_DIR/install-ripgrep.mjs" << 'INSTALL_RIPGREP_EOF'
 INSTALL_RIPGREP_EOF
 chmod 700 "$CLAWGOD_DIR/install-ripgrep.mjs"
 
+cat > "$CLAWGOD_DIR/vendor-transaction.mjs" << 'VENDOR_TRANSACTION_EOF'
+@@CLAWGOD_VENDOR_TRANSACTION_MJS@@
+VENDOR_TRANSACTION_EOF
+chmod 700 "$CLAWGOD_DIR/vendor-transaction.mjs"
+
 if RIPGREP_OUTPUT=$("$BUN_BIN" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR" 2>&1); then
   info "$RIPGREP_OUTPUT"
 else
@@ -308,22 +313,12 @@ RUNTIME_HAD_SOURCE_VERSION=0
 RUNTIME_HAS_CANDIDATE_VENDOR=0
 RUNTIME_VENDOR_PUBLISH_STARTED=0
 
-move_vendor_entries() {
-  local source="$1" destination="$2" skip_ripgrep="${3:-0}" entry
-  [ -d "$source" ] || return 0
-  mkdir -p "$destination"
-  for entry in "$source"/* "$source"/.[!.]* "$source"/..?*; do
-    [ -e "$entry" ] || [ -L "$entry" ] || continue
-    [ "$skip_ripgrep" = "1" ] && [ "${entry##*/}" = "ripgrep" ] && continue
-    mv -- "$entry" "$destination/"
-  done
-}
-
 rollback_runtime_transaction() {
   [ "$RUNTIME_TRANSACTION_ACTIVE" = "1" ] || return 0
-  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ]; then
-    move_vendor_entries "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/failed-vendor" 1 || true
-    move_vendor_entries "$RUNTIME_TRANSACTION_DIR/old-vendor" "$CLAWGOD_DIR/vendor" || true
+  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ] && [ ! -f "$RUNTIME_TRANSACTION_DIR/.vendor-rollback-complete" ]; then
+    RUNTIME_TRANSACTION_ACTIVE=0
+    printf '%s\n' "clawgod: vendor rollback conflict; prior CLI was not restored; recovery data retained at $RUNTIME_TRANSACTION_DIR" >&2
+    return 0
   fi
   if [ "$RUNTIME_HAD_TARGET" = "1" ]; then
     cp -p "$RUNTIME_TRANSACTION_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs" 2>/dev/null || true
@@ -336,19 +331,13 @@ rollback_runtime_transaction() {
     rm -f "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
-  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ]; then
-    printf '%s\n' "clawgod: vendor publish rollback retained recovery data at $RUNTIME_TRANSACTION_DIR" >&2
-  else
-    rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
-  fi
+  rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
 }
 
 commit_runtime_transaction() {
   if [ "$RUNTIME_HAS_CANDIDATE_VENDOR" = "1" ]; then
-    mkdir -p "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/old-vendor"
     RUNTIME_VENDOR_PUBLISH_STARTED=1
-    move_vendor_entries "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/old-vendor" 1
-    move_vendor_entries "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$CLAWGOD_DIR/vendor"
+    "$BUN_BIN" "$CLAWGOD_DIR/vendor-transaction.mjs" publish "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$RUNTIME_TRANSACTION_DIR"
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
   rm -rf "$RUNTIME_TRANSACTION_DIR"

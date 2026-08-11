@@ -21,6 +21,7 @@ const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
 const canonicalRipgrepUrl = new URL('../src/generic/runtime/install-ripgrep.mjs', import.meta.url);
 const canonicalRepatch = readFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), 'utf8');
+const canonicalVendorTransaction = readFileSync(new URL('../src/generic/runtime/vendor-transaction.mjs', import.meta.url), 'utf8');
 const canonicalWrapper = readFileSync(new URL('../src/generic/runtime/wrapper.cjs', import.meta.url), 'utf8');
 
 const expectedAssets = {
@@ -599,6 +600,7 @@ try {
     writeFileSync(join(fixture, 'post-process.mjs'), '#!/usr/bin/env bun\nimport { writeFileSync } from "node:fs";import { dirname, join } from "node:path";writeFileSync(join(dirname(import.meta.path), "cli.original.cjs"), "fixture");\n');
     writeFileSync(join(fixture, 'patch.mjs'), '#!/usr/bin/env bun\n');
     writeFileSync(join(fixture, 'repatch.mjs'), repatch);
+    writeFileSync(join(fixture, 'vendor-transaction.mjs'), canonicalVendorTransaction);
     const child = Bun.spawn([process.execPath, join(fixture, 'repatch.mjs'), join(fixture, 'native')], {
       stdout: 'pipe',
       stderr: 'pipe',

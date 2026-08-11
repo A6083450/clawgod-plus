@@ -608,7 +608,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache/claude-plugins" "$CLAWGOD_DIR/staging/claude-plugins" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh"
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache/claude-plugins" "$CLAWGOD_DIR/staging/claude-plugins" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh"
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -5011,6 +5011,143 @@ if (import.meta.main) {
 INSTALL_RIPGREP_EOF
 chmod 700 "$CLAWGOD_DIR/install-ripgrep.mjs"
 
+cat > "$CLAWGOD_DIR/vendor-transaction.mjs" << 'VENDOR_TRANSACTION_EOF'
+#!/usr/bin/env bun
+import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
+
+export const VENDOR_ROLLBACK_COMPLETE = '.vendor-rollback-complete';
+const CONFLICT_EVIDENCE = 'vendor-rollback-conflict.json';
+
+function status(path) {
+  try {
+    const value = lstatSync(path);
+    return { dev: value.dev, ino: value.ino, type: value.isDirectory() ? 'directory' : value.isSymbolicLink() ? 'symlink' : 'file' };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function sameIdentity(left, right) {
+  return left?.dev === right?.dev && left?.ino === right?.ino && left?.type === right?.type;
+}
+
+function entries(path, skipRipgrep = false) {
+  if (!existsSync(path)) return [];
+  return readdirSync(path).filter(name => !skipRipgrep || name !== 'ripgrep').sort();
+}
+
+function moveAndRecord(source, destination, name) {
+  const identity = status(join(source, name));
+  renameSync(join(source, name), join(destination, name));
+  return { name, identity };
+}
+
+function rollback({ liveVendor, transactionDir, oldVendor, published, oldEntries, ripgrepIdentity, cause }) {
+  const failedVendor = join(transactionDir, 'failed-vendor');
+  const conflicts = [];
+  mkdirSync(failedVendor, { recursive: true });
+
+  for (const entry of published.toReversed()) {
+    const livePath = join(liveVendor, entry.name);
+    const liveIdentity = status(livePath);
+    if (liveIdentity === null) continue;
+    if (!sameIdentity(liveIdentity, entry.identity)) {
+      conflicts.push({ entry: entry.name, reason: 'published-entry-identity-changed', expected: entry.identity, actual: liveIdentity });
+      continue;
+    }
+    try {
+      renameSync(livePath, join(failedVendor, entry.name));
+    } catch (error) {
+      conflicts.push({ entry: entry.name, reason: 'could-not-isolate-published-entry', error: String(error) });
+    }
+  }
+
+  for (const entry of oldEntries) {
+    const source = join(oldVendor, entry.name);
+    const destination = join(liveVendor, entry.name);
+    if (status(source) === null) {
+      if (!sameIdentity(status(destination), entry.identity)) {
+        conflicts.push({ entry: entry.name, reason: 'old-entry-not-restored' });
+      }
+      continue;
+    }
+    if (status(destination) !== null) {
+      conflicts.push({ entry: entry.name, reason: 'old-entry-destination-occupied', actual: status(destination) });
+      continue;
+    }
+    try {
+      renameSync(source, destination);
+      if (!sameIdentity(status(destination), entry.identity)) {
+        conflicts.push({ entry: entry.name, reason: 'old-entry-identity-changed' });
+      }
+    } catch (error) {
+      conflicts.push({ entry: entry.name, reason: 'could-not-restore-old-entry', error: String(error) });
+    }
+  }
+
+  const currentRipgrep = status(join(liveVendor, 'ripgrep'));
+  if (!sameIdentity(currentRipgrep, ripgrepIdentity)) {
+    conflicts.push({ entry: 'ripgrep', reason: 'managed-ripgrep-identity-changed', expected: ripgrepIdentity, actual: currentRipgrep });
+  }
+
+  if (conflicts.length === 0) {
+    writeFileSync(join(transactionDir, VENDOR_ROLLBACK_COMPLETE), 'complete\n');
+    return true;
+  }
+  writeFileSync(join(transactionDir, CONFLICT_EVIDENCE), JSON.stringify({
+    cause: cause instanceof Error ? cause.message : String(cause),
+    conflicts,
+  }, null, 2) + '\n');
+  return false;
+}
+
+export function publishVendorTransaction({ liveVendor, candidateVendor, transactionDir, afterPublish }) {
+  const oldVendor = join(transactionDir, 'old-vendor');
+  const oldEntries = [];
+  const published = [];
+  mkdirSync(liveVendor, { recursive: true });
+  mkdirSync(oldVendor, { recursive: true });
+  const ripgrepIdentity = status(join(liveVendor, 'ripgrep'));
+
+  try {
+    if (entries(candidateVendor).includes('ripgrep')) {
+      throw new Error('vendor transaction: candidate must not contain managed ripgrep');
+    }
+    for (const name of entries(liveVendor, true)) {
+      oldEntries.push(moveAndRecord(liveVendor, oldVendor, name));
+    }
+    for (const name of entries(candidateVendor)) {
+      const entry = moveAndRecord(candidateVendor, liveVendor, name);
+      published.push(entry);
+      afterPublish?.({ ...entry, path: join(liveVendor, name), publishedCount: published.length });
+    }
+  } catch (cause) {
+    const rollbackComplete = rollback({ liveVendor, transactionDir, oldVendor, published, oldEntries, ripgrepIdentity, cause });
+    const error = new Error(`vendor transaction: publish failed; rollback ${rollbackComplete ? 'complete' : 'conflicted'}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    error.cause = cause;
+    error.rollbackComplete = rollbackComplete;
+    throw error;
+  }
+}
+
+if (import.meta.main) {
+  const [command, liveVendor, candidateVendor, transactionDir] = process.argv.slice(2);
+  if (command !== 'publish' || !liveVendor || !candidateVendor || !transactionDir) {
+    console.error(`usage: ${basename(process.argv[1])} publish <live-vendor> <candidate-vendor> <transaction-dir>`);
+    process.exit(2);
+  }
+  try {
+    publishVendorTransaction({ liveVendor, candidateVendor, transactionDir });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+VENDOR_TRANSACTION_EOF
+chmod 700 "$CLAWGOD_DIR/vendor-transaction.mjs"
+
 if RIPGREP_OUTPUT=$("$BUN_BIN" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR" 2>&1); then
   info "$RIPGREP_OUTPUT"
 else
@@ -5073,22 +5210,12 @@ RUNTIME_HAD_SOURCE_VERSION=0
 RUNTIME_HAS_CANDIDATE_VENDOR=0
 RUNTIME_VENDOR_PUBLISH_STARTED=0
 
-move_vendor_entries() {
-  local source="$1" destination="$2" skip_ripgrep="${3:-0}" entry
-  [ -d "$source" ] || return 0
-  mkdir -p "$destination"
-  for entry in "$source"/* "$source"/.[!.]* "$source"/..?*; do
-    [ -e "$entry" ] || [ -L "$entry" ] || continue
-    [ "$skip_ripgrep" = "1" ] && [ "${entry##*/}" = "ripgrep" ] && continue
-    mv -- "$entry" "$destination/"
-  done
-}
-
 rollback_runtime_transaction() {
   [ "$RUNTIME_TRANSACTION_ACTIVE" = "1" ] || return 0
-  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ]; then
-    move_vendor_entries "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/failed-vendor" 1 || true
-    move_vendor_entries "$RUNTIME_TRANSACTION_DIR/old-vendor" "$CLAWGOD_DIR/vendor" || true
+  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ] && [ ! -f "$RUNTIME_TRANSACTION_DIR/.vendor-rollback-complete" ]; then
+    RUNTIME_TRANSACTION_ACTIVE=0
+    printf '%s\n' "clawgod: vendor rollback conflict; prior CLI was not restored; recovery data retained at $RUNTIME_TRANSACTION_DIR" >&2
+    return 0
   fi
   if [ "$RUNTIME_HAD_TARGET" = "1" ]; then
     cp -p "$RUNTIME_TRANSACTION_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs" 2>/dev/null || true
@@ -5101,19 +5228,13 @@ rollback_runtime_transaction() {
     rm -f "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
-  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ]; then
-    printf '%s\n' "clawgod: vendor publish rollback retained recovery data at $RUNTIME_TRANSACTION_DIR" >&2
-  else
-    rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
-  fi
+  rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
 }
 
 commit_runtime_transaction() {
   if [ "$RUNTIME_HAS_CANDIDATE_VENDOR" = "1" ]; then
-    mkdir -p "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/old-vendor"
     RUNTIME_VENDOR_PUBLISH_STARTED=1
-    move_vendor_entries "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/old-vendor" 1
-    move_vendor_entries "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$CLAWGOD_DIR/vendor"
+    "$BUN_BIN" "$CLAWGOD_DIR/vendor-transaction.mjs" publish "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$RUNTIME_TRANSACTION_DIR"
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
   rm -rf "$RUNTIME_TRANSACTION_DIR"
@@ -5895,9 +6016,10 @@ cat > "$CLAWGOD_DIR/repatch.mjs" << 'REPATCH_EOF'
 // native Claude binary. Invoked by cli.cjs when it detects that
 // .source-version no longer matches the latest binary in versions/.
 import { spawnSync } from 'child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
+import { publishVendorTransaction, VENDOR_ROLLBACK_COMPLETE } from './vendor-transaction.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const nativeBin = process.argv[2];
@@ -5942,51 +6064,8 @@ const sourceVersionSnapshot = snapshotFile(sourceVersion);
 const transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
 const candidateDir = join(transactionDir, 'candidate');
 const candidateVendor = join(candidateDir, 'vendor');
-const oldVendor = join(transactionDir, 'old-vendor');
 const vendorDir = join(here, 'vendor');
-const publishedVendor = [];
-
-function vendorEntries(path, skipRipgrep = false) {
-  if (!existsSync(path)) return [];
-  return readdirSync(path).filter(entry => !skipRipgrep || entry !== 'ripgrep');
-}
-
-function publishCandidateVendor() {
-  mkdirSync(vendorDir, { recursive: true });
-  mkdirSync(oldVendor);
-  for (const entry of vendorEntries(vendorDir, true)) {
-    renameSync(join(vendorDir, entry), join(oldVendor, entry));
-  }
-  for (const entry of vendorEntries(candidateVendor)) {
-    const destination = join(vendorDir, entry);
-    renameSync(join(candidateVendor, entry), destination);
-    const status = lstatSync(destination);
-    publishedVendor.push({ entry, dev: status.dev, ino: status.ino });
-  }
-}
-
-function rollbackPublishedVendor() {
-  let conflict = false;
-  for (const published of publishedVendor.reverse()) {
-    const path = join(vendorDir, published.entry);
-    if (!existsSync(path)) continue;
-    const status = lstatSync(path);
-    if (status.dev !== published.dev || status.ino !== published.ino) {
-      conflict = true;
-      continue;
-    }
-    rmSync(path, { recursive: true, force: true });
-  }
-  for (const entry of vendorEntries(oldVendor)) {
-    const destination = join(vendorDir, entry);
-    if (existsSync(destination)) {
-      conflict = true;
-      continue;
-    }
-    renameSync(join(oldVendor, entry), destination);
-  }
-  return !conflict;
-}
+let vendorPublishAttempted = false;
 
 try {
   mkdirSync(candidateDir);
@@ -6000,16 +6079,20 @@ try {
   renameSync(join(candidateDir, 'cli.original.cjs'), target);
   run('patcher', [patcher, '--enhancements-file', enhancementsFile]);
 
-  publishCandidateVendor();
   writeFileSync(sourceVersion, basename(nativeBin) + '\n');
+  vendorPublishAttempted = true;
+  publishVendorTransaction({ liveVendor: vendorDir, candidateVendor, transactionDir });
   rmSync(transactionDir, { recursive: true, force: true });
   console.log(`[clawgod] re-patched to ${basename(nativeBin)}`);
 } catch (error) {
-  restoreFile(target, targetSnapshot);
-  restoreFile(sourceVersion, sourceVersionSnapshot);
-  const vendorRestored = rollbackPublishedVendor();
-  if (vendorRestored) rmSync(transactionDir, { recursive: true, force: true });
-  else console.error(`repatch: vendor rollback conflict; recovery data retained at ${transactionDir}`);
+  const vendorRestored = !vendorPublishAttempted || existsSync(join(transactionDir, VENDOR_ROLLBACK_COMPLETE));
+  if (vendorRestored) {
+    restoreFile(target, targetSnapshot);
+    restoreFile(sourceVersion, sourceVersionSnapshot);
+    rmSync(transactionDir, { recursive: true, force: true });
+  } else {
+    console.error(`repatch: vendor rollback conflict; prior CLI was not restored; recovery data retained at ${transactionDir}`);
+  }
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 }

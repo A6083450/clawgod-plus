@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const repatcherSource = readFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), 'utf8');
+const vendorTransactionSource = readFileSync(new URL('../src/generic/runtime/vendor-transaction.mjs', import.meta.url), 'utf8');
 const fixtureRoot = mkdtempSync(join(tmpdir(), `clawgod repatch "quoted" 'selection' `));
 assert.equal(realpathSync(dirname(fixtureRoot)), realpathSync(tmpdir()), 'repatch fixture must be created directly under the system temporary directory');
 
@@ -40,6 +41,7 @@ try {
   assert.equal(realpathSync(dirname(fixtureBin)), realpathSync(fixtureRoot), 'repatch PATH must stay under the fixture root');
   writeFileSync(native, 'fixture native', 'utf8');
   writeFileSync(repatcher, repatcherSource, 'utf8');
+  writeFileSync(join(fixtureRoot, 'vendor-transaction.mjs'), vendorTransactionSource, 'utf8');
   writeFileSync(join(fixtureRoot, 'extract-natives.mjs'), `import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nconst output = process.argv.at(-1);\nconst native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');\nmkdirSync(join(output, 'vendor', 'candidate-addon', 'arm64-darwin'), { recursive: true });\nwriteFileSync(join(output, 'cli.original.js'), 'candidate source');\nwriteFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));\nchmodSync(native, 0o751);\n`, 'utf8');
   writeFileSync(join(fixtureRoot, 'post-process.mjs'), `import { writeFileSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\nwriteFileSync(join(dirname(import.meta.path), 'cli.original.cjs'), ${JSON.stringify(candidateRuntime)}, 'utf8');\n`, 'utf8');
   writeFileSync(join(fixtureRoot, 'patch.mjs'), `import { mkdirSync, writeFileSync } from 'node:fs';\nimport { dirname } from 'node:path';\nwriteFileSync(process.env.PATCH_ARGS, JSON.stringify(process.argv.slice(2)), 'utf8');\nif (process.env.PATCH_EXIT !== '0') { mkdirSync(dirname(process.env.EXTERNAL_REPLACEMENT), { recursive: true }); writeFileSync(process.env.EXTERNAL_REPLACEMENT, Buffer.from([0x55, 0xaa])); }\nprocess.exit(Number(process.env.PATCH_EXIT || 0));\n`, 'utf8');

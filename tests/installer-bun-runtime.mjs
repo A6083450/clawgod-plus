@@ -16,7 +16,7 @@ const canonicalPlatform = Object.fromEntries(
   ]),
 );
 const canonicalRuntime = Object.fromEntries(
-  ['fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
+  ['fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'vendor-transaction.mjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
     name,
     readFileSync(new URL(`../src/generic/runtime/${name}`, import.meta.url), 'utf8'),
   ]),
@@ -901,6 +901,7 @@ const unixTemplates = {
   'extract-natives.mjs': unixTemplate('extract-natives.mjs', 'cat > "$CLAWGOD_DIR/extract-natives.mjs" << \'EXTRACTOR_EOF\''),
   'post-process.mjs': unixTemplate('post-process.mjs', 'cat > "$CLAWGOD_DIR/post-process.mjs" << \'POSTPROC_EOF\''),
   'repatch.mjs': unixTemplate('repatch.mjs', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''),
+  'vendor-transaction.mjs': unixTemplate('vendor-transaction.mjs', 'cat > "$CLAWGOD_DIR/vendor-transaction.mjs" << \'VENDOR_TRANSACTION_EOF\''),
   'patch.mjs': unixTemplate('patch.mjs', 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\''),
   'fetch-file.mjs': unixTemplate('fetch-file.mjs', 'cat > "$CLAWGOD_DIR/fetch-file.mjs" << \'FETCH_FILE_EOF\''),
 };
@@ -908,6 +909,7 @@ const windowsTemplates = {
   'extract-natives.mjs': powerShellRuntimePayload('ExtractorBytes').toString('utf8').trimEnd(),
   'post-process.mjs': powerShellRuntimePayload('PostProcessorBytes').toString('utf8').trimEnd(),
   'repatch.mjs': powerShellRuntimePayload('RepatcherBytes').toString('utf8').trimEnd(),
+  'vendor-transaction.mjs': powerShellRuntimePayload('VendorTransactionBytes').toString('utf8').trimEnd(),
   'patch.mjs': powerShellRuntimePayload('PatcherBytes').toString('utf8').trimEnd(),
   'fetch-file.mjs': powerShellRuntimePayload('FetchFileBytes').toString('utf8').trimEnd(),
 };
@@ -919,6 +921,7 @@ const runtimeDefinitions = [
   ['extract-natives.mjs', 'extractor.mjs', 'ExtractorBytes', 'cat > "$CLAWGOD_DIR/extract-natives.mjs" << \'EXTRACTOR_EOF\''],
   ['post-process.mjs', 'post-processor.mjs', 'PostProcessorBytes', 'cat > "$CLAWGOD_DIR/post-process.mjs" << \'POSTPROC_EOF\''],
   ['repatch.mjs', 'repatcher.mjs', 'RepatcherBytes', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''],
+  ['vendor-transaction.mjs', 'vendor-transaction.mjs', 'VendorTransactionBytes', 'cat > "$CLAWGOD_DIR/vendor-transaction.mjs" << \'VENDOR_TRANSACTION_EOF\''],
   ['patch.mjs', 'patcher.mjs', 'PatcherBytes', 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\''],
   ['cli.cjs', 'wrapper.cjs', 'WrapperBytes', 'cat > "$CLAWGOD_DIR/cli.cjs" << \'WRAPPER_EOF\''],
   ['openai-proxy.cjs', 'openai-proxy.cjs', 'OpenAIProxyBytes', 'cat > "$CLAWGOD_DIR/openai-proxy.cjs" << \'PROXY_EOF\''],
@@ -1300,7 +1303,9 @@ assert.match(windowsApplyBlock, /if\s*\(\$patchStatus\s*-ne\s*0\)/, 'install.ps1
 assert.ok(windowsApplyBlock.indexOf('$patchStatus -ne 0') < windowsApplyBlock.indexOf('Invoke-ChromePostInstallFix'), 'install.ps1 must check patch status before Chrome/post-processing continuation');
 assert.match(windows, /\$RuntimeCandidateDir\s*=\s*Join-Path\s+\$RuntimeRollbackDir\s+"candidate"/, 'install.ps1 must stage candidate runtime files in its same-filesystem transaction');
 assert.match(windows, /&\s+\$BunBin\s+\$extractorPath\s+\$NativeBin\s+\$RuntimeCandidateDir/, 'install.ps1 must extract candidate native modules outside the live vendor');
-assert.match(windowsApplyBlock, /Move-Item[\s\S]*\$RuntimeCandidateVendor[\s\S]*\$RuntimeVendorDir/, 'install.ps1 must publish candidate native modules only after mandatory patches pass');
+assert.match(windowsApplyBlock, /vendor-transaction\.mjs"\) publish \$RuntimeVendorDir \$RuntimeCandidateVendor \$RuntimeRollbackDir/, 'install.ps1 must publish candidate native modules through the shared transaction helper only after mandatory patches pass');
+assert.match(windowsApplyBlock, /\.vendor-rollback-complete/, 'install.ps1 must restore the prior CLI only after the shared helper confirms complete vendor rollback');
+assert.doesNotMatch(windowsApplyBlock, /Move-Item[\s\S]*\$RuntimeCandidateVendor/, 'install.ps1 must not maintain a second native publication implementation');
 
 const repatchRoot = mkdtempSync(join(tmpdir(), `clawgod repatch "quoted" 'gate' `));
 assert.equal(realpathSync(dirname(repatchRoot)), realpathSync(tmpdir()), 'repatch fixture must be created directly under the system temporary directory');
@@ -1328,6 +1333,7 @@ try {
   assertTemporaryPath(fixtureBin, 'repatch PATH');
   writeFileSync(native, 'fixture native', 'utf8');
   writeFileSync(repatch, canonicalRuntime['repatcher.mjs'], 'utf8');
+  writeFileSync(join(repatchRoot, 'vendor-transaction.mjs'), canonicalRuntime['vendor-transaction.mjs'], 'utf8');
   writeFileSync(join(repatchRoot, 'extract-natives.mjs'), `import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nconst output = process.argv.at(-1);\nconst native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');\nmkdirSync(join(output, 'vendor', 'candidate-addon', 'arm64-darwin'), { recursive: true });\nwriteFileSync(join(output, 'cli.original.js'), 'candidate source');\nwriteFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));\nchmodSync(native, 0o751);\n`, 'utf8');
   writeFileSync(join(repatchRoot, 'post-process.mjs'), `import { writeFileSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\nwriteFileSync(join(dirname(import.meta.path), 'cli.original.cjs'), ${JSON.stringify(candidateRuntime)}, 'utf8');\n`, 'utf8');
   writeFileSync(join(repatchRoot, 'patch.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.PATCH_ARGS, JSON.stringify(process.argv.slice(2)), 'utf8');\nprocess.exit(Number(process.env.PATCH_EXIT||0));\n`, 'utf8');

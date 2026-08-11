@@ -304,7 +304,7 @@ if ($Uninstall) {
         Write-OK "Removed clawgod alias"
     }
 
-    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","openai-proxy.cjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache\claude-plugins","staging\claude-plugins",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
+    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","openai-proxy.cjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache\claude-plugins","staging\claude-plugins",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
@@ -382,6 +382,8 @@ $PluginDependenciesBytes = [Convert]::FromBase64String('@@CLAWGOD_PLUGIN_DEPENDE
 
 $InstallRipgrepBytes = [Convert]::FromBase64String('@@CLAWGOD_INSTALL_RIPGREP_MJS_BASE64@@')
 [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "install-ripgrep.mjs"), $InstallRipgrepBytes)
+$VendorTransactionBytes = [Convert]::FromBase64String('@@CLAWGOD_VENDOR_TRANSACTION_MJS_BASE64@@')
+[System.IO.File]::WriteAllBytes((Join-Path $ClawDir "vendor-transaction.mjs"), $VendorTransactionBytes)
 
 $ripgrepOutput = & $BunBin (Join-Path $ClawDir "install-ripgrep.mjs") $ClawDir 2>&1
 if ($LASTEXITCODE -ne 0) {
@@ -399,11 +401,11 @@ $RuntimeRollbackDir = Join-Path $ClawDir (".runtime-rollback." + [Guid]::NewGuid
 $RuntimeCandidateDir = Join-Path $RuntimeRollbackDir "candidate"
 $RuntimeCandidateVendor = Join-Path $RuntimeCandidateDir "vendor"
 $RuntimeVendorDir = Join-Path $ClawDir "vendor"
-$RuntimeOldVendor = Join-Path $RuntimeRollbackDir "old-vendor"
 $RuntimeHadTarget = Test-Path -LiteralPath $RuntimeTarget -PathType Leaf
 $RuntimeHadSourceVersion = Test-Path -LiteralPath $RuntimeSourceVersion -PathType Leaf
 $RuntimeTransactionCommitted = $false
 $RuntimeVendorPublishStarted = $false
+$VendorRollbackComplete = $false
 New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
 if ($RuntimeHadTarget) {
     Copy-Item -LiteralPath $RuntimeTarget -Destination (Join-Path $RuntimeRollbackDir "cli.original.cjs")
@@ -600,50 +602,33 @@ if ($patchStatus -ne 0) {
     exit $patchStatus
 }
 if (-not $NoUpgrade) {
-    New-Item -ItemType Directory -Force -Path $RuntimeVendorDir | Out-Null
-    New-Item -ItemType Directory -Path $RuntimeOldVendor | Out-Null
     $RuntimeVendorPublishStarted = $true
-    Get-ChildItem -Force $RuntimeVendorDir | Where-Object { $_.Name -ne "ripgrep" } | ForEach-Object {
-        Move-Item -LiteralPath $_.FullName -Destination $RuntimeOldVendor
-    }
-    if (Test-Path -LiteralPath $RuntimeCandidateVendor -PathType Container) {
-        Get-ChildItem -Force $RuntimeCandidateVendor | ForEach-Object {
-            Move-Item -LiteralPath $_.FullName -Destination $RuntimeVendorDir
-        }
+    & $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native vendor publication failed."
     }
 }
 $RuntimeTransactionCommitted = $true
 } finally {
     if (-not $RuntimeTransactionCommitted) {
-        if ($RuntimeVendorPublishStarted) {
-            $failedVendor = Join-Path $RuntimeRollbackDir "failed-vendor"
-            New-Item -ItemType Directory -Path $failedVendor -ErrorAction SilentlyContinue | Out-Null
-            if (Test-Path -LiteralPath $RuntimeVendorDir -PathType Container) {
-                Get-ChildItem -Force $RuntimeVendorDir | Where-Object { $_.Name -ne "ripgrep" } | ForEach-Object {
-                    Move-Item -LiteralPath $_.FullName -Destination $failedVendor -ErrorAction SilentlyContinue
-                }
+        $VendorRollbackComplete = -not $RuntimeVendorPublishStarted -or (Test-Path -LiteralPath (Join-Path $RuntimeRollbackDir ".vendor-rollback-complete") -PathType Leaf)
+        if ($VendorRollbackComplete) {
+            if ($RuntimeHadTarget) {
+                Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir "cli.original.cjs") -Destination $RuntimeTarget -Force
+            } else {
+                Remove-Item -LiteralPath $RuntimeTarget -Force -ErrorAction SilentlyContinue
             }
-            if (Test-Path -LiteralPath $RuntimeOldVendor -PathType Container) {
-                Get-ChildItem -Force $RuntimeOldVendor | ForEach-Object {
-                    Move-Item -LiteralPath $_.FullName -Destination $RuntimeVendorDir -ErrorAction SilentlyContinue
-                }
+            if ($RuntimeHadSourceVersion) {
+                Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir ".source-version") -Destination $RuntimeSourceVersion -Force
+            } else {
+                Remove-Item -LiteralPath $RuntimeSourceVersion -Force -ErrorAction SilentlyContinue
             }
-        }
-        if ($RuntimeHadTarget) {
-            Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir "cli.original.cjs") -Destination $RuntimeTarget -Force
         } else {
-            Remove-Item -LiteralPath $RuntimeTarget -Force -ErrorAction SilentlyContinue
-        }
-        if ($RuntimeHadSourceVersion) {
-            Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir ".source-version") -Destination $RuntimeSourceVersion -Force
-        } else {
-            Remove-Item -LiteralPath $RuntimeSourceVersion -Force -ErrorAction SilentlyContinue
+            Write-Err "Vendor rollback conflict; prior CLI was not restored; recovery data retained at $RuntimeRollbackDir"
         }
     }
-    if (-not $RuntimeVendorPublishStarted -or $RuntimeTransactionCommitted) {
+    if ($RuntimeTransactionCommitted -or $VendorRollbackComplete) {
         Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
-    } else {
-        Write-Err "Vendor publish rollback retained recovery data at $RuntimeRollbackDir"
     }
 }
 Invoke-ChromePostInstallFix

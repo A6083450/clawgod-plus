@@ -831,6 +831,7 @@ try {
     'src/generic/runtime/extractor.mjs',
     'src/generic/runtime/post-processor.mjs',
     'src/generic/runtime/repatcher.mjs',
+    'src/generic/runtime/vendor-transaction.mjs',
     'src/generic/runtime/wrapper.cjs',
     'src/generic/runtime/openai-proxy.cjs',
     'src/generic/runtime/claude-mem-compat.cjs',

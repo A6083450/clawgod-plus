@@ -3,9 +3,10 @@
 // native Claude binary. Invoked by cli.cjs when it detects that
 // .source-version no longer matches the latest binary in versions/.
 import { spawnSync } from 'child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
+import { publishVendorTransaction, VENDOR_ROLLBACK_COMPLETE } from './vendor-transaction.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const nativeBin = process.argv[2];
@@ -50,51 +51,8 @@ const sourceVersionSnapshot = snapshotFile(sourceVersion);
 const transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
 const candidateDir = join(transactionDir, 'candidate');
 const candidateVendor = join(candidateDir, 'vendor');
-const oldVendor = join(transactionDir, 'old-vendor');
 const vendorDir = join(here, 'vendor');
-const publishedVendor = [];
-
-function vendorEntries(path, skipRipgrep = false) {
-  if (!existsSync(path)) return [];
-  return readdirSync(path).filter(entry => !skipRipgrep || entry !== 'ripgrep');
-}
-
-function publishCandidateVendor() {
-  mkdirSync(vendorDir, { recursive: true });
-  mkdirSync(oldVendor);
-  for (const entry of vendorEntries(vendorDir, true)) {
-    renameSync(join(vendorDir, entry), join(oldVendor, entry));
-  }
-  for (const entry of vendorEntries(candidateVendor)) {
-    const destination = join(vendorDir, entry);
-    renameSync(join(candidateVendor, entry), destination);
-    const status = lstatSync(destination);
-    publishedVendor.push({ entry, dev: status.dev, ino: status.ino });
-  }
-}
-
-function rollbackPublishedVendor() {
-  let conflict = false;
-  for (const published of publishedVendor.reverse()) {
-    const path = join(vendorDir, published.entry);
-    if (!existsSync(path)) continue;
-    const status = lstatSync(path);
-    if (status.dev !== published.dev || status.ino !== published.ino) {
-      conflict = true;
-      continue;
-    }
-    rmSync(path, { recursive: true, force: true });
-  }
-  for (const entry of vendorEntries(oldVendor)) {
-    const destination = join(vendorDir, entry);
-    if (existsSync(destination)) {
-      conflict = true;
-      continue;
-    }
-    renameSync(join(oldVendor, entry), destination);
-  }
-  return !conflict;
-}
+let vendorPublishAttempted = false;
 
 try {
   mkdirSync(candidateDir);
@@ -108,16 +66,20 @@ try {
   renameSync(join(candidateDir, 'cli.original.cjs'), target);
   run('patcher', [patcher, '--enhancements-file', enhancementsFile]);
 
-  publishCandidateVendor();
   writeFileSync(sourceVersion, basename(nativeBin) + '\n');
+  vendorPublishAttempted = true;
+  publishVendorTransaction({ liveVendor: vendorDir, candidateVendor, transactionDir });
   rmSync(transactionDir, { recursive: true, force: true });
   console.log(`[clawgod] re-patched to ${basename(nativeBin)}`);
 } catch (error) {
-  restoreFile(target, targetSnapshot);
-  restoreFile(sourceVersion, sourceVersionSnapshot);
-  const vendorRestored = rollbackPublishedVendor();
-  if (vendorRestored) rmSync(transactionDir, { recursive: true, force: true });
-  else console.error(`repatch: vendor rollback conflict; recovery data retained at ${transactionDir}`);
+  const vendorRestored = !vendorPublishAttempted || existsSync(join(transactionDir, VENDOR_ROLLBACK_COMPLETE));
+  if (vendorRestored) {
+    restoreFile(target, targetSnapshot);
+    restoreFile(sourceVersion, sourceVersionSnapshot);
+    rmSync(transactionDir, { recursive: true, force: true });
+  } else {
+    console.error(`repatch: vendor rollback conflict; prior CLI was not restored; recovery data retained at ${transactionDir}`);
+  }
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 }

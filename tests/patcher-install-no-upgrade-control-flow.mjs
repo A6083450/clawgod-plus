@@ -83,7 +83,6 @@ try {
     ['head', '/usr/bin/head'],
     ['mkdir', '/bin/mkdir'],
     ['mktemp', '/usr/bin/mktemp'],
-    ['mv', '/bin/mv'],
     ['rm', '/bin/rm'],
     ['sed', '/usr/bin/sed'],
     ['sort', '/usr/bin/sort'],
@@ -91,10 +90,33 @@ try {
     ['touch', '/usr/bin/touch'],
     ['tr', '/usr/bin/tr'],
   ]) symlinkSync(target, join(fakeBin, name));
+  const fakeMv = join(fakeBin, 'mv');
+  writeFileSync(fakeMv, `#!${process.execPath}
+import { basename, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const operands = process.argv.slice(2).filter(value => value !== '--');
+const [source, destination] = operands;
+if (process.env.VENDOR_PUBLISH_FAULT === '1' && source?.includes('/candidate/vendor/')) {
+  if (existsSync(process.env.VENDOR_PUBLISH_MARKER)) process.exit(73);
+  const moved = spawnSync('/bin/mv', process.argv.slice(2), { stdio: 'inherit' });
+  if (moved.status !== 0) process.exit(moved.status ?? 1);
+  const published = join(destination, basename(source));
+  rmSync(published, { recursive: true, force: true });
+  mkdirSync(process.env.UNKNOWN_REPLACEMENT_DIR, { recursive: true });
+  writeFileSync(process.env.UNKNOWN_REPLACEMENT_PATH, Buffer.from([0x99, 0x00, 0xfe]));
+  writeFileSync(process.env.VENDOR_PUBLISH_MARKER, readFileSync(process.env.UNKNOWN_REPLACEMENT_PATH));
+  process.exit(0);
+}
+const child = spawnSync('/bin/mv', process.argv.slice(2), { stdio: 'inherit' });
+process.exit(child.status ?? 1);
+`, 'utf8');
+  chmodSync(fakeMv, 0o755);
   writeFileSync(fakeBun, `#!${process.execPath}
 import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 const [target, ...args] = process.argv.slice(2);
 if (target === '--version') {
   console.log('1.3.14');
@@ -126,6 +148,34 @@ if (name === 'install-ripgrep.mjs') {
   writeFileSync(join(output, 'cli.original.js'), '(function(exports,require,module,__filename,__dirname){})');
   writeFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));
   chmodSync(native, 0o751);
+  if (process.env.VENDOR_PUBLISH_FAULT === '1') {
+    const blocked = join(output, 'vendor', 'zz-blocked', 'arm64-darwin', 'zz-blocked.node');
+    mkdirSync(dirname(blocked), { recursive: true });
+    writeFileSync(blocked, Buffer.from([0xba, 0xdd, 0xca, 0xfe]));
+  }
+} else if (name === 'vendor-transaction.mjs') {
+  if (process.env.VENDOR_PUBLISH_FAULT !== '1') {
+    const child = spawnSync(process.execPath, [target, ...args], { env: process.env, stdio: 'inherit' });
+    process.exit(child.status ?? 1);
+  }
+  const { publishVendorTransaction } = await import(pathToFileURL(target).href);
+  try {
+    publishVendorTransaction({
+      liveVendor: args[1],
+      candidateVendor: args[2],
+      transactionDir: args[3],
+      afterPublish: ({ path, publishedCount }) => {
+        if (publishedCount !== 1) return;
+        rmSync(path, { recursive: true, force: true });
+        mkdirSync(process.env.UNKNOWN_REPLACEMENT_DIR, { recursive: true });
+        writeFileSync(process.env.UNKNOWN_REPLACEMENT_PATH, Buffer.from([0x99, 0x00, 0xfe]));
+        rmSync(join(args[2], 'zz-blocked'), { recursive: true, force: true });
+      },
+    });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 } else if (name === 'post-process.mjs') {
   const root = dirname(target);
   writeFileSync(join(root, 'cli.original.cjs'), '(function(exports,require,module,__filename,__dirname){})');
@@ -164,8 +214,10 @@ if (name === 'install-ripgrep.mjs') {
     const oldNative = join(vendor, 'native-addon', 'arm64-darwin', 'native-addon.node');
     const oldOnly = join(vendor, 'old-only', 'nested', 'data.bin');
     const candidateNative = join(vendor, 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');
+    const blockedNative = join(vendor, 'zz-blocked', 'arm64-darwin', 'zz-blocked.node');
     const ripgrep = join(vendor, 'ripgrep', 'bin', 'rg');
     const externalReplacement = join(vendor, 'external-replacement', 'data.bin');
+    const publishMarker = join(root, 'vendor-publish.marker');
     const savedConfig = '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n';
     mkdirSync(join(home, '.clawgod'), { recursive: true, mode: 0o700 });
     mkdirSync(temp, { recursive: true });
@@ -202,9 +254,17 @@ if (name === 'install-ripgrep.mjs') {
         PATCH_ARGS_MARKER: patchArgs,
         PATCH_EXIT: String(options.patchExit || 0),
         EXTERNAL_REPLACEMENT: externalReplacement,
+        VENDOR_PUBLISH_FAULT: options.publishFault ? '1' : '0',
+        VENDOR_PUBLISH_MARKER: publishMarker,
+        UNKNOWN_REPLACEMENT_DIR: dirname(candidateNative),
+        UNKNOWN_REPLACEMENT_PATH: candidateNative,
       },
     });
     const configAfter = statSync(configPath);
+    const transactionDirectories = readdirSync(join(home, '.clawgod')).filter(name => name.startsWith('.runtime-rollback.'));
+    const evidence = transactionDirectories.length === 1
+      ? join(home, '.clawgod', transactionDirectories[0], 'vendor-rollback-conflict.json')
+      : null;
     return {
       run,
       pluginHealth,
@@ -220,12 +280,14 @@ if (name === 'install-ripgrep.mjs') {
         oldNative: existsSync(oldNative) ? { bytes: readFileSync(oldNative), mode: statSync(oldNative).mode & 0o7777, ino: lstatSync(oldNative).ino } : null,
         oldOnly: existsSync(oldOnly) ? { bytes: readFileSync(oldOnly), mode: statSync(oldOnly).mode & 0o7777 } : null,
         candidate: existsSync(candidateNative) ? { bytes: readFileSync(candidateNative), mode: statSync(candidateNative).mode & 0o7777 } : null,
+        blocked: existsSync(blockedNative) ? readFileSync(blockedNative) : null,
         ripgrep: { bytes: readFileSync(ripgrep), mode: statSync(ripgrep).mode & 0o7777, ino: lstatSync(ripgrep).ino },
         oldNativeBefore,
         ripgrepBefore,
         externalReplacement: existsSync(externalReplacement) ? readFileSync(externalReplacement) : null,
       },
-      transactionDirectories: readdirSync(join(home, '.clawgod')).filter(name => name.startsWith('.runtime-rollback.')),
+      transactionDirectories,
+      recoveryEvidence: evidence && existsSync(evidence) ? JSON.parse(readFileSync(evidence, 'utf8')) : null,
     };
   }
 
@@ -280,6 +342,25 @@ if (name === 'install-ripgrep.mjs') {
   assert.deepEqual(failed.transactionDirectories, [], 'failed patch must remove staged candidate transaction data');
   assert.equal(failed.configBytes, '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n', 'failed patch must preserve saved config bytes');
   assert.equal(failed.configAfter.ino, failed.configBefore.ino, 'failed patch must preserve saved config identity');
+
+  const publishFailed = runLifecycleCase('vendor-publish-failure', [], {
+    priorRuntime: 'prior installed runtime\n',
+    publishFault: true,
+  });
+  assert.notEqual(publishFailed.run.status, 0, 'mid-publish failure must return nonzero');
+  assert.notEqual(publishFailed.runtime, 'prior installed runtime\n', 'vendor conflict must not restore the prior CLI against an incomplete vendor');
+  assert.notEqual(publishFailed.sourceVersion, '2.1.225\n', 'vendor conflict must not restore the prior source marker');
+  assert.deepEqual(publishFailed.vendor.oldNative.bytes, Buffer.from([0x00, 0x11, 0x80, 0xff]), 'vendor conflict recovery must restore prior native bytes');
+  assert.equal(publishFailed.vendor.oldNative.mode, 0o640, 'vendor conflict recovery must restore prior native mode');
+  assert.equal(publishFailed.vendor.oldNative.ino, publishFailed.vendor.oldNativeBefore.ino, 'vendor conflict recovery must restore prior native identity');
+  assert.deepEqual(publishFailed.vendor.oldOnly.bytes, Buffer.from([0xde, 0xad, 0xbe, 0xef]), 'vendor conflict recovery must restore nested old-only bytes');
+  assert.equal(publishFailed.vendor.oldOnly.mode, 0o605, 'vendor conflict recovery must restore nested old-only mode');
+  assert.deepEqual(publishFailed.vendor.candidate?.bytes, Buffer.from([0x99, 0x00, 0xfe]), 'unknown live replacement must remain at its original path');
+  assert.equal(publishFailed.vendor.blocked, null, 'failed candidate entry must not appear live');
+  assert.deepEqual(publishFailed.vendor.ripgrep.bytes, Buffer.from([0x72, 0x67, 0x00, 0xff]), 'mid-publish failure must preserve managed ripgrep bytes');
+  assert.equal(publishFailed.vendor.ripgrep.ino, publishFailed.vendor.ripgrepBefore.ino, 'mid-publish failure must preserve managed ripgrep identity');
+  assert.equal(publishFailed.transactionDirectories.length, 1, 'vendor conflict must retain one recovery transaction');
+  assert.equal(publishFailed.recoveryEvidence?.conflicts?.[0]?.reason, 'published-entry-identity-changed', 'vendor conflict must retain explicit identity evidence');
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
