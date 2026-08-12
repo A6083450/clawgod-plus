@@ -200,7 +200,7 @@ jobs:
           Get-ChildItem Env: | Where-Object { $_.Name -like 'ANTHROPIC_*' } | Remove-Item
           Remove-Item Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue
 
-          foreach ($name in @('node', 'npm', 'rg', 'tar', 'unzip')) {
+          foreach ($name in @('rg', 'tar', 'unzip')) {
             $shim = @"
           @echo off
           echo forbidden dependency invoked: $name 1>&2

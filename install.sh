@@ -2537,6 +2537,38 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify }) {
   return { status: 'applied', count: replacements.length, code: next };
 }
 
+async function applyClaudeApiSkillLazyDocsPatch(source, { dryRun, verify }) {
+  const appliedMarker = 'Only the essential reference is included to preserve context.';
+  if (source.includes(appliedMarker)) return { status: 'already', detail: 'already applied' };
+
+  const guide = source.indexOf('n.indexOf("## Reading Guide")');
+  if (guide === -1) return { status: 'skipped', detail: 'not present in this version' };
+  const beforeGuide = source.slice(Math.max(0, guide - 300), guide);
+  const startMatch = [...beforeGuide.matchAll(/function ([\w$]+)\(e,t,r\)\{let n=([\w$]+)\(r\.SKILL_PROMPT,r\),o=$/g)].at(-1);
+  if (!startMatch) return { status: 'failed', detail: 'prompt builder start marker not found' };
+  const start = guide - beforeGuide.length + startMatch.index;
+
+  const body = source.slice(start, start + 5000);
+  const referenceMatch = body.match(/,a=([\w$]+)\.replace\(\/\\\{lang\\\}\/g,e\?\?"unknown"\)/);
+  const subcommandMatch = body.match(/,([\w$]+)\(t\)!=="prompt-audit"/);
+  const docsMatch = body.match(/\+([\w$]+)\([^,]+,r\.SKILL_FILES,r\)\)/);
+  const endMatch = body.match(/;return s\.join\(`(?:\\n\\n|\n\n)`\)\}/);
+  if (!referenceMatch || !subcommandMatch || !docsMatch || !endMatch) {
+    return { status: 'failed', detail: 'prompt builder structure not recognized' };
+  }
+
+  const functionName = startMatch[1];
+  const promptFormatter = startMatch[2];
+  const referencePrompt = referenceMatch[1];
+  const parseSubcommand = subcommandMatch[1];
+  const formatDocs = docsMatch[1];
+  const replacement = `function ${functionName}(e,t,r){let n=${promptFormatter}(r.SKILL_PROMPT,r),o=n.indexOf("## Reading Guide"),s=[o!==-1?n.slice(0,o).trimEnd():n],a=${referencePrompt}.replace(/\\{lang\\}/g,e??"unknown"),p=${parseSubcommand}(t),d=[];if(p==="migrate")d.push("shared/model-migration.md");else if(p==="prompt-audit")d.push("shared/prompt-audit.md");else if(e)d.push(\`\${e}/claude-api/README.md\`);s.push(a);if(d.length)s.push(\`---\\n\\n## Included Documentation\\n\\n\`+${formatDocs}(d,r.SKILL_FILES,r));s.push("---\\n\\n## Additional Documentation\\n\\n${appliedMarker} When the task needs streaming, tools, files, batches, caching, token counting, managed agents, or another language-specific guide, use Read on the corresponding path in the skill files.");let l=n.indexOf("## When to Use WebFetch");if(l!==-1)s.push(n.slice(l).trimEnd());if(t)s.push(\`## User Request\\n\\n\${t}\`);return s.join(\`\\n\\n\`)}`;
+  if (verify) return { status: 'verify', count: 1 };
+  if (dryRun) return { status: 'applied', count: 1, code: source };
+  const end = start + endMatch.index + endMatch[0].length;
+  return { status: 'applied', count: 1, code: source.slice(0, start) + replacement + source.slice(end) };
+}
+
 async function applyContextLimitPatch(source, { dryRun, verify }) {
   const ENV_EXPR = '(+process.env.CLAUDE_CODE_CONTEXT_LIMIT||+process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS||200000)';
   const dualRe = /var\s+([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*32000\s*,\s*([\w$]+)\s*=\s*128000\s*,\s*([\w$]+)\s*=\s*1e6\b/;
@@ -3432,6 +3464,25 @@ for (const p of patches) {
     console.log(`  ⏭  ${p.name} (no change needed)`);
     skipped++;
   }
+}
+
+const claudeApiSkillPatch = await applyClaudeApiSkillLazyDocsPatch(code, { dryRun, verify });
+if (claudeApiSkillPatch.status === 'applied') {
+  if (!dryRun) code = claudeApiSkillPatch.code;
+  console.log(`  ✅ Claude API skill lazy docs (${claudeApiSkillPatch.count} replacement${claudeApiSkillPatch.count > 1 ? 's' : ''})`);
+  applied++;
+} else if (claudeApiSkillPatch.status === 'verify') {
+  console.log(`  ⬚  Claude API skill lazy docs — ${claudeApiSkillPatch.count} match(es), not yet applied`);
+  skipped++;
+} else if (claudeApiSkillPatch.status === 'already') {
+  console.log(`  ✅ Claude API skill lazy docs (${claudeApiSkillPatch.detail})`);
+  applied++;
+} else if (claudeApiSkillPatch.status === 'skipped') {
+  console.log(`  ⏭  Claude API skill lazy docs (${claudeApiSkillPatch.detail})`);
+  skipped++;
+} else {
+  console.log(`  ❌ Claude API skill lazy docs — ${claudeApiSkillPatch.detail}`);
+  failed++;
 }
 
 const contextLimitPatch = await applyContextLimitPatch(code, { dryRun, verify });

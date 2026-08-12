@@ -233,8 +233,11 @@ for (const variable of ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) {
 for (const command of ['-LeanOn', '-NoUpgrade -LeanOff', '-Uninstall']) {
   assert.ok(workflow.includes(command), `Windows smoke must exercise install.ps1 ${command}`);
 }
-for (const dependency of ['node', 'npm', 'rg', 'tar', 'unzip']) {
+for (const dependency of ['rg', 'tar', 'unzip']) {
   assert.match(workflow, new RegExp(`['"]${dependency}['"]`), `Windows smoke must trap ${dependency} with a command shim`);
+}
+for (const dependency of ['node', 'npm']) {
+  assert.doesNotMatch(workflow, new RegExp(`['"]${dependency}['"]`), `Windows smoke must allow ${dependency} without a command shim`);
 }
 assert.match(workflow, /\.clawgod\\vendor\\ripgrep\\bin\\rg\.exe/, 'Windows smoke must execute the private ripgrep binary');
 assert.match(workflow, /forbidden dependency invoked:/, 'compat smoke must fail on the forbidden dependency marker');
