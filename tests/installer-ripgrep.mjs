@@ -146,6 +146,11 @@ const unixModule = unixTemplate();
 const windowsModule = powerShellTemplate();
 const normalize = source => source.replace(/\r\n/g, '\n').trim();
 assert.equal(normalize(windowsModule), normalize(unixModule), 'Unix and Windows install-ripgrep.mjs bodies must be identical');
+assert.match(
+  unixModule,
+  /const staged = platform === 'win32' \? `\$\{target\}\.\$\{process\.pid\}\.staged\.exe` : `\$\{target\}\.\$\{process\.pid\}\.staged`;/,
+  'Windows staged ripgrep binaries must retain the .exe extension so Bun can execute their version smoke test',
+);
 
 const fixtureDir = mkdtempSync(join(tmpdir(), 'clawgod-ripgrep-'));
 assert.equal(realpathSync(dirname(fixtureDir)), realpathSync(tmpdir()), 'ripgrep fixture must be created directly under the system temporary directory');

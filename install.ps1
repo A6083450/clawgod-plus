@@ -937,7 +937,7 @@ export async function ensureRipgrep(root, options = {}) {
   const ripgrepDir = join(vendorDir, 'ripgrep');
   const binDir = join(ripgrepDir, 'bin');
   const target = join(binDir, platform === 'win32' ? 'rg.exe' : 'rg');
-  const staged = `${target}.${process.pid}.staged`;
+  const staged = platform === 'win32' ? `${target}.${process.pid}.staged.exe` : `${target}.${process.pid}.staged`;
   const backup = `${target}.previous`;
   const displaced = `${target}.${process.pid}.current`;
   const rootPath = resolve(root);
