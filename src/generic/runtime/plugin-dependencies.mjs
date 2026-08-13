@@ -27,6 +27,7 @@
 import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, unlinkSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export const PLUGIN_BASELINES = Object.freeze({
   hud: Object.freeze({
@@ -48,6 +49,12 @@ export const PLUGIN_BASELINES = Object.freeze({
     sha256: '468246a7b4981d4c014c2b58d9ee538700ffded075279d5810059cdc1abeb5f3',
     url: 'https://hub.211107.xyz/https://github.com/obra/superpowers/archive/refs/tags/v6.2.0.tar.gz',
   }),
+});
+
+export const PLUGIN_ENHANCEMENT_IDS = Object.freeze({
+  hud: 'claude-hud',
+  memory: 'claude-mem',
+  superpowers: 'superpowers',
 });
 
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
@@ -909,7 +916,7 @@ export async function restoreHud(context, state) {
   }
 }
 
-async function restoreClaudeMemIntegrations(context) {
+export async function restoreClaudeMemIntegrations(context) {
   const completedWrites = [];
   try {
     const statePath = join(context.clawgodDir, 'plugin-dependencies-state.json');
@@ -2474,21 +2481,84 @@ export function shouldConfigurePluginDependency(result) {
   return result?.ready === true && result.status !== 'warning';
 }
 
-export async function ensurePluginDependencies(context) {
-  const specs = [PLUGIN_BASELINES.hud, PLUGIN_BASELINES.memory, PLUGIN_BASELINES.superpowers];
-  const marketplaceResults = new Map();
-  for (const spec of specs) {
-    try {
-      marketplaceResults.set(spec.key, await ensureMarketplacePlugin(spec, context));
-    } catch (error) {
-      marketplaceResults.set(spec.key, warningResult(spec, error));
-    }
+export function enabledPluginKeys(selection) {
+  if (!selection || !Array.isArray(selection.enabled)) {
+    return new Set(Object.keys(PLUGIN_ENHANCEMENT_IDS));
   }
+  const enabled = new Set(selection.enabled);
+  const keys = new Set();
+  for (const [key, enhancementId] of Object.entries(PLUGIN_ENHANCEMENT_IDS)) {
+    if (enabled.has(enhancementId)) keys.add(key);
+  }
+  return keys;
+}
 
+async function resolvePluginSelection(context) {
+  const clawgodDir = resolve(context.clawgodDir);
+  const manifestPath = process.env.CLAWGOD_ENHANCEMENT_MANIFEST_FILE || join(clawgodDir, 'enhancement-manifest.json');
+  const configModulePath = process.env.CLAWGOD_ENHANCEMENT_CONFIG_MODULE || join(clawgodDir, 'enhancement-config.mjs');
+  const configPath = join(clawgodDir, 'enhancements.json');
+  let engine;
+  try {
+    engine = await import(pathToFileURL(configModulePath).href);
+  } catch {
+    return null;
+  }
+  let manifest;
+  try {
+    manifest = engine.loadEnhancementManifest(readFileSync(manifestPath, 'utf8'), { filename: 'enhancements.json' });
+  } catch {
+    return null;
+  }
+  let stored = null;
+  try {
+    stored = engine.parseStoredEnhancementConfig(readFileSync(configPath, 'utf8'), manifest);
+  } catch {
+    stored = null;
+  }
+  return engine.resolveEnhancementSelection({ stored }, manifest);
+}
+
+async function deselectedPluginResult(spec, context) {
+  if (spec.key === 'superpowers') {
+    return pluginResult(spec, 'disabled', false, null, 'management disabled; user installation retained');
+  }
+  let restoration;
+  try {
+    restoration = spec.key === 'hud'
+      ? await restoreHud(context)
+      : await restoreClaudeMemIntegrations(context);
+  } catch (error) {
+    return warningResult(spec, error);
+  }
+  if (restoration.failures.length > 0) {
+    return warningResult(spec, new Error(`deselection restoration failed: ${restoration.failures[0]}`));
+  }
+  return pluginResult(
+    spec,
+    'disabled',
+    false,
+    null,
+    `management disabled; restored ${restoration.restored.length} owned field(s)`,
+  );
+}
+
+export async function ensurePluginDependencies(context, selection) {
+  const specs = [PLUGIN_BASELINES.hud, PLUGIN_BASELINES.memory, PLUGIN_BASELINES.superpowers];
+  const enabled = enabledPluginKeys(selection);
   const state = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
   const results = [];
   for (const spec of specs) {
-    const marketplace = marketplaceResults.get(spec.key);
+    if (!enabled.has(spec.key)) {
+      results.push(await deselectedPluginResult(spec, context));
+      continue;
+    }
+    let marketplace;
+    try {
+      marketplace = await ensureMarketplacePlugin(spec, context);
+    } catch (error) {
+      marketplace = warningResult(spec, error);
+    }
     if (!shouldConfigurePluginDependency(marketplace) || spec.key === 'superpowers') {
       results.push(marketplace);
       continue;
@@ -2520,14 +2590,20 @@ function pluginContext() {
 }
 
 function printPluginResults(results) {
+  let ready = 0;
+  let disabled = 0;
   let warnings = 0;
   for (const result of results) {
-    const warning = result.status === 'warning' || !result.ready;
-    if (warning) warnings += 1;
+    const label = result.status === 'disabled'
+      ? 'disabled'
+      : (result.status === 'warning' || !result.ready) ? 'warning' : 'ready';
+    if (label === 'disabled') disabled += 1;
+    else if (label === 'warning') warnings += 1;
+    else ready += 1;
     const detail = String(result.detail || '').replace(/\s+/g, ' ').trim();
-    console.log(`${result.id}: ${warning ? 'warning' : 'ready'}${detail ? ` - ${detail}` : ''}`);
+    console.log(`${result.id}: ${label}${detail ? ` - ${detail}` : ''}`);
   }
-  console.log(`Optional plugins: ${results.length - warnings} ready, ${warnings} warning${warnings === 1 ? '' : 's'}`);
+  console.log(`Optional plugins: ${ready} ready, ${disabled} disabled, ${warnings} warnings`);
 }
 
 const MANAGED_ATOMIC_RESIDUE = /^\.(?:plugin-dependencies-state\.json|claude-hud-statusline\.mjs)\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
@@ -2565,7 +2641,8 @@ function cleanupManagedAtomicResidue(context) {
 async function runPluginDependenciesCli(command) {
   const context = pluginContext();
   if (command === 'ensure') {
-    printPluginResults(await ensurePluginDependencies(context));
+    const selection = await resolvePluginSelection(context);
+    printPluginResults(await ensurePluginDependencies(context, selection));
     return;
   }
   if (command === 'uninstall') {

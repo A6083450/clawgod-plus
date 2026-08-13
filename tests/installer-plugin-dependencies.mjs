@@ -10,6 +10,8 @@ const windows = await Bun.file(new URL('../install.ps1', import.meta.url)).text(
 const canonicalModulePath = fileURLToPath(new URL('../src/generic/runtime/plugin-dependencies.mjs', import.meta.url));
 const canonicalHudStatusLinePath = fileURLToPath(new URL('../src/generic/runtime/claude-hud-statusline.mjs', import.meta.url));
 const canonicalHudStatusLine = readFileSync(canonicalHudStatusLinePath, 'utf8');
+const canonicalEnhancementConfigPath = fileURLToPath(new URL('../src/generic/enhancement-config.mjs', import.meta.url));
+const canonicalEnhancementManifest = readFileSync(new URL('../src/generic/enhancements.json', import.meta.url), 'utf8');
 
 function records(id, version) {
   return { plugins: { [id]: [{ scope: 'user', version }] } };
@@ -254,6 +256,8 @@ try {
     copyFileSync(canonicalModulePath, lifecycleModule);
     chmodSync(lifecycleModule, 0o700);
     copyFileSync(canonicalHudStatusLinePath, join(clawgodDir, 'claude-hud-statusline.mjs'));
+    copyFileSync(canonicalEnhancementConfigPath, join(clawgodDir, 'enhancement-config.mjs'));
+    writeFileSync(join(clawgodDir, 'enhancement-manifest.json'), canonicalEnhancementManifest);
     writeFileSync(join(clawgodDir, 'cli.original.cjs'), 'process.exit(67);\n');
     writeFileSync(join(clawgodDir, 'fetch-file.mjs'), 'process.exit(68);\n');
     return {
@@ -319,7 +323,7 @@ try {
   const readyLifecycle = makeLifecycleFixture('ready');
   const readyEnsure = runLifecycleCommand(readyLifecycle, 'ensure');
   assert.equal(readyEnsure.exitCode, 0, new TextDecoder().decode(readyEnsure.stderr));
-  assert.deepEqual(outputLines(readyEnsure).slice(-1), ['Optional plugins: 3 ready, 0 warnings'], new TextDecoder().decode(readyEnsure.stdout));
+  assert.deepEqual(outputLines(readyEnsure).slice(-1), ['Optional plugins: 3 ready, 0 disabled, 0 warnings'], new TextDecoder().decode(readyEnsure.stdout));
   assert.equal(outputLines(readyEnsure).length, 4, 'ensure must print exactly three plugin lines and one summary');
   for (const id of Object.values(PLUGIN_BASELINES).map(spec => spec.id)) {
     assert.equal(outputLines(readyEnsure).filter(line => line.includes(id)).length, 1, `${id} must have exactly one result line`);
@@ -328,11 +332,57 @@ try {
   const warningLifecycle = makeLifecycleFixture('warning', 'latest');
   const warningEnsure = runLifecycleCommand(warningLifecycle, 'ensure');
   assert.equal(warningEnsure.exitCode, 0, new TextDecoder().decode(warningEnsure.stderr));
-  assert.deepEqual(outputLines(warningEnsure).slice(-1), ['Optional plugins: 2 ready, 1 warning']);
+  assert.deepEqual(outputLines(warningEnsure).slice(-1), ['Optional plugins: 2 ready, 0 disabled, 1 warnings']);
   assert.equal(outputLines(warningEnsure).length, 4, 'a warning must retain exactly three plugin lines and one summary');
   assert.equal(existsSync(warningLifecycle.hudConfig), false, 'a marketplace warning must skip only its dependent HUD configuration');
   const warningState = JSON.parse(readFileSync(warningLifecycle.statePath, 'utf8'));
   assert.equal(Object.keys(warningState.claudeMem.files).length, 2, 'a HUD warning must not stop claude-mem configuration');
+
+  function writeEnhancementSelection(fixture, mode, enabled = []) {
+    writeFileSync(join(fixture.clawgodDir, 'enhancements.json'), `${JSON.stringify({ schemaVersion: 1, mode, enabled }, null, 2)}\n`);
+  }
+
+  const hudOnlyLifecycle = makeLifecycleFixture('selection-hud-only');
+  writeEnhancementSelection(hudOnlyLifecycle, 'custom', ['claude-hud']);
+  const hudOnlyEnsure = runLifecycleCommand(hudOnlyLifecycle, 'ensure');
+  assert.equal(hudOnlyEnsure.exitCode, 0, new TextDecoder().decode(hudOnlyEnsure.stderr));
+  assert.deepEqual(outputLines(hudOnlyEnsure).slice(-1), ['Optional plugins: 1 ready, 2 disabled, 0 warnings'], new TextDecoder().decode(hudOnlyEnsure.stdout));
+  assert.equal(outputLines(hudOnlyEnsure).length, 4, 'HUD-only selection must print exactly three plugin lines and one summary');
+  assert.match(outputLines(hudOnlyEnsure).find(line => line.includes(PLUGIN_BASELINES.hud.id)), /: ready\b/, 'HUD-only selection must leave HUD ready');
+  assert.match(outputLines(hudOnlyEnsure).find(line => line.includes(PLUGIN_BASELINES.memory.id)), /: disabled\b.*restored/, 'HUD-only selection must disable and restore claude-mem');
+  assert.match(outputLines(hudOnlyEnsure).find(line => line.includes(PLUGIN_BASELINES.superpowers.id)), /: disabled\b.*retained/, 'HUD-only selection must disable and retain superpowers');
+
+  const noneLifecycle = makeLifecycleFixture('selection-none');
+  writeEnhancementSelection(noneLifecycle, 'custom', []);
+  const noneEnsure = runLifecycleCommand(noneLifecycle, 'ensure');
+  assert.equal(noneEnsure.exitCode, 0, new TextDecoder().decode(noneEnsure.stderr));
+  assert.deepEqual(outputLines(noneEnsure).slice(-1), ['Optional plugins: 0 ready, 3 disabled, 0 warnings'], new TextDecoder().decode(noneEnsure.stdout));
+  assert.equal(outputLines(noneEnsure).length, 4, 'empty selection must print exactly three plugin lines and one summary');
+  assert.match(outputLines(noneEnsure).find(line => line.includes(PLUGIN_BASELINES.hud.id)), /: disabled\b.*restored/, 'empty selection must disable and restore HUD');
+  assert.match(outputLines(noneEnsure).find(line => line.includes(PLUGIN_BASELINES.memory.id)), /: disabled\b.*restored/, 'empty selection must disable and restore claude-mem');
+  assert.match(outputLines(noneEnsure).find(line => line.includes(PLUGIN_BASELINES.superpowers.id)), /: disabled\b.*retained/, 'empty selection must disable and retain superpowers');
+
+  const deselectLifecycle = makeLifecycleFixture('selection-deselect-restores');
+  const memoryHookPath = join(deselectLifecycle.claudeConfigDir, 'plugins', 'cache', 'thedotmack', 'claude-mem', PLUGIN_BASELINES.memory.version, 'hooks', 'hooks.json');
+  const memoryMcpPath = join(deselectLifecycle.claudeConfigDir, 'plugins', 'cache', 'thedotmack', 'claude-mem', PLUGIN_BASELINES.memory.version, '.mcp.json');
+  const superpowersInstallPath = join(deselectLifecycle.claudeConfigDir, 'plugins', 'cache', 'superpowers-marketplace', 'superpowers', PLUGIN_BASELINES.superpowers.version);
+  writeFileSync(join(superpowersInstallPath, 'user-sentinel.txt'), 'user superpowers data\n');
+  const originalMemoryHook = readFileSync(memoryHookPath);
+  const originalMemoryMcp = readFileSync(memoryMcpPath);
+  const superpowersBefore = snapshotTree(superpowersInstallPath);
+  const deselectFirst = runLifecycleCommand(deselectLifecycle, 'ensure');
+  assert.equal(deselectFirst.exitCode, 0, new TextDecoder().decode(deselectFirst.stderr));
+  assert.deepEqual(outputLines(deselectFirst).slice(-1), ['Optional plugins: 3 ready, 0 disabled, 0 warnings'], new TextDecoder().decode(deselectFirst.stdout));
+  assert.equal(existsSync(deselectLifecycle.hudConfig), true, 'all-enabled ensure must configure the HUD');
+  assert.notDeepEqual(readFileSync(memoryHookPath), originalMemoryHook, 'all-enabled ensure must rewrite claude-mem hooks');
+  writeEnhancementSelection(deselectLifecycle, 'custom', []);
+  const deselectSecond = runLifecycleCommand(deselectLifecycle, 'ensure');
+  assert.equal(deselectSecond.exitCode, 0, new TextDecoder().decode(deselectSecond.stderr));
+  assert.deepEqual(outputLines(deselectSecond).slice(-1), ['Optional plugins: 0 ready, 3 disabled, 0 warnings'], new TextDecoder().decode(deselectSecond.stdout));
+  assert.equal(existsSync(deselectLifecycle.hudConfig), false, 'deselection must restore the originally absent HUD config');
+  assert.deepEqual(readFileSync(memoryHookPath), originalMemoryHook, 'deselection must restore owned claude-mem hooks');
+  assert.deepEqual(readFileSync(memoryMcpPath), originalMemoryMcp, 'deselection must restore owned claude-mem MCP');
+  assert.deepEqual(snapshotTree(superpowersInstallPath), superpowersBefore, 'superpowers deselection must retain the user installation');
 
   const cleanupLifecycle = makeLifecycleFixture('successful-uninstall-temp-cleanup');
   const cleanupEnsure = runLifecycleCommand(cleanupLifecycle, 'ensure');
