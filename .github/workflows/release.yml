@@ -55,12 +55,12 @@ jobs:
             echo
             echo '**macOS / Linux:**'
             echo '```bash'
-            echo "curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash"
+            echo "curl -fsSL https://github.com/${{ github.repository }}/releases/download/${tag}/install.sh | bash"
             echo '```'
             echo
             echo '**Windows (PowerShell):**'
             echo '```powershell'
-            echo "irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex"
+            echo "irm https://github.com/${{ github.repository }}/releases/download/${tag}/install.ps1 | iex"
             echo '```'
             if [ -n "$prev" ]; then
               echo
