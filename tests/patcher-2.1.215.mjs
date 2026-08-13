@@ -49,6 +49,8 @@ assert.match(
   'install.ps1 should render terminal refresh advice as a hint',
 );
 
+const FAST_FIXTURE_VERSION = '2.1.229';
+
 const fixture = `
 Version: 2.1.215
 function Bot(){return et(ulu,null)}
@@ -58,6 +60,12 @@ function oQt(){return Bot()?.enabled===!0&&ru()&&!X6()}
 function Sub(){let plan=currentPlan();return plan==="max"||plan==="pro"}
 function AA6(){if(vo5("hipaa"))return!1;return zQ()&&oL8().enabled}
 var ulu="tengu_review_bughunter_config";
+`;
+
+// @anthropic-ai/claude-code-darwin-arm64@2.1.229 constructs Fast requests as
+// `...fu!==void 0&&{speed:fu}` and beta headers from capability `.header`s.
+const fastFixture = `${fixture}
+function buildRequest(fast,existingBeta){let Fi=existingBeta?[{header:existingBeta}]:[],Fbr={name:"speed",header:"fast-mode-2026-02-01"},ae=fast,fu;if(!!fast)fu="fast";if(ae&&!Fi.includes(Fbr))Fi.push(Fbr);let Rc={model:"claude-opus-5",messages:[],...fu!==void 0&&{speed:fu}},headers={"anthropic-beta":Fi.map((St)=>St.header).toString()};return{body:Rc,headers}}
 `;
 
 for (const [name, patcher] of [
@@ -99,6 +107,16 @@ for (const [name, patcher] of [
       `${name}: no unverifiable Computer Use alternative`,
     );
     assert.match(firstOutput, /Result: \d+ applied, \d+ skipped, 0 failed/, `${name}: no patch failures`);
+
+    writeFileSync(join(dir, 'cli.original.cjs'), fastFixture, 'utf8');
+    const fast = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(fast.status, 0, `${name}: Fast fixture for upstream ${FAST_FIXTURE_VERSION}: ${fast.stdout + fast.stderr}`);
+    const fastPatched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    assert.match(
+      fastPatched,
+      /__clawgod_fast_messages_protocol__/,
+      `${name}: Fast Messages protocol marker missing for upstream ${FAST_FIXTURE_VERSION}`,
+    );
 
     const second = spawnSync(process.execPath, ['patch.mjs', '--dry-run'], { cwd: dir, encoding: 'utf8' });
     const secondOutput = second.stdout + second.stderr;
