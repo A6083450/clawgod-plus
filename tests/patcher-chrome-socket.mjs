@@ -7,8 +7,8 @@ import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
-const unixHelper = readFileSync(new URL('../apply-claude-code-chrome-fix.sh', import.meta.url), 'utf8');
-const powerShellHelper = readFileSync(new URL('../apply-claude-code-chrome-fix.ps1', import.meta.url), 'utf8');
+const unixHelper = readFileSync(new URL('../dist/unix/apply-claude-code-chrome-fix.sh', import.meta.url), 'utf8');
+const powerShellHelper = readFileSync(new URL('../dist/win/apply-claude-code-chrome-fix.ps1', import.meta.url), 'utf8');
 
 for (const [name, helper] of [
   ['apply-claude-code-chrome-fix.sh', unixHelper],

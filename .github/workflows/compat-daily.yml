@@ -10,8 +10,7 @@ on:
   push:
     branches: [main]
     paths:
-      - install.sh
-      - install.ps1
+      - 'dist/**'
       - 'apply-claude-code-*.sh'
       - 'apply-claude-code-*.ps1'
       - 'apply-claude-code-*.zip'
@@ -28,8 +27,7 @@ on:
       - .github/workflows/compat-daily.yml
   pull_request:
     paths:
-      - install.sh
-      - install.ps1
+      - 'dist/**'
       - 'apply-claude-code-*.sh'
       - 'apply-claude-code-*.ps1'
       - 'apply-claude-code-*.zip'
@@ -76,7 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           bun build.mjs --check
-          bash -n install.sh
+          bash -n dist/unix/install.sh
           bun scripts/rebuild-helper-zips.mjs --check
           for test in tests/*.mjs; do
             bun "$test"
@@ -532,7 +530,7 @@ jobs:
             if ($actual -cne $expected) { throw 'HUD golden fixture ANSI stdout did not match byte-for-byte' }
           }
 
-          $installer = Join-Path $env:GITHUB_WORKSPACE 'install.ps1'
+          $installer = Join-Path $env:GITHUB_WORKSPACE 'dist/win/install.ps1'
           $settingsPath = Join-Path $env:USERPROFILE '.claude\settings.json'
           New-Item -ItemType Directory -Force -Path (Split-Path -Parent $settingsPath) | Out-Null
           $initialSettings = [ordered]@{

@@ -96,6 +96,7 @@ const archives = [
   {
     output: join(root, 'apply-claude-code-chrome-fix.zip'),
     sources: ['apply-claude-code-chrome-fix.ps1', 'apply-claude-code-chrome-fix.sh'],
+    sourcePaths: ['dist/win/apply-claude-code-chrome-fix.ps1', 'dist/unix/apply-claude-code-chrome-fix.sh'],
   },
   {
     output: join(root, 'apply-claude-code-computer-use-fix.zip'),
@@ -103,8 +104,11 @@ const archives = [
   },
 ];
 
-async function archiveEntries(sources) {
-  return Promise.all(sources.map(async name => ({ name, data: await Bun.file(join(root, name)).bytes() })));
+async function archiveEntries(archive) {
+  return Promise.all(archive.sources.map(async (name, index) => ({
+    name,
+    data: await Bun.file(join(root, archive.sourcePaths?.[index] ?? name)).bytes(),
+  })));
 }
 
 async function main() {
@@ -114,7 +118,7 @@ async function main() {
 
   let stale = false;
   for (const archive of archives) {
-    const entries = await archiveEntries(archive.sources);
+    const entries = await archiveEntries(archive);
     const expected = buildStoredZip(entries);
     if (checkOnly) {
       let current;

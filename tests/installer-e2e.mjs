@@ -763,7 +763,7 @@ try {
   writeFileSync(claudeMemSentinelPath, claudeMemSentinel);
 
   const fullPluginValidation = e2eEnhancements === '';
-  const initialInstallOutput = run('initial --lean-on install', '/bin/bash', [join(root, 'install.sh'), '--lean-on', ...selectionArgs()]);
+  const initialInstallOutput = run('initial --lean-on install', '/bin/bash', [join(root, 'dist/unix/install.sh'), '--lean-on', ...selectionArgs()]);
   console.log(validatePatchSummary('unix initial', initialInstallOutput));
   console.log(validateEnhancementSummary(initialInstallOutput));
   validatePluginSummary(initialInstallOutput);
@@ -799,7 +799,7 @@ try {
   console.log(validateVersionEquality(wrapperVersion, sourceVersion));
   console.log(`installer source version: ${sourceVersion}`);
 
-  const noUpgradeOutput = run('no-upgrade --lean-off install', '/bin/bash', [join(root, 'install.sh'), '--no-upgrade', '--lean-off']);
+  const noUpgradeOutput = run('no-upgrade --lean-off install', '/bin/bash', [join(root, 'dist/unix/install.sh'), '--no-upgrade', '--lean-off']);
   console.log(validatePatchSummary('unix no-upgrade', noUpgradeOutput));
   console.log(validateEnhancementSummary(noUpgradeOutput));
   validatePluginSummary(noUpgradeOutput);
@@ -820,7 +820,7 @@ try {
 
   const expectedSettingsAfterUninstall = structuredClone(readSettings());
   delete expectedSettingsAfterUninstall.statusLine;
-  run('uninstall', '/bin/bash', [join(root, 'install.sh'), '--uninstall']);
+  run('uninstall', '/bin/bash', [join(root, 'dist/unix/install.sh'), '--uninstall']);
   console.log(validateUninstallCleanup({
     managedRoot: clawgodDir,
     settingsPath,

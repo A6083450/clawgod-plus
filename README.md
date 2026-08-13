@@ -311,7 +311,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 `~/.clawgod/.source-version` 记录被修改的原生版本。后续启动时，Wrapper 会检测官方 Claude Code 升级并对新二进制重新打补丁。
 
-安装器脚本是确定性生成产物：`src/` 是唯一事实来源，`install.sh` 与 `install.ps1` 由 `bun build.mjs` 生成，请勿手工编辑。
+安装器脚本是确定性生成产物：`src/` 是唯一事实来源，`dist/unix/install.sh` 与 `dist/win/install.ps1` 由 `bun build.mjs` 生成，请勿手工编辑。
 
 ## 更新
 

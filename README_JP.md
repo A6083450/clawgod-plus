@@ -303,7 +303,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 `~/.clawgod/.source-version` はパッチ対象のネイティブ版を記録します。その後の起動で Wrapper が公式 Claude Code の更新を検出し、新しいバイナリへ再パッチします。
 
-インストーラスクリプトは決定的に生成される成果物です。`src/` が唯一の正規ソースであり、`install.sh` と `install.ps1` は `bun build.mjs` によって生成されます。手動で編集しないでください。
+インストーラスクリプトは決定的に生成される成果物です。`src/` が唯一の正規ソースであり、`dist/unix/install.sh` と `dist/win/install.ps1` は `bun build.mjs` によって生成されます。手動で編集しないでください。
 
 ## アップデート
 

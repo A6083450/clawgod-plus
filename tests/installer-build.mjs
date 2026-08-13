@@ -35,8 +35,8 @@ const {
 
 assert.equal(GENERATED_HEADER, 'GENERATED FILE - edit src/ and run: bun build.mjs');
 assert.deepEqual(OUTPUTS, [
-  { template: 'src/template/install.sh', output: 'install.sh', mode: 0o755 },
-  { template: 'src/template/install.ps1', output: 'install.ps1', mode: 0o644 },
+  { template: 'src/template/install.sh', output: 'dist/unix/install.sh', mode: 0o755 },
+  { template: 'src/template/install.ps1', output: 'dist/win/install.ps1', mode: 0o644 },
 ]);
 assert.equal(Object.isFrozen(OUTPUTS), true, 'OUTPUTS must be frozen');
 assert.equal(OUTPUTS.every(Object.isFrozen), true, 'each OUTPUTS entry must be frozen');
@@ -135,10 +135,11 @@ function generatedPair(contentPrefix = 'new') {
 
 function originalPair(fixtureRoot) {
   const originals = [
-    { path: join(fixtureRoot, 'install.sh'), content: 'old:install.sh\n', mode: 0o751 },
-    { path: join(fixtureRoot, 'install.ps1'), content: 'old:install.ps1\n', mode: 0o640 },
+    { path: join(fixtureRoot, 'dist/unix/install.sh'), content: 'old:install.sh\n', mode: 0o751 },
+    { path: join(fixtureRoot, 'dist/win/install.ps1'), content: 'old:install.ps1\n', mode: 0o640 },
   ];
   for (const original of originals) {
+    mkdirSync(dirname(original.path), { recursive: true });
     writeFileSync(original.path, original.content);
     chmodSync(original.path, original.mode);
   }
@@ -171,15 +172,18 @@ const transactionRoot = mkdtempSync(join(tmpdir(), 'clawgod-build-transaction-')
 try {
   originalPair(transactionRoot);
   await writeGeneratedPair(generatedPair(), { rootDir: transactionRoot });
-  assert.equal(readFileSync(join(transactionRoot, 'install.sh'), 'utf8'), 'new:install.sh\n');
-  assert.equal(readFileSync(join(transactionRoot, 'install.ps1'), 'utf8'), 'new:install.ps1\n');
+  assert.equal(readFileSync(join(transactionRoot, 'dist/unix/install.sh'), 'utf8'), 'new:dist/unix/install.sh\n');
+  assert.equal(readFileSync(join(transactionRoot, 'dist/win/install.ps1'), 'utf8'), 'new:dist/win/install.ps1\n');
   if (process.platform === 'win32') {
     await checkGeneratedPair(generatedPair(), { rootDir: transactionRoot });
   } else {
-    assert.equal(statSync(join(transactionRoot, 'install.sh')).mode & 0o777, 0o755);
-    assert.equal(statSync(join(transactionRoot, 'install.ps1')).mode & 0o777, 0o644);
+    assert.equal(statSync(join(transactionRoot, 'dist/unix/install.sh')).mode & 0o777, 0o755);
+    assert.equal(statSync(join(transactionRoot, 'dist/win/install.ps1')).mode & 0o777, 0o644);
   }
-  assert.deepEqual(readdirSync(transactionRoot).sort(), ['install.ps1', 'install.sh'], 'successful publication must clean transaction files');
+  assert.deepEqual(readdirSync(transactionRoot).sort(), ['dist'], 'successful publication must clean transaction files');
+  assert.deepEqual(readdirSync(join(transactionRoot, 'dist')).sort(), ['unix', 'win'], 'the two platform output directories must remain');
+  assert.deepEqual(readdirSync(join(transactionRoot, 'dist/unix')).sort(), ['install.sh'], 'the Unix output directory must contain only its installer');
+  assert.deepEqual(readdirSync(join(transactionRoot, 'dist/win')).sort(), ['install.ps1'], 'the Windows output directory must contain only its installer');
 
   for (const fault of [
     { label: 'write', fileSystem: faultingFileSystem({ writeTarget: 'install.ps1.stage-' }) },
@@ -190,8 +194,10 @@ try {
     originalPair(transactionRoot);
     const before = {
       entries: readdirSync(transactionRoot).sort(),
-      shell: snapshot(join(transactionRoot, 'install.sh')),
-      powershell: snapshot(join(transactionRoot, 'install.ps1')),
+      unixEntries: readdirSync(join(transactionRoot, 'dist/unix')).sort(),
+      winEntries: readdirSync(join(transactionRoot, 'dist/win')).sort(),
+      shell: snapshot(join(transactionRoot, 'dist/unix/install.sh')),
+      powershell: snapshot(join(transactionRoot, 'dist/win/install.ps1')),
     };
     await assert.rejects(
       writeGeneratedPair(generatedPair(fault.label), { rootDir: transactionRoot, fileSystem: fault.fileSystem }),
@@ -200,8 +206,10 @@ try {
     );
     assert.deepEqual({
       entries: readdirSync(transactionRoot).sort(),
-      shell: snapshot(join(transactionRoot, 'install.sh')),
-      powershell: snapshot(join(transactionRoot, 'install.ps1')),
+      unixEntries: readdirSync(join(transactionRoot, 'dist/unix')).sort(),
+      winEntries: readdirSync(join(transactionRoot, 'dist/win')).sort(),
+      shell: snapshot(join(transactionRoot, 'dist/unix/install.sh')),
+      powershell: snapshot(join(transactionRoot, 'dist/win/install.ps1')),
     }, before, `${fault.label} failure must restore both original outputs byte-for-byte`);
   }
 } finally {
@@ -213,8 +221,8 @@ if (process.platform !== 'win32') {
   try {
     const pair = generatedPair('symlink');
     await writeGeneratedPair(pair, { rootDir: symlinkRoot });
-    renameSync(join(symlinkRoot, 'install.sh'), join(symlinkRoot, 'install.sh.target'));
-    symlinkSync('install.sh.target', join(symlinkRoot, 'install.sh'));
+    renameSync(join(symlinkRoot, 'dist/unix/install.sh'), join(symlinkRoot, 'dist/unix/install.sh.target'));
+    symlinkSync('install.sh.target', join(symlinkRoot, 'dist/unix/install.sh'));
     await assert.rejects(
       checkGeneratedPair(pair, { rootDir: symlinkRoot }),
       /stale.*install\.sh/i,
@@ -250,10 +258,10 @@ try {
     [0o666, 0o666],
     'Windows publication must normalize Unix executable bits to writable regular-file modes',
   );
-  chmodSync(join(windowsModeRoot, 'install.sh'), 0o600);
-  chmodSync(join(windowsModeRoot, 'install.ps1'), 0o600);
+  chmodSync(join(windowsModeRoot, 'dist/unix/install.sh'), 0o600);
+  chmodSync(join(windowsModeRoot, 'dist/win/install.ps1'), 0o600);
   await checkGeneratedPair(pair, { rootDir: windowsModeRoot, platform: 'win32' });
-  chmodSync(join(windowsModeRoot, 'install.sh'), 0o400);
+  chmodSync(join(windowsModeRoot, 'dist/unix/install.sh'), 0o400);
   await assert.rejects(
     checkGeneratedPair(pair, { rootDir: windowsModeRoot, platform: 'win32' }),
     /stale.*install\.sh/i,
@@ -382,8 +390,8 @@ await writeGeneratedPair(OUTPUTS.map(entry => ({ ...entry, content: \`\${generat
     'the second process must contend on the build lock before any stage write',
   );
   assert.equal(existsSync(join(signals, 'b-stage')), true, 'generation B must publish after generation A releases the lock');
-  assert.equal(readFileSync(join(concurrencyRoot, 'install.sh'), 'utf8'), 'generation-b:install.sh\n');
-  assert.equal(readFileSync(join(concurrencyRoot, 'install.ps1'), 'utf8'), 'generation-b:install.ps1\n');
+  assert.equal(readFileSync(join(concurrencyRoot, 'dist/unix/install.sh'), 'utf8'), 'generation-b:dist/unix/install.sh\n');
+  assert.equal(readFileSync(join(concurrencyRoot, 'dist/win/install.ps1'), 'utf8'), 'generation-b:dist/win/install.ps1\n');
 } finally {
   const allow = join(concurrencyRoot, 'signals', 'allow-a');
   if (existsSync(dirname(allow))) writeFileSync(allow, '');
@@ -521,8 +529,8 @@ await writeGeneratedPair(OUTPUTS.map(entry => ({ ...entry, content: \`\${generat
     false,
     'a failed acquire must not delete another process replacement lock',
   );
-  assert.equal(readFileSync(join(initializationRaceRoot, 'install.sh'), 'utf8'), 'initialization-b:install.sh\n');
-  assert.equal(readFileSync(join(initializationRaceRoot, 'install.ps1'), 'utf8'), 'initialization-b:install.ps1\n');
+  assert.equal(readFileSync(join(initializationRaceRoot, 'dist/unix/install.sh'), 'utf8'), 'initialization-b:dist/unix/install.sh\n');
+  assert.equal(readFileSync(join(initializationRaceRoot, 'dist/win/install.ps1'), 'utf8'), 'initialization-b:dist/win/install.ps1\n');
 } finally {
   const signals = join(initializationRaceRoot, 'signals');
   if (existsSync(signals)) {
@@ -626,8 +634,8 @@ try {
   );
   assert.equal(replacementPublished, true, 'the stale-lock quarantine race must publish a replacement lock');
   assert.equal(JSON.parse(readFileSync(lockPath, 'utf8')).token, replacementToken, 'stale reclaim must not delete the replacement lock path');
-  assert.equal(readFileSync(join(reclaimReplacementRoot, 'install.sh'), 'utf8'), 'old:install.sh\n');
-  assert.equal(readFileSync(join(reclaimReplacementRoot, 'install.ps1'), 'utf8'), 'old:install.ps1\n');
+  assert.equal(readFileSync(join(reclaimReplacementRoot, 'dist/unix/install.sh'), 'utf8'), 'old:install.sh\n');
+  assert.equal(readFileSync(join(reclaimReplacementRoot, 'dist/win/install.ps1'), 'utf8'), 'old:install.ps1\n');
 } finally {
   rmSync(reclaimReplacementRoot, { recursive: true, force: true });
 }
@@ -668,8 +676,8 @@ try {
   });
   assert.equal(replacementPublished, true, 'the release race must publish a replacement lock');
   assert.equal(JSON.parse(readFileSync(lockPath, 'utf8')).token, replacementToken, 'release must remove only its quarantined lock, not the replacement path');
-  assert.equal(readFileSync(join(releaseReplacementRoot, 'install.sh'), 'utf8'), 'published-before-release-replacement:install.sh\n');
-  assert.equal(readFileSync(join(releaseReplacementRoot, 'install.ps1'), 'utf8'), 'published-before-release-replacement:install.ps1\n');
+  assert.equal(readFileSync(join(releaseReplacementRoot, 'dist/unix/install.sh'), 'utf8'), 'published-before-release-replacement:dist/unix/install.sh\n');
+  assert.equal(readFileSync(join(releaseReplacementRoot, 'dist/win/install.ps1'), 'utf8'), 'published-before-release-replacement:dist/win/install.ps1\n');
 } finally {
   rmSync(releaseReplacementRoot, { recursive: true, force: true });
 }
@@ -730,7 +738,7 @@ for (const recoveryFault of ['published-target-remove', 'backup-restore-rename']
       get(target, property) {
         if (property === 'rm' && recoveryFault === 'published-target-remove') {
           return async (path, ...args) => {
-            if (!recoveryFailed && String(path) === join(recoveryRoot, 'install.sh')) {
+            if (!recoveryFailed && String(path) === join(recoveryRoot, 'dist/unix/install.sh')) {
               recoveryFailed = true;
               throw new Error('injected published-target removal failure');
             }
@@ -741,11 +749,11 @@ for (const recoveryFault of ['published-target-remove', 'backup-restore-rename']
           return async (source, destination) => {
             if (!publishFailed
               && String(source).includes('.install.ps1.stage-')
-              && String(destination) === join(recoveryRoot, 'install.ps1')) {
+              && String(destination) === join(recoveryRoot, 'dist/win/install.ps1')) {
               publishFailed = true;
               throw new Error('injected second-output publish failure');
             }
-            if (String(source).includes('.backup-') && String(destination) === join(recoveryRoot, 'install.sh')) {
+            if (String(source).includes('.backup-') && String(destination) === join(recoveryRoot, 'dist/unix/install.sh')) {
               if (recoveryFault === 'backup-restore-rename' && !recoveryFailed) {
                 recoveryFailed = true;
                 throw new Error('injected backup restore rename failure');
@@ -787,8 +795,8 @@ for (const recoveryFault of ['published-target-remove', 'backup-restore-rename']
         if (property === 'writeFile') {
           return async (path, ...args) => {
             if (!observedRecoveredOldGeneration && String(path).includes('.stage-')) {
-              assert.equal(readFileSync(join(recoveryRoot, 'install.sh'), 'utf8'), 'old:install.sh\n');
-              assert.equal(readFileSync(join(recoveryRoot, 'install.ps1'), 'utf8'), 'old:install.ps1\n');
+              assert.equal(readFileSync(join(recoveryRoot, 'dist/unix/install.sh'), 'utf8'), 'old:install.sh\n');
+              assert.equal(readFileSync(join(recoveryRoot, 'dist/win/install.ps1'), 'utf8'), 'old:install.ps1\n');
               const activeJournal = JSON.parse(readFileSync(journalPath, 'utf8'));
               assert.notEqual(activeJournal.id, failedTransactionId, 'failed transaction must recover before the new transaction stages bytes');
               observedRecoveredOldGeneration = true;
@@ -804,12 +812,17 @@ for (const recoveryFault of ['published-target-remove', 'backup-restore-rename']
       fileSystem: recoveryObserverFileSystem,
     });
     assert.equal(observedRecoveredOldGeneration, true, `${recoveryFault} must recover before new staging`);
-    assert.equal(readFileSync(join(recoveryRoot, 'install.sh'), 'utf8'), `recovered-${recoveryFault}:install.sh\n`);
-    assert.equal(readFileSync(join(recoveryRoot, 'install.ps1'), 'utf8'), `recovered-${recoveryFault}:install.ps1\n`);
+    assert.equal(readFileSync(join(recoveryRoot, 'dist/unix/install.sh'), 'utf8'), `recovered-${recoveryFault}:dist/unix/install.sh\n`);
+    assert.equal(readFileSync(join(recoveryRoot, 'dist/win/install.ps1'), 'utf8'), `recovered-${recoveryFault}:dist/win/install.ps1\n`);
     assert.deepEqual(
       readdirSync(recoveryRoot).sort(),
-      ['install.ps1', 'install.sh'],
+      ['dist'],
       `${recoveryFault} recovery must clean lock, journal, stage, backup, and commit evidence`,
+    );
+    assert.deepEqual(
+      readdirSync(join(recoveryRoot, 'dist')).sort(),
+      ['unix', 'win'],
+      `${recoveryFault} recovery must leave exactly the two platform output directories`,
     );
   } finally {
     rmSync(recoveryRoot, { recursive: true, force: true });
@@ -859,10 +872,12 @@ try {
     mkdirSync(dirname(destination), { recursive: true });
     copyFileSync(join(root, path), destination);
   }
-  writeFileSync(join(cliRoot, 'install.sh'), 'stale shell\n');
-  chmodSync(join(cliRoot, 'install.sh'), 0o600);
-  writeFileSync(join(cliRoot, 'install.ps1'), 'stale powershell\n');
-  chmodSync(join(cliRoot, 'install.ps1'), 0o600);
+  mkdirSync(join(cliRoot, 'dist/unix'), { recursive: true });
+  mkdirSync(join(cliRoot, 'dist/win'), { recursive: true });
+  writeFileSync(join(cliRoot, 'dist/unix/install.sh'), 'stale shell\n');
+  chmodSync(join(cliRoot, 'dist/unix/install.sh'), 0o600);
+  writeFileSync(join(cliRoot, 'dist/win/install.ps1'), 'stale powershell\n');
+  chmodSync(join(cliRoot, 'dist/win/install.ps1'), 0o600);
 
   const beforeCheck = snapshot(cliRoot);
   const staleCheck = spawnSync(process.execPath, ['build.mjs', '--check'], { cwd: cliRoot, encoding: 'utf8' });
@@ -880,8 +895,8 @@ try {
   const currentCheck = spawnSync(process.execPath, ['build.mjs', '--check'], { cwd: cliRoot, encoding: 'utf8' });
   assert.equal(currentCheck.status, 0, `--check must pass after generation: ${currentCheck.stderr}`);
   if (process.platform !== 'win32') {
-    assert.equal(statSync(join(cliRoot, 'install.sh')).mode & 0o777, 0o755, 'generated install.sh must be executable');
-    assert.equal(statSync(join(cliRoot, 'install.ps1')).mode & 0o777, 0o644, 'generated install.ps1 must be mode 0644');
+    assert.equal(statSync(join(cliRoot, 'dist/unix/install.sh')).mode & 0o777, 0o755, 'generated install.sh must be executable');
+    assert.equal(statSync(join(cliRoot, 'dist/win/install.ps1')).mode & 0o777, 0o644, 'generated install.ps1 must be mode 0644');
   }
 } finally {
   rmSync(cliRoot, { recursive: true, force: true });

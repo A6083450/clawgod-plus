@@ -82,20 +82,25 @@ jobs:
         run: |
           ver="${GITHUB_REF_NAME#v}"
           echo "Injecting version: $ver"
-          sed -i "s/^CLAWGOD_SELF_VERSION=\".*\"/CLAWGOD_SELF_VERSION=\"${ver}\"/" install.sh
-          sed -i "s/^\\\$ClawSelfVersion = \"[^\"]*\"/\$ClawSelfVersion = \"${ver}\"/" install.ps1
-          grep 'CLAWGOD_SELF_VERSION=' install.sh | head -1
-          grep 'ClawSelfVersion' install.ps1 | head -1
+          sed -i "s/^CLAWGOD_SELF_VERSION=\".*\"/CLAWGOD_SELF_VERSION=\"${ver}\"/" dist/unix/install.sh
+          sed -i "s/^\\\$ClawSelfVersion = \"[^\"]*\"/\$ClawSelfVersion = \"${ver}\"/" dist/win/install.ps1
+          grep 'CLAWGOD_SELF_VERSION=' dist/unix/install.sh | head -1
+          grep 'ClawSelfVersion' dist/win/install.ps1 | head -1
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF_NAME}"
+          # Upload from inside each platform directory so release assets keep their
+          # stable basenames (install.sh, install.ps1, apply-claude-code-chrome-fix.*).
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" install.sh install.ps1 apply-claude-code-chrome-fix.sh apply-claude-code-chrome-fix.ps1 --clobber
+            (cd dist/unix && gh release upload "$tag" install.sh apply-claude-code-chrome-fix.sh --clobber)
+            (cd dist/win && gh release upload "$tag" install.ps1 apply-claude-code-chrome-fix.ps1 --clobber)
           else
-            gh release create "$tag" install.sh install.ps1 apply-claude-code-chrome-fix.sh apply-claude-code-chrome-fix.ps1 \
+            gh release create "$tag" \
               --title "ClawGod Plus $tag" \
               --notes-file release-notes.md
+            (cd dist/unix && gh release upload "$tag" install.sh apply-claude-code-chrome-fix.sh)
+            (cd dist/win && gh release upload "$tag" install.ps1 apply-claude-code-chrome-fix.ps1)
           fi

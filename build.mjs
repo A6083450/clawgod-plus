@@ -2,15 +2,15 @@
 import { Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
 import * as defaultFileSystem from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadEnhancementManifest } from './src/generic/enhancement-config.mjs';
 
 export const GENERATED_HEADER = 'GENERATED FILE - edit src/ and run: bun build.mjs';
 export const OUTPUTS = Object.freeze([
-  Object.freeze({ template: 'src/template/install.sh', output: 'install.sh', mode: 0o755 }),
-  Object.freeze({ template: 'src/template/install.ps1', output: 'install.ps1', mode: 0o644 }),
+  Object.freeze({ template: 'src/template/install.sh', output: 'dist/unix/install.sh', mode: 0o755 }),
+  Object.freeze({ template: 'src/template/install.ps1', output: 'dist/win/install.ps1', mode: 0o644 }),
 ]);
 
 const ROOT_DIR = fileURLToPath(new URL('.', import.meta.url));
@@ -549,8 +549,8 @@ function transactionState(rootDir, transaction, entry) {
   return {
     ...entry,
     target,
-    stage: join(dirname(target), `.${entry.output}.stage-${transaction.id}`),
-    backup: join(dirname(target), `.${entry.output}.backup-${transaction.id}`),
+    stage: join(dirname(target), `.${basename(entry.output)}.stage-${transaction.id}`),
+    backup: join(dirname(target), `.${basename(entry.output)}.backup-${transaction.id}`),
   };
 }
 
@@ -688,8 +688,8 @@ async function publishGeneratedPair(outputs, {
     return {
       ...entry,
       target,
-      stage: join(dirname(target), `.${entry.output}.stage-${transactionId}`),
-      backup: join(dirname(target), `.${entry.output}.backup-${transactionId}`),
+      stage: join(dirname(target), `.${basename(entry.output)}.stage-${transactionId}`),
+      backup: join(dirname(target), `.${basename(entry.output)}.backup-${transactionId}`),
       original: await describePath(fileSystem, target),
     };
   }));
@@ -705,6 +705,9 @@ async function publishGeneratedPair(outputs, {
   };
 
   try {
+    for (const state of states) {
+      await fileSystem.mkdir(dirname(state.target), { recursive: true });
+    }
     await writeTransaction(fileSystem, rootDir, transaction);
     for (const state of states) {
       const mode = modeForPlatform(state.mode, platform);

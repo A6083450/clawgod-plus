@@ -9,8 +9,8 @@ import { inflateRawSync } from 'node:zlib';
 
 const root = new URL('../', import.meta.url);
 const helpers = [
-  { name: 'apply-claude-code-chrome-fix.sh', kind: 'sh', backup: 'backup-bridge-fallback', explicit: value => [value] },
-  { name: 'apply-claude-code-chrome-fix.ps1', kind: 'ps1', backup: 'backup-bridge-fallback' },
+  { name: 'apply-claude-code-chrome-fix.sh', path: 'dist/unix/apply-claude-code-chrome-fix.sh', kind: 'sh', backup: 'backup-bridge-fallback', explicit: value => [value] },
+  { name: 'apply-claude-code-chrome-fix.ps1', path: 'dist/win/apply-claude-code-chrome-fix.ps1', kind: 'ps1', backup: 'backup-bridge-fallback' },
   { name: 'apply-claude-code-computer-use-fix.sh', kind: 'sh', backup: 'backup-computer-use', explicit: value => [value] },
   {
     name: 'apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch.sh',
@@ -23,7 +23,7 @@ const helpers = [
     kind: 'ps1',
     backup: 'backup-ctxlimit',
   },
-].map(helper => ({ ...helper, source: readFileSync(new URL(helper.name, root), 'utf8') }));
+].map(helper => ({ ...helper, source: readFileSync(new URL(helper.path ?? helper.name, root), 'utf8') }));
 const ACORN_SHA512 = 'd883627a2de353f34bc25ffb7bbe277c84186720619fe3cbecc3c5885b379635e67019c8d8db7a24e21e8f82e1486e8038b4d13d642b40a684995d0867ed55b3';
 
 const failures = [];
@@ -271,6 +271,7 @@ const archives = [
   {
     zip: 'apply-claude-code-chrome-fix.zip',
     sources: ['apply-claude-code-chrome-fix.ps1', 'apply-claude-code-chrome-fix.sh'],
+    sourcePaths: ['dist/win/apply-claude-code-chrome-fix.ps1', 'dist/unix/apply-claude-code-chrome-fix.sh'],
   },
   {
     zip: 'apply-claude-code-computer-use-fix.zip',
@@ -283,7 +284,8 @@ for (const archive of archives) {
     const entries = readZipEntries(new URL(archive.zip, root));
     assert.deepEqual(entries.map(entry => entry.name), archive.sources, 'ZIP entry order must be stable');
     for (const [index, source] of archive.sources.entries()) {
-      assert.ok(entries[index].data.equals(readFileSync(new URL(source, root))), `${source} bytes must match source`);
+      const sourcePath = archive.sourcePaths?.[index] ?? source;
+      assert.ok(entries[index].data.equals(readFileSync(new URL(sourcePath, root))), `${source} bytes must match source`);
       assert.equal(entries[index].method, 0, `${source} must use stored ZIP method 0`);
       assert.notEqual(entries[index].flags & 0x0800, 0, `${source} must set the UTF-8 name flag`);
       assert.equal(entries[index].dosTime, 0, `${source} must use midnight DOS time`);
@@ -377,7 +379,7 @@ exit 9
   }
 
   for (const [index, helper] of unixHelpers.entries()) {
-    const script = new URL(helper.name, root);
+    const script = new URL(helper.path ?? helper.name, root);
 
     const auto = makeEnvironment(`auto-${index}`);
     const autoBundle = join(auto.home, '.clawgod', 'cli.original.cjs');

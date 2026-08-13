@@ -9,8 +9,8 @@ import { buildPatcherBundle, renderTemplate } from '../build.mjs';
 import { publishVendorTransaction } from '../src/generic/runtime/vendor-transaction.mjs';
 
 const vendorTransactionPath = fileURLToPath(new URL('../src/generic/runtime/vendor-transaction.mjs', import.meta.url));
-const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const unix = readFileSync(new URL('../dist/unix/install.sh', import.meta.url), 'utf8');
+const windows = readFileSync(new URL('../dist/win/install.ps1', import.meta.url), 'utf8');
 const windowsTemplate = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
 const canonicalPlatform = Object.fromEntries(
   ['unix/lifecycle.sh', 'unix/launcher.sh', 'windows/lifecycle.ps1', 'windows/launcher.cmd'].map(name => [

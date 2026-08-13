@@ -7,10 +7,10 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => readFileSync(join(root, path), 'utf8');
 const paths = {
-  installers: ['install.sh', 'install.ps1'],
+  installers: ['dist/unix/install.sh', 'dist/win/install.ps1'],
   helpers: [
-    'apply-claude-code-chrome-fix.sh',
-    'apply-claude-code-chrome-fix.ps1',
+    'dist/unix/apply-claude-code-chrome-fix.sh',
+    'dist/win/apply-claude-code-chrome-fix.ps1',
     'apply-claude-code-computer-use-fix.sh',
     'apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch.sh',
     'apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch.ps1',
@@ -42,9 +42,9 @@ function findReverseExtraction(source) {
   const matches = [];
   for (const [offset, line] of source.split(/\r?\n/).entries()) {
     const trimmed = line.trim();
-    if (/['"]\.\.\/install\.(?:sh|ps1)['"]/.test(trimmed)) {
+    if (/['"]\.\.\/(?:dist\/(?:unix|win)\/)?install\.(?:sh|ps1)['"]/.test(trimmed)) {
       matches.push({ lineNumber: offset + 1, line: trimmed });
-    } else if (/join\([^)]*root[^)]*,\s*['"]install\.(?:sh|ps1)['"]/.test(trimmed)) {
+    } else if (/join\([^)]*root[^)]*,\s*['"](?:dist\/(?:unix|win)\/)?install\.(?:sh|ps1)['"]/.test(trimmed)) {
       matches.push({ lineNumber: offset + 1, line: trimmed });
     }
   }
@@ -361,12 +361,14 @@ for (const reference of allowedReferences) {
 }
 
 const reverseExtractionFixtures = [
-  ['URL read install.sh', `readFileSync(new URL('../install.sh', import.meta.url), 'utf8')`],
-  ['URL read install.ps1', `readFileSync(new URL('../install.ps1', import.meta.url), 'utf8')`],
-  ['Bun.file read install.sh', `await Bun.file(new URL('../install.sh', import.meta.url)).text()`],
-  ['Bun.file read install.ps1', `await Bun.file(new URL('../install.ps1', import.meta.url)).text()`],
-  ['root join read install.sh', `readFileSync(join(root, 'install.sh'), 'utf8')`],
-  ['root join read install.ps1', `readFileSync(join(root, 'install.ps1'), 'utf8')`],
+  ['URL read dist Unix installer', `readFileSync(new URL('../dist/unix/install.sh', import.meta.url), 'utf8')`],
+  ['URL read dist Windows installer', `readFileSync(new URL('../dist/win/install.ps1', import.meta.url), 'utf8')`],
+  ['Bun.file read dist Unix installer', `await Bun.file(new URL('../dist/unix/install.sh', import.meta.url)).text()`],
+  ['Bun.file read dist Windows installer', `await Bun.file(new URL('../dist/win/install.ps1', import.meta.url)).text()`],
+  ['root join read dist Unix installer', `readFileSync(join(root, 'dist/unix/install.sh'), 'utf8')`],
+  ['root join read dist Windows installer', `readFileSync(join(root, 'dist/win/install.ps1'), 'utf8')`],
+  ['legacy URL read root install.sh', `readFileSync(new URL('../install.sh', import.meta.url), 'utf8')`],
+  ['legacy join read root install.ps1', `readFileSync(join(root, 'install.ps1'), 'utf8')`],
 ];
 for (const [label, source] of reverseExtractionFixtures) {
   assert.equal(findReverseExtraction(source).length, 1, `${label} must be detected as reverse extraction`);
@@ -374,6 +376,7 @@ for (const [label, source] of reverseExtractionFixtures) {
 const allowedReverseExtractionFixtures = [
   ['canonical template read', `readFileSync(new URL('../src/template/install.sh', import.meta.url), 'utf8')`],
   ['canonical launcher read', `readFileSync(new URL('../src/unix/launcher.sh', import.meta.url), 'utf8')`],
+  ['dist helper read', `readFileSync(new URL('../dist/unix/apply-claude-code-chrome-fix.sh', import.meta.url), 'utf8')`],
   ['fixture installer write', `writeFileSync(join(localClawgod, 'install.sh'), 'local installer', 'utf8')`],
 ];
 for (const [label, source] of allowedReverseExtractionFixtures) {
@@ -421,7 +424,7 @@ for (const path of testFiles) {
   assert.deepEqual(
     findReverseExtraction(source),
     [],
-    `tests/${path} must import/execute canonical src/ files instead of reverse-extracting the root generated installers`,
+    `tests/${path} must import/execute canonical src/ files instead of reverse-extracting the generated dist/ installers`,
   );
 }
 assert.deepEqual(
