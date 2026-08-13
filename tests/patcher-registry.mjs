@@ -22,7 +22,7 @@ const expectedManifest = [
 ];
 
 const expectedTask5Source = {
-  commit: 'MERGE-COMMIT-PLACEHOLDER',
+  commit: '6672d49',
   path: 'src/generic/patcher/registry.mjs',
   fileSha256: 'e624b24032aa99624231a10cc56bb7b9d5f44c1ecaa9815d9466fc9bae44d856',
   descriptorBlockLines: '45-60',
