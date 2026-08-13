@@ -90,6 +90,17 @@ function assertFastProtocol(name, output) {
 
 const fastResults = [];
 
+// Real 2.1.229 request closure: beta insertion is gated by `ae`, while body
+// speed is gated by `Fo.fastMode`. Forced policy must ultimately make these
+// states agree, but the current strict matcher must first reject this shape.
+const real229FastClosureFixture = `${fixture}
+function RA(name,header){return{name,header}}
+let Fbr=RA("speed","fast-mode-2026-02-01");
+function buildRequest(Fo,ae){let caps=[...Fo.capabilities];if(ae)caps.push(Fbr);let speed;if(Fo.fastMode)speed="fast";let body={model:"claude-opus-5",messages:[],...speed!==void 0&&{speed:speed}},headers={"anthropic-beta":caps.map((cap)=>cap.header).toString()};return{body,headers}}
+console.log(JSON.stringify(buildRequest({fastMode:!0,capabilities:[]},!1)));
+`;
+const real229Results = [];
+
 for (const [name, patcher] of [
   ['install.sh', extractUnixPatcher()],
   ['install.ps1', extractPowerShellPatcher()],
@@ -174,6 +185,16 @@ for (const [name, patcher] of [
     const second = spawnSync(process.execPath, ['patch.mjs', '--dry-run'], { cwd: dir, encoding: 'utf8' });
     const secondOutput = second.stdout + second.stderr;
     assert.notEqual(second.status, 0, `${name}: unmatched Fast capability must fail in dry run`);
+
+    writeFileSync(join(dir, 'cli.original.cjs'), real229FastClosureFixture, 'utf8');
+    const real229 = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    const output = real229.stdout + real229.stderr;
+    const after = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    real229Results.push({ name, status: real229.status, output });
+    assert.notEqual(real229.status, 0, `${name}: strict real 2.1.229 closure must fail`);
+    assert.match(output, /Fast Messages protocol.*Fast request body\/header closure not found; upstream shape changed/s, `${name}: Fast closure mismatch must be explicit`);
+    assert.match(output, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: Fast mismatch must be mandatory`);
+    assert.equal(after, real229FastClosureFixture, `${name}: failed Fast closure must not write the fixture`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -188,5 +209,6 @@ assert.equal(
     `${result.name}: patch=${result.patchStatus}, execute=${result.executeStatus}, ${result.protocolError ?? 'ok'}`,
   ).join('\n')}`,
 );
+assert.equal(real229Results.length, 2, 'strict real 2.1.229 closure must execute both patcher variants');
 
 console.log('patcher 2.1.215 checks passed');
