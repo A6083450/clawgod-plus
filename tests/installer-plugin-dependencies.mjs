@@ -54,7 +54,7 @@ function writeTarString(header, offset, length, value) {
   bytes.copy(header, offset);
 }
 
-function tarHeader({ name, type = '0', size = 0, mode = 0o755, modeField, sizeField, checksumStyle }) {
+function tarHeader({ name, type = '0', size = 0, mode = 0o755, modeField, sizeField, checksumStyle, linkname }) {
   const header = Buffer.alloc(512);
   writeTarString(header, 0, 100, name);
   writeTarString(header, 100, 8, modeField ?? `${mode.toString(8).padStart(7, '0')}\0`);
@@ -64,6 +64,7 @@ function tarHeader({ name, type = '0', size = 0, mode = 0o755, modeField, sizeFi
   writeTarString(header, 136, 12, '00000000000\0');
   header.fill(0x20, 148, 156);
   writeTarString(header, 156, 1, type);
+  if (linkname !== undefined) writeTarString(header, 157, 100, linkname);
   writeTarString(header, 257, 6, 'ustar\0');
   writeTarString(header, 263, 2, '00');
   const checksum = header.reduce((sum, byte) => sum + byte, 0);
@@ -1616,8 +1617,6 @@ process.exit(37);
     ['traversal', '../escape', '0'],
     ['absolute', '/tmp/escape', '0'],
     ['windows absolute', 'C:/escape', '0'],
-    ['symbolic link', 'repo/link', '2'],
-    ['hard link', 'repo/hard', '1'],
     ['device', 'repo/device', '3'],
   ];
   const outsideSentinel = join(fixtureRoot, 'escape');
@@ -1625,6 +1624,40 @@ process.exit(37);
     const bytes = rawTar([{ name, type }]);
     await rejectsArchive(extractPluginArchive, bytes, PLUGIN_BASELINES.hud, fixtureRoot, label, /unsafe|unsupported|link|device/i);
     assert.equal(existsSync(outsideSentinel), false, `${label} must not create an outside sentinel`);
+  }
+
+  const linkArchive = rawTar([
+    { name: 'link-repo/.claude-plugin/marketplace.json', data: JSON.stringify({ name: 'claude-hud', plugins: [{ name: 'claude-hud', source: './' }] }), mode: 0o644 },
+    { name: 'link-repo/.claude-plugin/plugin.json', data: JSON.stringify({ name: 'claude-hud', version: '0.7.0' }), mode: 0o644 },
+    { name: 'link-repo/README.md', data: 'fixture only\n', mode: 0o644 },
+    { name: 'link-repo/target.txt', data: 'symlink target content\n', mode: 0o644 },
+    { name: 'link-repo/hard-target.txt', data: 'hardlink target content\n', mode: 0o644 },
+    { name: 'link-repo/symlink.txt', type: '2', linkname: 'target.txt' },
+    { name: 'link-repo/hardlink.txt', type: '1', linkname: 'link-repo/hard-target.txt' },
+  ]);
+  const linkRoot = await extractPluginArchive(
+    linkArchive,
+    archiveSpec(PLUGIN_BASELINES.hud, linkArchive),
+    join(fixtureRoot, 'valid-links'),
+  );
+  assert.equal(readFileSync(join(linkRoot, 'symlink.txt'), 'utf8'), 'symlink target content\n', 'a symbolic link must extract as a copy of its resolved target');
+  assert.equal(readFileSync(join(linkRoot, 'hardlink.txt'), 'utf8'), 'hardlink target content\n', 'a hard link must extract as a copy of its referenced archive path');
+  for (const name of ['symlink.txt', 'hardlink.txt']) {
+    const status = lstatSync(join(linkRoot, name));
+    assert.equal(status.isSymbolicLink(), false, `${name} must not remain a symbolic link`);
+    assert.equal(status.isFile(), true, `${name} must be a regular file`);
+    assert.equal(status.nlink, 1, `${name} must not share an inode with its target`);
+  }
+
+  const unsafeLinks = [
+    ['symlink absolute target', 'link-repo/abs.txt', '2', '/etc/passwd'],
+    ['symlink escaping target', 'link-repo/esc.txt', '2', '../../escape'],
+    ['hardlink unseen target', 'link-repo/hard-unseen.txt', '1', 'link-repo/does-not-exist.txt'],
+    ['hardlink traversal target', 'link-repo/hard-trav.txt', '1', '../escape'],
+  ];
+  for (const [label, name, type, linkname] of unsafeLinks) {
+    const bytes = rawTar([{ name, type, linkname }]);
+    await rejectsArchive(extractPluginArchive, bytes, PLUGIN_BASELINES.hud, fixtureRoot, label, /unsafe|escape|unseen|link|device/i);
   }
 
   const secondRoot = await pluginArchive(PLUGIN_BASELINES.hud, { entries: { 'other-root/README.md': 'second root' } });
@@ -2115,7 +2148,7 @@ process.exit(67);
     mkdirSync(pluginRoot, { recursive: true });
     mkdirSync(cacheDirectory, { recursive: true });
     mkdirSync(join(root, 'bin'), { recursive: true });
-    const bytes = validArchives[spec.key];
+    const bytes = options.archiveBytes || validArchives[spec.key];
     const archivePath = join(cacheDirectory, `${spec.key}-${spec.version}.tar.gz`);
     if (options.archive !== false) writeFileSync(archivePath, bytes);
     writeFileSync(fetchPath, `await Bun.write(${JSON.stringify(fetchLogPath)}, 'called'); process.exit(79);\n`);
@@ -2271,6 +2304,24 @@ process.exit(67);
   assert.equal(JSON.stringify(installedSuperpowers.plugins['superpowers@claude-plugins-official']), officialRecordBefore, 'the official Superpowers record must remain byte-identical');
   assert.deepEqual(snapshotTree(join(superFixture.pluginRoot, 'cache', 'claude-plugins-official', 'superpowers')), officialCacheBefore, 'the official Superpowers cache must remain byte-identical');
   assert.equal(readCliLog(superFixture).some(entry => entry.args.join(' ').includes('superpowers@claude-plugins-official')), false, 'no command may target official Superpowers');
+
+  const lockfileArchive = await pluginArchive(PLUGIN_BASELINES.hud, {
+    root: 'lockfile-repo',
+    entries: {
+      'lockfile-repo/package.json': JSON.stringify({ name: 'claude-hud', version: '0.7.0', main: 'dist/index.js' }),
+      'lockfile-repo/package-lock.json': '{"name":"claude-hud","lockfileVersion":3}\n',
+      'lockfile-repo/bun.lock': '{ "lockfileVersion": 1 }\n',
+    },
+  });
+  const lockfileSpec = archiveSpec(PLUGIN_BASELINES.hud, lockfileArchive);
+  const lockfileFixture = makeTransactionFixture('lockfile-strip', lockfileSpec, 'missing', { known: false, archiveBytes: lockfileArchive });
+  const lockfileResult = await ensureMarketplacePlugin(lockfileSpec, lockfileFixture.context);
+  assert.equal(lockfileResult.status, 'installed', 'a plugin source carrying an npm lockfile must still install');
+  assert.equal(existsSync(join(lockfileFixture.persistentSource, 'package.json')), true, 'package.json must be retained in the managed source');
+  assert.equal(existsSync(join(lockfileFixture.persistentSource, 'bun.lock')), true, 'bun.lock must be retained in the managed source');
+  for (const lockfile of ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml']) {
+    assert.equal(existsSync(join(lockfileFixture.persistentSource, lockfile)), false, `${lockfile} must be stripped from the managed plugin source`);
+  }
 
   for (const [classification, expectedStatus, expectedReady] of [
     ['satisfied', 'preserved', true],

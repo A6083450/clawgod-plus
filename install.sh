@@ -2127,6 +2127,7 @@ const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 512 * 1024 * 1024;
 const MAX_ENTRIES = 50_000;
 const TAR_BLOCK_BYTES = 512;
+const NON_BUN_LOCKFILES = new Set(['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml']);
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
 
 export const HUD_CONFIG_TEXT = `{
@@ -3184,6 +3185,27 @@ function normalizeArchivePath(value, spec) {
   return normalized;
 }
 
+function resolveSymlinkTarget(parentParts, rootName, target, spec) {
+  if (typeof target !== 'string' || target.includes('\0')) throw new Error(`${spec.key}: unsafe symlink target`);
+  const portable = target.replace(/\\/g, '/');
+  if (!portable || portable.startsWith('/') || /^[A-Za-z]:/.test(portable)) {
+    throw new Error(`${spec.key}: unsafe symlink target`);
+  }
+  const parts = parentParts.slice();
+  for (const part of portable.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      if (parts.length <= 1) throw new Error(`${spec.key}: symlink escapes the archive root`);
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  if (parts.length <= 1) throw new Error(`${spec.key}: unsafe symlink target`);
+  if (parts[0] !== rootName) throw new Error(`${spec.key}: symlink escapes the archive root`);
+  return parts.join('/');
+}
+
 async function gunzipBounded(bytes, spec) {
   const chunks = [];
   let total = 0;
@@ -3247,7 +3269,7 @@ async function parseTar(bytes, spec) {
 
     const typeByte = header[156];
     const type = typeByte === 0 ? '0' : String.fromCharCode(typeByte);
-    if (!['0', '5', 'x', 'g', 'L'].includes(type)) {
+    if (!['0', '5', 'x', 'g', 'L', '1', '2'].includes(type)) {
       throw new Error(`${spec.key}: unsupported tar link or device entry`);
     }
     const metadata = type === 'x' || type === 'g' || type === 'L';
@@ -3294,7 +3316,21 @@ async function parseTar(bytes, spec) {
     if (seenPaths.has(path)) throw new Error(`${spec.key}: duplicate archive path`);
     seenPaths.add(path);
     roots.add(path.split('/')[0]);
-    entries.push({ path, type, data, executable: (mode & 0o111) !== 0 });
+    let linkTarget = null;
+    if (type === '1' || type === '2') {
+      const linkname = decodeTarText(header.subarray(157, 257), 'tar link', spec);
+      if (!linkname) throw new Error(`${spec.key}: malformed tar link entry`);
+      if (type === '1') {
+        const targetPath = normalizeArchivePath(linkname, spec);
+        if (!seenPaths.has(targetPath)) throw new Error(`${spec.key}: hardlink references an unseen archive path`);
+        linkTarget = targetPath;
+      } else {
+        const parentParts = path.split('/');
+        parentParts.pop();
+        linkTarget = resolveSymlinkTarget(parentParts, path.split('/')[0], linkname, spec);
+      }
+    }
+    entries.push({ path, type, data, executable: (mode & 0o111) !== 0, linkTarget });
   }
 
   if (!terminated) throw new Error(`${spec.key}: malformed tar terminator`);
@@ -3532,6 +3568,20 @@ function writeExclusive(path, bytes, executable, spec) {
   }
 }
 
+function materializeArchiveLink(stagingRoot, entry, spec) {
+  const sourcePath = join(stagingRoot, ...entry.linkTarget.split('/'));
+  let sourceBytes;
+  try {
+    const status = lstatSync(sourcePath);
+    if (status.isSymbolicLink() || !status.isFile() || status.nlink !== 1) return;
+    sourceBytes = readSingleLinkFile(sourcePath);
+  } catch {
+    return;
+  }
+  if (!sourceBytes) return;
+  writeExclusive(entry.target, sourceBytes.bytes, entry.executable, spec);
+}
+
 function readJson(path, spec) {
   try {
     return JSON.parse(readFileSync(path, 'utf8'));
@@ -3571,12 +3621,15 @@ export async function extractPluginArchive(bytes, spec, destination) {
   }
   const stagingRoot = mkdtempSync(join(destination, `.${spec.key}-${spec.version}-`));
   try {
+    const linkEntries = [];
     for (const entry of archive.entries) {
       const parent = ensureDirectory(stagingRoot, dirname(entry.path).replace(/\\/g, '/'), spec);
       const target = join(parent, entry.path.split('/').at(-1));
       if (entry.type === '5') ensureDirectory(stagingRoot, entry.path, spec);
+      else if (entry.type === '1' || entry.type === '2') linkEntries.push({ ...entry, target });
       else writeExclusive(target, entry.data, entry.executable, spec);
     }
+    for (const entry of linkEntries) materializeArchiveLink(stagingRoot, entry, spec);
     const sourceRoot = join(stagingRoot, archive.root);
     const manifest = readJson(join(sourceRoot, '.claude-plugin', 'marketplace.json'), spec);
     const expectedArchiveMarketplace = spec.archiveMarketplace || spec.marketplace;
@@ -3867,6 +3920,7 @@ function copyValidatedDirectory(source, destination, spec) {
     const destinationPath = join(destination, name);
     const status = lstatSync(sourcePath);
     if (status.isSymbolicLink()) throw new Error(`${spec.key}: staged source contains a link`);
+    if (NON_BUN_LOCKFILES.has(name)) continue;
     if (status.isDirectory()) copyValidatedDirectory(sourcePath, destinationPath, spec);
     else if (status.isFile() && status.nlink === 1) {
       const file = readSingleLinkFile(sourcePath);
