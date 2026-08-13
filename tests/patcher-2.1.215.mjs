@@ -122,6 +122,55 @@ function assertReal229Protocol(name, output) {
 
 const real229Results = [];
 
+// Real 2.1.229 Ze request builder: the betas travel as the body field
+// `betas:i$(l0s(ma))` after the `l0s`/`aku` allowlist filter; the bundled SDK
+// `messages.create` later destructures `{betas:n,...}` and emits the
+// `"anthropic-beta":n?.toString()` header itself. The fixture replicates the
+// Ze closure token shape (Fast speed gate, `ae`-gated push, simulated-proxy
+// `ma` derivation, betas + speed body fields) together with the real
+// `l0s`/`aku` allowlist behavior: third-party providers (`d0o()` false) drop
+// every capability that is not in `aku`, and Fbr is not in `aku`.
+const real229ZeFixture = `${fixture}
+function RA(name,header){return{name,header}}
+function i$(e){return e.map((t)=>t.header)}
+let Fbr=RA("speed","fast-mode-2026-02-01");
+var aku;let __clawgodCapAlpha=RA("alpha","existing-alpha"),__clawgodCapOmega=RA("omega","existing-omega");aku=new Set([__clawgodCapAlpha,__clawgodCapOmega]);
+var __clawgodFirstParty=!1;
+function d0o(){return __clawgodFirstParty}
+function l0s(e){if(d0o())return e;return e.filter((t)=>aku.has(t))}
+function fn(v){return!1}
+function E(m){}
+function $c(){return!0}function P3(){return!0}function xLe(){return!1}function T0(y){return!0}
+function K2f(o){return{}}
+function r_i(v){return!1}
+let cSt=RA("c","c-st"),Ll=!0,ee=!0,y="claude-opus-5",g="claude-opus-5",i={};
+function buildRequest(Fo,ae){let Fi=[...Fo.capabilities];let qi=K2f({hasThinking:Ll}),Wi=i.enablePromptCaching??r_i(g??Fo.model),fu;if($c()&&P3()&&!xLe()&&T0(y)&&!!Fo.fastMode)fu="fast";if(ae&&!Fi.includes(Fbr))Fi.push(Fbr);let $u=fn(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),ma=$u?Fi.filter((St)=>St===cSt):Fi;let Rc={model:"claude-opus-5",messages:[],...ee&&(!$u||ma.length>0)&&{betas:i$(l0s(ma))},...fu!==void 0&&{speed:fu}};return Rc}
+function snapshot(Fo,ae,firstParty){__clawgodFirstParty=firstParty;let Rc=buildRequest(Fo,ae),{betas:n}=Rc;return{betas:n??null,speed:Rc.speed??null,header:n?.toString()??""}}
+console.log(JSON.stringify({fastThirdParty:snapshot({fastMode:!0,capabilities:[__clawgodCapAlpha,__clawgodCapOmega]},!1,!1),fastThirdPartyDedup:snapshot({fastMode:!0,capabilities:[__clawgodCapAlpha,__clawgodCapAlpha,__clawgodCapOmega]},!1,!1),slowAePushedFirstParty:snapshot({fastMode:!1,capabilities:[]},!0,!0),slowThirdPartyPrior:snapshot({fastMode:!1,capabilities:[__clawgodCapAlpha]},!1,!1),fastAeFirstParty:snapshot({fastMode:!0,capabilities:[]},!0,!0)}));
+`;
+
+function assertReal229ZeProtocol(name, output) {
+  const checks = [
+    () => assert.deepEqual(output.fastThirdParty.betas, ['existing-alpha', 'existing-omega', 'fast-mode-2026-02-01'], `${name}: fast third-party betas must force the Fast capability through the l0s/aku allowlist`),
+    () => assert.equal(output.fastThirdParty.header, 'existing-alpha,existing-omega,fast-mode-2026-02-01', `${name}: fast third-party SDK header must carry the forced Fast capability`),
+    () => assert.equal(output.fastThirdParty.speed, 'fast', `${name}: fast third-party body must keep speed=fast`),
+    () => assert.deepEqual(output.fastThirdPartyDedup.betas, ['existing-alpha', 'existing-omega', 'fast-mode-2026-02-01'], `${name}: fast betas must deduplicate every capability`),
+    () => assert.deepEqual(output.slowAePushedFirstParty.betas, [], `${name}: slow first-party betas must drop the Fast capability pushed by ae`),
+    () => assert.equal(output.slowAePushedFirstParty.header, '', `${name}: slow first-party SDK header must drop the Fast capability`),
+    () => assert.equal(output.slowAePushedFirstParty.speed, null, `${name}: slow first-party body must keep no speed field`),
+    () => assert.deepEqual(output.slowThirdPartyPrior.betas, ['existing-alpha'], `${name}: slow third-party betas must keep allowlisted capabilities`),
+    () => assert.equal(output.slowThirdPartyPrior.speed, null, `${name}: slow third-party body must keep no speed field`),
+    () => assert.deepEqual(output.fastAeFirstParty.betas, ['fast-mode-2026-02-01'], `${name}: fast first-party betas must carry exactly one Fast capability`),
+    () => assert.equal(output.fastAeFirstParty.header, 'fast-mode-2026-02-01', `${name}: fast first-party SDK header must carry exactly one Fast capability`),
+    () => assert.equal(output.fastAeFirstParty.speed, 'fast', `${name}: fast first-party body must keep speed=fast`),
+  ];
+  const failures = [];
+  for (const check of checks) try { check(); } catch (error) { failures.push(error.message); }
+  if (failures.length) throw new Error(failures.join('\n'));
+}
+
+const real229ZeResults = [];
+
 for (const [name, patcher] of [
   ['install.sh', extractUnixPatcher()],
   ['install.ps1', extractPowerShellPatcher()],
@@ -239,6 +288,54 @@ for (const [name, patcher] of [
     assert.equal(verifyReal229.status, 0, `${name}: ${verifyReal229Output}`);
     assert.match(verifyReal229Output, /Fast Messages protocol — 1 match\(es\), not yet applied/, `${name}: verify must report the unapplied real 2.1.229 match`);
     assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), real229FastClosureFixture, `${name}: verify must not write the real 2.1.229 closure`);
+
+    writeFileSync(join(dir, 'cli.original.cjs'), real229ZeFixture, 'utf8');
+    const real229Ze = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    const zeOutput = real229Ze.stdout + real229Ze.stderr;
+    assert.equal(real229Ze.status, 0, `${name}: real 2.1.229 Ze closure must patch: ${zeOutput}`);
+    assert.match(zeOutput, /Fast Messages protocol \(1 replacement\)/, `${name}: real 2.1.229 Ze closure must report its replacement`);
+    const zeAfter = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    assert.notEqual(zeAfter, real229ZeFixture, `${name}: real 2.1.229 Ze closure patch must write`);
+    assert.match(zeAfter, /__clawgod_fast_messages_protocol__/, `${name}: real 2.1.229 Ze closure patch must add the idempotency marker`);
+    assert.match(zeAfter, /betas:\(\(\)=>\{/, `${name}: real 2.1.229 Ze closure must rewrite the betas body field`);
+    assert.doesNotMatch(zeAfter, /\{betas:i\$\(l0s\(ma\)\)\}/, `${name}: real 2.1.229 Ze closure must replace the raw betas field`);
+    const executeReal229Ze = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8' });
+    try {
+      assert.equal(executeReal229Ze.status, 0, `${name}: real 2.1.229 Ze fixture must execute: ${executeReal229Ze.stderr}`);
+      assertReal229ZeProtocol(name, JSON.parse(executeReal229Ze.stdout));
+    } catch (error) {
+      real229ZeResults.push({ name, status: real229Ze.status, protocolError: error instanceof Error ? error.message : String(error), output: zeOutput });
+      throw error;
+    }
+    real229ZeResults.push({ name, status: real229Ze.status, protocolError: null, output: zeOutput });
+
+    const zeRerun = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(zeRerun.status, 0, `${name}: patched real 2.1.229 Ze closure must re-run cleanly: ${zeRerun.stdout}${zeRerun.stderr}`);
+    assert.match(zeRerun.stdout + zeRerun.stderr, /Fast Messages protocol \(already applied\)/, `${name}: Ze re-run must recognize the idempotency marker`);
+
+    writeFileSync(join(dir, 'cli.original.cjs'), real229ZeFixture, 'utf8');
+    const verifyReal229Ze = spawnSync(process.execPath, ['patch.mjs', '--verify'], { cwd: dir, encoding: 'utf8' });
+    const verifyReal229ZeOutput = verifyReal229Ze.stdout + verifyReal229Ze.stderr;
+    assert.equal(verifyReal229Ze.status, 0, `${name}: ${verifyReal229ZeOutput}`);
+    assert.match(verifyReal229ZeOutput, /Fast Messages protocol — 1 match\(es\), not yet applied/, `${name}: verify must report the unapplied real 2.1.229 Ze match`);
+    assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), real229ZeFixture, `${name}: verify must not write the real 2.1.229 Ze closure`);
+
+    const invalidZeFixtures = [
+      ['mismatched real 2.1.229 Ze betas source', real229ZeFixture.replace('{betas:i$(l0s(ma))}', '{betas:i$(l0s(mm))}')],
+      ['ambiguous real 2.1.229 Ze closure', real229ZeFixture.replace('function snapshot(', `function duplicate(Fo,ae){let Fi=[...Fo.capabilities];let qi=K2f({hasThinking:Ll}),Wi=i.enablePromptCaching??r_i(g??Fo.model),fu;if($c()&&P3()&&!xLe()&&T0(y)&&!!Fo.fastMode)fu="fast";if(ae&&!Fi.includes(Fbr))Fi.push(Fbr);let $u=fn(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),ma=$u?Fi.filter((St)=>St===cSt):Fi;let Rc={model:"claude-opus-5",messages:[],...ee&&(!$u||ma.length>0)&&{betas:i$(l0s(ma))},...fu!==void 0&&{speed:fu}};return Rc}\nfunction snapshot(`)],
+      ['inconsistent real 2.1.229 Ze capability list', real229ZeFixture.replace('ma=$u?Fi.filter((St)=>St===cSt):Fi;', 'ma=$u?Fi.filter((St)=>St===cSt):Fj;')],
+      ['mismatched real 2.1.229 Ze speed variable', real229ZeFixture.replace('...fu!==void 0&&{speed:fu}', '...fu!==void 0&&{speed:fq}')],
+      ['mismatched real 2.1.229 Ze Fast registration', real229ZeFixture.replace('let Fbr=RA("speed","fast-mode-2026-02-01")', 'let Fbr=RA("speed","fast-mode-2027-01-01")')],
+    ];
+    for (const [label, invalidFixture] of invalidZeFixtures) {
+      writeFileSync(join(dir, 'cli.original.cjs'), invalidFixture, 'utf8');
+      const invalid = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+      const invalidOutput = invalid.stdout + invalid.stderr;
+      assert.notEqual(invalid.status, 0, `${name}: ${label} must fail`);
+      assert.match(invalidOutput, /Fast Messages protocol/, `${name}: ${label} must report Fast Messages protocol`);
+      assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
+      assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -258,6 +355,14 @@ assert.equal(
   real229Results.filter((result) => result.protocolError !== null).length,
   0,
   `real 2.1.229 forced passthrough protocol missing:\n${real229Results.map((result) =>
+    `${result.name}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
+  ).join('\n')}`,
+);
+assert.equal(real229ZeResults.length, 2, 'real 2.1.229 Ze closure must execute both patcher variants');
+assert.equal(
+  real229ZeResults.filter((result) => result.protocolError !== null).length,
+  0,
+  `real 2.1.229 Ze forced passthrough protocol missing:\n${real229ZeResults.map((result) =>
     `${result.name}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
   ).join('\n')}`,
 );

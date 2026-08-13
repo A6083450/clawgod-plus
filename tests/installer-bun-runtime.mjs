@@ -902,8 +902,24 @@ for (const [name, patcher] of [
   assert.match(patcher, /fast-mode-2026-02-01/, `${name} must include the Fast beta capability`);
   assert.match(patcher, /legacyRe/, `${name} must retain the frozen 2.1.215 Fast closure matcher`);
   assert.match(patcher, /realRe/, `${name} must match the real 2.1.229 Fast closure`);
+  assert.match(patcher, /real229ZeRe/, `${name} must match the real 2.1.229 Ze request builder`);
   assert.match(patcher, /===\s*["']fast["']/, `${name} must force the Fast beta capability from the speed field`);
 }
+
+// install.sh and install.ps1 must embed byte-identical Fast patch logic; only
+// the installer wrapper (heredoc vs here-string) may differ.
+function fastFunctionSlice(patcher) {
+  const start = patcher.indexOf('async function applyFastMessagesProtocolPatch');
+  const end = patcher.indexOf('\nconst patches = [', start);
+  assert.notEqual(start, -1, 'patcher must embed the Fast Messages patch function');
+  assert.notEqual(end, -1, 'patcher must close the Fast Messages patch function before the patch table');
+  return patcher.slice(start, end);
+}
+assert.equal(
+  fastFunctionSlice(unixTemplates['patch.mjs']),
+  fastFunctionSlice(windowsTemplates['patch.mjs']),
+  'install.sh and install.ps1 must embed byte-identical Fast Messages patch functions',
+);
 
 const unixApplyStart = unix.indexOf('dim "Applying patches ..."');
 const unixApplyEnd = unix.indexOf('\n# ─── Create default configs', unixApplyStart);

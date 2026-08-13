@@ -2657,7 +2657,20 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   const realRe = /let ([\w$]+)=\[\.\.\.([\w$.]+)\](?:;let ([\w$]+)=([^;]+)|,([\w$]+)=([^;]+))?;if\(([\w$]+)\)([\w$]+)\.push\(([\w$]+)\);let ([\w$]+);if\(([^;]+)\)([\w$]+)="fast";let ([\w$]+)=\{([^{}]*),\.\.\.([\w$]+)!==void 0&&\{speed(?::([\w$]+))?\}\}(?:,|;)headers=\{"anthropic-beta":([\w$]+)\.map\(\(([\w$]+)\)=>([\w$]+)\.header\)\.toString\(\)\};return\{body(?::([\w$]+))?,headers(?::([\w$]+))?\}/g;
   const realMatches = [...source.matchAll(realRe)];
 
-  const totalMatches = legacyMatches.length + realMatches.length;
+  // Real 2.1.229 Ze request builder: the body carries the betas as
+  // `...ee&&(!$u||ma.length>0)&&{betas:i$(l0s(ma))}` and the bundled SDK
+  // `messages.create` destructures `{betas:n,...}` and emits the
+  // `"anthropic-beta":n?.toString()` header itself. `l0s` filters through
+  // the `aku` allowlist (which drops the Fast capability for third-party
+  // providers), so the forced passthrough operates on the final betas:
+  // `speed==="fast"` is the only switch — while Fast is active the Fast
+  // beta capability is forced in and every capability is deduplicated;
+  // while the speed field is absent every Fast beta capability is removed.
+  // The independent `ae` eligibility no longer limits the beta list.
+  const real229ZeRe = /if\(\$c\(\)&&P3\(\)&&!xLe\(\)&&T0\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,2000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,2000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
+  const real229ZeMatches = [...source.matchAll(real229ZeRe)];
+
+  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length;
   if (totalMatches !== 1) {
     if (totalMatches === 0 && !hasFastBeta) return { status: 'skipped', detail: 'not present in this version' };
     return { status: 'failed', detail: totalMatches === 0 ? 'Fast request body/header closure not found; upstream shape changed' : `Fast request body/header closure matched ${totalMatches} times; refusing ambiguous patch` };
@@ -2673,19 +2686,41 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
     return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
   }
 
-  // Forced passthrough for the real 2.1.229 closure: `body.speed==="fast"`
-  // (driven by `Fo.fastMode`) is the only switch. While Fast is active the Fast
-  // beta capability is forced in and every capability is deduplicated; while
-  // the speed field is absent every Fast beta capability is removed. The
-  // independent `ae` eligibility no longer limits the beta header.
-  const [, capabilities, prior, aeSeparate, eligibilitySeparate, aeCombined, eligibilityCombined, pushCondition, pushCapabilities, fastCapability, speed, speedCondition, speedAssignment, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, mapParameter, mapHeader, returnBody, returnHeaders] = realMatches[0];
-  const aeName = aeSeparate ?? aeCombined;
-  if ((aeName && aeName !== pushCondition) || capabilities !== pushCapabilities || capabilities !== headerCapabilities || speed !== speedAssignment || speed !== bodySpeed || (bodySpeedValue && bodySpeedValue !== speed) || mapParameter !== mapHeader || (returnBody && returnBody !== body) || (returnHeaders && returnHeaders !== 'headers')) return { status: 'failed', detail: 'Fast request body/header closure matched an inconsistent Fast-state shape' };
+  if (realMatches.length === 1) {
+    // Forced passthrough for the legacy synthetic 2.1.229 closure:
+    // `body.speed==="fast"` (driven by `Fo.fastMode`) is the only switch. While
+    // Fast is active the Fast beta capability is forced in and every capability
+    // is deduplicated; while the speed field is absent every Fast beta
+    // capability is removed. The independent `ae` eligibility no longer limits
+    // the beta header.
+    const [, capabilities, prior, aeSeparate, eligibilitySeparate, aeCombined, eligibilityCombined, pushCondition, pushCapabilities, fastCapability, speed, speedCondition, speedAssignment, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, mapParameter, mapHeader, returnBody, returnHeaders] = realMatches[0];
+    const aeName = aeSeparate ?? aeCombined;
+    if ((aeName && aeName !== pushCondition) || capabilities !== pushCapabilities || capabilities !== headerCapabilities || speed !== speedAssignment || speed !== bodySpeed || (bodySpeedValue && bodySpeedValue !== speed) || mapParameter !== mapHeader || (returnBody && returnBody !== body) || (returnHeaders && returnHeaders !== 'headers')) return { status: 'failed', detail: 'Fast request body/header closure matched an inconsistent Fast-state shape' };
+    if (verify) return { status: 'verify', count: 1 };
+    const aeDeclaration = aeSeparate ? `;let ${aeSeparate}=${eligibilitySeparate}` : aeCombined ? `,${aeCombined}=${eligibilityCombined}` : '';
+    const replacement = `let ${capabilities}=[...${prior}]${aeDeclaration};let ${speed};if(${speedCondition})${speed}="fast";if(${speed}==="fast"&&!${capabilities}.includes(${fastCapability}))${capabilities}.push(${fastCapability});let ${body}={${bodyFields},...${speed}!==void 0&&{speed:${speed}}},headers={"anthropic-beta":${speed}==="fast"?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${mapParameter})=>${mapParameter}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('${FAST_BETA}'))__clawgodFastUniqueCapabilities.push('${FAST_BETA}');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${mapParameter})=>${mapParameter}.header).filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}").toString()};${MARKER}return{body:${body},headers}`;
+    if (dryRun) return { status: 'applied', count: 1, code: source };
+    const match = realMatches[0];
+    return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
+
+  // Forced passthrough for the real 2.1.229 Ze request builder: the matched
+  // span runs from the Fast speed gate through the `ae`-gated push, the
+  // simulated-proxy `$u`/`ma` derivation, the `betas` body field and the
+  // `speed` body field of the same request object. Only the `betas` field is
+  // rewritten (single minimal replacement); everything else is preserved
+  // byte-for-byte. The SDK later joins the betas array into the
+  // `anthropic-beta` header (`n?.toString()`).
+  const [, fastModeHolder, speed, ae, caps, fastCapability, simulatedProxy, envReader, betasSource, capsElse, filterParam, betaSpread, betaSerializer, betaAllowlist, speedTail] = real229ZeMatches[0];
+  if (caps !== capsElse) return { status: 'failed', detail: 'Fast request betas closure matched an inconsistent capability list' };
+  if (!source.includes(`${fastCapability}=RA("speed","${FAST_BETA}")`)) return { status: 'failed', detail: 'Fast beta capability registration shape changed' };
   if (verify) return { status: 'verify', count: 1 };
-  const aeDeclaration = aeSeparate ? `;let ${aeSeparate}=${eligibilitySeparate}` : aeCombined ? `,${aeCombined}=${eligibilityCombined}` : '';
-  const replacement = `let ${capabilities}=[...${prior}]${aeDeclaration};let ${speed};if(${speedCondition})${speed}="fast";if(${speed}==="fast"&&!${capabilities}.includes(${fastCapability}))${capabilities}.push(${fastCapability});let ${body}={${bodyFields},...${speed}!==void 0&&{speed:${speed}}},headers={"anthropic-beta":${speed}==="fast"?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${mapParameter})=>${mapParameter}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('${FAST_BETA}'))__clawgodFastUniqueCapabilities.push('${FAST_BETA}');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${mapParameter})=>${mapParameter}.header).filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}").toString()};${MARKER}return{body:${body},headers}`;
+  const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
+  const match = real229ZeMatches[0];
+  const betasIndex = match[0].lastIndexOf(betasField);
+  if (betasIndex === -1) return { status: 'failed', detail: 'Fast request betas field not found inside the matched Ze closure' };
+  const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
   if (dryRun) return { status: 'applied', count: 1, code: source };
-  const match = realMatches[0];
   return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
 }
 

@@ -2323,7 +2323,7 @@ Write-OK "Wrapper created (cli.cjs)"
 $patcherCode = @'
 #!/usr/bin/env bun
 /**
- * ClawGod Plus Universal Patcher
+ * ClawGod Plus Universal Patcher — 正则模式匹配, 跨版本兼容
  */
 import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
@@ -2687,7 +2687,20 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   const realRe = /let ([\w$]+)=\[\.\.\.([\w$.]+)\](?:;let ([\w$]+)=([^;]+)|,([\w$]+)=([^;]+))?;if\(([\w$]+)\)([\w$]+)\.push\(([\w$]+)\);let ([\w$]+);if\(([^;]+)\)([\w$]+)="fast";let ([\w$]+)=\{([^{}]*),\.\.\.([\w$]+)!==void 0&&\{speed(?::([\w$]+))?\}\}(?:,|;)headers=\{"anthropic-beta":([\w$]+)\.map\(\(([\w$]+)\)=>([\w$]+)\.header\)\.toString\(\)\};return\{body(?::([\w$]+))?,headers(?::([\w$]+))?\}/g;
   const realMatches = [...source.matchAll(realRe)];
 
-  const totalMatches = legacyMatches.length + realMatches.length;
+  // Real 2.1.229 Ze request builder: the body carries the betas as
+  // `...ee&&(!$u||ma.length>0)&&{betas:i$(l0s(ma))}` and the bundled SDK
+  // `messages.create` destructures `{betas:n,...}` and emits the
+  // `"anthropic-beta":n?.toString()` header itself. `l0s` filters through
+  // the `aku` allowlist (which drops the Fast capability for third-party
+  // providers), so the forced passthrough operates on the final betas:
+  // `speed==="fast"` is the only switch — while Fast is active the Fast
+  // beta capability is forced in and every capability is deduplicated;
+  // while the speed field is absent every Fast beta capability is removed.
+  // The independent `ae` eligibility no longer limits the beta list.
+  const real229ZeRe = /if\(\$c\(\)&&P3\(\)&&!xLe\(\)&&T0\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,2000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,2000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
+  const real229ZeMatches = [...source.matchAll(real229ZeRe)];
+
+  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length;
   if (totalMatches !== 1) {
     if (totalMatches === 0 && !hasFastBeta) return { status: 'skipped', detail: 'not present in this version' };
     return { status: 'failed', detail: totalMatches === 0 ? 'Fast request body/header closure not found; upstream shape changed' : `Fast request body/header closure matched ${totalMatches} times; refusing ambiguous patch` };
@@ -2703,19 +2716,41 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
     return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
   }
 
-  // Forced passthrough for the real 2.1.229 closure: `body.speed==="fast"`
-  // (driven by `Fo.fastMode`) is the only switch. While Fast is active the Fast
-  // beta capability is forced in and every capability is deduplicated; while
-  // the speed field is absent every Fast beta capability is removed. The
-  // independent `ae` eligibility no longer limits the beta header.
-  const [, capabilities, prior, aeSeparate, eligibilitySeparate, aeCombined, eligibilityCombined, pushCondition, pushCapabilities, fastCapability, speed, speedCondition, speedAssignment, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, mapParameter, mapHeader, returnBody, returnHeaders] = realMatches[0];
-  const aeName = aeSeparate ?? aeCombined;
-  if ((aeName && aeName !== pushCondition) || capabilities !== pushCapabilities || capabilities !== headerCapabilities || speed !== speedAssignment || speed !== bodySpeed || (bodySpeedValue && bodySpeedValue !== speed) || mapParameter !== mapHeader || (returnBody && returnBody !== body) || (returnHeaders && returnHeaders !== 'headers')) return { status: 'failed', detail: 'Fast request body/header closure matched an inconsistent Fast-state shape' };
+  if (realMatches.length === 1) {
+    // Forced passthrough for the legacy synthetic 2.1.229 closure:
+    // `body.speed==="fast"` (driven by `Fo.fastMode`) is the only switch. While
+    // Fast is active the Fast beta capability is forced in and every capability
+    // is deduplicated; while the speed field is absent every Fast beta
+    // capability is removed. The independent `ae` eligibility no longer limits
+    // the beta header.
+    const [, capabilities, prior, aeSeparate, eligibilitySeparate, aeCombined, eligibilityCombined, pushCondition, pushCapabilities, fastCapability, speed, speedCondition, speedAssignment, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, mapParameter, mapHeader, returnBody, returnHeaders] = realMatches[0];
+    const aeName = aeSeparate ?? aeCombined;
+    if ((aeName && aeName !== pushCondition) || capabilities !== pushCapabilities || capabilities !== headerCapabilities || speed !== speedAssignment || speed !== bodySpeed || (bodySpeedValue && bodySpeedValue !== speed) || mapParameter !== mapHeader || (returnBody && returnBody !== body) || (returnHeaders && returnHeaders !== 'headers')) return { status: 'failed', detail: 'Fast request body/header closure matched an inconsistent Fast-state shape' };
+    if (verify) return { status: 'verify', count: 1 };
+    const aeDeclaration = aeSeparate ? `;let ${aeSeparate}=${eligibilitySeparate}` : aeCombined ? `,${aeCombined}=${eligibilityCombined}` : '';
+    const replacement = `let ${capabilities}=[...${prior}]${aeDeclaration};let ${speed};if(${speedCondition})${speed}="fast";if(${speed}==="fast"&&!${capabilities}.includes(${fastCapability}))${capabilities}.push(${fastCapability});let ${body}={${bodyFields},...${speed}!==void 0&&{speed:${speed}}},headers={"anthropic-beta":${speed}==="fast"?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${mapParameter})=>${mapParameter}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('${FAST_BETA}'))__clawgodFastUniqueCapabilities.push('${FAST_BETA}');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${mapParameter})=>${mapParameter}.header).filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}").toString()};${MARKER}return{body:${body},headers}`;
+    if (dryRun) return { status: 'applied', count: 1, code: source };
+    const match = realMatches[0];
+    return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
+
+  // Forced passthrough for the real 2.1.229 Ze request builder: the matched
+  // span runs from the Fast speed gate through the `ae`-gated push, the
+  // simulated-proxy `$u`/`ma` derivation, the `betas` body field and the
+  // `speed` body field of the same request object. Only the `betas` field is
+  // rewritten (single minimal replacement); everything else is preserved
+  // byte-for-byte. The SDK later joins the betas array into the
+  // `anthropic-beta` header (`n?.toString()`).
+  const [, fastModeHolder, speed, ae, caps, fastCapability, simulatedProxy, envReader, betasSource, capsElse, filterParam, betaSpread, betaSerializer, betaAllowlist, speedTail] = real229ZeMatches[0];
+  if (caps !== capsElse) return { status: 'failed', detail: 'Fast request betas closure matched an inconsistent capability list' };
+  if (!source.includes(`${fastCapability}=RA("speed","${FAST_BETA}")`)) return { status: 'failed', detail: 'Fast beta capability registration shape changed' };
   if (verify) return { status: 'verify', count: 1 };
-  const aeDeclaration = aeSeparate ? `;let ${aeSeparate}=${eligibilitySeparate}` : aeCombined ? `,${aeCombined}=${eligibilityCombined}` : '';
-  const replacement = `let ${capabilities}=[...${prior}]${aeDeclaration};let ${speed};if(${speedCondition})${speed}="fast";if(${speed}==="fast"&&!${capabilities}.includes(${fastCapability}))${capabilities}.push(${fastCapability});let ${body}={${bodyFields},...${speed}!==void 0&&{speed:${speed}}},headers={"anthropic-beta":${speed}==="fast"?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${mapParameter})=>${mapParameter}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('${FAST_BETA}'))__clawgodFastUniqueCapabilities.push('${FAST_BETA}');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${mapParameter})=>${mapParameter}.header).filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}").toString()};${MARKER}return{body:${body},headers}`;
+  const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
+  const match = real229ZeMatches[0];
+  const betasIndex = match[0].lastIndexOf(betasField);
+  if (betasIndex === -1) return { status: 'failed', detail: 'Fast request betas field not found inside the matched Ze closure' };
+  const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
   if (dryRun) return { status: 'applied', count: 1, code: source };
-  const match = realMatches[0];
   return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
 }
 
@@ -2750,7 +2785,8 @@ const patches = [
     pattern: /function ([\w$]+)\(\)\{if\(!([\w$]+)\)\2=!0;return ([\w$]+)\}/g,
     replacer: (m, fn, flag, val) =>
       `function ${fn}(){if(!${flag}){${flag}=!0;try{let e=process.env.CLAUDE_INTERNAL_FC_OVERRIDES;if(e)${val}=JSON.parse(e)}catch(e){}}return ${val}}`,
-    unique: true,
+    unique: true,  // must match exactly 1
+    optional: true,  // v2.1.197+ refactored to schema-based env export; pattern no longer exists
   },
   {
     name: 'GrowthBook config overrides',
@@ -2758,6 +2794,7 @@ const patches = [
     replacer: (m, fn, next) =>
       `function ${fn}(){return null}${next}`,
     selectIndex: 0,
+    optional: true,  // v2.1.215+ GrowthBook functions restructured; pattern no longer matches
     validate: (match, code) => {
       const pos = code.indexOf(match);
       const nearby = code.substring(Math.max(0, pos - 500), pos + 500);
@@ -2766,8 +2803,8 @@ const patches = [
   },
   {
     name: 'Agent Teams always enabled',
-    pattern: /function ([\w$]+)\(\)\{if\(![\w$]+\(process\.env\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\)&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}/g,
-    replacer: (m, fn) => `function ${fn}(){return!0}`,
+    pattern: /function ([\w$]+)\(\)\{if\(![\w$]+\(process\.env\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\)&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}|function ([\w$]+)\(\)\{if\(![\w$]+\.[\w$]+&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}/g,
+    replacer: (m, fn1, fn2) => `function ${fn1||fn2}(){return!0}`,
     sentinel: 'tengu_amber_flint',
   },
   {
@@ -2891,8 +2928,11 @@ const patches = [
     sentinel: '{enabled:!1,pixelValidation',
   },
   {
-    // v2.1.92+: name:"ultraplan",get description(){...},argumentHint:"<prompt>",isEnabled:()=>fnRef()
-    // Older  : name:"ultraplan",description:`...`,argumentHint:"<prompt>",isEnabled:()=>!1
+    // v2.1.92+ shape: name:"ultraplan",get description(){...},argumentHint:"<prompt>",isEnabled:()=>fnRef()
+    // Older shape  : name:"ultraplan",description:`...`,argumentHint:"<prompt>",isEnabled:()=>!1
+    // The middle metadata block changed from a literal description to a getter,
+    // and the gate switched from a literal !1 to a GrowthBook-flag-check function call.
+    // Match both.
     name: 'Ultraplan enable',
     pattern: /(name:"ultraplan",[\s\S]{1,500}?argumentHint:"<prompt>",isEnabled:\(\)=>)(?:!1|[\w$]+\(\))/g,
     replacer: (m, prefix) => `${prefix}!0`,
@@ -2900,6 +2940,15 @@ const patches = [
     appliedMarker: 'argumentHint:"<prompt>",isEnabled:()=>!0',
   },
   {
+    // ≤v2.1.110: function X(){return Y("tengu_review_bughunter_config",null)?.enabled===!0}
+    // v2.1.119+: function X(){return Y("tengu_review_bughunter_config",null)} — bare getter
+    // v2.1.152+: same bare-getter shape, config also feeds cost_note/duration_note/model
+    // v2.1.214+: config key moved to a variable:
+    //   var Yau="tengu_review_bughunter_config";
+    //   function Fot(){return et(Yau,null)}
+    //   function rQt(){return Fot()?.enabled===!0&&ru()&&!J6()}
+    //   Patch rQt to always return true so ultrareview is unlocked.
+    //   Also match the old direct-literal form for <=2.1.213 compat.
     name: 'Ultrareview enable (rQt gate)',
     pattern: /function ([\w$]+)\(\)\{return ([\w$]+)\(\)\?\.enabled===!0&&[\w$]+\(\)&&![\w$]+\(\)\}/g,
     replacer: (m, fn) => `function ${fn}(){/*__clawgod_ultrareview_enabled__*/return!0}`,
@@ -2918,51 +2967,18 @@ const patches = [
     appliedMarker: ',enabled:!0}:{enabled:!0}}',
   },
   {
-    // v2.1.215+: the config key is stored in ulu and the gate moved away
-    // from the getter. Preserve every declaration between them and replace
-    // only the gate; deleting that span leaves runtime references undefined.
+    // v2.1.215+: the getter now uses a variable indirection — e.g.
+    //   function Bot(){return et(ulu,null)}   (ulu = "tengu_review_bughunter_config")
+    //   function oQt(){return Bot()?.enabled===!0&&ru()&&!X6()}
+    // The old pattern can't match because et() receives a variable, not the
+    // literal string. Match the getter (which uses ulu) and gate function
+    // together. The ulu variable reference is unique to this feature.
     name: 'Ultrareview enable (v2.1.215+ gate)',
     pattern: /(function ([\w$]+)\(\)\{return [\w$]+\(ulu,null\)\})([\s\S]{0,1500}?)(function ([\w$]+)\(\)\{return \2\(\)\?\.enabled===!0&&[\w$]+\(\)&&![\w$]+\(\)\})/g,
     replacer: (m, getterDef, getter, between, gateDef, gate) =>
       `${getterDef}${between}function ${gate}(){/*__clawgod_ultrareview_enabled__*/return!0}`,
     sentinel: 'var ulu="tengu_review_bughunter_config"',
     appliedMarker: '/*__clawgod_ultrareview_enabled__*/',
-  },
-  {
-    name: 'Logo + brand color → green (RGB dark)',
-    pattern: /clawd_body:"rgb\(215,119,87\)"/g,
-    replacer: () => 'clawd_body:"rgb(34,197,94)"',
-    sentinel: 'clawd_body:"rgb(215,119,87)"',
-  },
-  {
-    name: 'Logo + brand color → green (ANSI)',
-    pattern: /clawd_body:"ansi:redBright"/g,
-    replacer: () => 'clawd_body:"ansi:greenBright"',
-    sentinel: 'clawd_body:"ansi:redBright"',
-  },
-  {
-    name: 'Theme claude color → green (dark)',
-    pattern: /claude:"rgb\(215,119,87\)"/g,
-    replacer: () => 'claude:"rgb(34,197,94)"',
-    sentinel: 'claude:"rgb(215,119,87)"',
-  },
-  {
-    name: 'Theme claude color → green (light)',
-    pattern: /claude:"rgb\(255,153,51\)"/g,
-    replacer: () => 'claude:"rgb(22,163,74)"',
-    sentinel: 'claude:"rgb(255,153,51)"',
-  },
-  {
-    name: 'Shimmer → green',
-    pattern: /claudeShimmer:"rgb\(2[34]5,1[45]9,1[12]7\)"/g,
-    replacer: () => 'claudeShimmer:"rgb(74,222,128)"',
-    appliedMarker: 'claudeShimmer:"rgb(74,222,128)"',
-  },
-  {
-    name: 'Shimmer light → green',
-    pattern: /claudeShimmer:"rgb\(255,183,101\)"/g,
-    replacer: () => 'claudeShimmer:"rgb(34,197,94)"',
-    sentinel: 'claudeShimmer:"rgb(255,183,101)"',
   },
   {
     name: 'Computer Use gate bypass',
@@ -3037,16 +3053,26 @@ const patches = [
     sentinel: 'process.env.CLAUDE_CODE_ENABLE_AUTO_MODE)}',
   },
   {
-    // Redirect CLI `claude update` to clawgod self-update. Upstream's
-    // detectInstallType() returns "unknown" under our launcher; the
-    // unknown-fallback either silently downgrades ~/.bun/bin/bun (macOS) or
-    // writes the new binary outside our drift-detection scan path (Windows).
-    // Our redirect funnels the upgrade through install.{sh,ps1} so the new
-    // version is re-extracted, re-patched, and re-launchered without ever
-    // touching the bun runtime. Escape hatch for users who want vanilla
-    // update is printed every run.
+    // CLI subcommand registered via commander chain:
+    //   .command("update").alias("upgrade").description("…").action(async()=>{…})
+    // The original action's update path is broken under clawgod: detectInstallType()
+    // returns "unknown" because the launcher hides our cli.cjs from upstream's
+    // path heuristics, and the unknown-fallback branch on macOS overwrites
+    // ~/.bun/bin/bun by extracting the bun runtime out of the new native binary
+    // (preserving Apr-19-build mtime). That **silently downgrades** clawgod's
+    // required Bun and crashes cli.original.cjs the next launch with
+    // "Expected CommonJS module to have a function wrapper". On Windows the
+    // same fallback writes the new binary somewhere our drift detection
+    // doesn't scan, so the user sees "Successfully updated" but never gets
+    // the new version.
+    //
+    // Redirect to clawgod's own self-update so the upgrade goes through
+    // install.sh (re-extract + re-patch + re-launcher). Always pull the
+    // latest install.sh from the release so users get patcher fixes too.
+    // Escape hatch printed on every run: `install.sh --uninstall` restores
+    // claude.orig and lets vanilla `claude update` work again.
     name: "Redirect `claude update` to clawgod self-update",
-    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\(async\(\)=>\{)/g,
+    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\((?:[a-z]\()?async\([^)]*\)=>\{)/g,
     replacer: (m, chain, action) => {
       return (
         chain + '.allowUnknownOption()' + action +
@@ -3066,6 +3092,44 @@ const patches = [
     },
     sentinel: '.command("update").alias("upgrade")',
     appliedMarker: "[clawgod] 'claude update' is handled by clawgod self-update.",
+  },
+  // ── 绿色主题 (patch 标识) ──
+
+  {
+    name: 'Logo + brand color → green (RGB dark)',
+    pattern: /clawd_body:"rgb\(215,119,87\)"/g,
+    replacer: () => 'clawd_body:"rgb(34,197,94)"',
+    sentinel: 'clawd_body:"rgb(215,119,87)"',
+  },
+  {
+    name: 'Logo + brand color → green (ANSI)',
+    pattern: /clawd_body:"ansi:redBright"/g,
+    replacer: () => 'clawd_body:"ansi:greenBright"',
+    sentinel: 'clawd_body:"ansi:redBright"',
+  },
+  {
+    name: 'Theme claude color → green (dark)',
+    pattern: /claude:"rgb\(215,119,87\)"/g,
+    replacer: () => 'claude:"rgb(34,197,94)"',
+    sentinel: 'claude:"rgb(215,119,87)"',
+  },
+  {
+    name: 'Theme claude color → green (light)',
+    pattern: /claude:"rgb\(255,153,51\)"/g,
+    replacer: () => 'claude:"rgb(22,163,74)"',
+    sentinel: 'claude:"rgb(255,153,51)"',
+  },
+  {
+    name: 'Shimmer → green',
+    pattern: /claudeShimmer:"rgb\(2[34]5,1[45]9,1[12]7\)"/g,
+    replacer: () => 'claudeShimmer:"rgb(74,222,128)"',
+    appliedMarker: 'claudeShimmer:"rgb(74,222,128)"',
+  },
+  {
+    name: 'Shimmer light → green',
+    pattern: /claudeShimmer:"rgb\(255,183,101\)"/g,
+    replacer: () => 'claudeShimmer:"rgb(34,197,94)"',
+    sentinel: 'claudeShimmer:"rgb(255,183,101)"',
   },
   {
     name: 'Hex brand color → green',
@@ -3098,7 +3162,42 @@ const patches = [
     pattern: /briefLabelClaude:"ansi:redBright"/g,
     replacer: () => 'briefLabelClaude:"ansi:greenBright"',
   },
+
+  // ── macOS Cmd+V 图片粘贴修复 ──
+
   {
+    // Under Bun runtime (clawgod), macOS Cmd+V pastes the image file path
+    // as text instead of triggering the clipboard image read. The paste
+    // handler detects the path as an image file (rju), tries to read it
+    // via nju, fails, and falls through to display the raw path as text.
+    //
+    // The paste handler flow:
+    //   1. Empty text + macOS → clipboard reader (m()) — works ✓
+    //   2. Text with paths → rju() detects image paths → nju() reads files
+    //   3. If reads succeed → display images ✓
+    //   4. If ALL reads fail → else branch:
+    //      else if(N&&d) m()   ← N = TemporaryItems/screenshot check
+    //      else We("input_image_drag","read_failed"), g(x), y()
+    //
+    // Bug: the else-if only calls clipboard reader (m) for macOS screenshot
+    // temp paths (N = /TemporaryItems/...screencaptureui/.../Screenshot/).
+    // For other image paths (Preview, Finder, web copies), the final else
+    // types the raw path as text.
+    //
+    // Note: there's also a fallback inside the if(W.length>0) block:
+    //   if(W.length===0&&k.length>0){...if(d&&O.length===0){m();return}...}
+    // But that's dead code — when all reads fail (W.length===0 && P.length===0),
+    // the outer if(W.length>0||P.length>0) is false, so we skip straight to
+    // the else branch.
+    //
+    // Shape:
+    //   }else if(N&&d)m();else We("input_image_drag","read_failed"),g(x),y()
+    //
+    // Patched:
+    //   }else if(d)m();else We("input_image_drag","read_failed"),g(x),y()
+    //
+    // Always try clipboard reader on macOS when image path reads failed,
+    // not just for TemporaryItems screenshot paths.
     name: 'macOS Cmd+V image paste fallback to clipboard read',
     pattern: /\}else if\(([\w$]+)&&([\w$]+)\)([\w$]+)\(\);else ([\w$]+)\("input_image_drag","read_failed"\),([\w$]+)\(([\w$]+)\),([\w$]+)\(\)/g,
     replacer: (m, N, d, mFn, We, g, x, y) =>
@@ -3161,7 +3260,23 @@ const patches = [
     appliedMarker: '/^https?:\\/\\//i.test(',
     unique: true,
   },
+
+  // ── Glob/Grep 工具恢复 ──
+
   {
+    // Bun inlines EMBEDDED_SEARCH_TOOLS env as literal "true" at compile time.
+    // This makes bC() always return true → Wft() returns the shadow set
+    // containing "Glob" and "Grep" → those tools are hidden from the user.
+    // Under clawgod (Bun runtime, not native binary) the env is unset, but
+    // the code still says ct("true") instead of ct(process.env.EMBEDDED_SEARCH_TOOLS).
+    //
+    // Shape:
+    //   function bC(){if(!ct("true"))return!1;if(mEr())return!1;
+    //     return process.env.CLAUDE_CODE_ENTRYPOINT!=="local-agent"}
+    //
+    // Patch: replace ct("true") with ct(process.env.EMBEDDED_SEARCH_TOOLS)
+    // so the guard reads the actual env var (unset → falsy → return false →
+    // Glob/Grep tools available).
     name: 'Restore Glob/Grep tools (un-inline EMBEDDED_SEARCH_TOOLS)',
     pattern: /function ([\w$]+)\(\)\{if\(!([\w$]+)\("true"\)\)return!1;if\([\w$]+\(\)\)return!1;return process\.env\.CLAUDE_CODE_ENTRYPOINT!=="local-agent"\}/g,
     replacer: (m, fn, envCheck) =>
@@ -3169,10 +3284,25 @@ const patches = [
     sentinel: 'ct("true")',
     optional: true,
   },
+
+  // ── 地区隐写中和 (v2.1.197+) ──
+
   {
+    // v2.1.197+: geo-steganography in system prompt date string.
+    // qla(e) builds "Today{apostrophe}s date is {date}." where:
+    //   - the apostrophe encodes proxy-detection state (U+0027/U+2019/U+02BC/U+02B9)
+    //   - the date separator encodes timezone (- for non-CN, / for CN)
+    //
+    // Shape:
+    //   function qla(e){let t=rdp(),n=odp(t?.known??!1,t?.labKw??!1),
+    //     r=t?.cnTZ?e.replaceAll("-","/"):e;return`Today${n}s date is ${r}.`}
+    //
+    // Patch: replace entire function body to always use ASCII apostrophe
+    // and pass through the date string unmodified.
     name: 'Neutralize geo-steganography in date string (qla)',
     pattern: /function ([\w$]+)\([\w$]+\)\{let [\w$]+=[\w$]+\(\),[\w$]+=[\w$]+\([\w$]+\?\.[\w$]+\?\?!1,[\w$]+\?\.[\w$]+\?\?!1\),[\w$]+=[\w$]+\?\.[\w$]+\?[\w$]+\.replaceAll\("-","\/"\):[\w$]+;return`Today\$\{[\w$]+\}s date is \$\{[\w$]+\}\.`\}/g,
     replacer: (m) => {
+      // Extract function name and parameter name from the match
       const fnMatch = m.match(/^function ([\w$]+)\(([\w$]+)\)/);
       if (!fnMatch) return m;
       const [, fn, param] = fnMatch;
@@ -3181,6 +3311,17 @@ const patches = [
     sentinel: 'replaceAll("-","/")',
   },
   {
+    // v2.1.197+: rdp() performs three-axis geo detection:
+    //   1. timezone === "Asia/Shanghai" || "Asia/Urumqi"  → cnTZ
+    //   2. ANTHROPIC_BASE_URL hostname in XOR-obfuscated domain blocklist → known
+    //   3. ANTHROPIC_BASE_URL contains CN-LLM vendor keywords → labKw
+    //
+    // Shape:
+    //   function rdp(){if(vrt())return null;let e=ndp(),t=ekt(),
+    //     n=t==="Asia/Shanghai"||t==="Asia/Urumqi";if(!e)return{known:!1,labKw:!1,cnTZ:n,host:null};
+    //     return{known:edp().some(...),labKw:tdp().some(...),cnTZ:n,host:e}}
+    //
+    // Patch: always return null (same as firstParty path), disabling all detection.
     name: 'Neutralize geo-detection probe (rdp)',
     pattern: /function ([\w$]+)\(\)\{if\([\w$]+\(\)\)return null;let [\w$]+=[\w$]+\(\),[\w$]+=[\w$]+\(\),[\w$]+=[\w$]+==="Asia\/Shanghai"\|\|[\w$]+==="Asia\/Urumqi"[\s\S]*?\}\}/g,
     replacer: (m) => {
@@ -3190,6 +3331,22 @@ const patches = [
     sentinel: 'Asia/Shanghai',
   },
   {
+    // v2.1.197+: odp(known, labKw) selects a Unicode apostrophe to encode
+    // proxy detection state into the system prompt:
+    //   !known && !labKw → U+0027 (ASCII)
+    //   known  && !labKw → U+2019 (RIGHT SINGLE QUOTATION MARK)
+    //   !known && labKw  → U+02BC (MODIFIER LETTER APOSTROPHE)
+    //   known  && labKw  → U+02B9 (MODIFIER LETTER PRIME)
+    //
+    // Shape:
+    //   function odp(e,t){if(!e&&!t)return"'";if(e&&!t)return"'";
+    //     if(!e&&t)return"ʼ";return"ʹ"}
+    //
+    // Patch: always return ASCII apostrophe regardless of detection state.
+    // The return values may appear as \uXXXX escapes or literal UTF-8 in
+    // the bundle depending on bundler version. Match both forms.
+    // Defense-in-depth — qla patch above already bypasses the call to odp,
+    // but if qla's shape changes this keeps odp harmless.
     name: 'Neutralize apostrophe steganography (odp)',
     pattern: new RegExp(
       'function ([\\w$]+)\\(([\\w$]+),([\\w$]+)\\)\\{' +
@@ -3203,8 +3360,11 @@ const patches = [
       const fn = m.match(/^function ([\w$]+)/)[1];
       return `function ${fn}(e,t){return"'"}`;
     },
-    optional: true,
+    optional: true,  // defense-in-depth; rdp→null already neutralizes the stego channel
   },
+
+  // ── 限制移除 ──
+
   {
     name: 'Remove CYBER_RISK_INSTRUCTION',
     pattern: /([\w$]+)="IMPORTANT: Assist with authorized security testing[^"]*"/g,
@@ -3231,37 +3391,46 @@ const patches = [
     replacer: () => '',
     optional: true,
   },
+
+  // ── 消息过滤 ──
+
   {
+    // v2.1.88-~v2.1.91: fn()!=="ant"){if(q.attachment.type==="hook_additional_context"...
+    // v2.1.92+        : fn()!=="ant"&&paY.has(q.attachment.type) — paY is an empty Set
+    //                    in v2.1.110, so this filter is effectively a no-op; patch anyway
+    //                    to guard against paY being populated in future versions.
     name: 'Attachment filter bypass',
     pattern: /([\w$]+)\(\)!=="ant"(&&[\w$]+\.has\([\w$]+\.attachment\.type\)|\)\{if\([\w$]+\.attachment\.type==="hook_additional_context")/g,
     replacer: (m) => m.replace(/([\w$]+)\(\)!=="ant"/, 'false'),
-    optional: true,
+    optional: true,  // filter may be removed entirely in future versions
   },
   {
+    // Legacy (≤v2.1.91) ternary form: fn()!=="ant"?tRY(_,sRY(K)):K
     name: 'Message list filter bypass (legacy ternary)',
     pattern: /([\w$]+)\(\)!=="ant"\?([\w$]+)\(([\w$]+),([\w$]+)\(([\w$]+)\)\):([\w$]+)/g,
     replacer: (m, fn, tRY, underscore, sRY, K, fallback) => fallback,
-    optional: true,
+    optional: true,  // removed in v2.1.92+
   },
   {
+    // v2.1.92+ (s_8): if(fn()==="ant")return _;let z=...;return FaY(_,z)
+    // Flip the guard so non-ant users also return the pre-filtered list.
     name: 'Message list filter bypass (s_8 form)',
     pattern: /if\(([\w$]+)\(\)==="ant"\)return ([\w$]+);let ([\w$]+)=([\w$]+) instanceof Set\?\4:([\w$]+)\(\4\);return ([\w$]+)\(\2,\3\)/g,
     replacer: (m, fn, ret) => `return ${ret}`,
-    optional: true,
+    optional: true,  // legacy versions had a ternary instead
   },
   {
     // Shell-integration generator (iT6 in v2.1.140, was Wa1 in older versions)
     // emits a zsh/bash function that calls the native claude binary with
     // ARGV0=ugrep|rg|... for multitool dispatch. After clawgod installs, the
-    // baked path points at our shell-script launcher (or .cmd on Windows) —
-    // but shell scripts CANNOT preserve argv[0] (kernel shebang re-exec
-    // overwrites it, and zsh additionally refuses to export ARGV0 as env).
-    // The shell function then fails because bun receives e.g. -G and errors
-    // with "Invalid Argument".
+    // baked path points at our shell-script launcher — but shell scripts
+    // CANNOT preserve argv[0] (kernel shebang re-exec overwrites it, and zsh
+    // additionally refuses to export ARGV0 as env). The shell function then
+    // fails because bun receives e.g. -G and errors with "Invalid Argument".
     //
-    // Fix: redirect the baked path to claude.orig[.exe] (the native binary
-    // backup clawgod creates at install time). Then the multitool dispatch
-    // reaches a real binary that honors argv[0]. See issue #82.
+    // Fix: redirect the baked path to claude.orig (the native binary backup
+    // clawgod creates at install time). Then the multitool dispatch reaches
+    // a real binary that honors argv[0]. See issue #82.
     //
     // Generator shape across versions:
     //   v2.1.88 (Wa1):  let Y=E4([_]),...  ← _ is the claude binary path, no in-function compute
@@ -3275,9 +3444,11 @@ const patches = [
     pattern: /([\w$]+\.join\([\w$]+\(\),[\w$]+\?)"claude\.exe":"claude"(\))/g,
     replacer: (m, prefix, suffix) => `${prefix}"claude.orig.exe":"claude.orig"${suffix}`,
     sentinel: '?"claude.exe":"claude")',
-    optional: true,
+    optional: true,  // v2.1.88-era bundles compute the path differently
   },
 ];
+
+// ─── Main ─────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
@@ -3285,152 +3456,217 @@ const verify = args.includes('--verify');
 const revert = args.includes('--revert');
 
 if (revert) {
-  if (!existsSync(BACKUP)) { console.error('No backup found'); process.exit(1); }
+  if (!existsSync(BACKUP)) { console.error('❌ No backup found'); process.exit(1); }
   copyFileSync(BACKUP, TARGET);
-  console.log('Reverted from backup');
+  console.log('✅ Reverted from backup');
   process.exit(0);
 }
 
 if (!existsSync(TARGET)) {
-  console.error('Target not found:', TARGET);
+  console.error('❌ Target not found:', TARGET);
   process.exit(1);
 }
 
 let code = readFileSync(TARGET, 'utf8');
 const origSize = code.length;
+
+// Extract version
 const verMatch = code.match(/Version:\s*([\d.]+)/);
 const version = verMatch ? verMatch[1] : 'unknown';
 
-console.log(`\n${'='.repeat(55)}`);
+console.log(`\n${'═'.repeat(55)}`);
 console.log(`  ClawGod Plus (universal)`);
 console.log(`  Target: cli.original.cjs (v${version})`);
 console.log(`  Mode: ${dryRun ? 'DRY RUN' : verify ? 'VERIFY' : 'APPLY'}`);
-console.log(`${'='.repeat(55)}\n`);
+console.log(`${'═'.repeat(55)}\n`);
 
 let applied = 0, skipped = 0, failed = 0;
 
 for (const p of patches) {
   const matches = [...code.matchAll(p.pattern)];
   let relevant = matches;
-  if (p.validate) relevant = matches.filter(m => p.validate(m[0], code));
-  if (p.selectIndex !== undefined) relevant = relevant.length > p.selectIndex ? [relevant[p.selectIndex]] : [];
-  if (p.unique && relevant.length > 1) {
-    console.log(`  ?? ${p.name} — ${relevant.length} matches (need 1)`);
-    failed++; continue;
+
+  // Filter by validation if provided
+  if (p.validate) {
+    relevant = matches.filter(m => p.validate(m[0], code));
   }
+
+  // Select specific match index
+  if (p.selectIndex !== undefined) {
+    relevant = relevant.length > p.selectIndex ? [relevant[p.selectIndex]] : [];
+  }
+
+  // Uniqueness check — skip when 0 so the sentinel / already-applied
+  // fallthrough can handle it; only fail on >1 (ambiguous).
+  if (p.unique && relevant.length > 1) {
+    console.log(`  ⚠️  ${p.name} — ${relevant.length} matches, skipping (need 1)`);
+    failed++;
+    continue;
+  }
+
   if (relevant.length === 0) {
-    if (p.knownShape?.test(code)) { console.log(`  XX ${p.name} — known resolver shape did not match exactly`); failed++; continue; }
-    if (p.appliedMarker !== undefined && (p.appliedMarker instanceof RegExp ? p.appliedMarker.test(code) : code.includes(p.appliedMarker))) { console.log(`  OK ${p.name} (already applied, marker present)`); applied++; continue; }
-    if (p.optional) { console.log(`  >> ${p.name} (not in this version)`); skipped++; continue; }
+    if (p.knownShape?.test(code)) {
+      console.log(`  ❌ ${p.name} — known resolver shape did not match exactly`);
+      failed++;
+      continue;
+    }
+    // appliedMarker: a substring that exists ONLY in this patch's output. Some
+    // replacements retain their own sentinel (Ultraplan keeps name:"ultraplan";
+    // Ultrareview keeps "tengu_review_bughunter_config"), which made the sentinel
+    // check below misfire as "regex stale" on a file that was in fact patched.
+    // A present marker means the patch is applied.
+    if (p.appliedMarker !== undefined && (p.appliedMarker instanceof RegExp ? p.appliedMarker.test(code) : code.includes(p.appliedMarker))) {
+      console.log(`  ✅ ${p.name} (already applied, marker present)`);
+      applied++;
+      continue;
+    }
+    if (p.optional) {
+      console.log(`  ⏭  ${p.name} (not present in this version)`);
+      skipped++;
+      continue;
+    }
+    // If the patch declares a sentinel (a string that must NOT exist in a
+    // fully-patched file), use it to tell "already applied" apart from
+    // "regex is stale and silently missed the target".
     if (p.sentinel !== undefined) {
       const sentinels = Array.isArray(p.sentinel) ? p.sentinel : [p.sentinel];
       const stillPresent = sentinels.filter((s) => code.includes(s));
       if (stillPresent.length > 0) {
-        console.log(`  XX ${p.name} — regex stale, sentinel still present: ${stillPresent.map((s) => JSON.stringify(s)).join(', ')}`);
-        failed++; continue;
+        console.log(`  ❌ ${p.name} — regex stale, sentinel still in source: ${stillPresent.map((s) => JSON.stringify(s)).join(', ')}`);
+        failed++;
+        continue;
       }
-      console.log(`  OK ${p.name} (already applied, sentinel absent)`); applied++; continue;
+      console.log(`  ✅ ${p.name} (already applied, sentinel absent)`);
+      applied++;
+      continue;
     }
-    console.log(`  !! ${p.name} (0 matches, no sentinel)`); skipped++;
+    console.log(`  ⚠️  ${p.name} (0 matches, no sentinel — cannot verify)`);
+    skipped++;
     continue;
   }
-  if (verify) { console.log(`  -- ${p.name} — not yet applied`); skipped++; continue; }
+
+  if (verify) {
+    console.log(`  ⬚  ${p.name} — ${relevant.length} match(es), not yet applied`);
+    skipped++;
+    continue;
+  }
+
+  // Apply patch
   let count = 0;
   for (const m of relevant) {
     const replacement = p.replacer(m[0], ...m.slice(1));
-    // Function-form replace: a string replacement would interpret $$ as $
-    // and break minified identifiers like `a$$`. See install.sh issue #86.
-    if (replacement !== m[0]) { if (!dryRun) code = code.replace(m[0], () => replacement); count++; }
+    if (replacement !== m[0]) {
+      if (!dryRun) {
+        // Use function-form replace: String.prototype.replace with a string
+        // replacement interprets $$ as literal $, $1/$& as backreferences.
+        // Minified upstream identifiers like `a$$` would silently become `a$`
+        // and break every caller referencing the original name. Function form
+        // is opaque to the parser. (issue #86)
+        code = code.replace(m[0], () => replacement);
+      }
+      count++;
+    }
   }
-  if (count > 0) { console.log(`  OK ${p.name} (${count})`); applied++; }
-  else { console.log(`  >> ${p.name} (no change)`); skipped++; }
+
+  if (count > 0) {
+    console.log(`  ✅ ${p.name} (${count} replacement${count > 1 ? 's' : ''})`);
+    applied++;
+  } else {
+    console.log(`  ⏭  ${p.name} (no change needed)`);
+    skipped++;
+  }
 }
 
 const claudeApiSkillPatch = await applyClaudeApiSkillLazyDocsPatch(code, { dryRun, verify });
 if (claudeApiSkillPatch.status === 'applied') {
   if (!dryRun) code = claudeApiSkillPatch.code;
-  console.log(`  OK Claude API skill lazy docs (${claudeApiSkillPatch.count})`);
+  console.log(`  ✅ Claude API skill lazy docs (${claudeApiSkillPatch.count} replacement${claudeApiSkillPatch.count > 1 ? 's' : ''})`);
   applied++;
 } else if (claudeApiSkillPatch.status === 'verify') {
-  console.log(`  -- Claude API skill lazy docs — ${claudeApiSkillPatch.count} match(es), not yet applied`);
+  console.log(`  ⬚  Claude API skill lazy docs — ${claudeApiSkillPatch.count} match(es), not yet applied`);
   skipped++;
 } else if (claudeApiSkillPatch.status === 'already') {
-  console.log(`  OK Claude API skill lazy docs (${claudeApiSkillPatch.detail})`);
+  console.log(`  ✅ Claude API skill lazy docs (${claudeApiSkillPatch.detail})`);
   applied++;
 } else if (claudeApiSkillPatch.status === 'skipped') {
-  console.log(`  >> Claude API skill lazy docs (${claudeApiSkillPatch.detail})`);
+  console.log(`  ⏭  Claude API skill lazy docs (${claudeApiSkillPatch.detail})`);
   skipped++;
 } else {
-  console.log(`  XX Claude API skill lazy docs — ${claudeApiSkillPatch.detail}`);
+  console.log(`  ❌ Claude API skill lazy docs — ${claudeApiSkillPatch.detail}`);
   failed++;
 }
 
 const contextLimitPatch = await applyContextLimitPatch(code, { dryRun, verify });
 if (contextLimitPatch.status === 'applied') {
   if (!dryRun) code = contextLimitPatch.code;
-  console.log(`  OK Context limit configurable (${contextLimitPatch.count})`);
+  console.log(`  ✅ Context limit configurable (${contextLimitPatch.count} replacement${contextLimitPatch.count > 1 ? 's' : ''})`);
   applied++;
 } else if (contextLimitPatch.status === 'verify') {
-  console.log(`  -- Context limit configurable — ${contextLimitPatch.count} match(es), not yet applied`);
+  console.log(`  ⬚  Context limit configurable — ${contextLimitPatch.count} match(es), not yet applied`);
   skipped++;
 } else if (contextLimitPatch.status === 'already') {
-  console.log(`  OK Context limit configurable (${contextLimitPatch.detail})`);
+  console.log(`  ✅ Context limit configurable (${contextLimitPatch.detail})`);
   applied++;
 } else if (contextLimitPatch.status === 'skipped') {
-  console.log(`  >> Context limit configurable (${contextLimitPatch.detail})`);
+  console.log(`  ⏭  Context limit configurable (${contextLimitPatch.detail})`);
   skipped++;
 } else {
-  console.log(`  XX Context limit configurable — ${contextLimitPatch.detail}`);
+  console.log(`  ❌ Context limit configurable — ${contextLimitPatch.detail}`);
   failed++;
 }
 
 const fastMessagesProtocolPatch = await applyFastMessagesProtocolPatch(code, { dryRun, verify });
 if (fastMessagesProtocolPatch.status === 'applied') {
   if (!dryRun) code = fastMessagesProtocolPatch.code;
-  console.log(`  OK Fast Messages protocol (${fastMessagesProtocolPatch.count} replacement${fastMessagesProtocolPatch.count > 1 ? 's' : ''})`);
+  console.log(`  ✅ Fast Messages protocol (${fastMessagesProtocolPatch.count} replacement${fastMessagesProtocolPatch.count > 1 ? 's' : ''})`);
   applied++;
 } else if (fastMessagesProtocolPatch.status === 'verify') {
-  console.log(`  -- Fast Messages protocol — ${fastMessagesProtocolPatch.count} match(es), not yet applied`);
+  console.log(`  ⬚  Fast Messages protocol — ${fastMessagesProtocolPatch.count} match(es), not yet applied`);
   skipped++;
 } else if (fastMessagesProtocolPatch.status === 'already') {
-  console.log(`  OK Fast Messages protocol (${fastMessagesProtocolPatch.detail})`);
+  console.log(`  ✅ Fast Messages protocol (${fastMessagesProtocolPatch.detail})`);
   applied++;
 } else if (fastMessagesProtocolPatch.status === 'skipped') {
-  console.log(`  >> Fast Messages protocol (${fastMessagesProtocolPatch.detail})`);
+  console.log(`  ⏭  Fast Messages protocol (${fastMessagesProtocolPatch.detail})`);
   skipped++;
 } else {
-  console.log(`  XX Fast Messages protocol — ${fastMessagesProtocolPatch.detail}`);
+  console.log(`  ❌ Fast Messages protocol — ${fastMessagesProtocolPatch.detail}`);
   failed++;
 }
 
 const chromePatch = await applyClaudeChromeSocketPatch(code, { dryRun, verify });
 if (chromePatch.status === 'applied') {
   if (!dryRun) code = chromePatch.code;
-  console.log(`  OK Claude in Chrome local socket fallback (${chromePatch.count})`);
+  console.log(`  ✅ Claude in Chrome local socket fallback (${chromePatch.count} replacement${chromePatch.count > 1 ? 's' : ''})`);
   applied++;
 } else if (chromePatch.status === 'verify') {
-  console.log(`  -- Claude in Chrome local socket fallback — ${chromePatch.count} match(es), not yet applied`);
+  console.log(`  ⬚  Claude in Chrome local socket fallback — ${chromePatch.count} match(es), not yet applied`);
   skipped++;
 } else if (chromePatch.status === 'already') {
-  console.log(`  OK Claude in Chrome local socket fallback (${chromePatch.detail})`);
+  console.log(`  ✅ Claude in Chrome local socket fallback (${chromePatch.detail})`);
   applied++;
 } else if (chromePatch.status === 'skipped') {
-  console.log(`  >> Claude in Chrome local socket fallback (${chromePatch.detail})`);
+  console.log(`  ⏭  Claude in Chrome local socket fallback (${chromePatch.detail})`);
   skipped++;
 } else {
-  console.log(`  XX Claude in Chrome local socket fallback — ${chromePatch.detail}`);
+  console.log(`  ❌ Claude in Chrome local socket fallback — ${chromePatch.detail}`);
   failed++;
 }
 
-console.log(`\n${'-'.repeat(55)}`);
+console.log(`\n${'─'.repeat(55)}`);
 console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed`);
 
 if (failed === 0 && !dryRun && !verify && applied > 0) {
-  if (!existsSync(BACKUP)) { copyFileSync(TARGET, BACKUP); console.log(`  Backup: ${BACKUP}`); }
+  if (!existsSync(BACKUP)) {
+    copyFileSync(TARGET, BACKUP);
+    console.log(`  📦 Backup: ${BACKUP}`);
+  }
   writeFileSync(TARGET, code, 'utf8');
-  console.log(`  Written: cli.original.cjs (${code.length - origSize} bytes)`);
+  const diff = code.length - origSize;
+  console.log(`  📝 Written: cli.original.cjs (${diff >= 0 ? '+' : ''}${diff} bytes)`);
 }
-console.log(`${'='.repeat(55)}\n`);
+
+console.log(`${'═'.repeat(55)}\n`);
 if (failed > 0) process.exit(1);
 '@
 
