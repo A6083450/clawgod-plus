@@ -2748,7 +2748,7 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
   const match = real229ZeMatches[0];
   const betasIndex = match[0].lastIndexOf(betasField);
-  if (betasIndex === -1) return { status: 'failed', detail: 'Fast request betas field not found inside the matched Ze closure' };
+  if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex) return { status: 'failed', detail: 'Fast request betas field is not unique inside the matched Ze closure' };
   const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
   if (dryRun) return { status: 'applied', count: 1, code: source };
   return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };

@@ -326,6 +326,7 @@ for (const [name, patcher] of [
       ['inconsistent real 2.1.229 Ze capability list', real229ZeFixture.replace('ma=$u?Fi.filter((St)=>St===cSt):Fi;', 'ma=$u?Fi.filter((St)=>St===cSt):Fj;')],
       ['mismatched real 2.1.229 Ze speed variable', real229ZeFixture.replace('...fu!==void 0&&{speed:fu}', '...fu!==void 0&&{speed:fq}')],
       ['mismatched real 2.1.229 Ze Fast registration', real229ZeFixture.replace('let Fbr=RA("speed","fast-mode-2026-02-01")', 'let Fbr=RA("speed","fast-mode-2027-01-01")')],
+      ['inconsistent real 2.1.229 Ze push target', real229ZeFixture.replace('if(ae&&!Fi.includes(Fbr))Fi.push(Fbr)', 'if(ae&&!Fj.includes(Fbr))Fj.push(Fbr)')],
     ];
     for (const [label, invalidFixture] of invalidZeFixtures) {
       writeFileSync(join(dir, 'cli.original.cjs'), invalidFixture, 'utf8');
