@@ -186,6 +186,14 @@ CLAWGOD_NO_AUTO_CHROME=1 claude
 - 非 Anthropic 的 `baseURL` 会自动配置兼容网关认证，并关闭可能降低 Prompt Cache 命中率的逐请求 Attribution Header。
 - 现有 `~/.claude` 中的 Agent、Skill、Hook 和 MCP 设置仍然可用。
 
+### Fast mode 请求兼容
+
+当在 Claude Code 中通过 `/fast` 开启 Fast mode 时，ClawGod 会保留该模式对应的 Anthropic Messages 协议：请求体含 `"speed": "fast"`，`anthropic-beta` 含 `fast-mode-2026-02-01`。已有 beta capability 会被保留并合并。该能力是否可用由当前 API provider 与模型决定；若 provider 不支持 Fast mode，请关闭 `/fast` 后重试。
+
+**2.1.229 注入点**：官方 2.1.229 bundle 的请求构造（`Ze` builder）已不再生成 `headers` 对象；beta 以请求体字段 `betas` 携带（该字段先经 `l0s`/`aku` 允许列表过滤，第三方 provider 下 Fast capability 原本会被剥离），随后由内置 SDK 的 `messages.create` 从 `{betas:…}` 解构并构造 `"anthropic-beta"` 头（`n?.toString()` 逗号拼接）。ClawGod 直接在 `betas` 字段处做强制透传：`speed === "fast"` 是唯一开关——fast 时强制 `fast-mode-2026-02-01` 进入最终 betas（完整去重），slow 时移除全部 Fast beta capability；不受内部 `ae` 资格或第三方 provider 允许列表限制。
+
+此行为仅适用于 Anthropic Messages `/v1/messages` 请求；不会改写 OpenAI Chat Completions 请求或添加 `service_tier`。
+
 ## 可配置上下文窗口
 
 为单次启动设置本地 fallback 上限：
