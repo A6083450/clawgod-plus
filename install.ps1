@@ -2671,6 +2671,21 @@ async function applyContextLimitPatch(source, { dryRun, verify }) {
   return { status: 'applied', count: replacements.length, code: next };
 }
 
+async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
+  const MARKER = '/*__clawgod_fast_messages_protocol__*/';
+  if (source.includes(MARKER)) return { status: 'already', detail: 'already applied' };
+  const targetRe = /let ([\w$]+)=\[\.\.\.([\w$]+)\],([\w$]+)="([^"]+)",([\w$]+)=([^;]+&&!!([\w$]+));if\(([\w$]+)\)([\w$]+)\.push\(([\w$]+)\);let ([\w$]+)=([\w$]+)\.includes\(([\w$]+)\),([\w$]+);if\([^;]+\)([\w$]+)="fast";let ([\w$]+)=\{([^{}]*),\.\.\.([\w$]+)!==void 0&&\{speed:([\w$]+)\}\},headers=\{"anthropic-beta":([\w$]+)\.map\(\(([\w$]+)\)=>([\w$]+)\.header\)\.toString\(\)\};return\{body:([\w$]+),headers\}/g;
+  const matches = [...source.matchAll(targetRe)];
+  if (matches.length !== 1) return matches.length === 0 && !source.includes('fast-mode-2026-02-01') ? { status: 'skipped', detail: 'not present in this version' } : { status: 'failed', detail: matches.length === 0 ? 'Fast request body/header closure not found; upstream shape changed' : `Fast request body/header closure matched ${matches.length} times; refusing ambiguous patch` };
+  const [, capabilities, existingBeta, model, modelName, isFast, fastCondition, fastArg, pushCondition, pushCapabilities, fastCapability, hasFastCapability, includesCapabilities, includesCapability, speed, speedName, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, capability, capabilityObject, returnBody] = matches[0];
+  if (isFast !== pushCondition || capabilities !== pushCapabilities || capabilities !== includesCapabilities || fastCapability !== includesCapability || speed !== bodySpeed || speed !== bodySpeedValue || capabilities !== headerCapabilities || capability !== capabilityObject || body !== returnBody || !fastCondition.includes('&&!!')) return { status: 'failed', detail: 'Fast request body/header closure matched an inconsistent Fast-state shape' };
+  if (verify) return { status: 'verify', count: 1 };
+  const replacement = `let ${capabilities}=[...${existingBeta}],${model}="${modelName}",${isFast}=!!${fastArg};if(${isFast}&&!${capabilities}.includes(${fastCapability}))${capabilities}.push(${fastCapability});let ${hasFastCapability}=${capabilities}.includes(${fastCapability}),${speed};if(${isFast})${speed}="fast";let ${body}={${bodyFields},...${speed}!==void 0&&{speed:${speed}}},headers={"anthropic-beta":${isFast}?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${capability})=>${capability}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);if(!__clawgodFastCapabilities.includes('fast-mode-2026-02-01'))__clawgodFastCapabilities.push('fast-mode-2026-02-01');return __clawgodFastCapabilities.join(',')})():${capabilities}.map((${capability})=>${capability}.header).toString()};${MARKER}return{body:${body},headers}`;
+  if (dryRun) return { status: 'applied', count: 1, code: source };
+  const match = matches[0];
+  return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+}
+
 const patches = [
   {
     name: 'USER_TYPE → ant',
@@ -3333,6 +3348,25 @@ if (contextLimitPatch.status === 'applied') {
   skipped++;
 } else {
   console.log(`  XX Context limit configurable — ${contextLimitPatch.detail}`);
+  failed++;
+}
+
+const fastMessagesProtocolPatch = await applyFastMessagesProtocolPatch(code, { dryRun, verify });
+if (fastMessagesProtocolPatch.status === 'applied') {
+  if (!dryRun) code = fastMessagesProtocolPatch.code;
+  console.log(`  OK Fast Messages protocol (${fastMessagesProtocolPatch.count} replacement${fastMessagesProtocolPatch.count > 1 ? 's' : ''})`);
+  applied++;
+} else if (fastMessagesProtocolPatch.status === 'verify') {
+  console.log(`  -- Fast Messages protocol — ${fastMessagesProtocolPatch.count} match(es), not yet applied`);
+  skipped++;
+} else if (fastMessagesProtocolPatch.status === 'already') {
+  console.log(`  OK Fast Messages protocol (${fastMessagesProtocolPatch.detail})`);
+  applied++;
+} else if (fastMessagesProtocolPatch.status === 'skipped') {
+  console.log(`  >> Fast Messages protocol (${fastMessagesProtocolPatch.detail})`);
+  skipped++;
+} else {
+  console.log(`  XX Fast Messages protocol — ${fastMessagesProtocolPatch.detail}`);
   failed++;
 }
 
