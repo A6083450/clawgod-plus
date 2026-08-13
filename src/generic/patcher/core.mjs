@@ -168,7 +168,7 @@ const patches = [
   {
     order: 29,
     name: "Redirect `claude update` to clawgod self-update",
-    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\(async\(\)=>\{)/g,
+    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\((?:t\()?async\([^)]*\)=>\{)/g,
     replacer: (match, chain, action) => (
       chain + '.allowUnknownOption()' + action +
       `const __clawgodUpdateIndex=process.argv.findIndex(a=>a==="update"||a==="upgrade");` +

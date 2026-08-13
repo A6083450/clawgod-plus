@@ -713,7 +713,7 @@
       "type": "regex",
       "order": 29,
       "metadata": {
-        "patternSource": "(\\.command\\(\"update\"\\)\\.alias\\(\"upgrade\"\\)\\.description\\(\"[^\"]+\"\\))(\\.action\\(async\\(\\)=>\\{)",
+        "patternSource": "(\\.command\\(\"update\"\\)\\.alias\\(\"upgrade\"\\)\\.description\\(\"[^\"]+\"\\))(\\.action\\((?:t\\()?async\\([^)]*\\)=>\\{)",
         "patternFlags": "g",
         "sentinel": ".command(\"update\").alias(\"upgrade\")",
         "appliedMarker": "[clawgod] 'claude update' is handled by clawgod self-update.",

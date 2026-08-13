@@ -23,6 +23,7 @@ NC='\033[0m'
 
 info()  { echo -e "  ${GREEN}✓${NC} $1"; }
 warn()  { echo -e "  ${RED}✗${NC} $1"; }
+err()   { echo -e "  ${RED}✗${NC} $1" >&2; }
 dim()   { echo -e "  ${DIM}$1${NC}"; }
 
 install_claude_mem_compat_helper() {
