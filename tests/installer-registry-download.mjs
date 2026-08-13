@@ -4,8 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const unix = readFileSync(new URL('../src/template/install.sh', import.meta.url), 'utf8');
+const windows = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
 const canonicalModuleUrl = new URL('../src/generic/runtime/fetch-package.mjs', import.meta.url);
 
 const fixtureDir = mkdtempSync(join(tmpdir(), 'clawgod-registry-'));

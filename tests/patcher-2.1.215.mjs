@@ -7,8 +7,8 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
-const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const unixInstaller = readFileSync(new URL('../src/template/install.sh', import.meta.url), 'utf8');
+const powerShellInstaller = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
 
 assert.doesNotMatch(
   unixInstaller,

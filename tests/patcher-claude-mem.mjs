@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const unixLauncher = readFileSync(new URL('../src/unix/launcher.sh', import.meta.url), 'utf8');
+const powerShellInstaller = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
 const canonicalHelper = readFileSync(new URL('../src/generic/runtime/claude-mem-compat.cjs', import.meta.url), 'utf8');
 const canonicalPluginDependenciesUrl = new URL('../src/generic/runtime/plugin-dependencies.mjs', import.meta.url);
 const canonicalWrapper = readFileSync(new URL('../src/generic/runtime/wrapper.cjs', import.meta.url), 'utf8');
@@ -266,11 +266,7 @@ for (const [installerName, helper] of [['canonical source', canonicalHelper]]) {
     );
     chmodSync(fakeBun, 0o755);
 
-    const start = unixInstaller.indexOf('LAUNCHER_CONTENT="');
-    const end = unixInstaller.indexOf('"\n\n\n# Back up original claude', start);
-    assert.notEqual(start, -1);
-    assert.notEqual(end, -1);
-    const assignment = unixInstaller.slice(start, end + 1);
+    const assignment = unixLauncher;
     const rendered = spawnSync('bash', ['-c', `${assignment}\nprintf '%s' "$LAUNCHER_CONTENT"`], {
       encoding: 'utf8',
       env: { ...process.env, HOME: home, CLAWGOD_DIR: join(home, '.clawgod'), BUN_BIN: fakeBun, CLAUDE_BIN: launcher },

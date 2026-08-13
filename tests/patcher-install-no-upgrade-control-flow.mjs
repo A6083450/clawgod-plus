@@ -4,8 +4,10 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { renderGeneratedPair } from '../build.mjs';
 
-const installer = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
+const generated = await renderGeneratedPair();
+const installer = generated.find(pair => pair.output === 'install.sh').content;
 const branchMarker = 'if [ "$NO_UPGRADE" = "1" ]; then';
 const branchStart = installer.indexOf(branchMarker);
 assert.notEqual(branchStart, -1, 'install.sh must retain the --no-upgrade branch');

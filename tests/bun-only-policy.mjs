@@ -18,6 +18,39 @@ const paths = {
   docs: ['README.md', 'README_EN.md', 'README_JP.md', 'AGENTS.md'],
 };
 
+const GENERATED_INSTALLER_CONTRACT_TESTS = new Set([
+  'installer-build.mjs',
+  'installer-bun-runtime.mjs',
+  'installer-e2e.mjs',
+  'installer-e2e-contract.mjs',
+]);
+
+function collectCanonicalSources() {
+  const sources = ['build.mjs'];
+  const walk = directory => {
+    for (const entry of readdirSync(join(root, directory), { withFileTypes: true })) {
+      const relativePath = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) walk(relativePath);
+      else if (entry.isFile()) sources.push(relativePath);
+    }
+  };
+  walk('src');
+  return sources;
+}
+
+function findReverseExtraction(source) {
+  const matches = [];
+  for (const [offset, line] of source.split(/\r?\n/).entries()) {
+    const trimmed = line.trim();
+    if (/['"]\.\.\/install\.(?:sh|ps1)['"]/.test(trimmed)) {
+      matches.push({ lineNumber: offset + 1, line: trimmed });
+    } else if (/join\([^)]*root[^)]*,\s*['"]install\.(?:sh|ps1)['"]/.test(trimmed)) {
+      matches.push({ lineNumber: offset + 1, line: trimmed });
+    }
+  }
+  return matches;
+}
+
 assert.equal(existsSync(join(root, 'index.html')), false, 'root index.html must not return');
 assert.equal(existsSync(join(root, 'web')), false, 'the retired web site must not return');
 assert.equal(existsSync(join(root, 'bypass.png')), true, 'README runtime image must remain tracked');
@@ -327,6 +360,52 @@ for (const reference of allowedReferences) {
   assert.deepEqual(findForbiddenDependencies(reference), [], `policy must allow ${reference}`);
 }
 
+const reverseExtractionFixtures = [
+  ['URL read install.sh', `readFileSync(new URL('../install.sh', import.meta.url), 'utf8')`],
+  ['URL read install.ps1', `readFileSync(new URL('../install.ps1', import.meta.url), 'utf8')`],
+  ['Bun.file read install.sh', `await Bun.file(new URL('../install.sh', import.meta.url)).text()`],
+  ['Bun.file read install.ps1', `await Bun.file(new URL('../install.ps1', import.meta.url)).text()`],
+  ['root join read install.sh', `readFileSync(join(root, 'install.sh'), 'utf8')`],
+  ['root join read install.ps1', `readFileSync(join(root, 'install.ps1'), 'utf8')`],
+];
+for (const [label, source] of reverseExtractionFixtures) {
+  assert.equal(findReverseExtraction(source).length, 1, `${label} must be detected as reverse extraction`);
+}
+const allowedReverseExtractionFixtures = [
+  ['canonical template read', `readFileSync(new URL('../src/template/install.sh', import.meta.url), 'utf8')`],
+  ['canonical launcher read', `readFileSync(new URL('../src/unix/launcher.sh', import.meta.url), 'utf8')`],
+  ['fixture installer write', `writeFileSync(join(localClawgod, 'install.sh'), 'local installer', 'utf8')`],
+];
+for (const [label, source] of allowedReverseExtractionFixtures) {
+  assert.equal(findReverseExtraction(source).length, 0, `${label} must not be treated as reverse extraction`);
+}
+
+const canonicalSources = collectCanonicalSources();
+const requiredCanonicalSources = [
+  'build.mjs',
+  'src/template/install.sh',
+  'src/template/install.ps1',
+  'src/unix/lifecycle.sh',
+  'src/unix/launcher.sh',
+  'src/windows/lifecycle.ps1',
+  'src/windows/launcher.cmd',
+  'src/generic/enhancement-config.mjs',
+  'src/generic/enhancements.json',
+  'src/generic/runtime/plugin-dependencies.mjs',
+  'src/generic/patcher/entry.mjs',
+];
+for (const path of requiredCanonicalSources) {
+  assert.ok(canonicalSources.includes(path), `policy must scan canonical source ${path}`);
+}
+for (const path of canonicalSources) {
+  const source = read(path);
+  assert.deepEqual(
+    findForbiddenDependencies(source),
+    [],
+    `${path} must not require an external Node, npm, system Git, downloader, or system ripgrep executable`,
+  );
+}
+
 for (const path of [...paths.installers, ...paths.helpers]) {
   const source = read(path);
   assert.deepEqual(findForbiddenDependencies(source), [], `${path} must not require an external Node, npm, or system ripgrep executable`);
@@ -335,6 +414,15 @@ for (const path of [...paths.installers, ...paths.helpers]) {
 const testFiles = readdirSync(join(root, 'tests')).filter(path => path.endsWith('.mjs'));
 for (const path of testFiles) {
   assert.match(read(`tests/${path}`), /^#!\/usr\/bin\/env bun\r?\n/, `tests/${path} must run under Bun`);
+}
+for (const path of testFiles) {
+  if (path === 'bun-only-policy.mjs' || GENERATED_INSTALLER_CONTRACT_TESTS.has(path)) continue;
+  const source = read(`tests/${path}`);
+  assert.deepEqual(
+    findReverseExtraction(source),
+    [],
+    `tests/${path} must import/execute canonical src/ files instead of reverse-extracting the root generated installers`,
+  );
 }
 assert.deepEqual(
   findForbiddenDependencies(read('tests/installer-e2e.mjs')),

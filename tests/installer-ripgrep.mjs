@@ -17,8 +17,8 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 
-const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const unix = readFileSync(new URL('../src/template/install.sh', import.meta.url), 'utf8');
+const windows = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
 const canonicalRipgrepUrl = new URL('../src/generic/runtime/install-ripgrep.mjs', import.meta.url);
 const canonicalRepatch = readFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), 'utf8');
 const canonicalVendorTransaction = readFileSync(new URL('../src/generic/runtime/vendor-transaction.mjs', import.meta.url), 'utf8');

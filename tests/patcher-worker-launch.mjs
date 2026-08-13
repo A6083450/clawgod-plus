@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
-const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
+const unixLauncher = readFileSync(new URL('../src/unix/launcher.sh', import.meta.url), 'utf8');
 const compatWorkflow = readFileSync(new URL('../.github/workflows/compat-daily.yml', import.meta.url), 'utf8');
 const patcherSources = await getPatcherSources();
 
@@ -184,11 +184,6 @@ assert.match(
   'compat workflow must assert the targeted worker resolver invariant',
 );
 
-const launcherStart = unixInstaller.indexOf('LAUNCHER_CONTENT="');
-const launcherEnd = unixInstaller.indexOf('"\n\n\n# Back up original claude', launcherStart);
-assert.notEqual(launcherStart, -1, 'install.sh must embed the Unix launcher');
-assert.notEqual(launcherEnd, -1, 'install.sh Unix launcher must end');
-
 const launcherDir = mkdtempSync(join(tmpdir(), 'clawgod-launcher-'));
 try {
   const cli = join(launcherDir, 'cli.cjs');
@@ -199,7 +194,7 @@ try {
   writeFileSync(bun, '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CAPTURE_FILE"\n', 'utf8');
   chmodSync(bun, 0o755);
 
-  const assignment = unixInstaller.slice(launcherStart, launcherEnd + 1);
+  const assignment = unixLauncher;
   const rendered = spawnSync('bash', ['-c', `${assignment}\nprintf '%s' "$LAUNCHER_CONTENT"`], {
     encoding: 'utf8',
     env: { ...process.env, CLAWGOD_DIR: launcherDir, BUN_BIN: bun, CLAUDE_BIN: launcher },

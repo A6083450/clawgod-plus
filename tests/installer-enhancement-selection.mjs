@@ -17,6 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { renderGeneratedPair } from '../build.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const unixLifecyclePath = join(root, 'src/unix/lifecycle.sh');
@@ -32,8 +33,9 @@ const unixLifecycle = readFileSync(unixLifecyclePath, 'utf8');
 const unixLauncher = readFileSync(unixLauncherPath, 'utf8');
 const windowsLifecycle = readFileSync(windowsLifecyclePath, 'utf8');
 const windowsLauncher = readFileSync(windowsLauncherPath, 'utf8');
-const generatedUnix = readFileSync(join(root, 'install.sh'), 'utf8');
-const generatedWindows = readFileSync(join(root, 'install.ps1'), 'utf8');
+const generated = await renderGeneratedPair();
+const generatedUnix = generated.find(pair => pair.output === 'install.sh').content;
+const generatedWindows = generated.find(pair => pair.output === 'install.ps1').content;
 const manifest = JSON.parse(readFileSync(join(root, 'src/generic/enhancements.json'), 'utf8'));
 const generatedConfigWriteStart = generatedUnix.indexOf('cat > "$CLAWGOD_DIR/enhancement-config.mjs"');
 const generatedBootstrapStart = generatedUnix.lastIndexOf('\n', generatedConfigWriteStart - 2) + 1;

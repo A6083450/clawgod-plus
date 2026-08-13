@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const unix = await Bun.file(new URL('../install.sh', import.meta.url)).text();
-const windows = await Bun.file(new URL('../install.ps1', import.meta.url)).text();
+const unix = await Bun.file(new URL('../src/template/install.sh', import.meta.url)).text();
+const windows = await Bun.file(new URL('../src/template/install.ps1', import.meta.url)).text();
 const canonicalModulePath = fileURLToPath(new URL('../src/generic/runtime/plugin-dependencies.mjs', import.meta.url));
 const canonicalHudStatusLinePath = fileURLToPath(new URL('../src/generic/runtime/claude-hud-statusline.mjs', import.meta.url));
 const canonicalHudStatusLine = readFileSync(canonicalHudStatusLinePath, 'utf8');

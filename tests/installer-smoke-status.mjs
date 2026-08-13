@@ -5,8 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const unix = readFileSync(new URL('../src/template/install.sh', import.meta.url), 'utf8');
+const windows = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
 
 const smokeStart = unix.indexOf('dim "Verifying Bun can load patched cli.original.cjs ..."');
 const smokeEnd = unix.indexOf('\n# ─── Replace claude command', smokeStart);
