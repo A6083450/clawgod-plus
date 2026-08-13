@@ -5,33 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
-
-function extractUnixHelper() {
-  const marker = 'cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << \'CLAUDE_MEM_COMPAT_EOF\'';
-  const start = unixInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed the claude-mem compatibility helper');
-  const bodyStart = unixInstaller.indexOf('\n', start) + 1;
-  const end = unixInstaller.indexOf('\nCLAUDE_MEM_COMPAT_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh claude-mem compatibility helper must end');
-  return unixInstaller.slice(bodyStart, end);
-}
-
-function extractPowerShellHelper() {
-  const marker = "$ClaudeMemCompatSource = @'\n";
-  const start = powerShellInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must embed the claude-mem compatibility helper');
-  const bodyStart = start + marker.length;
-  const end = powerShellInstaller.indexOf("\n'@\n", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 claude-mem compatibility helper must end');
-  return powerShellInstaller.slice(bodyStart, end);
-}
-
-const unixHelper = extractUnixHelper();
-const powerShellHelper = extractPowerShellHelper();
-assert.equal(powerShellHelper, unixHelper, 'Unix and Windows installers must ship the same helper');
-assert.match(unixHelper, /^#!\/usr\/bin\/env bun\n/, 'claude-mem compatibility helper must run with Bun');
+const unixLauncher = readFileSync(new URL('../src/unix/launcher.sh', import.meta.url), 'utf8');
+const powerShellInstaller = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
+const canonicalHelper = readFileSync(new URL('../src/generic/runtime/claude-mem-compat.cjs', import.meta.url), 'utf8');
+const canonicalPluginDependenciesUrl = new URL('../src/generic/runtime/plugin-dependencies.mjs', import.meta.url);
+const canonicalWrapper = readFileSync(new URL('../src/generic/runtime/wrapper.cjs', import.meta.url), 'utf8');
+assert.match(canonicalHelper, /^#!\/usr\/bin\/env bun\n/, 'claude-mem compatibility helper must run with Bun');
 assert.match(powerShellInstaller, /if \(\$LASTEXITCODE -ne 0\) \{ throw "claude-mem compatibility helper exited \$LASTEXITCODE" \}/, 'Windows uninstall must stop on helper failure');
 
 function makeHome(helper) {
@@ -56,7 +35,7 @@ function runHelper(home, command = 'install', extraEnv = {}) {
   });
 }
 
-for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1', powerShellHelper]]) {
+for (const [installerName, helper] of [['canonical source', canonicalHelper]]) {
 {
   const home = makeHome(helper);
   try {
@@ -266,12 +245,7 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
     const fakeBun = join(bin, 'fake-bun');
     const capture = join(home, 'capture.json');
     writeFileSync(cli, '', 'utf8');
-    const wrapperStart = unixInstaller.indexOf("cat > \"$CLAWGOD_DIR/cli.cjs\" << 'WRAPPER_EOF'");
-    const wrapperBody = unixInstaller.indexOf('\n', wrapperStart) + 1;
-    const wrapperEnd = unixInstaller.indexOf('\nWRAPPER_EOF', wrapperBody);
-    assert.notEqual(wrapperStart, -1);
-    assert.notEqual(wrapperEnd, -1);
-    writeFileSync(cli, unixInstaller.slice(wrapperBody, wrapperEnd), 'utf8');
+    writeFileSync(cli, canonicalWrapper, 'utf8');
     writeFileSync(
       join(home, '.clawgod', 'provider.json'),
       `${JSON.stringify({ apiKey: 'provider-secret', baseURL: 'https://gateway.example.test', smallModel: 'provider-haiku' })}\n`,
@@ -292,11 +266,7 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
     );
     chmodSync(fakeBun, 0o755);
 
-    const start = unixInstaller.indexOf('LAUNCHER_CONTENT="');
-    const end = unixInstaller.indexOf('"\n\n\n# Back up original claude', start);
-    assert.notEqual(start, -1);
-    assert.notEqual(end, -1);
-    const assignment = unixInstaller.slice(start, end + 1);
+    const assignment = unixLauncher;
     const rendered = spawnSync('bash', ['-c', `${assignment}\nprintf '%s' "$LAUNCHER_CONTENT"`], {
       encoding: 'utf8',
       env: { ...process.env, HOME: home, CLAWGOD_DIR: join(home, '.clawgod'), BUN_BIN: fakeBun, CLAUDE_BIN: launcher },
@@ -385,7 +355,7 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
 
 
 {
-  const windowsHelper = powerShellHelper.replace("const isWindows = process.platform === 'win32';", 'const isWindows = true;');
+  const windowsHelper = canonicalHelper.replace("const isWindows = process.platform === 'win32';", 'const isWindows = true;');
   const home = makeHome(windowsHelper);
   try {
     const memDir = join(home, '.claude-mem');
@@ -406,6 +376,177 @@ for (const [installerName, helper] of [['install.sh', unixHelper], ['install.ps1
     );
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+}
+
+
+{
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'clawgod-claude-mem-rewrite-'));
+  try {
+    const { rewriteClaudeMemFile } = await import(`${canonicalPluginDependenciesUrl.href}?test=${Date.now()}`);
+    assert.equal(typeof rewriteClaudeMemFile, 'function', 'plugin-dependencies.mjs must export rewriteClaudeMemFile');
+
+    const hookCommands = [
+      'node "$_P/scripts/version-check.js"',
+      'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" start',
+      'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code context',
+      'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code session-init',
+      'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code observation',
+      'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code file-context',
+      'node "$_P/scripts/bun-runner.js" "$_P/scripts/worker-service.cjs" hook claude-code summarize',
+    ];
+    const hookPrefix = 'export PATH="$($SHELL -lc \'echo $PATH\' 2>/dev/null):$PATH"; _C="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; _E="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"; _P="$_E"; [ -n "$_P" ] || exit 1; ';
+    const hookNames = ['Setup', 'SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PreToolUse', 'Stop', 'SubagentStop'];
+    const hooksFixture = {
+      description: 'Claude-mem memory system hooks; node is descriptive, node:fs and addon.node stay text',
+      hooks: Object.fromEntries(hookNames.map((name, index) => [name, [{
+        matcher: index === 0 ? '*' : undefined,
+        hooks: [{ type: 'command', shell: 'bash', command: `${hookPrefix}${hookCommands[index]}`, timeout: 60 }],
+      }]])),
+    };
+    const hooksRaw = `${JSON.stringify(hooksFixture, null, 2)}\n`;
+    const bunPath = "/tmp/claude mem/it's [bun]?/bun";
+    const quotedBun = "'/tmp/claude mem/it'\"'\"'s [bun]?/bun'";
+    const rewrittenHooks = rewriteClaudeMemFile('hooks/hooks.json', hooksRaw, bunPath);
+    assert.equal(rewrittenHooks.replacements, 7, 'all seven 13.14.0 hook entrypoints must be rewritten');
+    const parsedHooks = JSON.parse(rewrittenHooks.text);
+    assert.equal(parsedHooks.description, hooksFixture.description, 'descriptive node text and extension/import text must remain unchanged');
+    for (const [index, name] of hookNames.entries()) {
+      const command = parsedHooks.hooks[name][0].hooks[0].command;
+      assert.equal(command, `${hookPrefix}${hookCommands[index].replace(/^node /, `${quotedBun} `)}`, `${name} must replace only its executable token`);
+      assert.doesNotMatch(command, /(^|[;&|]\s*)node\s+(?=["']?\$_P\/scripts\/)/, `${name} must retain no executable Node entrypoint`);
+    }
+
+    const mcp = { mcpServers: { 'mcp-search': { type: 'stdio', command: 'node', args: ['-e', 'process.stdout.write(process.execPath)'] } } };
+    const rewrittenMcp = rewriteClaudeMemFile('.mcp.json', `${JSON.stringify(mcp, null, 2)}\n`, process.execPath);
+    assert.equal(rewrittenMcp.replacements, 1, 'the mcp-search command must be the only MCP replacement');
+    assert.deepEqual(JSON.parse(rewrittenMcp.text), {
+      mcpServers: { 'mcp-search': { type: 'stdio', command: process.execPath, args: ['-e', 'process.stdout.write(process.execPath)'] } },
+    }, 'MCP rewriting must preserve the -e program and replace only the executable');
+    const windowsBunPath = 'C:\\Program Files\\Bun\\bun.exe';
+    const windowsHooks = rewriteClaudeMemFile('hooks/hooks.json', hooksRaw, windowsBunPath);
+    assert.match(windowsHooks.text, /'C:\\\\Program Files\\\\Bun\\\\bun\.exe'/, 'Windows source behavior must embed a single-quoted absolute Bun hook executable');
+    const windowsMcp = rewriteClaudeMemFile('.mcp.json', JSON.stringify(mcp), windowsBunPath);
+    assert.equal(JSON.parse(windowsMcp.text).mcpServers['mcp-search'].command, windowsBunPath, 'Windows source behavior must persist the absolute Bun MCP executable');
+
+    const missingVersion = structuredClone(hooksFixture);
+    delete missingVersion.hooks.Setup;
+    assert.throws(() => rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(missingVersion), process.execPath), /version-check|replacement|schema/i, 'hooks without version-check must fail closed');
+    const missingRunner = structuredClone(hooksFixture);
+    for (const name of hookNames.slice(1)) delete missingRunner.hooks[name];
+    assert.throws(() => rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(missingRunner), process.execPath), /bun-runner|replacement|schema/i, 'hooks without bun-runner must fail closed');
+    const duplicateExecutable = structuredClone(hooksFixture);
+    duplicateExecutable.hooks.Setup[0].hooks[0].command += `; ${hookCommands[0]}`;
+    assert.throws(() => rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(duplicateExecutable), process.execPath), /duplicate|unique|multiple/i, 'two identical executable tokens in one hook must fail closed');
+    const unknownExecutable = structuredClone(hooksFixture);
+    unknownExecutable.hooks.Setup[0].hooks[0].command += '; node "$_P/scripts/unknown.js"';
+    assert.throws(() => rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(unknownExecutable), process.execPath), /unknown|remaining|executable|node/i, 'unknown plugin script entrypoints must fail closed');
+    const quotedDecoyOnly = structuredClone(hooksFixture);
+    quotedDecoyOnly.hooks.Setup[0].hooks[0].command = `${hookPrefix}printf '%s' 'text; node "$_P/scripts/version-check.js"'`;
+    const newlineUnknownExecutable = structuredClone(hooksFixture);
+    newlineUnknownExecutable.hooks.Setup[0].hooks[0].command += '\nnode "$_P/scripts/unknown.js"';
+    const acceptedShellDecoys = [];
+    for (const [label, fixture] of [
+      ['single-quoted version-check decoy', quotedDecoyOnly],
+      ['newline unknown executable', newlineUnknownExecutable],
+    ]) {
+      try {
+        rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(fixture), process.execPath);
+        acceptedShellDecoys.push(label);
+      } catch {}
+    }
+    assert.deepEqual(acceptedShellDecoys, [], 'quoted text must not count as an executable and newline command boundaries must reject unknown scripts');
+    const quotedTextWithRealExecutable = structuredClone(hooksFixture);
+    quotedTextWithRealExecutable.hooks.Setup[0].hooks[0].command = `${hookPrefix}printf '%s' 'text; node "$_P/scripts/version-check.js"'; ${hookCommands[0]}`;
+    const quotedTextResult = JSON.parse(rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(quotedTextWithRealExecutable), process.execPath).text);
+    assert.match(quotedTextResult.hooks.Setup[0].hooks[0].command, /printf '%s' 'text; node "\$_P\/scripts\/version-check\.js"'/, 'ordinary quoted Node text must remain byte-identical');
+    const descriptiveNode = structuredClone(hooksFixture);
+    descriptiveNode.hooks.Setup[0].hooks[0].note = 'run node for node:fs while native.node remains unchanged';
+    const descriptiveResult = JSON.parse(rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(descriptiveNode), process.execPath).text);
+    assert.equal(descriptiveResult.hooks.Setup[0].hooks[0].note, descriptiveNode.hooks.Setup[0].hooks[0].note, 'non-command node text must not be edited');
+    assert.throws(() => rewriteClaudeMemFile('hooks/hooks.json', '{broken json\n', process.execPath), /json/i, 'malformed hook JSON must fail closed');
+    assert.throws(() => rewriteClaudeMemFile('.mcp.json', '{broken json\n', process.execPath), /json/i, 'malformed MCP JSON must fail closed');
+    for (const [label, invalidMcp] of [
+      ['missing server', { mcpServers: {} }],
+      ['wrong type', { mcpServers: { 'mcp-search': { ...mcp.mcpServers['mcp-search'], type: 'http' } } }],
+      ['wrong command', { mcpServers: { 'mcp-search': { ...mcp.mcpServers['mcp-search'], command: 'bun' } } }],
+      ['missing eval program', { mcpServers: { 'mcp-search': { ...mcp.mcpServers['mcp-search'], args: ['script.cjs'] } } }],
+    ]) {
+      assert.throws(() => rewriteClaudeMemFile('.mcp.json', JSON.stringify(invalidMcp), process.execPath), /mcp-search|schema|command|args/i, `${label} MCP schema must fail closed`);
+    }
+
+    const smokeHome = join(fixtureRoot, 'smoke-home');
+    const smokeClaude = join(fixtureRoot, 'smoke-claude');
+    const smokePlugin = join(fixtureRoot, 'smoke-plugin');
+    const smokeBin = join(fixtureRoot, 'smoke-bin');
+    const smokeScripts = join(smokePlugin, 'scripts');
+    const nodeMarker = join(fixtureRoot, 'forbidden-node-ran');
+    mkdirSync(smokeHome, { recursive: true });
+    mkdirSync(smokeClaude, { recursive: true });
+    mkdirSync(smokeScripts, { recursive: true });
+    mkdirSync(smokeBin, { recursive: true });
+    writeFileSync(join(smokeScripts, 'version-check.js'), 'process.exit(0);\n', 'utf8');
+    writeFileSync(join(smokeScripts, 'bun-runner.js'), `
+const child = Bun.spawn({
+  cmd: [process.execPath, process.argv[2], ...process.argv.slice(3)],
+  stdin: 'inherit', stdout: 'inherit', stderr: 'inherit', env: process.env,
+});
+process.exit(await child.exited);
+`, 'utf8');
+    writeFileSync(join(smokeScripts, 'worker-service.cjs'), `
+const input = new Uint8Array(await new Response(Bun.stdin.stream()).arrayBuffer());
+await Bun.write(Bun.stdout, new Uint8Array([...new TextEncoder().encode(process.env.CLAUDE_MEM_SMOKE + ':' + process.argv.slice(2).join(' ') + ':'), ...input]));
+await Bun.write(Bun.stderr, 'fixture-stderr');
+process.exit(23);
+`, 'utf8');
+    writeFileSync(join(smokeBin, 'node'), `#!/bin/sh\nprintf forbidden > ${JSON.stringify(nodeMarker)}\nexit 90\n`, 'utf8');
+    chmodSync(join(smokeBin, 'node'), 0o700);
+    writeFileSync(join(smokeBin, 'bun'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`, 'utf8');
+    chmodSync(join(smokeBin, 'bun'), 0o700);
+    const smokeHooks = {
+      hooks: {
+        Setup: [{ hooks: [{ type: 'command', command: `_P="$PLUGIN_ROOT"; ${hookCommands[0]}` }] }],
+        SessionStart: [{ hooks: [{ type: 'command', command: `_P="$PLUGIN_ROOT"; ${hookCommands[2]}` }] }],
+      },
+    };
+    const smokeRewrite = rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(smokeHooks), process.execPath);
+    const smokeCommand = JSON.parse(smokeRewrite.text).hooks.SessionStart[0].hooks[0].command;
+    const smokeInput = Buffer.from('fixture-stdin\n');
+    const smokeChild = Bun.spawn({
+      cmd: ['/bin/sh', '-c', smokeCommand],
+      cwd: fixtureRoot,
+      env: {
+        HOME: smokeHome,
+        CLAUDE_CONFIG_DIR: smokeClaude,
+        PATH: smokeBin,
+        PLUGIN_ROOT: smokePlugin,
+        CLAUDE_MEM_SMOKE: 'fixture-env',
+      },
+      stdin: new Blob([smokeInput]),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const smokeExit = await smokeChild.exited;
+    const smokeStdout = Buffer.from(await new Response(smokeChild.stdout).arrayBuffer());
+    const smokeStderr = Buffer.from(await new Response(smokeChild.stderr).arrayBuffer());
+    assert.equal(smokeExit, 23, 'the rewritten hook must propagate the worker nonzero exit code');
+    assert.deepEqual(smokeStdout, Buffer.concat([Buffer.from('fixture-env:hook claude-code context:'), smokeInput]), 'the rewritten hook must forward environment, argv, stdin, and stdout');
+    assert.deepEqual(smokeStderr, Buffer.from('fixture-stderr'), 'the rewritten hook must forward stderr');
+    assert.equal(existsSync(nodeMarker), false, 'the forbidden Node shim must not execute');
+
+    const mcpSmoke = rewriteClaudeMemFile('.mcp.json', JSON.stringify(mcp), process.execPath);
+    const mcpServer = JSON.parse(mcpSmoke.text).mcpServers['mcp-search'];
+    const mcpRun = Bun.spawnSync([mcpServer.command, ...mcpServer.args], {
+      cwd: fixtureRoot,
+      env: { HOME: smokeHome, CLAUDE_CONFIG_DIR: smokeClaude, PATH: smokeBin },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    assert.equal(mcpRun.exitCode, 0, mcpRun.stderr.toString());
+    assert.equal(mcpRun.stdout.toString(), process.execPath, 'the rewritten MCP command must execute the current Bun');
+    assert.equal(existsSync(nodeMarker), false, 'MCP smoke must not execute the forbidden Node shim');
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
   }
 }
 

@@ -4,21 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-
-const installers = [
-  ['install.sh', '../install.sh', 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\'', '\nPATCHER_EOF'],
-  ['install.ps1', '../install.ps1', "$patcherCode = @'", "\n'@\n\nSet-Content"],
-];
-
-function extractPatcher(file, marker, closingMarker) {
-  const source = readFileSync(new URL(file, import.meta.url), 'utf8');
-  const start = source.indexOf(marker);
-  assert.notEqual(start, -1, `${file}: patcher heredoc must exist`);
-  const bodyStart = source.indexOf('\n', start) + 1;
-  const end = source.indexOf(closingMarker, bodyStart);
-  assert.notEqual(end, -1, `${file}: patcher heredoc must close`);
-  return source.slice(bodyStart, end);
-}
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const fixtures = [
   {
@@ -35,12 +21,12 @@ const fixtures = [
   },
 ];
 
-for (const [name, file, marker, closingMarker] of installers) {
-  const patcher = extractPatcher(file, marker, closingMarker);
+for (const [name, patcher] of await getPatcherSources()) {
   for (const fixture of fixtures) {
     const label = `${name} (${fixture.name})`;
     const dir = mkdtempSync(join(tmpdir(), 'clawgod-claude-api-skill-'));
     try {
+      seedPatcherAcorn(dir);
       writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
       writeFileSync(join(dir, 'cli.original.cjs'), fixture.source, 'utf8');
 

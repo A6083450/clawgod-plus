@@ -9,41 +9,19 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
-
-const root = realpathSync(new URL('../', import.meta.url));
-const unixInstaller = readFileSync(join(root, 'install.sh'), 'utf8');
-const windowsInstaller = readFileSync(join(root, 'install.ps1'), 'utf8');
+import { getPatcherSources } from './patcher-test-sources.mjs';
 
 function assertTemporaryPath(path, parent, label) {
   const resolvedParent = realpathSync(parent);
   const resolvedPath = realpathSync(path);
   const child = relative(resolvedParent, resolvedPath);
   assert.ok(child && child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child), `${label} must stay under its fixture root`);
-}
-
-function extractUnixPatcher() {
-  const marker = 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\'';
-  const start = unixInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed patch.mjs');
-  const bodyStart = unixInstaller.indexOf('\n', start) + 1;
-  const end = unixInstaller.indexOf('\nPATCHER_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh patcher heredoc must end');
-  return unixInstaller.slice(bodyStart, end);
-}
-
-function extractWindowsPatcher() {
-  const marker = "$patcherCode = @'\n";
-  const start = windowsInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must embed patch.mjs');
-  const bodyStart = start + marker.length;
-  const end = windowsInstaller.indexOf("\n'@\n\nSet-Content", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 patcher here-string must end');
-  return windowsInstaller.slice(bodyStart, end);
 }
 
 const fixtureSource = `
@@ -58,6 +36,12 @@ function patchUpdateBranch(label, patcher) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'clawgod update patch '));
   assertTemporaryPath(fixtureRoot, tmpdir(), `${label} patch fixture`);
   try {
+    const fixtureBin = join(fixtureRoot, 'fixture-only-bin');
+    const fixtureHome = join(fixtureRoot, 'home');
+    mkdirSync(fixtureBin);
+    mkdirSync(fixtureHome);
+    assertTemporaryPath(fixtureBin, fixtureRoot, `${label} patch PATH`);
+    assertTemporaryPath(fixtureHome, fixtureRoot, `${label} patch HOME`);
     writeFileSync(join(fixtureRoot, 'patch.mjs'), patcher, 'utf8');
     writeFileSync(
       join(fixtureRoot, 'no-fetch.cjs'),
@@ -68,7 +52,7 @@ function patchUpdateBranch(label, patcher) {
     const run = spawnSync(process.execPath, [join(fixtureRoot, 'no-fetch.cjs'), './patch.mjs'], {
       cwd: fixtureRoot,
       encoding: 'utf8',
-      env: { HOME: fixtureRoot, PATH: dirname(process.execPath), TMPDIR: fixtureRoot },
+      env: { HOME: fixtureHome, PATH: fixtureBin, TMPDIR: fixtureRoot },
     });
     assert.equal(run.status, 0, `${label} update fixture must patch cleanly: ${run.stdout}${run.stderr}`);
     return readFileSync(join(fixtureRoot, 'cli.original.cjs'), 'utf8');
@@ -95,11 +79,15 @@ function runUpdateCase(label, code, options = {}) {
   for (const path of [home, clawgod, bin, updateTmp]) assertTemporaryPath(path, fixtureRoot, `${label} ${basename(path)}`);
 
   const target = join(clawgod, 'cli.original.cjs');
+  const enhancementsFile = join(clawgod, 'enhancements.json');
+  const savedConfig = '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n';
   const fetchCapture = join(fixtureRoot, 'fetch.json');
   const runCapture = join(fixtureRoot, 'run.json');
   const installerFixture = join(fixtureRoot, options.windows ? 'remote installer.ps1' : 'remote installer.sh');
   writeFileSync(installerFixture, 'fixture installer', 'utf8');
   writeFileSync(target, options.windows ? code.replace("const _w=process.platform==='win32';", 'const _w=true;') : code, 'utf8');
+  writeFileSync(enhancementsFile, savedConfig, { mode: 0o600 });
+  const configBefore = statSync(enhancementsFile);
 
   makeExecutable(join(clawgod, 'fetch-file.mjs'), `
 import { copyFileSync } from 'node:fs';
@@ -149,6 +137,10 @@ process.exit(Number(process.env.RUN_EXIT||0));
     assert.doesNotMatch(`${run.stdout}${run.stderr}`, /forbidden downloader invoked/, `${label} must never execute a forbidden downloader`);
     const leftovers = readdirSync(updateTmp).filter(name => name.startsWith('clawgod-update-'));
     assert.deepEqual(leftovers, [], `${label} must clean its private update directory in finally`);
+    const configAfter = statSync(enhancementsFile);
+    assert.equal(readFileSync(enhancementsFile, 'utf8'), savedConfig, `${label} must preserve saved enhancement config bytes`);
+    assert.equal(configAfter.mode & 0o7777, configBefore.mode & 0o7777, `${label} must preserve saved enhancement config mode`);
+    assert.equal(configAfter.ino, configBefore.ino, `${label} must preserve saved enhancement config identity`);
     return {
       fixtureRoot,
       clawgod,
@@ -161,10 +153,8 @@ process.exit(Number(process.env.RUN_EXIT||0));
   }
 }
 
-const patchedUpdateBranches = [
-  ['install.sh', patchUpdateBranch('install.sh', extractUnixPatcher())],
-  ['install.ps1', patchUpdateBranch('install.ps1', extractWindowsPatcher())],
-];
+const patchedUpdateBranches = (await getPatcherSources())
+  .map(([label, patcherSource]) => [label, patchUpdateBranch(label, patcherSource)]);
 
 function windowsUpdateCommandSource(code) {
   const match = code.match(/const __command=_w\?\[([^\]]+)\]:\['bash',__installer\]/);
@@ -176,12 +166,6 @@ const expectedWindowsCommand = "'powershell','-NoProfile','-ExecutionPolicy','By
 for (const [label, code] of patchedUpdateBranches) {
   assert.equal(windowsUpdateCommandSource(code), expectedWindowsCommand, `${label} must generate the complete PowerShell execution-policy argv in exact order`);
 }
-assert.equal(
-  windowsUpdateCommandSource(patchedUpdateBranches[0][1]),
-  windowsUpdateCommandSource(patchedUpdateBranches[1][1]),
-  'Unix and PowerShell installers must generate identical Windows update argv',
-);
-
 for (const [label, code] of patchedUpdateBranches) {
 
   for (const windows of [false, true]) {

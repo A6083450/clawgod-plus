@@ -17,7 +17,13 @@ on:
       - 'apply-claude-code-*.zip'
       - claude-browser-1.0.77-patched.zip
       - 'apply-claude-code-context-limit-patch/**'
-      - 'tests/*.mjs'
+      - 'tests/**'
+      - 'README.md'
+      - 'README_EN.md'
+      - 'README_JP.md'
+      - 'AGENTS.md'
+      - 'docs/superpowers/specs/2026-08-09-claude-plugin-dependencies-design.md'
+      - 'docs/superpowers/plans/2026-08-09-claude-plugin-dependencies.md'
       - scripts/rebuild-helper-zips.mjs
       - .github/workflows/compat-daily.yml
   pull_request:
@@ -29,7 +35,13 @@ on:
       - 'apply-claude-code-*.zip'
       - claude-browser-1.0.77-patched.zip
       - 'apply-claude-code-context-limit-patch/**'
-      - 'tests/*.mjs'
+      - 'tests/**'
+      - 'README.md'
+      - 'README_EN.md'
+      - 'README_JP.md'
+      - 'AGENTS.md'
+      - 'docs/superpowers/specs/2026-08-09-claude-plugin-dependencies-design.md'
+      - 'docs/superpowers/plans/2026-08-09-claude-plugin-dependencies.md'
       - scripts/rebuild-helper-zips.mjs
       - .github/workflows/compat-daily.yml
 
@@ -63,6 +75,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bun build.mjs --check
           bash -n install.sh
           bun scripts/rebuild-helper-zips.mjs --check
           for test in tests/*.mjs; do
@@ -104,6 +117,51 @@ jobs:
             echo '::error::installed Claude source version was not observed'
             exit 1
           }
+          grep -q '^no prompt: selection resolved without interaction$' "$log" || {
+            echo '::error::default install must resolve enhancement selection without prompting'
+            exit 1
+          }
+          for contract in \
+            'Optional plugins: 3 ready, 0 disabled, 0 warnings' \
+            'HUD statusline: bun-only current-style=exact' \
+            'claude-mem entrypoints: hooks=bun mcp=bun' \
+            'plugin retention: hud=present memory=present superpowers=present'; do
+            grep -q "^${contract}$" "$log" || {
+              echo "::error::missing plugin lifecycle contract: ${contract}"
+              exit 1
+            }
+          done
+
+      - name: Run isolated installer E2E — subset and core-only selections
+        shell: bash
+        run: |
+          set -euo pipefail
+          subset_log="$RUNNER_TEMP/installer-e2e-subset.log"
+          CLAWGOD_E2E=1 CLAWGOD_E2E_ENHANCEMENTS='chrome,computer-use,claude-hud' bun tests/installer-e2e.mjs 2>&1 | tee "$subset_log"
+          for contract in \
+            'enhancement config initial: mode=custom enabled=3' \
+            'enhancement config no-upgrade: mode=custom enabled=3' \
+            'enhancements summary: 3 enabled, 10 disabled' \
+            'Optional plugins: 1 ready, 2 disabled, 0 warnings' \
+            'no prompt: selection resolved without interaction'; do
+            grep -q "^${contract}$" "$subset_log" || {
+              echo "::error::missing subset selection contract: ${contract}"
+              exit 1
+            }
+          done
+          none_log="$RUNNER_TEMP/installer-e2e-none.log"
+          CLAWGOD_E2E=1 CLAWGOD_E2E_ENHANCEMENTS='none' bun tests/installer-e2e.mjs 2>&1 | tee "$none_log"
+          for contract in \
+            'enhancement config initial: mode=custom enabled=0' \
+            'enhancement config no-upgrade: mode=custom enabled=0' \
+            'enhancements summary: 0 enabled, 13 disabled' \
+            'Optional plugins: 0 ready, 3 disabled, 0 warnings' \
+            'no prompt: selection resolved without interaction'; do
+            grep -q "^${contract}$" "$none_log" || {
+              echo "::error::missing core-only selection contract: ${contract}"
+              exit 1
+            }
+          done
 
       - name: Publish supported-Claude-version badge
         if: success() && github.event_name != 'pull_request'
@@ -200,7 +258,7 @@ jobs:
           Get-ChildItem Env: | Where-Object { $_.Name -like 'ANTHROPIC_*' } | Remove-Item
           Remove-Item Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue
 
-          foreach ($name in @('rg', 'tar', 'unzip')) {
+          foreach ($name in @('node', 'npm', 'rg', 'tar', 'unzip', 'git')) {
             $shim = @"
           @echo off
           echo forbidden dependency invoked: $name 1>&2
@@ -208,6 +266,20 @@ jobs:
           exit /b 97
           "@
             [System.IO.File]::WriteAllText((Join-Path $shimDir "$name.cmd"), $shim, [System.Text.Encoding]::ASCII)
+          }
+          $gitExeSource = Join-Path $sandbox 'forbidden-git-exe.mjs'
+          $gitExeShim = Join-Path $shimDir 'git.exe'
+          $gitExeProgram = @'
+          const marker = process.env.CLAWGOD_FORBIDDEN_MARKER;
+          if (!marker) process.exit(96);
+          await Bun.write(marker, 'forbidden dependency invoked: git.exe\n');
+          console.error('forbidden dependency invoked: git.exe');
+          process.exit(97);
+          '@
+          [System.IO.File]::WriteAllText($gitExeSource, $gitExeProgram, [System.Text.UTF8Encoding]::new($false))
+          $gitExeBuild = & $bunBin build --compile $gitExeSource --outfile $gitExeShim 2>&1
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gitExeShim -PathType Leaf)) {
+            throw "Bun failed to compile the git.exe shim: $($gitExeBuild | Out-String)"
           }
 
           function Assert-NoForbiddenDependency([object[]]$Output) {
@@ -226,6 +298,20 @@ jobs:
             return ,$output
           }
 
+          function Assert-ForbiddenShim([string]$Label, [string]$Executable) {
+            Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+            $output = & $Executable status --short 2>&1
+            $exitCode = $LASTEXITCODE
+            $text = $output | Out-String
+            if ($exitCode -ne 97 -or $text -notmatch 'forbidden dependency invoked:' -or -not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+              throw "$Label did not exit 97 and write the forbidden marker"
+            }
+            Remove-Item -LiteralPath $marker -Force
+          }
+
+          Assert-ForbiddenShim 'git command shim' (Join-Path $shimDir 'git.cmd')
+          Assert-ForbiddenShim 'git executable shim' (Join-Path $shimDir 'git.exe')
+
           function Assert-PatchSummary([string]$Label, [object[]]$Output) {
             $text = $Output | Out-String
             $resultLines = @($text -split '\r?\n' | Where-Object { $_.Contains('Result:') })
@@ -235,14 +321,244 @@ jobs:
             return $summaryMatch
           }
 
+          function Assert-PluginSummary([string]$Label, [object[]]$Output) {
+            $lines = @(($Output | Out-String) -split '\r?\n' | Where-Object { $_.Contains('Optional plugins:') })
+            if ($lines.Count -ne 1) { throw "$Label expected exactly one optional plugin summary, found $($lines.Count)" }
+            if ($lines[0].Trim() -cne 'Optional plugins: 3 ready, 0 disabled, 0 warnings') {
+              throw "$Label did not report all three optional plugins ready"
+            }
+          }
+
+          function Assert-EnhancementConfig([string]$Label, [string]$ExpectedMode, [int]$ExpectedEnabled) {
+            $configPath = Join-Path $env:USERPROFILE '.clawgod\enhancements.json'
+            $config = Read-JsonFile $configPath
+            if ($config.schemaVersion -ne 1) { throw "$Label enhancement config must use schemaVersion 1" }
+            if ($config.mode -cne $ExpectedMode) { throw "$Label enhancement config mode must be $ExpectedMode" }
+            if (@($config.enabled).Count -ne $ExpectedEnabled) { throw "$Label enhancement config must enable $ExpectedEnabled items" }
+            Write-Host "enhancement config $Label mode=$($config.mode) enabled=$(@($config.enabled).Count)"
+          }
+
+          $pluginSpecs = @(
+            [pscustomobject]@{ Key = 'hud'; Id = 'claude-hud@claude-hud'; Marketplace = 'claude-hud'; Plugin = 'claude-hud'; Version = '0.7.0' },
+            [pscustomobject]@{ Key = 'memory'; Id = 'claude-mem@thedotmack'; Marketplace = 'thedotmack'; Plugin = 'claude-mem'; Version = '13.14.0' },
+            [pscustomobject]@{ Key = 'superpowers'; Id = 'superpowers@superpowers-marketplace'; Marketplace = 'superpowers-marketplace'; Plugin = 'superpowers'; Version = '6.2.0' }
+          )
+
+          function Read-JsonFile([string]$Path) {
+            return Get-Content $Path -Raw | ConvertFrom-Json
+          }
+
+          function Assert-SharedPluginRetention([string]$Label) {
+            $contractInput = [ordered]@{
+              tempHome = $env:USERPROFILE
+              expectedCanonicalIds = @(
+                'claude-hud@claude-hud',
+                'claude-mem@thedotmack',
+                'superpowers@superpowers-marketplace'
+              )
+            } | ConvertTo-Json -Depth 10 -Compress
+            $contractScript = Join-Path $env:GITHUB_WORKSPACE 'tests\installer-e2e.mjs'
+            try {
+              $env:CLAWGOD_E2E_CONTRACT = 'plugin-retention'
+              $env:CLAWGOD_E2E_CONTRACT_INPUT = $contractInput
+              $retentionOutput = & $bunBin $contractScript 2>&1
+              $retentionExitCode = $LASTEXITCODE
+              $env:CLAWGOD_E2E_CONTRACT = 'plugin-selection'
+              $selectionOutput = & $bunBin $contractScript 2>&1
+              $selectionExitCode = $LASTEXITCODE
+            } finally {
+              Remove-Item Env:CLAWGOD_E2E_CONTRACT -ErrorAction SilentlyContinue
+              Remove-Item Env:CLAWGOD_E2E_CONTRACT_INPUT -ErrorAction SilentlyContinue
+            }
+            if ($retentionExitCode -ne 0 -or ($retentionOutput | Out-String).Trim() -cne 'plugin retention: hud=present memory=present superpowers=present') {
+              throw "$Label failed the shared Bun plugin validator: $($retentionOutput | Out-String)"
+            }
+            if ($selectionExitCode -ne 0) { throw "$Label failed the shared Bun plugin selection: $($selectionOutput | Out-String)" }
+            try {
+              return (($selectionOutput | Out-String).Trim() | ConvertFrom-Json)
+            } catch {
+              throw "$Label shared Bun plugin selection was not JSON: $($selectionOutput | Out-String)"
+            }
+          }
+
+          function Assert-PluginState([string]$Label) {
+            $validated = Assert-SharedPluginRetention $Label
+            $settingsValue = Read-JsonFile (Join-Path $env:USERPROFILE '.claude\settings.json')
+            $selected = @{}
+            foreach ($spec in $pluginSpecs) {
+              $recordProperty = $validated.PSObject.Properties[$spec.Key]
+              if ($null -eq $recordProperty) { throw "$Label shared validator omitted $($spec.Id)" }
+              $record = $recordProperty.Value
+              $enabled = $settingsValue.enabledPlugins.PSObject.Properties[$spec.Id]
+              if ($null -eq $enabled -or $enabled.Value -ne $true) { throw "$Label $($spec.Id) is not enabled" }
+              $selected[$spec.Key] = $record
+            }
+            return $selected
+          }
+
+          function Assert-HudStatusLine([object]$SettingsValue, [string]$ModulePath) {
+            $expected = '"' + $bunBin + '" "' + $ModulePath + '"'
+            if ($SettingsValue.statusLine.type -cne 'command' -or $SettingsValue.statusLine.command -cne $expected) {
+              throw 'HUD statusLine does not exactly invoke the managed module with Bun'
+            }
+            Write-Host 'HUD statusline: bun-only current-style=exact'
+          }
+
+          function Assert-ClaudeMemEntrypoints([string]$InstallPath) {
+            $hooks = Read-JsonFile (Join-Path $InstallPath 'hooks\hooks.json')
+            $mcp = Read-JsonFile (Join-Path $InstallPath '.mcp.json')
+            $versionToken = "'" + $bunBin + "' " + '"$_P/scripts/version-check.js"'
+            $runnerToken = "'" + $bunBin + "' " + '"$_P/scripts/bun-runner.js"'
+            $versionCount = 0
+            $runnerCount = 0
+            foreach ($groupsProperty in $hooks.hooks.PSObject.Properties) {
+              foreach ($group in @($groupsProperty.Value)) {
+                foreach ($hook in @($group.hooks)) {
+                  if ($hook.type -cne 'command' -or $hook.command -isnot [string]) { throw 'claude-mem Hook schema is not command-based' }
+                  if ($hook.command -match '(^|[;&|]\s*)node\s+(?=["'']?\$_P/scripts/)') { throw 'claude-mem Hook retained a Node entrypoint' }
+                  if ($hook.command.Contains('$_P/scripts/version-check.js')) {
+                    if (-not $hook.command.Contains($versionToken)) { throw 'claude-mem version-check Hook is not Bun-managed' }
+                    $versionCount += 1
+                  }
+                  if ($hook.command.Contains('$_P/scripts/bun-runner.js')) {
+                    if (-not $hook.command.Contains($runnerToken)) { throw 'claude-mem bun-runner Hook is not Bun-managed' }
+                    $runnerCount += 1
+                  }
+                }
+              }
+            }
+            if ($versionCount -lt 1 -or $runnerCount -lt 1) { throw 'claude-mem Hook rewrite is partial' }
+            $mcpSearch = $mcp.mcpServers.'mcp-search'
+            if ($mcpSearch.type -cne 'stdio' -or $mcpSearch.command -cne $bunBin -or $mcpSearch.args.Count -ne 2
+              -or $mcpSearch.args[0] -cne '-e' -or [string]::IsNullOrEmpty([string]$mcpSearch.args[1])) {
+              throw 'claude-mem MCP entrypoint is not Bun-managed'
+            }
+            Write-Host 'claude-mem entrypoints: hooks=bun mcp=bun'
+          }
+
+          function Assert-ClaudeMemMcpConsumer([string]$InstallPath) {
+            $mcp = Read-JsonFile (Join-Path $InstallPath '.mcp.json')
+            $mcpSearch = $mcp.mcpServers.'mcp-search'
+            $smokeRoot = Join-Path $env:USERPROFILE 'claude-mem-mcp-smoke'
+            $mcpHome = Join-Path $smokeRoot 'home'
+            $mcpConfig = Join-Path $smokeRoot 'config'
+            $mcpCwd = Join-Path $smokeRoot 'cwd'
+            New-Item -ItemType Directory -Force -Path $mcpHome, $mcpConfig, $mcpCwd | Out-Null
+
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = [string]$mcpSearch.command
+            foreach ($argument in @($mcpSearch.args)) { $startInfo.ArgumentList.Add([string]$argument) }
+            $startInfo.WorkingDirectory = $mcpCwd
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            $startInfo.Environment.Clear()
+            $startInfo.Environment['HOME'] = $mcpHome
+            $startInfo.Environment['USERPROFILE'] = $mcpHome
+            $startInfo.Environment['APPDATA'] = $mcpHome
+            $startInfo.Environment['LOCALAPPDATA'] = $mcpHome
+            $startInfo.Environment['TEMP'] = $smokeRoot
+            $startInfo.Environment['TMP'] = $smokeRoot
+            $startInfo.Environment['PATH'] = $env:PATH
+            $startInfo.Environment['SystemRoot'] = $env:SystemRoot
+            $startInfo.Environment['ComSpec'] = $env:ComSpec
+            $startInfo.Environment['CLAWGOD_FORBIDDEN_MARKER'] = $marker
+            $startInfo.Environment['CLAUDE_CONFIG_DIR'] = $mcpConfig
+            $startInfo.Environment['CLAUDE_PLUGIN_ROOT'] = (Join-Path $smokeRoot 'missing-plugin')
+            $startInfo.Environment['PLUGIN_ROOT'] = (Join-Path $smokeRoot 'missing-plugin')
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            if (-not $process.Start()) { throw 'claude-mem MCP safe consumer did not start' }
+            $stdout = [System.IO.MemoryStream]::new()
+            $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdout)
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            $process.StandardInput.Close()
+            if (-not $process.WaitForExit(10000)) {
+              $process.Kill($true)
+              throw 'claude-mem MCP safe consumer timed out'
+            }
+            $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            if ($process.ExitCode -ne 1 -or $stdout.Length -ne 0 -or $stderr -cne "claude-mem: mcp server not found`n") {
+              throw "claude-mem MCP safe consumer did not take the missing-server branch: exit=$($process.ExitCode) stderr=$stderr"
+            }
+            Assert-NoForbiddenDependency @($stderr)
+            Write-Host 'claude-mem consumer windows: mcp=bun missing-server=safe node-shim=unused'
+          }
+
+          function Assert-HudGoldenFixture([object]$SettingsValue) {
+            $fixture = Read-JsonFile (Join-Path $env:GITHUB_WORKSPACE 'tests\fixtures\claude-hud-current-style.json')
+            $projectDir = Join-Path $env:USERPROFILE 'my-project'
+            $transcriptPath = Join-Path $projectDir 'transcript.jsonl'
+            New-Item -ItemType Directory -Force -Path $projectDir | Out-Null
+            $transcriptLines = @($fixture.transcript | ForEach-Object { $_ | ConvertTo-Json -Depth 100 -Compress })
+            [System.IO.File]::WriteAllText($transcriptPath, ($transcriptLines -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
+            $stdinValue = $fixture.stdin | ConvertTo-Json -Depth 100 | ConvertFrom-Json
+            $stdinValue | Add-Member -NotePropertyName cwd -NotePropertyValue $projectDir
+            $stdinValue | Add-Member -NotePropertyName transcript_path -NotePropertyValue $transcriptPath
+            $stdinValue.workspace | Add-Member -NotePropertyName current_dir -NotePropertyValue $projectDir
+            $stdinValue.workspace | Add-Member -NotePropertyName project_dir -NotePropertyValue $projectDir
+
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $env:ComSpec
+            $startInfo.ArgumentList.Add('/d')
+            $startInfo.ArgumentList.Add('/s')
+            $startInfo.ArgumentList.Add('/c')
+            $startInfo.ArgumentList.Add('"' + $SettingsValue.statusLine.command + '"')
+            $startInfo.WorkingDirectory = $projectDir
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            $startInfo.StandardInputEncoding = [System.Text.UTF8Encoding]::new($false)
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            if (-not $process.Start()) { throw 'HUD golden fixture process did not start' }
+            $stdout = [System.IO.MemoryStream]::new()
+            $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdout)
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            $process.StandardInput.Write(($stdinValue | ConvertTo-Json -Depth 100 -Compress) + "`n")
+            $process.StandardInput.Close()
+            if (-not $process.WaitForExit(10000)) {
+              $process.Kill($true)
+              throw 'HUD golden fixture command host timed out'
+            }
+            $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            if ($process.ExitCode -ne 0) { throw "HUD golden fixture exited $($process.ExitCode): $stderr" }
+            $actual = [Convert]::ToBase64String($stdout.ToArray())
+            $expected = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([string]$fixture.expectedStdout))
+            if ($actual -cne $expected) { throw 'HUD golden fixture ANSI stdout did not match byte-for-byte' }
+          }
+
           $installer = Join-Path $env:GITHUB_WORKSPACE 'install.ps1'
+          $settingsPath = Join-Path $env:USERPROFILE '.claude\settings.json'
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $settingsPath) | Out-Null
+          $initialSettings = [ordered]@{
+            env = [ordered]@{ CLAUDE_CODE_HARBOR_KITE = '1' }
+            unrelatedWindowsE2EValue = 'preserve-me'
+          }
+          [System.IO.File]::WriteAllText($settingsPath, ($initialSettings | ConvertTo-Json -Depth 100) + "`n", [System.Text.UTF8Encoding]::new($false))
+          $claudeMemSentinelPath = Join-Path $env:USERPROFILE '.claude-mem\installer-e2e-memory-sentinel.json'
+          $claudeMemSentinel = [System.Text.Encoding]::UTF8.GetBytes("{`"retain`":`"claude-mem user data`"}`n")
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $claudeMemSentinelPath) | Out-Null
+          [System.IO.File]::WriteAllBytes($claudeMemSentinelPath, $claudeMemSentinel)
+
           $initialOutput = Invoke-Checked 'initial -LeanOn install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-LeanOn')
           $initialSummary = Assert-PatchSummary 'initial' $initialOutput
           Write-Host "patch summary windows initial: $($initialSummary.Groups[1].Value) applied, $($initialSummary.Groups[2].Value) skipped, 0 failed"
+          Assert-PluginSummary 'initial' $initialOutput
+          Assert-EnhancementConfig 'initial' 'all' 0
 
-          $settingsPath = Join-Path $env:USERPROFILE '.claude\settings.json'
           $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
           if ($settings.disableWorkflows -ne $true) { throw '-LeanOn did not apply lean settings' }
+          $initialPlugins = Assert-PluginState 'initial install'
+          $hudStatusLineModule = Join-Path $env:USERPROFILE '.clawgod\claude-hud-statusline.mjs'
+          Assert-HudStatusLine $settings $hudStatusLineModule
+          Assert-ClaudeMemEntrypoints $initialPlugins['memory'].installPath
+          Assert-ClaudeMemMcpConsumer $initialPlugins['memory'].installPath
+          Assert-HudGoldenFixture $settings
 
           $privateRg = Join-Path $env:USERPROFILE '.clawgod\vendor\ripgrep\bin\rg.exe'
           $rgVersion = Invoke-Checked 'private ripgrep version smoke' $privateRg @('--version')
@@ -263,14 +579,28 @@ jobs:
           $noUpgradeOutput = Invoke-Checked '-NoUpgrade -LeanOff install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-NoUpgrade', '-LeanOff')
           $noUpgradeSummary = Assert-PatchSummary 'no-upgrade' $noUpgradeOutput
           Write-Host "patch summary windows no-upgrade: $($noUpgradeSummary.Groups[1].Value) applied, $($noUpgradeSummary.Groups[2].Value) skipped, 0 failed"
+          Assert-PluginSummary 'no-upgrade' $noUpgradeOutput
+          Assert-EnhancementConfig 'no-upgrade' 'all' 0
           $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
           if ($null -ne $settings.disableWorkflows) { throw '-LeanOff did not remove lean settings' }
           if (-not (Test-Path (Join-Path $env:USERPROFILE '.clawgod\.lean-disabled'))) { throw '-LeanOff did not create its state marker' }
+          $noUpgradePlugins = Assert-PluginState 'no-upgrade install'
+          Assert-HudStatusLine $settings $hudStatusLineModule
+          Assert-ClaudeMemEntrypoints $noUpgradePlugins['memory'].installPath
 
-          $settingsBeforeUninstall = [System.IO.File]::ReadAllBytes($settingsPath)
+          $subsetOutput = Invoke-Checked 'subset -Enhancements install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-NoUpgrade', '-Enhancements', 'chrome,computer-use,claude-hud')
+          $null = Assert-PatchSummary 'subset' $subsetOutput
+          Assert-EnhancementConfig 'subset' 'custom' 3
+
+          $noneOutput = Invoke-Checked 'core-only -Enhancements none install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-NoUpgrade', '-Enhancements', 'none')
+          $null = Assert-PatchSummary 'core-only' $noneOutput
+          Assert-EnhancementConfig 'core-only' 'custom' 0
+
+          $expectedSettingsAfterUninstall = Get-Content $settingsPath -Raw | ConvertFrom-Json -AsHashtable
+          $null = $expectedSettingsAfterUninstall.Remove('statusLine')
           $null = Invoke-Checked '-Uninstall' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-Uninstall')
           $managedRoot = Join-Path $env:USERPROFILE '.clawgod'
-          $allowedPersistent = @('provider.json', 'features.json', '.lean-disabled', '.lean-max')
+          $allowedPersistent = @('provider.json', 'features.json', 'enhancements.json', '.lean-disabled', '.lean-max')
           $remainingManaged = @(Get-ChildItem $managedRoot -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin $allowedPersistent })
           if ($remainingManaged.Count -ne 0) { throw "Uninstall retained managed artifacts: $($remainingManaged.Name -join ', ')" }
           $externalManaged = @(
@@ -285,9 +615,25 @@ jobs:
           foreach ($path in $externalManaged) {
             if (Test-Path $path) { throw "Uninstall retained external managed path: $path" }
           }
-          $settingsAfterUninstall = [System.IO.File]::ReadAllBytes($settingsPath)
-          if ([Convert]::ToBase64String($settingsBeforeUninstall) -cne [Convert]::ToBase64String($settingsAfterUninstall)) {
-            throw 'Uninstall changed unrelated Claude settings bytes'
+          $actualSettingsAfterUninstall = Get-Content $settingsPath -Raw | ConvertFrom-Json -AsHashtable
+          $expectedSettingsJson = $expectedSettingsAfterUninstall | ConvertTo-Json -Depth 100 -Compress
+          $actualSettingsJson = $actualSettingsAfterUninstall | ConvertTo-Json -Depth 100 -Compress
+          if ($actualSettingsJson -cne $expectedSettingsJson) {
+            throw 'Uninstall did not restore only the managed statusLine field'
           }
-          Write-Host 'uninstall cleanup windows: managed-runtime=absent settings=byte-identical external-launchers=absent'
+          $null = Assert-PluginState 'post-uninstall retention'
+          Write-Host 'plugin retention: hud=present memory=present superpowers=present'
+          if ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes($claudeMemSentinelPath)) -cne [Convert]::ToBase64String($claudeMemSentinel)) {
+            throw 'Uninstall changed claude-mem sentinel data'
+          }
+          foreach ($path in @(
+            (Join-Path $managedRoot 'plugin-dependencies.mjs'),
+            (Join-Path $managedRoot 'plugin-dependencies-state.json'),
+            (Join-Path $managedRoot 'claude-hud-statusline.mjs'),
+            (Join-Path $managedRoot 'cache\claude-plugins'),
+            (Join-Path $managedRoot 'staging\claude-plugins')
+          )) {
+            if (Test-Path $path) { throw "Uninstall retained ClawGod plugin artifact: $path" }
+          }
+          Write-Host 'uninstall cleanup windows: managed-runtime=absent settings=restored external-launchers=absent'
           Assert-NoForbiddenDependency @()

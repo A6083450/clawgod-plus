@@ -1,17 +1,486 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { buildPatcherBundle, renderTemplate } from '../build.mjs';
+import { publishVendorTransaction } from '../src/generic/runtime/vendor-transaction.mjs';
 
+const vendorTransactionPath = fileURLToPath(new URL('../src/generic/runtime/vendor-transaction.mjs', import.meta.url));
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const windowsTemplate = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
+const canonicalPlatform = Object.fromEntries(
+  ['unix/lifecycle.sh', 'unix/launcher.sh', 'windows/lifecycle.ps1', 'windows/launcher.cmd'].map(name => [
+    name,
+    readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8'),
+  ]),
+);
+const canonicalRuntime = Object.fromEntries(
+  ['fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'vendor-transaction.mjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
+    name,
+    readFileSync(new URL(`../src/generic/runtime/${name}`, import.meta.url), 'utf8'),
+  ]),
+);
+canonicalRuntime['plugin-dependencies.mjs'] = renderTemplate(canonicalRuntime['plugin-dependencies.mjs'], {
+  HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(canonicalRuntime['claude-hud-statusline.mjs'])).slice(1, -1),
+});
+canonicalRuntime['patcher.mjs'] = await buildPatcherBundle();
+
+for (const [name, source] of Object.entries(canonicalPlatform)) {
+  const generated = name.startsWith('unix/') ? unix : windows;
+  assert.ok(generated.includes(source), `${name} must be embedded exactly in its generated installer`);
+}
 
 function assertTemporaryPath(path, label) {
   const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];
   const resolvedPath = resolve(path);
   assert.ok(temporaryRoots.some(root => resolvedPath.startsWith(`${root}/`)), `${label} must stay under the system temporary directory`);
+}
+
+function writeVendorRootRacePreload(path) {
+  writeFileSync(path, `import { createRequire, syncBuiltinESMExports } from 'node:module';
+const require = createRequire(import.meta.url);
+const fs = require('node:fs');
+const { join } = require('node:path');
+const originalLstatSync = fs.lstatSync;
+let injected = false;
+let cleanupAssessmentTransactionChecks = 0;
+
+fs.lstatSync = function (path, ...args) {
+  const pathString = String(path);
+  const stack = String(new Error().stack);
+  const boundary = process.env.VENDOR_RACE_BOUNDARY;
+  const inCleanup = stack.includes('transactionCleanupSafe');
+  const inAssessment = stack.includes('assessPreMutationRollback');
+  if (boundary === 'cleanup-final-transaction'
+    && inCleanup
+    && inAssessment
+    && pathString === process.env.VENDOR_RACE_TRANSACTION_ROOT) {
+    cleanupAssessmentTransactionChecks += 1;
+  }
+  const shouldInject = (boundary === 'preflight' && pathString === process.env.VENDOR_RACE_OLD_ROOT)
+    || (boundary === 'cleanup' && inCleanup && pathString === process.env.VENDOR_RACE_OLD_ROOT)
+    || (boundary === 'cleanup-final-live' && inCleanup && inAssessment && pathString === process.env.VENDOR_RACE_RIPGREP)
+    || (boundary === 'cleanup-final-transaction' && cleanupAssessmentTransactionChecks === 2);
+  if (!injected && boundary === 'forged-preflight' && pathString === process.env.VENDOR_RACE_OLD_ROOT) {
+    injected = true;
+    const error = new Error('fixture preflight failure');
+    error.rootConflict = { root: 'live vendor', reason: 'forged-root-conflict' };
+    throw error;
+  }
+  if (!injected && shouldInject) {
+    injected = true;
+    fs.renameSync(process.env.VENDOR_RACE_TARGET_ROOT, process.env.VENDOR_RACE_DISPLACED_ROOT);
+    fs.renameSync(process.env.VENDOR_RACE_REPLACEMENT_ROOT, process.env.VENDOR_RACE_TARGET_ROOT);
+    if (process.env.VENDOR_RACE_PRESERVE_RIPGREP === '1') {
+      fs.renameSync(
+        join(process.env.VENDOR_RACE_DISPLACED_ROOT, 'ripgrep'),
+        join(process.env.VENDOR_RACE_TARGET_ROOT, 'ripgrep'),
+      );
+    }
+  }
+  return originalLstatSync.call(this, path, ...args);
+};
+
+syncBuiltinESMExports();
+`, 'utf8');
+}
+
+function runVendorRootRace({ root, boundary, replacementTarget = 'live', candidateRipgrep = false, oldRootBlocker = false, preserveRipgrepIdentity = false }) {
+  const transaction = join(root, 'transaction');
+  const candidate = join(transaction, 'candidate', 'vendor');
+  const oldRoot = join(transaction, 'old-vendor');
+  const live = join(root, 'runtime', 'vendor');
+  const replacement = join(root, 'replacement-vendor');
+  const displaced = join(root, 'displaced-vendor');
+  const preload = join(root, 'root-race-preload.mjs');
+  const liveNative = join(live, 'old-native.node');
+  const liveRipgrep = join(live, 'ripgrep');
+  const replacementSentinel = join(replacement, 'sentinel.bin');
+
+  mkdirSync(candidate, { recursive: true });
+  mkdirSync(live, { recursive: true });
+  mkdirSync(replacement);
+  if (candidateRipgrep) writeFileSync(join(candidate, 'ripgrep'), Buffer.from([0x63, 0x61, 0x6e, 0x64]));
+  if (oldRootBlocker) writeFileSync(oldRoot, 'preflight blocker\n', 'utf8');
+  writeFileSync(liveNative, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(liveRipgrep, Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(replacementSentinel, Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  const nativeBefore = lstatSync(liveNative);
+  const ripgrepBefore = lstatSync(liveRipgrep);
+  const sentinelBefore = lstatSync(replacementSentinel);
+  const transactionBefore = lstatSync(transaction);
+  const replacementBefore = lstatSync(replacement);
+  const targetRoot = replacementTarget === 'old' ? oldRoot : replacementTarget === 'transaction' ? transaction : live;
+  writeVendorRootRacePreload(preload);
+
+  const run = spawnSync(process.execPath, [
+    '--preload', preload,
+    vendorTransactionPath, 'publish', live, candidate, transaction,
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      HOME: root,
+      TMPDIR: root,
+      PATH: dirname(process.execPath),
+      VENDOR_RACE_BOUNDARY: boundary,
+      VENDOR_RACE_OLD_ROOT: oldRoot,
+      VENDOR_RACE_TRANSACTION_ROOT: transaction,
+      VENDOR_RACE_RIPGREP: liveRipgrep,
+      VENDOR_RACE_TARGET_ROOT: targetRoot,
+      VENDOR_RACE_DISPLACED_ROOT: displaced,
+      VENDOR_RACE_REPLACEMENT_ROOT: replacement,
+      VENDOR_RACE_PRESERVE_RIPGREP: preserveRipgrepIdentity ? '1' : '0',
+    },
+  });
+
+  return {
+    run,
+    transaction,
+    candidate,
+    oldRoot,
+    live,
+    targetRoot,
+    replacementTarget,
+    preserveRipgrepIdentity,
+    displaced,
+    nativeBefore,
+    ripgrepBefore,
+    sentinelBefore,
+    transactionBefore,
+    replacementBefore,
+  };
+}
+
+const vendorTransactionRoot = mkdtempSync(join(tmpdir(), 'clawgod-vendor-transaction-'));
+try {
+  const missingLiveCase = join(vendorTransactionRoot, 'missing-live');
+  const missingLiveTransaction = join(missingLiveCase, 'transaction');
+  const missingLiveCandidate = join(missingLiveTransaction, 'candidate', 'vendor');
+  const missingLive = join(missingLiveCase, 'runtime', 'vendor');
+  mkdirSync(missingLiveCandidate, { recursive: true });
+  mkdirSync(dirname(missingLive), { recursive: true });
+  let missingLiveError;
+  try {
+    publishVendorTransaction({ liveVendor: missingLive, candidateVendor: missingLiveCandidate, transactionDir: missingLiveTransaction });
+  } catch (error) {
+    missingLiveError = error;
+  }
+  assert.equal(missingLiveError?.rollbackComplete, true, 'missing live root must report verified pre-mutation rollback');
+  assert.equal(existsSync(missingLive), false, 'missing live root rejection must not create vendor state');
+
+  const missingCandidateCase = join(vendorTransactionRoot, 'missing-candidate');
+  const missingCandidateTransaction = join(missingCandidateCase, 'transaction');
+  const missingCandidate = join(missingCandidateTransaction, 'candidate', 'vendor');
+  const missingCandidateLive = join(missingCandidateCase, 'runtime', 'vendor');
+  mkdirSync(join(missingCandidateTransaction, 'candidate'), { recursive: true });
+  mkdirSync(missingCandidateLive, { recursive: true });
+  writeFileSync(join(missingCandidateLive, 'ripgrep'), Buffer.from([0x72, 0x67]));
+  let missingCandidateError;
+  try {
+    publishVendorTransaction({ liveVendor: missingCandidateLive, candidateVendor: missingCandidate, transactionDir: missingCandidateTransaction });
+  } catch (error) {
+    missingCandidateError = error;
+  }
+  assert.equal(missingCandidateError?.rollbackComplete, true, 'missing candidate root must report verified pre-mutation rollback');
+  assert.deepEqual(readdirSync(missingCandidateLive), ['ripgrep'], 'missing candidate rejection must not mutate live vendor');
+
+  const symlinkCase = join(vendorTransactionRoot, 'candidate-symlink');
+  const symlinkTransaction = join(symlinkCase, 'transaction');
+  const symlinkCandidate = join(symlinkTransaction, 'candidate', 'vendor');
+  const symlinkLive = join(symlinkCase, 'runtime', 'vendor');
+  const symlinkExternal = join(symlinkCase, 'external');
+  const symlinkSentinel = join(symlinkExternal, 'sentinel.bin');
+  mkdirSync(join(symlinkTransaction, 'candidate'), { recursive: true });
+  mkdirSync(symlinkLive, { recursive: true });
+  mkdirSync(symlinkExternal);
+  writeFileSync(join(symlinkLive, 'ripgrep'), Buffer.from([0x72, 0x67]));
+  writeFileSync(symlinkSentinel, Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  const symlinkSentinelBefore = lstatSync(symlinkSentinel);
+  symlinkSync(symlinkExternal, symlinkCandidate);
+  let symlinkError;
+  try {
+    publishVendorTransaction({ liveVendor: symlinkLive, candidateVendor: symlinkCandidate, transactionDir: symlinkTransaction });
+  } catch (error) {
+    symlinkError = error;
+  }
+  assert.equal(symlinkError?.rollbackComplete, true, 'candidate symlink rejection must report verified pre-mutation rollback');
+  assert.equal(symlinkError?.cleanupSafe, false, 'candidate symlink rejection must retain unsafe transaction data');
+  assert.deepEqual(readdirSync(symlinkExternal), ['sentinel.bin'], 'candidate symlink rejection must not mutate the external directory');
+  assert.deepEqual(readFileSync(symlinkSentinel), Buffer.from([0x5a, 0x00, 0xa5]), 'candidate symlink rejection must preserve external bytes');
+  assert.equal(lstatSync(symlinkSentinel).ino, symlinkSentinelBefore.ino, 'candidate symlink rejection must preserve external identity');
+  assert.deepEqual(readdirSync(symlinkLive), ['ripgrep'], 'candidate symlink rejection must not mutate live vendor');
+
+  const raceCase = join(vendorTransactionRoot, 'root-race');
+  const raceTransaction = join(raceCase, 'transaction');
+  const raceCandidate = join(raceTransaction, 'candidate', 'vendor');
+  const raceLive = join(raceCase, 'runtime', 'vendor');
+  const raceReplacement = join(raceCase, 'replacement');
+  const raceDisplaced = join(raceCase, 'displaced');
+  const raceSentinel = join(raceReplacement, 'sentinel.bin');
+  mkdirSync(join(raceCandidate, 'a-first'), { recursive: true });
+  mkdirSync(join(raceCandidate, 'z-second'), { recursive: true });
+  mkdirSync(raceLive, { recursive: true });
+  mkdirSync(raceReplacement);
+  writeFileSync(join(raceCandidate, 'a-first', 'native.node'), Buffer.from([0x01]));
+  writeFileSync(join(raceCandidate, 'z-second', 'native.node'), Buffer.from([0x02]));
+  writeFileSync(join(raceLive, 'old-native.node'), Buffer.from([0x03]));
+  writeFileSync(join(raceLive, 'ripgrep'), Buffer.from([0x72, 0x67]));
+  writeFileSync(raceSentinel, Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  const raceSentinelBefore = lstatSync(raceSentinel);
+  let raceError;
+  try {
+    publishVendorTransaction({
+      liveVendor: raceLive,
+      candidateVendor: raceCandidate,
+      transactionDir: raceTransaction,
+      afterPublish: ({ publishedCount }) => {
+        if (publishedCount !== 1) return;
+        renameSync(raceLive, raceDisplaced);
+        renameSync(raceReplacement, raceLive);
+      },
+    });
+  } catch (error) {
+    raceError = error;
+  }
+  assert.equal(raceError?.rollbackComplete, false, 'live root identity replacement must report a rollback conflict');
+  assert.deepEqual(readdirSync(raceLive), ['sentinel.bin'], 'root conflict rollback must not mutate the unknown replacement directory');
+  assert.deepEqual(readFileSync(join(raceLive, 'sentinel.bin')), Buffer.from([0x5a, 0x00, 0xa5]), 'root conflict rollback must preserve replacement bytes');
+  assert.equal(lstatSync(join(raceLive, 'sentinel.bin')).ino, raceSentinelBefore.ino, 'root conflict rollback must preserve replacement identity');
+  assert.equal(existsSync(join(raceTransaction, 'vendor-rollback-conflict.json')), true, 'root conflict must retain recovery evidence');
+
+  const preflightRootRace = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'pre-mutation-bound-root-race'),
+    boundary: 'preflight',
+    oldRootBlocker: true,
+  });
+  const cleanupRootRace = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'cleanup-bound-root-race'),
+    boundary: 'cleanup',
+    replacementTarget: 'old',
+    candidateRipgrep: true,
+  });
+  const cleanupLiveRootRace = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'cleanup-live-root-race'),
+    boundary: 'cleanup',
+    replacementTarget: 'live',
+    candidateRipgrep: true,
+  });
+  const cleanupFinalLiveRootRace = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'cleanup-final-live-root-race'),
+    boundary: 'cleanup-final-live',
+    replacementTarget: 'live',
+    candidateRipgrep: true,
+    preserveRipgrepIdentity: true,
+  });
+  const cleanupFinalTransactionRootRace = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'cleanup-final-transaction-root-race'),
+    boundary: 'cleanup-final-transaction',
+    replacementTarget: 'transaction',
+    candidateRipgrep: true,
+  });
+  const forgedRootConflict = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'forged-root-conflict'),
+    boundary: 'forged-preflight',
+    oldRootBlocker: true,
+  });
+  assert.deepEqual(
+    [
+      preflightRootRace.run.status,
+      cleanupRootRace.run.status,
+      cleanupLiveRootRace.run.status,
+      cleanupFinalLiveRootRace.run.status,
+      cleanupFinalTransactionRootRace.run.status,
+      forgedRootConflict.run.status,
+    ],
+    [21, 22, 21, 21, 21, 20],
+    `bound-root races must distinguish live conflicts from retained transaction-owned conflicts and ignore forged metadata:\n${preflightRootRace.run.stderr}${cleanupRootRace.run.stderr}${cleanupLiveRootRace.run.stderr}${cleanupFinalLiveRootRace.run.stderr}${cleanupFinalTransactionRootRace.run.stderr}${forgedRootConflict.run.stderr}`,
+  );
+  assert.match(forgedRootConflict.run.stderr, /fixture preflight failure/, 'forged-metadata fixture must execute its injected unbranded error');
+
+  const preflightEvidence = join(preflightRootRace.transaction, 'vendor-rollback-conflict.json');
+  assert.equal(existsSync(preflightEvidence), true, 'pre-mutation root conflict must retain recovery evidence in the trusted transaction root');
+  assert.ok(
+    JSON.parse(readFileSync(preflightEvidence, 'utf8')).conflicts.some(conflict => conflict.root === 'live vendor'),
+    'pre-mutation recovery evidence must identify the replaced live root',
+  );
+  for (const [label, fixture] of [
+    ['pre-mutation', preflightRootRace],
+    ['cleanup-old', cleanupRootRace],
+    ['cleanup-live', cleanupLiveRootRace],
+    ['cleanup-final-live', cleanupFinalLiveRootRace],
+    ['cleanup-final-transaction', cleanupFinalTransactionRootRace],
+  ]) {
+    const replacementSentinel = join(fixture.targetRoot, 'sentinel.bin');
+    const preservedLive = fixture.replacementTarget === 'live' ? fixture.displaced : fixture.live;
+    const preservedNative = join(preservedLive, 'old-native.node');
+    const preservedRipgrep = fixture.preserveRipgrepIdentity
+      ? join(fixture.targetRoot, 'ripgrep')
+      : join(preservedLive, 'ripgrep');
+    const expectedReplacementEntries = fixture.preserveRipgrepIdentity
+      ? ['ripgrep', 'sentinel.bin']
+      : ['sentinel.bin'];
+    assert.equal(existsSync(fixture.transaction), true, `${label}: unsafe transaction data must be retained`);
+    const replacementAfter = lstatSync(fixture.targetRoot);
+    assert.equal(replacementAfter.dev, fixture.replacementBefore.dev, `${label}: helper must preserve replacement root device`);
+    assert.equal(replacementAfter.ino, fixture.replacementBefore.ino, `${label}: helper must preserve replacement root identity`);
+    assert.equal(replacementAfter.isDirectory(), true, `${label}: helper must preserve replacement root type`);
+    assert.equal(replacementAfter.mode & 0o7777, fixture.replacementBefore.mode & 0o7777, `${label}: helper must preserve replacement root mode`);
+    assert.deepEqual(readdirSync(fixture.targetRoot).toSorted(), expectedReplacementEntries, `${label}: helper must not add files to the unknown replacement root`);
+    assert.deepEqual(readFileSync(replacementSentinel), Buffer.from([0x5a, 0x00, 0xa5]), `${label}: replacement sentinel bytes must remain unchanged`);
+    assert.equal(lstatSync(replacementSentinel).ino, fixture.sentinelBefore.ino, `${label}: replacement sentinel identity must remain unchanged`);
+    assert.equal(lstatSync(replacementSentinel).mode & 0o7777, 0o604, `${label}: replacement sentinel mode must remain unchanged`);
+    assert.deepEqual(readFileSync(preservedNative), Buffer.from([0x00, 0x11, 0x80, 0xff]), `${label}: live native bytes must remain unchanged`);
+    assert.equal(lstatSync(preservedNative).ino, fixture.nativeBefore.ino, `${label}: live native identity must remain unchanged`);
+    assert.deepEqual(readFileSync(preservedRipgrep), Buffer.from([0x72, 0x67, 0x00, 0xff]), `${label}: live ripgrep bytes must remain unchanged`);
+    assert.equal(lstatSync(preservedRipgrep).ino, fixture.ripgrepBefore.ino, `${label}: live ripgrep identity must remain unchanged`);
+    assert.equal(existsSync(join(fixture.targetRoot, 'vendor-rollback-conflict.json')), false, `${label}: helper must never write evidence into an unknown replacement root`);
+  }
+  const displacedTransaction = lstatSync(cleanupFinalTransactionRootRace.displaced);
+  assert.equal(displacedTransaction.dev, cleanupFinalTransactionRootRace.transactionBefore.dev, 'final transaction replacement must retain the original transaction device');
+  assert.equal(displacedTransaction.ino, cleanupFinalTransactionRootRace.transactionBefore.ino, 'final transaction replacement must retain the original transaction identity');
+  assert.equal(displacedTransaction.isDirectory(), true, 'final transaction replacement must retain the original transaction type');
+  assert.equal(displacedTransaction.mode & 0o7777, cleanupFinalTransactionRootRace.transactionBefore.mode & 0o7777, 'final transaction replacement must retain the original transaction mode');
+  assert.deepEqual(
+    readFileSync(join(cleanupFinalTransactionRootRace.displaced, 'candidate', 'vendor', 'ripgrep')),
+    Buffer.from([0x63, 0x61, 0x6e, 0x64]),
+    'final transaction replacement must retain original candidate recovery bytes',
+  );
+  assert.equal(existsSync(join(forgedRootConflict.transaction, 'vendor-rollback-conflict.json')), false, 'unbranded error metadata must not forge recovery evidence');
+  assert.deepEqual(readFileSync(join(forgedRootConflict.live, 'old-native.node')), Buffer.from([0x00, 0x11, 0x80, 0xff]), 'unbranded error metadata must preserve prior native bytes');
+  assert.equal(lstatSync(join(forgedRootConflict.live, 'old-native.node')).ino, forgedRootConflict.nativeBefore.ino, 'unbranded error metadata must preserve prior native identity');
+  assert.deepEqual(readFileSync(join(forgedRootConflict.live, 'ripgrep')), Buffer.from([0x72, 0x67, 0x00, 0xff]), 'unbranded error metadata must preserve managed ripgrep bytes');
+  assert.equal(lstatSync(join(forgedRootConflict.live, 'ripgrep')).ino, forgedRootConflict.ripgrepBefore.ino, 'unbranded error metadata must preserve managed ripgrep identity');
+
+  const evidenceLeafCase = join(vendorTransactionRoot, 'evidence-leaf-symlink');
+  const evidenceLeafTransaction = join(evidenceLeafCase, 'transaction');
+  const evidenceLeafCandidate = join(evidenceLeafTransaction, 'candidate', 'vendor');
+  const evidenceLeafLive = join(evidenceLeafCase, 'runtime', 'vendor');
+  const evidenceLeafReplacement = join(evidenceLeafCase, 'replacement-vendor');
+  const evidenceLeafDisplaced = join(evidenceLeafCase, 'displaced-vendor');
+  const evidenceLeafExternal = join(evidenceLeafCase, 'external-evidence-target.bin');
+  const evidenceLeafPath = join(evidenceLeafTransaction, 'vendor-rollback-conflict.json');
+  mkdirSync(evidenceLeafCandidate, { recursive: true });
+  mkdirSync(evidenceLeafLive, { recursive: true });
+  mkdirSync(evidenceLeafReplacement);
+  writeFileSync(join(evidenceLeafCandidate, 'candidate.node'), Buffer.from([0xca, 0xfe]));
+  writeFileSync(join(evidenceLeafLive, 'old-native.node'), Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(join(evidenceLeafLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(join(evidenceLeafReplacement, 'sentinel.bin'), Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  writeFileSync(evidenceLeafExternal, Buffer.from([0xde, 0xad, 0xbe, 0xef]), { mode: 0o600 });
+  const evidenceLeafExternalBefore = lstatSync(evidenceLeafExternal);
+  symlinkSync(evidenceLeafExternal, evidenceLeafPath);
+  let evidenceLeafError;
+  try {
+    publishVendorTransaction({
+      liveVendor: evidenceLeafLive,
+      candidateVendor: evidenceLeafCandidate,
+      transactionDir: evidenceLeafTransaction,
+      afterPublish: () => {
+        renameSync(evidenceLeafLive, evidenceLeafDisplaced);
+        renameSync(evidenceLeafReplacement, evidenceLeafLive);
+      },
+    });
+  } catch (error) {
+    evidenceLeafError = error;
+  }
+  assert.equal(evidenceLeafError?.rollbackComplete, false, 'evidence leaf fixture must retain the live-root rollback conflict');
+  assert.deepEqual(readFileSync(evidenceLeafExternal), Buffer.from([0xde, 0xad, 0xbe, 0xef]), 'conflict evidence must not follow a pre-existing symlink leaf');
+  assert.equal(lstatSync(evidenceLeafExternal).ino, evidenceLeafExternalBefore.ino, 'conflict evidence must preserve external target identity');
+  assert.equal(lstatSync(evidenceLeafExternal).mode & 0o7777, 0o600, 'conflict evidence must preserve external target mode');
+  assert.equal(lstatSync(evidenceLeafPath).isSymbolicLink(), true, 'conflict evidence must preserve a pre-existing symlink leaf');
+  assert.equal(readlinkSync(evidenceLeafPath), evidenceLeafExternal, 'conflict evidence must not replace a pre-existing symlink leaf');
+
+  const candidateRootCase = join(vendorTransactionRoot, 'candidate-root-conflict');
+  const candidateRootTransaction = join(candidateRootCase, 'transaction');
+  const candidateRoot = join(candidateRootTransaction, 'candidate', 'vendor');
+  const candidateRootDisplaced = join(candidateRootCase, 'displaced-candidate');
+  const candidateRootReplacement = join(candidateRootCase, 'replacement-candidate');
+  const candidateRootLive = join(candidateRootCase, 'runtime', 'vendor');
+  const candidateRootOldNative = join(candidateRootLive, 'old-native.node');
+  const candidateRootRipgrep = join(candidateRootLive, 'ripgrep');
+  const candidateRootSentinel = join(candidateRootReplacement, 'sentinel.bin');
+  mkdirSync(candidateRoot, { recursive: true });
+  mkdirSync(candidateRootLive, { recursive: true });
+  mkdirSync(candidateRootReplacement);
+  writeFileSync(join(candidateRoot, 'candidate.node'), Buffer.from([0xca, 0xfe]));
+  writeFileSync(candidateRootOldNative, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(candidateRootRipgrep, Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(candidateRootSentinel, Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  const candidateRootOldNativeBefore = lstatSync(candidateRootOldNative);
+  const candidateRootRipgrepBefore = lstatSync(candidateRootRipgrep);
+  const candidateRootSentinelBefore = lstatSync(candidateRootSentinel);
+  let candidateRootError;
+  try {
+    publishVendorTransaction({
+      liveVendor: candidateRootLive,
+      candidateVendor: candidateRoot,
+      transactionDir: candidateRootTransaction,
+      afterPublish: () => {
+        renameSync(candidateRoot, candidateRootDisplaced);
+        renameSync(candidateRootReplacement, candidateRoot);
+      },
+    });
+  } catch (error) {
+    candidateRootError = error;
+  }
+  assert.equal(candidateRootError?.rollbackComplete, true, 'a transaction-owned candidate root conflict must preserve completed live rollback');
+  assert.equal(candidateRootError?.cleanupSafe, false, 'a transaction-owned candidate root conflict must retain transaction recovery data');
+  assert.deepEqual(readdirSync(candidateRootLive).toSorted(), ['old-native.node', 'ripgrep'], 'candidate root conflict rollback must restore the exact prior live entry set');
+  assert.deepEqual(readFileSync(candidateRootOldNative), Buffer.from([0x00, 0x11, 0x80, 0xff]), 'candidate root conflict rollback must restore prior native bytes');
+  assert.equal(lstatSync(candidateRootOldNative).ino, candidateRootOldNativeBefore.ino, 'candidate root conflict rollback must restore prior native identity');
+  assert.deepEqual(readFileSync(candidateRootRipgrep), Buffer.from([0x72, 0x67, 0x00, 0xff]), 'candidate root conflict rollback must preserve managed ripgrep bytes');
+  assert.equal(lstatSync(candidateRootRipgrep).ino, candidateRootRipgrepBefore.ino, 'candidate root conflict rollback must preserve managed ripgrep identity');
+  assert.deepEqual(readFileSync(join(candidateRoot, 'sentinel.bin')), Buffer.from([0x5a, 0x00, 0xa5]), 'candidate root conflict rollback must not mutate replacement bytes');
+  assert.equal(lstatSync(join(candidateRoot, 'sentinel.bin')).ino, candidateRootSentinelBefore.ino, 'candidate root conflict rollback must preserve replacement identity');
+  assert.equal(existsSync(join(candidateRootTransaction, 'vendor-rollback-conflict.json')), true, 'candidate root conflict must retain recovery evidence');
+
+  const unknownEntryCase = join(vendorTransactionRoot, 'unknown-live-entry');
+  const unknownEntryTransaction = join(unknownEntryCase, 'transaction');
+  const unknownEntryCandidate = join(unknownEntryTransaction, 'candidate', 'vendor');
+  const unknownEntryLive = join(unknownEntryCase, 'runtime', 'vendor');
+  const unknownEntryOldNative = join(unknownEntryLive, 'old-native.node');
+  const unknownEntryRipgrep = join(unknownEntryLive, 'ripgrep');
+  const unknownEntryRogue = join(unknownEntryLive, 'rogue.node');
+  mkdirSync(unknownEntryCandidate, { recursive: true });
+  mkdirSync(unknownEntryLive, { recursive: true });
+  writeFileSync(join(unknownEntryCandidate, 'candidate.node'), Buffer.from([0xca, 0xfe]));
+  writeFileSync(unknownEntryOldNative, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(unknownEntryRipgrep, Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  const unknownEntryOldNativeBefore = lstatSync(unknownEntryOldNative);
+  const unknownEntryRipgrepBefore = lstatSync(unknownEntryRipgrep);
+  let unknownEntryRogueBefore;
+  let unknownEntryError;
+  try {
+    publishVendorTransaction({
+      liveVendor: unknownEntryLive,
+      candidateVendor: unknownEntryCandidate,
+      transactionDir: unknownEntryTransaction,
+      afterPublish: () => {
+        writeFileSync(unknownEntryRogue, Buffer.from([0x13, 0x37]), { mode: 0o601 });
+        unknownEntryRogueBefore = lstatSync(unknownEntryRogue);
+        throw new Error('fixture publication interruption');
+      },
+    });
+  } catch (error) {
+    unknownEntryError = error;
+  }
+  assert.equal(unknownEntryError?.rollbackComplete, false, 'an unknown live entry must make rollback incomplete');
+  assert.equal(unknownEntryError?.cleanupSafe, false, 'an unknown live entry must retain transaction recovery data');
+  assert.deepEqual(readFileSync(unknownEntryOldNative), Buffer.from([0x00, 0x11, 0x80, 0xff]), 'unknown-entry rollback must restore prior native bytes');
+  assert.equal(lstatSync(unknownEntryOldNative).ino, unknownEntryOldNativeBefore.ino, 'unknown-entry rollback must restore prior native identity');
+  assert.deepEqual(readFileSync(unknownEntryRipgrep), Buffer.from([0x72, 0x67, 0x00, 0xff]), 'unknown-entry rollback must preserve managed ripgrep bytes');
+  assert.equal(lstatSync(unknownEntryRipgrep).ino, unknownEntryRipgrepBefore.ino, 'unknown-entry rollback must preserve managed ripgrep identity');
+  assert.deepEqual(readFileSync(unknownEntryRogue), Buffer.from([0x13, 0x37]), 'unknown-entry rollback must not overwrite unknown bytes');
+  assert.equal(lstatSync(unknownEntryRogue).ino, unknownEntryRogueBefore.ino, 'unknown-entry rollback must not replace unknown identity');
+  assert.equal(lstatSync(unknownEntryRogue).mode & 0o7777, 0o601, 'unknown-entry rollback must preserve unknown mode');
+  assert.equal(existsSync(join(unknownEntryTransaction, 'vendor-rollback-conflict.json')), true, 'unknown-entry rollback must retain recovery evidence');
+} finally {
+  rmSync(vendorTransactionRoot, { recursive: true, force: true });
 }
 
 function isolatedUnixPath(root) {
@@ -52,14 +521,17 @@ function unixTemplate(name, marker) {
   return unix.slice(bodyStart, end);
 }
 
-function powerShellTemplate(name, firstLine) {
-  const marker = `@'\n${firstLine}`;
+function powerShellRuntimePayload(name) {
+  const marker = `$${name} = [Convert]::FromBase64String('`;
   const start = windows.indexOf(marker);
-  assert.notEqual(start, -1, `install.ps1 must generate ${name}`);
-  const bodyStart = start + 3;
-  const end = windows.indexOf("\n'@", bodyStart);
-  assert.notEqual(end, -1, `install.ps1 ${name} template must end`);
-  return windows.slice(bodyStart, end);
+  assert.notEqual(start, -1, `install.ps1 must declare canonical byte payload $${name}`);
+  const bodyStart = start + marker.length;
+  const end = windows.indexOf("')", bodyStart);
+  assert.notEqual(end, -1, `install.ps1 canonical byte payload $${name} must end`);
+  const encoded = windows.slice(bodyStart, end);
+  assert.match(encoded, /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/, `$${name} must be canonical base64`);
+  assert.equal(Buffer.from(encoded, 'base64').toString('base64'), encoded, `$${name} must round-trip as canonical base64`);
+  return Buffer.from(encoded, 'base64');
 }
 
 function powerShellFunction(name) {
@@ -68,6 +540,52 @@ function powerShellFunction(name) {
   const end = windows.indexOf('\n}\n', start);
   assert.notEqual(end, -1, `install.ps1 must close ${name}`);
   return windows.slice(start, end + 3);
+}
+
+function powerShellApplyBlock(source, label) {
+  const start = source.indexOf('Write-Dim "Applying patches ..."');
+  const end = source.indexOf('\n# ─── Create default configs', start);
+  assert.ok(start >= 0 && end > start, `${label} must retain the patch application gate`);
+  return source.slice(start, end);
+}
+
+function assertPowerShellVendorStatusScope(source, label) {
+  const block = powerShellApplyBlock(source, label);
+  const probe = '$VendorNativePreferenceWasDefined = Test-Path Variable:PSNativeCommandUseErrorActionPreference';
+  const save = 'if ($VendorNativePreferenceWasDefined) { $VendorNativePreferenceValue = $PSNativeCommandUseErrorActionPreference }';
+  const disable = 'if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $false }';
+  const call = '& $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir';
+  const capture = '$vendorStatus = $LASTEXITCODE';
+  const restore = 'if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $VendorNativePreferenceValue }';
+  const remove = 'else { Remove-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue }';
+  const failureGate = 'if ($vendorStatus -ne 0) {';
+  const rollbackStatus = '$VendorRollbackComplete = $vendorStatus -eq 20 -or $vendorStatus -eq 22';
+  const retainedStatus = 'if ($vendorStatus -eq 22) { $RuntimeTransactionCleanupSafe = $false }';
+  const promote = 'throw "Native vendor publication failed."';
+  const positions = [probe, save, '    try {', disable, call, capture, '    } finally {', restore, remove, failureGate, rollbackStatus, retainedStatus, promote]
+    .map(needle => block.indexOf(needle));
+  assert.ok(positions.every(position => position >= 0), `${label} must preserve native-command state, capture rollback status, and promote vendor failure`);
+  assert.deepEqual(positions, positions.toSorted((left, right) => left - right), `${label} native-command status handling must stay in execution order`);
+  assert.equal(block.indexOf(call, positions[4] + call.length), -1, `${label} must invoke the vendor transaction helper exactly once`);
+  assert.equal(block.indexOf(capture, positions[5] + capture.length), -1, `${label} must capture native vendor status exactly once`);
+  assert.equal((block.match(/\$vendorStatus\s*=/g) || []).length, 1, `${label} must assign native vendor status exactly once`);
+  assert.equal(block.slice(positions[4] + call.length, positions[5]).trim(), '', `${label} must capture native vendor status immediately after helper publication`);
+  assert.equal((block.match(/\$PSNativeCommandUseErrorActionPreference\s*=\s*\$false/g) || []).length, 1, `${label} must disable native-command throwing only once`);
+  const preferenceScope = block.slice(positions[2], positions[8] + remove.length);
+  assert.equal((preferenceScope.match(/\$PSNativeCommandUseErrorActionPreference\s*=/g) || []).length, 2, `${label} must only disable and restore the native-command error preference`);
+  assert.doesNotMatch(preferenceScope, /\$ErrorActionPreference\s*=/, `${label} must not weaken ErrorActionPreference around vendor publication`);
+  return block;
+}
+
+function findPwsh() {
+  const pathValue = process.env.PATH || process.env.Path || '';
+  for (const directory of pathValue.split(delimiter)) {
+    for (const name of process.platform === 'win32' ? ['pwsh.exe', 'pwsh'] : ['pwsh']) {
+      const candidate = join(directory, name);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
 }
 
 const executableNode = /(?:^|[;\r\n])\s*(?:&\s*)?(?:node(?:\.exe)?|\$NodeBin)\b(?:\s|$)|\bStart-Process\s+(?:-FilePath\s+)?(?:node(?:\.exe)?)\b/i;
@@ -812,10 +1330,10 @@ assert.match(windowsBackup, /Copy-Item \$latestExe\.FullName \$claudeOrigExe -Fo
 assert.match(windowsUninstall, /Move-Item -Force \$claudeExeOrig \$claudeExe/, 'Windows uninstall must restore the backed-up versions executable');
 
 for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', windowsUninstall]]) {
-  for (const artifact of ['.clawgod-version', '.update-check']) {
+  for (const artifact of ['.clawgod-version', '.update-check', 'enhancement-config.mjs', 'enhancement-manifest.json']) {
     assert.ok(uninstall.includes(artifact), `${name}: uninstall must remove ${artifact}`);
   }
-  for (const preserved of ['provider.json', 'features.json', '.lean-disabled', '.lean-max']) {
+  for (const preserved of ['provider.json', 'features.json', 'enhancements.json', '.lean-disabled', '.lean-max']) {
     assert.doesNotMatch(uninstall, new RegExp(preserved.replace('.', '\\\.')), `${name}: uninstall must preserve ${preserved}`);
   }
 }
@@ -824,7 +1342,7 @@ assert.doesNotMatch(unix, /\$\(\$BUN_BIN\s+--version/, 'Unix Bun version probes 
 
 const resolveBunStart = unix.indexOf('resolve_bun() {');
 const normalPreflightStart = unix.indexOf('if ! resolve_bun; then', unix.indexOf('# ─── Bun prerequisite'));
-const normalPreflightEnd = unix.indexOf('mkdir -p "$CLAWGOD_DIR"', normalPreflightStart);
+const normalPreflightEnd = unix.indexOf('prepare_enhancement_config_directory', normalPreflightStart);
 assert.notEqual(resolveBunStart, -1, 'Unix installer must define resolve_bun');
 assert.notEqual(normalPreflightStart, -1, 'Unix installer must resolve Bun before normal installation');
 assert.notEqual(normalPreflightEnd, -1, 'Unix installer must retain its normal Bun preflight');
@@ -872,21 +1390,186 @@ assert.match(resolveBun, /\$candidate -match '\\\.\(\?:cmd\|bat\|ps1\)\$'/, 'Res
 assert.match(resolveBun, /\$candidate -notmatch '\\.exe\$'/, 'Resolve-Bun must only accept verified native executables');
 
 const unixTemplates = {
-  'claude-mem-compat.cjs': unixTemplate('claude-mem-compat.cjs', 'cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << \'CLAUDE_MEM_COMPAT_EOF\''),
   'extract-natives.mjs': unixTemplate('extract-natives.mjs', 'cat > "$CLAWGOD_DIR/extract-natives.mjs" << \'EXTRACTOR_EOF\''),
   'post-process.mjs': unixTemplate('post-process.mjs', 'cat > "$CLAWGOD_DIR/post-process.mjs" << \'POSTPROC_EOF\''),
   'repatch.mjs': unixTemplate('repatch.mjs', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''),
+  'vendor-transaction.mjs': unixTemplate('vendor-transaction.mjs', 'cat > "$CLAWGOD_DIR/vendor-transaction.mjs" << \'VENDOR_TRANSACTION_EOF\''),
   'patch.mjs': unixTemplate('patch.mjs', 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\''),
   'fetch-file.mjs': unixTemplate('fetch-file.mjs', 'cat > "$CLAWGOD_DIR/fetch-file.mjs" << \'FETCH_FILE_EOF\''),
 };
 const windowsTemplates = {
-  'claude-mem-compat.cjs': powerShellTemplate('claude-mem-compat.cjs', '#!/usr/bin/env bun\nconst fs = require'),
-  'extract-natives.mjs': powerShellTemplate('extract-natives.mjs', '#!/usr/bin/env bun\n/**\n * ClawGod Plus Bun section extractor'),
-  'post-process.mjs': powerShellTemplate('post-process.mjs', "#!/usr/bin/env bun\nimport { readFileSync, writeFileSync, unlinkSync } from 'fs';"),
-  'repatch.mjs': powerShellTemplate('repatch.mjs', "#!/usr/bin/env bun\n// Re-extract + post-process + patch the user's currently-installed"),
-  'patch.mjs': powerShellTemplate('patch.mjs', '#!/usr/bin/env bun\n/**\n * ClawGod Plus Universal Patcher'),
-  'fetch-file.mjs': powerShellTemplate('fetch-file.mjs', "#!/usr/bin/env bun\nimport { existsSync, renameSync, rmSync } from 'node:fs';"),
+  'extract-natives.mjs': powerShellRuntimePayload('ExtractorBytes').toString('utf8').trimEnd(),
+  'post-process.mjs': powerShellRuntimePayload('PostProcessorBytes').toString('utf8').trimEnd(),
+  'repatch.mjs': powerShellRuntimePayload('RepatcherBytes').toString('utf8').trimEnd(),
+  'vendor-transaction.mjs': powerShellRuntimePayload('VendorTransactionBytes').toString('utf8').trimEnd(),
+  'patch.mjs': powerShellRuntimePayload('PatcherBytes').toString('utf8').trimEnd(),
+  'fetch-file.mjs': powerShellRuntimePayload('FetchFileBytes').toString('utf8').trimEnd(),
 };
+
+const runtimeDefinitions = [
+  ['fetch-file.mjs', 'fetch-file.mjs', 'FetchFileBytes', 'cat > "$CLAWGOD_DIR/fetch-file.mjs" << \'FETCH_FILE_EOF\''],
+  ['fetch-package.mjs', 'fetch-package.mjs', 'FetchPackageBytes', 'cat > "$FETCH_SCRIPT" << \'FETCH_PACKAGE_EOF\''],
+  ['install-ripgrep.mjs', 'install-ripgrep.mjs', 'InstallRipgrepBytes', 'cat > "$CLAWGOD_DIR/install-ripgrep.mjs" << \'INSTALL_RIPGREP_EOF\''],
+  ['extract-natives.mjs', 'extractor.mjs', 'ExtractorBytes', 'cat > "$CLAWGOD_DIR/extract-natives.mjs" << \'EXTRACTOR_EOF\''],
+  ['post-process.mjs', 'post-processor.mjs', 'PostProcessorBytes', 'cat > "$CLAWGOD_DIR/post-process.mjs" << \'POSTPROC_EOF\''],
+  ['repatch.mjs', 'repatcher.mjs', 'RepatcherBytes', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''],
+  ['vendor-transaction.mjs', 'vendor-transaction.mjs', 'VendorTransactionBytes', 'cat > "$CLAWGOD_DIR/vendor-transaction.mjs" << \'VENDOR_TRANSACTION_EOF\''],
+  ['patch.mjs', 'patcher.mjs', 'PatcherBytes', 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\''],
+  ['cli.cjs', 'wrapper.cjs', 'WrapperBytes', 'cat > "$CLAWGOD_DIR/cli.cjs" << \'WRAPPER_EOF\''],
+  ['openai-proxy.cjs', 'openai-proxy.cjs', 'OpenAIProxyBytes', 'cat > "$CLAWGOD_DIR/openai-proxy.cjs" << \'PROXY_EOF\''],
+  ['claude-mem-compat.cjs', 'claude-mem-compat.cjs', 'ClaudeMemCompatBytes', 'cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << \'CLAUDE_MEM_COMPAT_EOF\''],
+  ['plugin-dependencies.mjs', 'plugin-dependencies.mjs', 'PluginDependenciesBytes', 'cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << \'PLUGIN_DEPENDENCIES_EOF\''],
+];
+
+for (const [generatedName, canonicalName, powerShellVariable, unixMarker] of runtimeDefinitions) {
+  const canonical = Buffer.from(canonicalRuntime[canonicalName]);
+  const powerShellBytes = powerShellRuntimePayload(powerShellVariable);
+  const unixBytes = Buffer.from(`${unixTemplate(generatedName, unixMarker)}\n`);
+  assert.deepEqual(
+    [unixBytes, powerShellBytes],
+    [canonical, canonical],
+    `both generated installers must write the canonical ${canonicalName} bytes`,
+  );
+  assert.equal(canonical.at(-1), 0x0a, `${canonicalName} must retain one LF terminal newline`);
+  assert.equal(canonical.includes(0x0d), false, `${canonicalName} canonical bytes must not contain CR`);
+  assert.equal(canonical.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), false, `${canonicalName} canonical bytes must not contain a UTF-8 BOM`);
+  assert.match(
+    windows,
+    new RegExp(`\\[System\\.IO\\.File\\]::WriteAllBytes\\([^\\n]*\\$${powerShellVariable}\\)`),
+    `install.ps1 must write $${powerShellVariable} without text transcoding`,
+  );
+}
+
+const canonicalHudBytes = Buffer.from(canonicalRuntime['claude-hud-statusline.mjs']);
+assert.equal(canonicalHudBytes.at(-1), 0x0a, 'claude-hud-statusline.mjs must retain one LF terminal newline');
+assert.equal(canonicalHudBytes.includes(0x0d), false, 'claude-hud-statusline.mjs canonical bytes must not contain CR');
+assert.equal(canonicalHudBytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), false, 'claude-hud-statusline.mjs canonical bytes must not contain a UTF-8 BOM');
+
+const powerShellByteFixture = mkdtempSync(join(tmpdir(), 'clawgod-powershell-runtime-bytes-'));
+assertTemporaryPath(powerShellByteFixture, 'PowerShell runtime byte fixture');
+try {
+  for (const [generatedName, canonicalName, powerShellVariable] of runtimeDefinitions) {
+    const destination = join(powerShellByteFixture, generatedName);
+    writeFileSync(destination, powerShellRuntimePayload(powerShellVariable));
+    assert.deepEqual(readFileSync(destination), Buffer.from(canonicalRuntime[canonicalName]), `${generatedName} decoded WriteAllBytes payload must be canonical`);
+  }
+} finally {
+  rmSync(powerShellByteFixture, { recursive: true, force: true });
+}
+
+function peBunFixture(modules) {
+  const data = [];
+  const records = [];
+  let cursor = 0;
+  for (const module of modules) {
+    const name = Buffer.from(module.name);
+    const content = Buffer.from(module.content);
+    const nameOffset = cursor;
+    data.push(name);
+    cursor += name.length;
+    const contentOffset = cursor;
+    data.push(content);
+    cursor += content.length;
+    const record = Buffer.alloc(52);
+    record.writeUInt32LE(nameOffset, 0);
+    record.writeUInt32LE(name.length, 4);
+    record.writeUInt32LE(contentOffset, 8);
+    record.writeUInt32LE(content.length, 12);
+    record.writeUInt8(module.loader, 49);
+    records.push(record);
+  }
+  const table = Buffer.concat(records);
+  const offsets = Buffer.alloc(32);
+  offsets.writeUInt32LE(cursor, 8);
+  offsets.writeUInt32LE(table.length, 12);
+  offsets.writeUInt32LE(0, 16);
+  const payload = Buffer.concat([...data, table, offsets, Buffer.from('\n---- Bun! ----\n')]);
+  const section = Buffer.alloc(8 + payload.length);
+  section.writeBigUInt64LE(BigInt(payload.length), 0);
+  payload.copy(section, 8);
+
+  const peOffset = 0x80;
+  const optionalHeaderSize = 0x20;
+  const sectionTable = peOffset + 0x18 + optionalHeaderSize;
+  const rawOffset = 0x200;
+  const binary = Buffer.alloc(rawOffset + section.length);
+  binary.write('MZ', 0, 'ascii');
+  binary.writeUInt32LE(peOffset, 0x3c);
+  binary.write('PE\0\0', peOffset, 'ascii');
+  binary.writeUInt16LE(0x8664, peOffset + 0x04);
+  binary.writeUInt16LE(1, peOffset + 0x06);
+  binary.writeUInt16LE(optionalHeaderSize, peOffset + 0x14);
+  binary.writeUInt16LE(0x20b, peOffset + 0x18);
+  binary.write('.bun', sectionTable, 'ascii');
+  binary.writeUInt32LE(section.length, sectionTable + 0x10);
+  binary.writeUInt32LE(rawOffset, sectionTable + 0x14);
+  section.copy(binary, rawOffset);
+  return binary;
+}
+
+const extractorFixture = mkdtempSync(join(tmpdir(), 'clawgod-canonical-extractor-'));
+assertTemporaryPath(extractorFixture, 'canonical extractor fixture');
+try {
+  const binary = join(extractorFixture, 'fixture.exe');
+  const output = join(extractorFixture, 'output');
+  const cliBytes = Buffer.from('(function(exports,require,module,__filename,__dirname){return 7})');
+  const napiBytes = Buffer.from([0xca, 0xfe, 0xba, 0xbe]);
+  writeFileSync(binary, peBunFixture([
+    { name: 'entry.js', content: cliBytes, loader: 1 },
+    { name: 'native/image.node', content: napiBytes, loader: 10 },
+  ]));
+  const extractorPath = fileURLToPath(new URL('../src/generic/runtime/extractor.mjs', import.meta.url));
+  const extracted = spawnSync(process.execPath, [extractorPath, binary, output], { encoding: 'utf8' });
+  assert.equal(extracted.status, 0, extracted.stderr);
+  assert.deepEqual(readFileSync(join(output, 'cli.original.js')), cliBytes, 'canonical extractor must emit the entry module bytes');
+  assert.deepEqual(readFileSync(join(output, 'vendor', 'image', 'x64-win32', 'image.node')), napiBytes, 'canonical extractor must emit the napi module bytes');
+
+  const noNapiBinary = join(extractorFixture, 'no-napi.exe');
+  const noNapiOutput = join(extractorFixture, 'no-napi-output');
+  writeFileSync(noNapiBinary, peBunFixture([{ name: 'entry.js', content: cliBytes, loader: 1 }]));
+  const noNapiExtracted = spawnSync(process.execPath, [extractorPath, noNapiBinary, noNapiOutput], { encoding: 'utf8' });
+  assert.equal(noNapiExtracted.status, 0, noNapiExtracted.stderr);
+  assert.equal(lstatSync(join(noNapiOutput, 'vendor')).isDirectory(), true, 'canonical extractor must emit a real vendor root when no napi modules exist');
+
+  const invalidOutput = join(extractorFixture, 'invalid-output');
+  const invalidBinary = join(extractorFixture, 'invalid.exe');
+  writeFileSync(invalidBinary, 'not a native binary');
+  const invalid = spawnSync(process.execPath, [extractorPath, invalidBinary, invalidOutput], { encoding: 'utf8' });
+  assert.notEqual(invalid.status, 0, 'canonical extractor must reject an invalid native binary');
+  assert.equal(existsSync(invalidOutput), false, 'canonical extractor must not create output after parse failure');
+} finally {
+  rmSync(extractorFixture, { recursive: true, force: true });
+}
+
+const postProcessorFixture = mkdtempSync(join(tmpdir(), 'clawgod-canonical-post-processor-'));
+assertTemporaryPath(postProcessorFixture, 'canonical post-processor fixture');
+try {
+  const script = join(postProcessorFixture, 'post-processor.mjs');
+  writeFileSync(script, canonicalRuntime['post-processor.mjs']);
+  writeFileSync(join(postProcessorFixture, 'cli.original.js'), `// @bun @bytecode @bun-cjs
+(function(exports,require,module,__filename,__dirname){
+const native=require('/$bunfs/root/image-processor.node');
+const leaked=x.fileURLToPath("file:///home/runner/work/claude-cli-internal/claude-cli-internal/src/index.ts");
+})`);
+  const processed = spawnSync(process.execPath, [script], { cwd: postProcessorFixture, encoding: 'utf8' });
+  assert.equal(processed.status, 0, processed.stderr);
+  assert.equal(existsSync(join(postProcessorFixture, 'cli.original.js')), false, 'canonical post-processor must remove the extracted source after success');
+  const output = readFileSync(join(postProcessorFixture, 'cli.original.cjs'), 'utf8');
+  assert.match(output, /^\(function/, 'canonical post-processor must strip leading Bun pragmas');
+  assert.match(output, /vendor.*image-processor.*x64.*win32.*image-processor\.node/s, 'canonical post-processor must rewrite bunfs native module lookup');
+  assert.match(output, /const leaked=__filename;/, 'canonical post-processor must rewrite build-time file paths');
+  assert.match(output, /\}\)\(exports, require, module, __filename, __dirname\)$/, 'canonical post-processor must invoke the outer CommonJS wrapper');
+
+  const missingFixture = join(postProcessorFixture, 'missing');
+  mkdirSync(missingFixture);
+  const missingScript = join(missingFixture, 'post-processor.mjs');
+  writeFileSync(missingScript, canonicalRuntime['post-processor.mjs']);
+  const missing = spawnSync(process.execPath, [missingScript], { cwd: missingFixture, encoding: 'utf8' });
+  assert.notEqual(missing.status, 0, 'canonical post-processor must fail when cli.original.js is missing');
+  assert.equal(existsSync(join(missingFixture, 'cli.original.cjs')), false, 'failed canonical post-processing must not create output');
+} finally {
+  rmSync(postProcessorFixture, { recursive: true, force: true });
+}
 
 for (const [name, body] of Object.entries(unixTemplates)) {
   assert.match(body, /^#!\/usr\/bin\/env bun\n/, `install.sh ${name} must run with Bun`);
@@ -910,9 +1593,9 @@ for (const [name, patcher] of [
 // the installer wrapper (heredoc vs here-string) may differ.
 function fastFunctionSlice(patcher) {
   const start = patcher.indexOf('async function applyFastMessagesProtocolPatch');
-  const end = patcher.indexOf('\nconst patches = [', start);
+  const end = patcher.indexOf('\nasync function applyFastModeOrgCheckPatch', start);
   assert.notEqual(start, -1, 'patcher must embed the Fast Messages patch function');
-  assert.notEqual(end, -1, 'patcher must close the Fast Messages patch function before the patch table');
+  assert.notEqual(end, -1, 'patcher must close the Fast Messages patch function before the org check patch');
   return patcher.slice(start, end);
 }
 assert.equal(
@@ -920,6 +1603,173 @@ assert.equal(
   fastFunctionSlice(windowsTemplates['patch.mjs']),
   'install.sh and install.ps1 must embed byte-identical Fast Messages patch functions',
 );
+
+const lifecyclePositions = {
+  unix: {
+    bun: unix.indexOf('info "Bun: $("$BUN_BIN" --version)"'),
+    fetch: unix.indexOf('cat > "$CLAWGOD_DIR/fetch-file.mjs"'),
+    module: unix.indexOf('cat > "$CLAWGOD_DIR/plugin-dependencies.mjs"'),
+    smoke: unix.indexOf('info "Bun loads cli.original.cjs"'),
+    launcher: unix.indexOf('info "Command \'clawgod\' → patched'),
+    ensure: unix.indexOf('"$CLAWGOD_DIR/plugin-dependencies.mjs" ensure'),
+    memory: unix.indexOf('"$CLAWGOD_DIR/claude-mem-compat.cjs" install'),
+  },
+  windows: {
+    bun: windows.indexOf('Write-OK "Bun: $(& $BunBin --version)"'),
+    fetch: windows.indexOf('Install-FetchFileHelper', windows.indexOf('# ─── Bun prerequisite')),
+    module: windows.indexOf('# --- Optional Claude plugin dependencies'),
+    smoke: windows.indexOf('Write-OK "Bun loads cli.original.cjs"'),
+    launcher: windows.indexOf('Write-OK "Commands \'claude\' + \'clawgod\' → patched"'),
+    ensure: windows.indexOf('(Join-Path $ClawDir "plugin-dependencies.mjs") ensure'),
+    memory: windows.indexOf('(Join-Path $ClawDir "claude-mem-compat.cjs") install'),
+  },
+};
+for (const [name, positions] of Object.entries(lifecyclePositions)) {
+  assert.ok(positions.bun >= 0 && positions.bun < positions.fetch, `${name}: fetch helper must be generated after Bun is available`);
+  assert.ok(positions.fetch < positions.module, `${name}: plugin manager must be generated after fetch-file.mjs`);
+  assert.ok(positions.smoke >= 0 && positions.smoke < positions.launcher, `${name}: launcher creation must follow the cli.original.cjs smoke test`);
+  assert.ok(positions.launcher < positions.ensure, `${name}: plugin ensure must run after launcher creation`);
+  assert.ok(positions.ensure < positions.memory, `${name}: plugin ensure must run before claude-mem worker restart compatibility`);
+}
+
+const unixOptionalStart = unix.indexOf('# --- Ensure optional Claude plugins');
+const unixOptionalEnd = unix.indexOf('\ninstall_claude_mem_compat_helper', unixOptionalStart);
+assert.ok(unixOptionalStart >= 0 && unixOptionalEnd > unixOptionalStart, 'install.sh must retain an extractable optional plugin stage');
+const unixOptionalBlock = unix.slice(unixOptionalStart, unixOptionalEnd);
+const optionalLifecycleRoot = mkdtempSync(join(tmpdir(), 'clawgod plugin lifecycle '));
+assertTemporaryPath(optionalLifecycleRoot, 'plugin lifecycle fixture');
+try {
+  const home = join(optionalLifecycleRoot, 'home');
+  const clawgodDir = join(home, '.clawgod');
+  const fixtureBin = join(optionalLifecycleRoot, 'bin');
+  const fakeBun = join(fixtureBin, 'bun');
+  mkdirSync(clawgodDir, { recursive: true });
+  mkdirSync(fixtureBin, { recursive: true });
+  writeFileSync(join(clawgodDir, 'plugin-dependencies.mjs'), '// lifecycle fixture\n');
+  writeFileSync(fakeBun, '#!/bin/sh\n[ "$2" = "ensure" ] || exit 91\nprintf "fixture ensure warning\\n"\nexit 23\n');
+  chmodSync(fakeBun, 0o700);
+  const optional = spawnSync('/bin/bash', ['-c', `set -e\nwarn() { printf '%s\\n' "$*" >&2; }\n${unixOptionalBlock}\nprintf 'ClawGod Plus installed!\\n'`], {
+    encoding: 'utf8',
+    env: { HOME: home, CLAWGOD_DIR: clawgodDir, BUN_BIN: fakeBun, PATH: fixtureBin },
+  });
+  assert.equal(optional.status, 0, optional.stderr);
+  assert.match(optional.stderr, /Optional Claude plugin setup could not complete; ClawGod Plus core install will continue/);
+  assert.match(optional.stdout, /ClawGod Plus installed!/, 'an optional ensure warning must not skip the final core success message');
+} finally {
+  rmSync(optionalLifecycleRoot, { recursive: true, force: true });
+}
+
+const unixPluginRestoreStart = unixUninstall.indexOf('  # Restore optional Claude plugin integrations');
+const unixPluginRestoreEnd = unixUninstall.indexOf('  if [ -f "$CLAWGOD_DIR/claude-mem-compat.cjs" ]; then', unixPluginRestoreStart);
+assert.ok(unixPluginRestoreStart >= 0 && unixPluginRestoreEnd > unixPluginRestoreStart, 'install.sh must retain an extractable fail-closed plugin restore guard');
+const unixPluginRestoreBlock = unixUninstall.slice(unixPluginRestoreStart, unixPluginRestoreEnd);
+const windowsPluginRestoreStart = windowsUninstall.indexOf('    # Restore optional Claude plugin integrations');
+const windowsPluginRestoreEnd = windowsUninstall.indexOf('    $claudeMemCompat = Join-Path $ClawDir "claude-mem-compat.cjs"', windowsPluginRestoreStart);
+assert.ok(windowsPluginRestoreStart >= 0 && windowsPluginRestoreEnd > windowsPluginRestoreStart, 'install.ps1 must retain an extractable fail-closed plugin restore guard');
+const windowsPluginRestoreBlock = windowsUninstall.slice(windowsPluginRestoreStart, windowsPluginRestoreEnd);
+const uninstallLifecycleRoot = mkdtempSync(join(tmpdir(), 'clawgod plugin uninstall '));
+assertTemporaryPath(uninstallLifecycleRoot, 'plugin uninstall fixture');
+try {
+  function runUnixPluginGuard(label, { module, state, restoreExit = 0 }) {
+    const root = join(uninstallLifecycleRoot, label);
+    const home = join(root, 'home');
+    const clawgodDir = join(home, '.clawgod');
+    const fixtureBin = join(root, 'bin');
+    const fakeBun = join(fixtureBin, 'bun');
+    const restored = join(root, 'restored');
+    const continued = join(root, 'continued');
+    const artifacts = {
+      module: join(clawgodDir, 'plugin-dependencies.mjs'),
+      state: join(clawgodDir, 'plugin-dependencies-state.json'),
+      hud: join(clawgodDir, 'claude-hud-statusline.mjs'),
+      memory: join(clawgodDir, 'claude-mem-compat.cjs'),
+      launcher: join(root, 'bin-home', 'claude'),
+      runtime: join(clawgodDir, 'cli.cjs'),
+    };
+    mkdirSync(clawgodDir, { recursive: true });
+    mkdirSync(fixtureBin, { recursive: true });
+    for (const artifact of [artifacts.hud, artifacts.memory, artifacts.launcher, artifacts.runtime]) {
+      mkdirSync(dirname(artifact), { recursive: true });
+      writeFileSync(artifact, 'managed fixture\n');
+    }
+    if (module) writeFileSync(artifacts.module, '// plugin manager fixture\n');
+    if (state) writeFileSync(artifacts.state, '{"schemaVersion":1}\n');
+    writeFileSync(fakeBun, `#!/bin/sh\n[ "$2" = "uninstall" ] || exit 92\nprintf 'called\\n' > ${JSON.stringify(restored)}\nexit ${restoreExit}\n`);
+    chmodSync(fakeBun, 0o700);
+    const run = spawnSync('/bin/bash', ['-c', `set -e\nwarn() { printf '%s\\n' "$*" >&2; }\n${unixPluginRestoreBlock}\nprintf 'continued\\n' > "$CONTINUED"\nrm -f "$CLAWGOD_DIR/claude-mem-compat.cjs" "$LAUNCHER" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/claude-hud-statusline.mjs"`], {
+      encoding: 'utf8',
+      env: {
+        HOME: home,
+        CLAWGOD_DIR: clawgodDir,
+        BUN_BIN: fakeBun,
+        PATH: `${fixtureBin}:${isolatedUnixPath(root)}`,
+        CONTINUED: continued,
+        LAUNCHER: artifacts.launcher,
+      },
+    });
+    return { run, restored, continued, artifacts };
+  }
+
+  const both = runUnixPluginGuard('state-and-module', { module: true, state: true });
+  assert.equal(both.run.status, 0, both.run.stderr);
+  assert.equal(existsSync(both.restored), true, 'state+module must run optional plugin restoration');
+  assert.equal(existsSync(both.continued), true, 'successful state+module restoration must continue uninstall');
+
+  const stateOnly = runUnixPluginGuard('state-only', { module: false, state: true });
+  assert.notEqual(stateOnly.run.status, 0, 'state without its restoration module must fail closed');
+  assert.match(stateOnly.run.stderr, /Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled/);
+  assert.equal(existsSync(stateOnly.restored), false, 'state-only must not invoke a missing restoration module');
+  assert.equal(existsSync(stateOnly.continued), false, 'state-only must not reach claude-mem, launcher, or runtime cleanup');
+  for (const artifact of [stateOnly.artifacts.state, stateOnly.artifacts.hud, stateOnly.artifacts.memory, stateOnly.artifacts.launcher, stateOnly.artifacts.runtime]) {
+    assert.equal(existsSync(artifact), true, `state-only must retain ${artifact}`);
+  }
+
+  const moduleOnly = runUnixPluginGuard('module-only', { module: true, state: false });
+  assert.equal(moduleOnly.run.status, 0, moduleOnly.run.stderr);
+  assert.equal(existsSync(moduleOnly.restored), true, 'module-only generation residue must run the no-state cleanup path');
+  assert.equal(existsSync(moduleOnly.continued), true, 'module-only generation residue may continue uninstall');
+
+  const neither = runUnixPluginGuard('neither', { module: false, state: false });
+  assert.equal(neither.run.status, 0, neither.run.stderr);
+  assert.equal(existsSync(neither.restored), false, 'no plugin artifacts must not run restoration');
+  assert.equal(existsSync(neither.continued), true, 'no plugin artifacts may continue uninstall');
+
+  const failedRestore = runUnixPluginGuard('restore-conflict', { module: true, state: true, restoreExit: 42 });
+  assert.notEqual(failedRestore.run.status, 0, 'plugin restoration failure must abort uninstall');
+  assert.match(failedRestore.run.stderr, /Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled/);
+  assert.equal(existsSync(failedRestore.continued), false, 'failed restoration must not reach later cleanup');
+  for (const artifact of Object.values(failedRestore.artifacts)) {
+    assert.equal(existsSync(artifact), true, `failed restoration must retain ${artifact}`);
+  }
+} finally {
+  rmSync(uninstallLifecycleRoot, { recursive: true, force: true });
+}
+
+assert.match(
+  windowsPluginRestoreBlock,
+  /if \(\(Test-Path \$pluginState\) -and -not \(Test-Path \$pluginDependencies\)\) \{[\s\S]*Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled[\s\S]*exit 1[\s\S]*\}\s*if \(Test-Path \$pluginDependencies\)/,
+  'PowerShell must implement the same state-only fail-closed and module-present restore/cleanup truth table',
+);
+
+for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', windowsUninstall]]) {
+  const pluginRestore = uninstall.indexOf('plugin-dependencies.mjs');
+  const claudeMemRestore = uninstall.indexOf('claude-mem-compat.cjs');
+  const launcherRestore = uninstall.indexOf(name === 'install.sh' ? 'Original claude restored' : 'Original claude restored');
+  const cleanup = uninstall.indexOf(name === 'install.sh' ? 'rm -rf "$CLAWGOD_DIR/node_modules"' : 'foreach ($f in @(');
+  assert.ok(pluginRestore >= 0 && pluginRestore < claudeMemRestore, `${name}: plugin restoration must run before claude-mem compatibility restore`);
+  assert.ok(pluginRestore < launcherRestore, `${name}: plugin restoration must run before launcher restore`);
+  assert.ok(pluginRestore < cleanup, `${name}: plugin restoration must run before managed runtime cleanup`);
+  const cleanupArtifacts = name === 'install.sh'
+    ? ['plugin-dependencies.mjs', 'claude-hud-statusline.mjs', 'plugin-dependencies-state.json', '"$CLAWGOD_DIR/cache"', '"$CLAWGOD_DIR/staging"']
+    : ['plugin-dependencies.mjs', 'claude-hud-statusline.mjs', 'plugin-dependencies-state.json', '"cache"', '"staging"'];
+  for (const artifact of cleanupArtifacts) {
+    const expression = name === 'install.ps1' ? artifact.replaceAll('/', '\\') : artifact;
+    assert.ok(uninstall.indexOf(expression, cleanup) >= cleanup, `${name}: successful cleanup must remove ${expression}`);
+  }
+  for (const preserved of ['clawgod-marketplaces', 'installed_plugins.json', 'known_marketplaces.json', 'enabledPlugins']) {
+    assert.doesNotMatch(uninstall.slice(cleanup), new RegExp(preserved.replace('.', '\\.')), `${name}: managed cleanup must preserve ${preserved}`);
+  }
+}
 
 const unixApplyStart = unix.indexOf('dim "Applying patches ..."');
 const unixApplyEnd = unix.indexOf('\n# ─── Create default configs', unixApplyStart);
@@ -944,6 +1794,7 @@ BUN_BIN=${JSON.stringify(fakeBun)}
 CLAWGOD_DIR=${JSON.stringify(home)}
 dim() { :; }
 warn() { printf '%s\n' "$*" >&2; }
+commit_runtime_transaction() { :; }
 run_claude_code_chrome_fix() { : > ${JSON.stringify(continued)}; }
 ${unixApplyBlock}
 : > ${JSON.stringify(success)}
@@ -967,49 +1818,273 @@ ${unixApplyBlock}
   rmSync(patchGateRoot, { recursive: true, force: true });
 }
 
-const windowsApplyStart = windows.indexOf('Write-Dim "Applying patches ..."');
-const windowsApplyEnd = windows.indexOf('\n# ─── Create default configs', windowsApplyStart);
-assert.ok(windowsApplyStart >= 0 && windowsApplyEnd > windowsApplyStart, 'install.ps1 must retain the patch application gate');
-const windowsApplyBlock = windows.slice(windowsApplyStart, windowsApplyEnd);
+const canonicalWindowsApplyBlock = assertPowerShellVendorStatusScope(windowsTemplate, 'src/template/install.ps1');
+const windowsApplyBlock = assertPowerShellVendorStatusScope(windows, 'install.ps1');
+assert.equal(windowsApplyBlock, canonicalWindowsApplyBlock, 'generated install.ps1 must preserve the canonical vendor status scope exactly');
+const preferenceMutation = windowsTemplate.replace(
+  'if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $false }',
+  '',
+);
+assert.notEqual(preferenceMutation, windowsTemplate, 'native-command preference mutation must remove production handling');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(preferenceMutation, 'mutated src/template/install.ps1'),
+  /must preserve native-command state/,
+  'removing scoped native-command preference handling must fail the semantic contract',
+);
+const missingPreferenceMutation = windowsTemplate.replace(
+  'else { Remove-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue }',
+  '',
+);
+assert.notEqual(missingPreferenceMutation, windowsTemplate, 'missing-variable mutation must remove production cleanup');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(missingPreferenceMutation, 'mutated missing-variable src/template/install.ps1'),
+  /must preserve native-command state/,
+  'removing the PowerShell 5.1 missing-variable cleanup path must fail the semantic contract',
+);
+const statusGapMutation = windowsTemplate.replace(
+  '& $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir\n        $vendorStatus = $LASTEXITCODE',
+  '& $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir\n        & $BunBin --version\n        $vendorStatus = $LASTEXITCODE',
+);
+assert.notEqual(statusGapMutation, windowsTemplate, 'native-status gap mutation must insert a clobbering command');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(statusGapMutation, 'mutated native-status-gap src/template/install.ps1'),
+  /must capture native vendor status immediately/,
+  'inserting a native command before LASTEXITCODE capture must fail the semantic contract',
+);
+const statusOverwriteMutation = windowsTemplate.replace(
+  '$vendorStatus = $LASTEXITCODE',
+  '$vendorStatus = $LASTEXITCODE\n        $vendorStatus = 0',
+);
+assert.notEqual(statusOverwriteMutation, windowsTemplate, 'native-status overwrite mutation must replace production handling');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(statusOverwriteMutation, 'mutated native-status-overwrite src/template/install.ps1'),
+  /must assign native vendor status exactly once/,
+  'overwriting captured LASTEXITCODE must fail the semantic contract',
+);
+const retainedStatusMutation = windowsTemplate.replace(
+  'if ($vendorStatus -eq 22) { $RuntimeTransactionCleanupSafe = $false }',
+  '',
+);
+assert.notEqual(retainedStatusMutation, windowsTemplate, 'retained-status mutation must remove production cleanup protection');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(retainedStatusMutation, 'mutated retained-status src/template/install.ps1'),
+  /must preserve native-command state/,
+  'removing exit 22 transaction retention must fail the semantic contract',
+);
+const nativePromotionMutation = windowsTemplate.replace(
+  'throw "Native vendor publication failed."',
+  '',
+);
+assert.notEqual(nativePromotionMutation, windowsTemplate, 'native-promotion mutation must remove production failure promotion');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(nativePromotionMutation, 'mutated native-promotion src/template/install.ps1'),
+  /must preserve native-command state/,
+  'removing manual native failure promotion must fail the semantic contract',
+);
 assert.match(windowsApplyBlock, /\$patchOutput\s*=\s*&\s*\$BunBin/, 'install.ps1 must capture patch output');
+assert.match(
+  windowsApplyBlock,
+  /\(Join-Path \$ClawDir "patch\.mjs"\)\s+--enhancements-file\s+\(Join-Path \$ClawDir "enhancements\.json"\)/,
+  'install.ps1 must pass the exact saved enhancement config path to patch.mjs',
+);
 assert.match(windowsApplyBlock, /\$patchStatus\s*=\s*\$LASTEXITCODE/, 'install.ps1 must preserve patch.mjs native exit status');
 assert.match(windowsApplyBlock, /if\s*\(\$patchStatus\s*-ne\s*0\)/, 'install.ps1 must stop on patch.mjs failure');
 assert.ok(windowsApplyBlock.indexOf('$patchStatus -ne 0') < windowsApplyBlock.indexOf('Invoke-ChromePostInstallFix'), 'install.ps1 must check patch status before Chrome/post-processing continuation');
+assert.match(windows, /\$RuntimeCandidateDir\s*=\s*Join-Path\s+\$RuntimeRollbackDir\s+"candidate"/, 'install.ps1 must stage candidate runtime files in its same-filesystem transaction');
+assert.match(windows, /&\s+\$BunBin\s+\$extractorPath\s+\$NativeBin\s+\$RuntimeCandidateDir/, 'install.ps1 must extract candidate native modules outside the live vendor');
+assert.match(windowsApplyBlock, /vendor-transaction\.mjs"\) publish \$RuntimeVendorDir \$RuntimeCandidateVendor \$RuntimeRollbackDir/, 'install.ps1 must publish candidate native modules through the shared transaction helper only after mandatory patches pass');
+assert.match(windowsApplyBlock, /\$VendorRollbackComplete\s*=\s*\$vendorStatus\s*-eq\s*20\s*-or\s*\$vendorStatus\s*-eq\s*22/, 'install.ps1 must restore the prior CLI only after the shared helper reports verified rollback');
+assert.doesNotMatch(windowsApplyBlock, /Move-Item[\s\S]*\$RuntimeCandidateVendor/, 'install.ps1 must not maintain a second native publication implementation');
 
-const repatchRoot = mkdtempSync(join(tmpdir(), 'clawgod repatch gate '));
+const pwsh = findPwsh();
+if (pwsh) {
+  const nativeStatusRoot = mkdtempSync(join(tmpdir(), 'clawgod-powershell-vendor-status-'));
+  assertTemporaryPath(nativeStatusRoot, 'PowerShell vendor status fixture');
+  try {
+    for (const expectedStatus of [20, 22]) {
+      const caseRoot = join(nativeStatusRoot, `status-${expectedStatus}`);
+      const clawDir = join(caseRoot, 'clawgod');
+      const transaction = join(clawDir, '.runtime-rollback');
+      const liveVendor = join(clawDir, 'vendor');
+      const candidateVendor = expectedStatus === 20
+        ? join(transaction, 'candidate', 'vendor')
+        : join(caseRoot, 'outside-candidate');
+      const target = join(clawDir, 'cli.original.cjs');
+      const script = join(caseRoot, 'vendor-status.ps1');
+      mkdirSync(transaction, { recursive: true });
+      mkdirSync(candidateVendor, { recursive: true });
+      mkdirSync(liveVendor, { recursive: true });
+      writeFileSync(join(liveVendor, 'ripgrep'), Buffer.from([0x72, 0x67]));
+      if (expectedStatus === 20) writeFileSync(join(candidateVendor, 'ripgrep'), Buffer.from([0x63, 0x61, 0x6e, 0x64]));
+      writeFileSync(join(clawDir, 'vendor-transaction.mjs'), canonicalRuntime['vendor-transaction.mjs'], 'utf8');
+      writeFileSync(join(clawDir, 'patch.mjs'), 'process.exit(0);\n', 'utf8');
+      writeFileSync(join(clawDir, 'enhancements.json'), '{}\n', 'utf8');
+      writeFileSync(target, 'candidate runtime\n', 'utf8');
+      writeFileSync(join(transaction, 'cli.original.cjs'), 'prior runtime\n', 'utf8');
+      writeFileSync(script, `$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+$BunBin = $env:CLAWGOD_TEST_BUN
+$ClawDir = $env:CLAWGOD_TEST_DIR
+$RuntimeTarget = Join-Path $ClawDir 'cli.original.cjs'
+$RuntimeSourceVersion = Join-Path $ClawDir '.source-version'
+$RuntimeRollbackDir = $env:CLAWGOD_TEST_TRANSACTION
+$RuntimeCandidateVendor = $env:CLAWGOD_TEST_CANDIDATE
+$RuntimeVendorDir = Join-Path $ClawDir 'vendor'
+$RuntimeHadTarget = $true
+$RuntimeHadSourceVersion = $false
+$RuntimeTransactionCommitted = $false
+$RuntimeVendorPublishStarted = $false
+$VendorRollbackComplete = $false
+$RuntimeTransactionCleanupSafe = $true
+$NoUpgrade = $false
+function Write-Dim { param([string]$Message) }
+function Write-Err { param([string]$Message); [Console]::Error.WriteLine($Message) }
+function Invoke-ChromePostInstallFix {}
+$Caught = $false
+try {
+    try {
+${windowsApplyBlock}
+} catch {
+    $Caught = $true
+}
+[ordered]@{
+    status = $vendorStatus
+    nativePreference = $PSNativeCommandUseErrorActionPreference
+    nativePreferenceDefined = Test-Path Variable:PSNativeCommandUseErrorActionPreference
+    errorActionPreference = $ErrorActionPreference
+    rollbackComplete = $VendorRollbackComplete
+    cleanupSafe = $RuntimeTransactionCleanupSafe
+    caught = $Caught
+    target = [System.IO.File]::ReadAllText($RuntimeTarget)
+    transactionExists = Test-Path -LiteralPath $RuntimeRollbackDir
+} | ConvertTo-Json -Compress
+`, 'utf8');
+
+      const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: caseRoot,
+          USERPROFILE: caseRoot,
+          CLAWGOD_TEST_BUN: process.execPath,
+          CLAWGOD_TEST_DIR: clawDir,
+          CLAWGOD_TEST_TRANSACTION: transaction,
+          CLAWGOD_TEST_CANDIDATE: candidateVendor,
+        },
+      });
+      assert.equal(run.status, 0, `PowerShell helper status ${expectedStatus} fixture must complete:\n${run.stdout}${run.stderr}`);
+      const resultLine = run.stdout.trim().split(/\r?\n/).findLast(line => line.startsWith('{'));
+      assert.ok(resultLine, `PowerShell helper status ${expectedStatus} fixture must emit JSON:\n${run.stdout}${run.stderr}`);
+      const result = JSON.parse(resultLine);
+      assert.equal(result.status, expectedStatus, `PowerShell must capture helper exit ${expectedStatus}`);
+      assert.equal(result.nativePreference, true, `PowerShell must restore native-command preference after helper exit ${expectedStatus}`);
+      assert.equal(result.nativePreferenceDefined, true, `PowerShell must restore native-command preference existence after helper exit ${expectedStatus}`);
+      assert.equal(result.errorActionPreference, 'Stop', `PowerShell must not weaken ErrorActionPreference around helper exit ${expectedStatus}`);
+      assert.equal(result.rollbackComplete, true, `PowerShell helper exit ${expectedStatus} must restore the prior CLI`);
+      assert.equal(result.cleanupSafe, expectedStatus === 20, `PowerShell helper exit ${expectedStatus} must preserve cleanup semantics`);
+      assert.equal(result.caught, true, `PowerShell helper exit ${expectedStatus} must reach caller failure handling`);
+      assert.equal(result.target, 'prior runtime\n', `PowerShell helper exit ${expectedStatus} must restore prior CLI bytes`);
+      assert.equal(result.transactionExists, expectedStatus === 22, `PowerShell helper exit ${expectedStatus} must ${expectedStatus === 22 ? 'retain' : 'clean'} transaction data`);
+    }
+  } finally {
+    rmSync(nativeStatusRoot, { recursive: true, force: true });
+  }
+} else {
+  console.log('PowerShell native vendor status checks skipped: pwsh unavailable');
+}
+
+const repatchRoot = mkdtempSync(join(tmpdir(), `clawgod repatch "quoted" 'gate' `));
 assert.equal(realpathSync(dirname(repatchRoot)), realpathSync(tmpdir()), 'repatch fixture must be created directly under the system temporary directory');
 try {
+  const installedRoot = realpathSync(repatchRoot);
   const native = join(repatchRoot, '2.1.226');
   const repatch = join(repatchRoot, 'repatch.mjs');
+  const fixtureHome = join(repatchRoot, 'home');
+  const fixtureBin = join(repatchRoot, 'bin');
+  const target = join(repatchRoot, 'cli.original.cjs');
+  const sourceVersion = join(repatchRoot, '.source-version');
+  const vendor = join(repatchRoot, 'vendor');
+  const oldNative = join(vendor, 'native-addon', 'arm64-darwin', 'native-addon.node');
+  const oldOnly = join(vendor, 'old-only', 'nested', 'data.bin');
+  const candidateNative = join(vendor, 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');
+  const ripgrep = join(vendor, 'ripgrep', 'bin', 'rg');
+  const enhancementsFile = join(installedRoot, 'enhancements.json');
+  const patchArgs = join(repatchRoot, 'patch-args.json');
+  const savedConfig = '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents"\n  ]\n}\n';
+  const priorRuntime = 'prior installed runtime\n';
+  const candidateRuntime = 'candidate runtime\n';
+  mkdirSync(fixtureHome);
+  mkdirSync(fixtureBin);
+  assertTemporaryPath(fixtureHome, 'repatch HOME');
+  assertTemporaryPath(fixtureBin, 'repatch PATH');
   writeFileSync(native, 'fixture native', 'utf8');
-  writeFileSync(repatch, unixTemplates['repatch.mjs'], 'utf8');
-  writeFileSync(join(repatchRoot, 'extract-natives.mjs'), 'process.exit(0);\n', 'utf8');
-  writeFileSync(join(repatchRoot, 'post-process.mjs'), 'process.exit(0);\n', 'utf8');
-  writeFileSync(join(repatchRoot, 'patch.mjs'), 'process.exit(Number(process.env.PATCH_EXIT||0));\n', 'utf8');
+  writeFileSync(repatch, canonicalRuntime['repatcher.mjs'], 'utf8');
+  writeFileSync(join(repatchRoot, 'vendor-transaction.mjs'), canonicalRuntime['vendor-transaction.mjs'], 'utf8');
+  writeFileSync(join(repatchRoot, 'extract-natives.mjs'), `import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nconst output = process.argv.at(-1);\nconst native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');\nmkdirSync(join(output, 'vendor', 'candidate-addon', 'arm64-darwin'), { recursive: true });\nwriteFileSync(join(output, 'cli.original.js'), 'candidate source');\nwriteFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));\nchmodSync(native, 0o751);\n`, 'utf8');
+  writeFileSync(join(repatchRoot, 'post-process.mjs'), `import { writeFileSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\nwriteFileSync(join(dirname(import.meta.path), 'cli.original.cjs'), ${JSON.stringify(candidateRuntime)}, 'utf8');\n`, 'utf8');
+  writeFileSync(join(repatchRoot, 'patch.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.PATCH_ARGS, JSON.stringify(process.argv.slice(2)), 'utf8');\nprocess.exit(Number(process.env.PATCH_EXIT||0));\n`, 'utf8');
+  writeFileSync(target, priorRuntime, 'utf8');
+  writeFileSync(sourceVersion, '2.1.225\n', 'utf8');
+  writeFileSync(enhancementsFile, savedConfig, { mode: 0o600 });
+  mkdirSync(dirname(oldNative), { recursive: true });
+  mkdirSync(dirname(oldOnly), { recursive: true });
+  mkdirSync(dirname(ripgrep), { recursive: true });
+  writeFileSync(oldNative, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(oldOnly, Buffer.from([0xde, 0xad, 0xbe, 0xef]), { mode: 0o605 });
+  writeFileSync(ripgrep, Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  const configBefore = statSync(enhancementsFile);
+  const ripgrepBefore = lstatSync(ripgrep);
   const runRepatch = patchExit => spawnSync(process.execPath, [repatch, native], {
     cwd: repatchRoot,
     encoding: 'utf8',
-    env: { HOME: repatchRoot, PATH: repatchRoot, PATCH_EXIT: String(patchExit) },
+    env: {
+      HOME: fixtureHome,
+      PATH: fixtureBin,
+      TMPDIR: repatchRoot,
+      BUN_INSTALL_CACHE_DIR: join(repatchRoot, 'bun-install-cache'),
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(repatchRoot, 'bun-transpiler-cache'),
+      XDG_CACHE_HOME: join(repatchRoot, 'xdg-cache'),
+      PATCH_ARGS: patchArgs,
+      PATCH_EXIT: String(patchExit),
+    },
   });
   const failed = runRepatch(41);
   assert.notEqual(failed.status, 0, 'repatch.mjs must propagate a mandatory patch failure');
-  assert.equal(existsSync(join(repatchRoot, '.source-version')), false, 'repatch.mjs must not record success after a mandatory patch failure');
+  assert.deepEqual(JSON.parse(readFileSync(patchArgs, 'utf8')), ['--enhancements-file', enhancementsFile], 'repatch.mjs must pass the exact saved config path as argv');
+  assert.equal(readFileSync(target, 'utf8'), priorRuntime, 'repatch.mjs must restore the prior runtime after mandatory patch failure');
+  assert.equal(readFileSync(sourceVersion, 'utf8'), '2.1.225\n', 'repatch.mjs must preserve the prior source marker after mandatory patch failure');
+  assert.deepEqual(readFileSync(oldNative), Buffer.from([0x00, 0x11, 0x80, 0xff]), 'repatch.mjs must preserve prior native bytes after mandatory patch failure');
+  assert.equal(statSync(oldNative).mode & 0o7777, 0o640, 'repatch.mjs must preserve prior native mode after mandatory patch failure');
+  assert.deepEqual(readFileSync(oldOnly), Buffer.from([0xde, 0xad, 0xbe, 0xef]), 'repatch.mjs must preserve nested old-only vendor bytes after mandatory patch failure');
+  assert.equal(existsSync(candidateNative), false, 'repatch.mjs must not publish candidate native modules on mandatory patch failure');
+  assert.deepEqual(readFileSync(ripgrep), Buffer.from([0x72, 0x67, 0x00, 0xff]), 'repatch.mjs must preserve managed ripgrep bytes on failure');
+  assert.equal(lstatSync(ripgrep).ino, ripgrepBefore.ino, 'repatch.mjs must preserve managed ripgrep identity on failure');
   const passed = runRepatch(0);
   assert.equal(passed.status, 0, passed.stderr);
-  assert.equal(readFileSync(join(repatchRoot, '.source-version'), 'utf8'), '2.1.226\n', 'repatch.mjs must retain its success marker after a zero-failure patch');
+  assert.deepEqual(JSON.parse(readFileSync(patchArgs, 'utf8')), ['--enhancements-file', enhancementsFile], 'successful repatch must use the same exact config argv');
+  assert.equal(readFileSync(target, 'utf8'), candidateRuntime, 'successful repatch must retain the candidate runtime');
+  assert.equal(readFileSync(sourceVersion, 'utf8'), '2.1.226\n', 'repatch.mjs must retain its success marker after a zero-failure patch');
+  assert.deepEqual(readFileSync(candidateNative), Buffer.from([0xca, 0xfe, 0xba, 0xbe]), 'successful repatch must publish candidate native bytes');
+  assert.equal(statSync(candidateNative).mode & 0o7777, 0o751, 'successful repatch must publish candidate native mode');
+  assert.equal(existsSync(oldNative), false, 'successful repatch must remove prior native versions');
+  assert.equal(existsSync(oldOnly), false, 'successful repatch must remove old-only vendor trees');
+  assert.equal(lstatSync(ripgrep).ino, ripgrepBefore.ino, 'successful repatch must preserve managed ripgrep identity');
+  const configAfter = statSync(enhancementsFile);
+  assert.equal(readFileSync(enhancementsFile, 'utf8'), savedConfig, 'repatch must not alter saved config bytes');
+  assert.equal(configAfter.mode & 0o7777, configBefore.mode & 0o7777, 'repatch must not alter saved config mode');
+  assert.equal(configAfter.ino, configBefore.ino, 'repatch must not replace saved config identity');
 } finally {
   rmSync(repatchRoot, { recursive: true, force: true });
 }
 
-for (const [installerName, fetchFile] of [['install.sh', unixTemplates['fetch-file.mjs']], ['install.ps1', windowsTemplates['fetch-file.mjs']]]) {
-  assert.match(fetchFile, /HTTPS_PROXY \|\| process\.env\.https_proxy/, `${installerName}: fetch-file must prefer HTTPS proxies`);
-  assert.match(fetchFile, /HTTP_PROXY \|\| process\.env\.http_proxy/, `${installerName}: fetch-file must support HTTP proxies`);
-  assert.match(fetchFile, /NO_PROXY \|\| process\.env\.no_proxy/, `${installerName}: fetch-file must honor NO_PROXY`);
-  assert.match(fetchFile, /AbortSignal\.timeout\(300000\)/, `${installerName}: fetch-file must use the five-minute timeout`);
-  assert.match(fetchFile, /redirects <= 5/, `${installerName}: fetch-file must cap redirects`);
-  assert.match(fetchFile, /response\.status !== 200/, `${installerName}: fetch-file must reject non-200 responses`);
-  assert.match(fetchFile, /renameSync\(temporary, destination\)/, `${installerName}: fetch-file must atomically replace completed downloads`);
-}
+const canonicalFetchFile = canonicalRuntime['fetch-file.mjs'];
+assert.match(canonicalFetchFile, /HTTPS_PROXY \|\| process\.env\.https_proxy/, 'fetch-file must prefer HTTPS proxies');
+assert.match(canonicalFetchFile, /HTTP_PROXY \|\| process\.env\.http_proxy/, 'fetch-file must support HTTP proxies');
+assert.match(canonicalFetchFile, /NO_PROXY \|\| process\.env\.no_proxy/, 'fetch-file must honor NO_PROXY');
+assert.match(canonicalFetchFile, /AbortSignal\.timeout\(300000\)/, 'fetch-file must use the five-minute timeout');
+assert.match(canonicalFetchFile, /redirects <= 5/, 'fetch-file must cap redirects');
+assert.match(canonicalFetchFile, /response\.status !== 200/, 'fetch-file must reject non-200 responses');
+assert.match(canonicalFetchFile, /renameSync\(temporary, destination\)/, 'fetch-file must atomically replace completed downloads');
 
 const proxyProbeDirectory = mkdtempSync(join(tmpdir(), 'clawgod-fetch-proxy-'));
 try {
@@ -1057,10 +2132,8 @@ const temporary = \`${'${destination}'}.${'${process.pid}'}.tmp\`;`,
     ['http://[::1]:8080/archive', '::1', null],
     ['http://[::1]:8080/archive', '[::1]:8081', 'http://proxy.test:3128'],
   ];
-  for (const [installerName, fetchFile] of [['install.sh', unixTemplates['fetch-file.mjs']], ['install.ps1', windowsTemplates['fetch-file.mjs']]]) {
-    for (const [url, noProxy, expected] of proxyCases) {
-      assert.equal(await proxyFor(fetchFile, url, noProxy), expected, `${installerName}: NO_PROXY=${noProxy} must select the expected proxy for ${url}`);
-    }
+  for (const [url, noProxy, expected] of proxyCases) {
+    assert.equal(await proxyFor(canonicalFetchFile, url, noProxy), expected, `NO_PROXY=${noProxy} must select the expected proxy for ${url}`);
   }
 } finally {
   rmSync(proxyProbeDirectory, { recursive: true, force: true });
@@ -1117,7 +2190,7 @@ try {
 const dir = mkdtempSync(join(tmpdir(), 'clawgod-fetch-file-'));
 try {
   const fetchFile = join(dir, 'fetch-file.mjs');
-  await Bun.write(fetchFile, unixTemplates['fetch-file.mjs']);
+  await Bun.write(fetchFile, canonicalFetchFile);
   chmodSync(fetchFile, 0o700);
   const server = Bun.serve({
     port: 0,

@@ -1,0 +1,15 @@
+[
+  { "id": "chrome", "kind": "patch" },
+  { "id": "computer-use", "kind": "patch" },
+  { "id": "agents", "kind": "patch" },
+  { "id": "planning", "kind": "patch" },
+  { "id": "voice", "kind": "patch" },
+  { "id": "auto-mode", "kind": "patch" },
+  { "id": "unrestricted-tools", "kind": "patch" },
+  { "id": "paste-images", "kind": "patch" },
+  { "id": "privacy", "kind": "patch" },
+  { "id": "branding", "kind": "patch" },
+  { "id": "claude-hud", "kind": "plugin" },
+  { "id": "claude-mem", "kind": "plugin" },
+  { "id": "superpowers", "kind": "plugin" }
+]

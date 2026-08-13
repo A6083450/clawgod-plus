@@ -5,29 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
-
-const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
-
-function extractUnixPatcher() {
-  const marker = 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\'';
-  const start = unixInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed patch.mjs');
-  const bodyStart = unixInstaller.indexOf('\n', start) + 1;
-  const end = unixInstaller.indexOf('\nPATCHER_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh patcher heredoc must end');
-  return unixInstaller.slice(bodyStart, end);
-}
-
-function extractPowerShellPatcher() {
-  const marker = "$patcherCode = @'\n";
-  const start = powerShellInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must embed patch.mjs');
-  const bodyStart = start + marker.length;
-  const end = powerShellInstaller.indexOf("\n'@\n\nSet-Content", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 patcher here-string must end');
-  return powerShellInstaller.slice(bodyStart, end);
-}
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const fixture = `
 /* Version: 2.1.220 */
@@ -57,13 +35,11 @@ function vvl({showWorkflows:e=!1}={}){let t=globalThis.taskList,q=globalThis.sel
 globalThis.visibleTaskState=(rows,count,selected=0)=>{globalThis.terminalSize={columns:120,rows};globalThis.taskList=Array.from({length:count});globalThis.selectedTaskIndex=selected;let result=vvl();return{limit:globalThis.windowLimit,moreVisible:result.moreVisible,windowStart:result.values[0],moreAbove:result.values[2],moreBelow:result.values[3]}};
 `;
 
-for (const [installerName, patcher] of [
-  ['install.sh', extractUnixPatcher()],
-  ['install.ps1', extractPowerShellPatcher()],
-]) {
+for (const [installerName, patcherSource] of await getPatcherSources()) {
   const dir = mkdtempSync(join(tmpdir(), 'clawgod-default-agents-'));
   try {
-    writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
+    seedPatcherAcorn(dir);
+    writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
     writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 
     const run = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });

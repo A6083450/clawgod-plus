@@ -78,6 +78,50 @@ bash install.sh --lean-off        # restore the full tool set; default
 
 Green branding means the patched runtime is active. The original command is backed up before replacement.
 
+## Optional enhancements
+
+ClawGod Plus offers 13 optional enhancements, all enabled by default. The enhancement IDs are stable and ordered as follows:
+
+| Kind | Enhancement ID |
+|---|---|
+| Patch | `chrome`, `computer-use`, `agents`, `planning`, `voice`, `auto-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding` |
+| Plugin | `claude-hud`, `claude-mem`, `superpowers` |
+
+With no option, all 13 enhancements are enabled by default. The selection is persisted as strict JSON in `~/.clawgod/enhancements.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "mode": "all",
+  "enabled": []
+}
+```
+
+`mode` `all` always enables every enhancement in the manifest (including future IDs); `mode` `custom` enables only the IDs listed in `enabled`.
+
+Choose interactively when installing directly:
+
+```bash
+bash install.sh --choose-enhancements
+```
+
+Or specify non-interactively:
+
+```bash
+bash install.sh --enhancements chrome,computer-use,claude-hud
+bash install.sh --enhancements none   # core only, no enhancements
+```
+
+Windows PowerShell equivalents:
+
+```powershell
+.\install.ps1 -ChooseEnhancements
+.\install.ps1 -Enhancements chrome,computer-use,claude-hud
+.\install.ps1 -Enhancements none
+```
+
+A later `claude update` reuses the saved selection from `~/.clawgod/enhancements.json` and never prompts. Disabling `claude-hud` or `claude-mem` restores the configuration ClawGod owns, while disabling `superpowers` only stops management and never deletes the plugin you installed.
+
 ## Commands and launch behavior
 
 ```bash
@@ -98,14 +142,17 @@ CLAWGOD_NO_AUTO_CHROME=1 claude
 
 For ClawGod Plus multi-agent and long-running workflows, [Claude HUD](https://github.com/jarrodwatts/claude-hud) is the recommended statusline companion. It keeps model and context health, project and Git state, Claude configuration counts, usage, tools, agents, todos, cost, speed, and session duration visible without opening another window.
 
-Install it inside Claude Code:
+Every install and update automatically ensures these optional Claude Code plugin dependencies:
 
-```text
-/plugin marketplace add jarrodwatts/claude-hud
-/plugin install claude-hud
-/reload-plugins
-/claude-hud:setup
-```
+| Plugin | Canonical ID | Baseline |
+|---|---|---|
+| Claude HUD | `claude-hud@claude-hud` | `0.7.0` |
+| claude-mem | `claude-mem@thedotmack` | `13.14.0` |
+| Superpowers | `superpowers@superpowers-marketplace` | `6.2.0` |
+
+ClawGod Plus installs a missing or older plugin at the baseline, but preserves any installed newer version. Public fixed archives use the selected `hub.211107.xyz` proxy and are accepted only after their exact byte length and fixed SHA-256 match. Bun remains the only installed JavaScript runtime dependency.
+
+For HUD, the installer keeps the exact profile below and manages only the `statusLine` field in `~/.claude/settings.json`. That command invokes the managed `claude-hud-statusline.mjs` with the absolute Bun path; it does not add a Node or Bash status-line runtime. An optional plugin warning is reported without failing the core ClawGod Plus installation.
 
 The screenshot below shows this recommended configuration during a multi-agent session.
 
@@ -211,6 +258,7 @@ This changes Claude Code's local 200K constants and checks. It does **not** bypa
 
 When claude-mem is installed and configured with the Claude provider, the installer can:
 
+- run the selected claude-mem hooks and MCP entrypoints with Bun;
 - reuse the active ClawGod Plus provider or Claude settings without writing credentials into claude-mem's `.env`;
 - route claude-mem SDK subprocesses through a dedicated ClawGod Plus launcher;
 - back up only the settings it manages and restore them during uninstall;
@@ -218,6 +266,8 @@ When claude-mem is installed and configured with the Claude provider, the instal
 - clean duplicate stale Chroma MCP processes and restart the worker.
 
 If claude-mem is absent, uses another provider, has no usable credential, or contains user-owned conflicting settings, the core ClawGod Plus installation continues without taking ownership of those settings.
+
+Managed integration state is fail-closed. An unknown higher claude-mem ownership schema is preserved and reported as not Bun-verified; ClawGod Plus does not rewrite or delete it.
 
 ## Standalone patch tools
 
@@ -249,8 +299,11 @@ These scripts create backups before applying changes. Use their `--restore` opti
 6. Applies the integrated Chrome, Computer Use, context-limit, worker, paste, provider, and feature patches.
 7. Verifies that Bun can load the patched CLI.
 8. Backs up the original launcher and writes `claude` plus `clawgod` launchers.
+9. Uses the generated `plugin-dependencies.mjs` to ensure the three optional plugin baselines, then applies their managed HUD and claude-mem integrations.
 
 `~/.clawgod/.source-version` records the patched native version. On later starts, the wrapper detects official Claude Code upgrades and re-patches the new binary.
+
+The installer scripts are deterministic generated artifacts: `src/` is the single source of truth, and `install.sh` plus `install.ps1` are generated by `bun build.mjs` — do not edit them by hand.
 
 ## Update
 
@@ -260,7 +313,7 @@ Use the normal command:
 claude update
 ```
 
-The enhanced patch routes updates through the installed local ClawGod Plus installer when available, downloads the requested Claude Code package, re-extracts it, reapplies the complete patch set, and rewrites the launchers.
+The enhanced patch routes updates through the installed local ClawGod Plus installer when available. Plain `claude update` selects the latest Claude Code release, re-extracts it, reapplies the complete patch set, and rewrites the launchers. Plugin baselines are managed separately: the update does not pin Claude Code to plugin versions.
 
 ```bash
 claude update --version 2.1.220  # pin a known Claude Code version
@@ -282,7 +335,7 @@ hash -r
 .\install.ps1 -Uninstall
 ```
 
-Uninstall restores the original Claude launcher, removes the ClawGod Plus alias and generated runtime files, and restores claude-mem settings that are still owned by the compatibility helper.
+Uninstall restores the original Claude launcher, removes the ClawGod Plus alias and generated runtime files, restores the prior HUD `statusLine` and still-owned claude-mem entrypoints, and removes ClawGod-owned plugin helper/state/cache files. It keeps plugin caches, marketplace registrations, and claude-mem memory data; uninstalling ClawGod Plus does not uninstall the optional plugins.
 
 ## Verification
 

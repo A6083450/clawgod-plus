@@ -5,29 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
-
-const installSh = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const installPs1 = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
-
-function extractUnixPatcher() {
-  const marker = 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\'';
-  const start = installSh.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed patch.mjs');
-  const bodyStart = installSh.indexOf('\n', start) + 1;
-  const end = installSh.indexOf('\nPATCHER_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh patcher heredoc must end');
-  return installSh.slice(bodyStart, end);
-}
-
-function extractPowerShellPatcher() {
-  const marker = "$patcherCode = @'\n";
-  const start = installPs1.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must embed patch.mjs');
-  const bodyStart = start + marker.length;
-  const end = installPs1.indexOf("\n'@\n\nSet-Content", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 patcher here-string must end');
-  return installPs1.slice(bodyStart, end);
-}
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const fixture = `
 /* Version: 2.1.231 */
@@ -42,12 +20,10 @@ function evaluate(code, env = {}) {
   return context;
 }
 
-for (const [name, patcher] of [
-  ['install.sh', extractUnixPatcher()],
-  ['install.ps1', extractPowerShellPatcher()],
-]) {
+for (const [name, patcher] of await getPatcherSources()) {
   const dir = mkdtempSync(join(tmpdir(), 'clawgod-fast-model-label-'));
   try {
+    seedPatcherAcorn(dir);
     writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
     writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 

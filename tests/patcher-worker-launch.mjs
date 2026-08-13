@@ -5,30 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
-const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const unixLauncher = readFileSync(new URL('../src/unix/launcher.sh', import.meta.url), 'utf8');
 const compatWorkflow = readFileSync(new URL('../.github/workflows/compat-daily.yml', import.meta.url), 'utf8');
-
-function extractUnixPatcher() {
-  const marker = 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\'';
-  const start = unixInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed patch.mjs');
-  const bodyStart = unixInstaller.indexOf('\n', start) + 1;
-  const end = unixInstaller.indexOf('\nPATCHER_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh patcher heredoc must end');
-  return unixInstaller.slice(bodyStart, end);
-}
-
-function extractPowerShellPatcher() {
-  const marker = "$patcherCode = @'\n";
-  const start = powerShellInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must embed patch.mjs');
-  const bodyStart = start + marker.length;
-  const end = powerShellInstaller.indexOf("\n'@\n\nSet-Content", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 patcher here-string must end');
-  return powerShellInstaller.slice(bodyStart, end);
-}
+const patcherSources = await getPatcherSources();
 
 const fixtures = [
   {
@@ -45,10 +26,7 @@ const fixtures = [
   },
 ];
 
-for (const [installerName, patcher] of [
-  ['install.sh', extractUnixPatcher()],
-  ['install.ps1', extractPowerShellPatcher()],
-]) {
+for (const [installerName, patcherSource] of patcherSources) {
   for (const { version, workerResolver, plainBunResult, standaloneResult } of fixtures) {
     const name = `${installerName} Claude Code ${version}`;
     const fixture = `
@@ -65,7 +43,8 @@ globalThis.computerUseMcpCommand=computerUseMcpCommand;
 `;
     const dir = mkdtempSync(join(tmpdir(), 'clawgod-worker-launch-'));
     try {
-      writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
+      seedPatcherAcorn(dir);
+      writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
       writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 
       const run = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
@@ -168,16 +147,14 @@ globalThis.computerUseMcpCommand=computerUseMcpCommand;
   }
 }
 
-for (const [name, patcher] of [
-  ['install.sh', extractUnixPatcher()],
-  ['install.ps1', extractPowerShellPatcher()],
-]) {
+for (const [name, patcherSource] of patcherSources) {
   for (const args of [[], ['--dry-run'], ['--verify']]) {
     const mode = args[0] || 'normal';
     const dir = mkdtempSync(join(tmpdir(), 'clawgod-worker-launch-stale-'));
     try {
+      seedPatcherAcorn(dir);
       const original = 'function WE(){return Bun.isStandaloneExecutable===!0}function W1t(){if(WE())return{cmd:process.execPath,prefixArgs:[]};let t=process.argv[1];if(!t)return{cmd:process.execPath,prefixArgs:[]};return{cmd:process.execPath,prefixArgs:[t],env:{}}}';
-      writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
+      writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
       writeFileSync(join(dir, 'cli.original.cjs'), original, 'utf8');
       const run = spawnSync(process.execPath, ['patch.mjs', ...args], { cwd: dir, encoding: 'utf8' });
       const output = run.stdout + run.stderr;
@@ -207,11 +184,6 @@ assert.match(
   'compat workflow must assert the targeted worker resolver invariant',
 );
 
-const launcherStart = unixInstaller.indexOf('LAUNCHER_CONTENT="');
-const launcherEnd = unixInstaller.indexOf('"\n\n\n# Back up original claude', launcherStart);
-assert.notEqual(launcherStart, -1, 'install.sh must embed the Unix launcher');
-assert.notEqual(launcherEnd, -1, 'install.sh Unix launcher must end');
-
 const launcherDir = mkdtempSync(join(tmpdir(), 'clawgod-launcher-'));
 try {
   const cli = join(launcherDir, 'cli.cjs');
@@ -222,7 +194,7 @@ try {
   writeFileSync(bun, '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CAPTURE_FILE"\n', 'utf8');
   chmodSync(bun, 0o755);
 
-  const assignment = unixInstaller.slice(launcherStart, launcherEnd + 1);
+  const assignment = unixLauncher;
   const rendered = spawnSync('bash', ['-c', `${assignment}\nprintf '%s' "$LAUNCHER_CONTENT"`], {
     encoding: 'utf8',
     env: { ...process.env, CLAWGOD_DIR: launcherDir, BUN_BIN: bun, CLAUDE_BIN: launcher },

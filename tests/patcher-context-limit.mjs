@@ -5,29 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
-
-const unixInstaller = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const powerShellInstaller = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
-
-function extractUnixPatcher() {
-  const marker = 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\'';
-  const start = unixInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must embed patch.mjs');
-  const bodyStart = unixInstaller.indexOf('\n', start) + 1;
-  const end = unixInstaller.indexOf('\nPATCHER_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh patcher heredoc must end');
-  return unixInstaller.slice(bodyStart, end);
-}
-
-function extractPowerShellPatcher() {
-  const marker = "$patcherCode = @'\n";
-  const start = powerShellInstaller.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must embed patch.mjs');
-  const bodyStart = start + marker.length;
-  const end = powerShellInstaller.indexOf("\n'@\n\nSet-Content", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 patcher here-string must end');
-  return powerShellInstaller.slice(bodyStart, end);
-}
+import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const fixture = `
 /* Version: 2.1.218 */
@@ -67,10 +45,7 @@ function disableAcorn(dir) {
   );
 }
 
-for (const [name, patcher] of [
-  ['install.sh', extractUnixPatcher()],
-  ['install.ps1', extractPowerShellPatcher()],
-]) {
+for (const [name, patcherSource] of await getPatcherSources()) {
   let acornSource;
   const unpatched = evaluate(fixture);
   assert.equal(unpatched.currentLimit(), 200000, `${name}: unpatched default limit starts at 200000`);
@@ -82,7 +57,8 @@ for (const [name, patcher] of [
 
   const dir = mkdtempSync(join(tmpdir(), 'clawgod-context-limit-'));
   try {
-    writeFileSync(join(dir, 'patch.mjs'), patcher, 'utf8');
+    seedPatcherAcorn(dir);
+    writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
     writeFileSync(join(dir, 'cli.original.cjs'), fixture, 'utf8');
 
     const first = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
@@ -153,7 +129,7 @@ for (const [name, patcher] of [
   const noAcornDir = mkdtempSync(join(tmpdir(), 'clawgod-context-limit-no-acorn-'));
   try {
     disableAcorn(noAcornDir);
-    writeFileSync(join(noAcornDir, 'patch.mjs'), patcher, 'utf8');
+    writeFileSync(join(noAcornDir, 'patch.mjs'), patcherSource, 'utf8');
     writeFileSync(join(noAcornDir, 'cli.original.cjs'), fixture, 'utf8');
 
     const run = spawnSync(process.execPath, ['no-fetch.cjs', './patch.mjs'], { cwd: noAcornDir, encoding: 'utf8' });

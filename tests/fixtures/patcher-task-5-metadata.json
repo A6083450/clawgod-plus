@@ -1,0 +1,1483 @@
+{
+  "source": {
+    "commit": "MERGE-COMMIT-PLACEHOLDER",
+    "path": "src/generic/patcher/registry.mjs",
+    "fileSha256": "e624b24032aa99624231a10cc56bb7b9d5f44c1ecaa9815d9466fc9bae44d856",
+    "descriptorBlockLines": "45-60",
+    "descriptorBlockSha256": "2754fdecbeb01066e37bd038bea71004e1ac6e43a29bb5a24dd3ae0d2b6003fa"
+  },
+  "descriptors": [
+    {
+      "name": "USER_TYPE → ant",
+      "type": "regex",
+      "order": 0,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{return\"external\"\\}",
+        "patternFlags": "g",
+        "sentinel": "return\"external\"",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Worker resolver for plain Bun cli.cjs (target shape)",
+      "type": "regex",
+      "order": 1,
+      "metadata": {
+        "patternSource": "if\\(([\\w$]+)\\(\\)\\)return\\{cmd:process\\.execPath,prefixArgs:\\[\\],target:process\\.execPath\\};let ([\\w$]+)=process\\.argv\\[1\\];if\\(!\\2\\)return\\{cmd:process\\.execPath,prefixArgs:\\[\\],target:process\\.execPath\\};return\\{cmd:process\\.execPath,prefixArgs:\\[\\2\\],target:\\2\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_plain_bun_worker__*/",
+        "knownShape": {
+          "$type": "regexp",
+          "source": "if\\([\\w$]+\\(\\)\\)return\\{cmd:process\\.execPath,prefixArgs:\\[\\],target:process\\.execPath\\};let [\\w$]+=process\\.argv\\[1\\];if\\(![\\w$]+\\)return\\{cmd:process\\.execPath,prefixArgs:\\[\\],target:process\\.execPath\\};return\\{cmd:process\\.execPath,prefixArgs:",
+          "flags": ""
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Worker resolver for plain Bun cli.cjs (legacy shape)",
+      "type": "regex",
+      "order": 2,
+      "metadata": {
+        "patternSource": "if\\(([\\w$]+)\\(\\)\\)return\\{cmd:process\\.execPath,prefixArgs:\\[\\]\\};let ([\\w$]+)=process\\.argv\\[1\\];if\\(!\\2\\)return\\{cmd:process\\.execPath,prefixArgs:\\[\\]\\};return\\{cmd:process\\.execPath,prefixArgs:\\[\\2\\]\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_plain_bun_worker__*/",
+        "knownShape": {
+          "$type": "regexp",
+          "source": "if\\([\\w$]+\\(\\)\\)return\\{cmd:process\\.execPath,prefixArgs:\\[\\]\\};let [\\w$]+=process\\.argv\\[1\\];if\\(![\\w$]+\\)return\\{cmd:process\\.execPath,prefixArgs:\\[\\]\\};return\\{cmd:process\\.execPath,prefixArgs:",
+          "flags": ""
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "GrowthBook env overrides",
+      "type": "regex",
+      "order": 3,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{if\\(!([\\w$]+)\\)\\2=!0;return ([\\w$]+)\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": true,
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "GrowthBook config overrides",
+      "type": "regex",
+      "order": 4,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{return\\}(function)",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": 0
+      }
+    },
+    {
+      "name": "Agent Teams always enabled",
+      "type": "regex",
+      "order": 5,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{if\\(![\\w$]+\\(process\\.env\\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\\)&&![\\w$]+\\(\\)\\)return!1;if\\(![\\w$]+\\(\"tengu_amber_flint\",!0\\)\\)return!1;return!0\\}|function ([\\w$]+)\\(\\)\\{if\\(![\\w$]+\\.[\\w$]+&&![\\w$]+\\(\\)\\)return!1;if\\(![\\w$]+\\(\"tengu_amber_flint\",!0\\)\\)return!1;return!0\\}",
+        "patternFlags": "g",
+        "sentinel": "tengu_amber_flint",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Agents view session metadata",
+      "type": "regex",
+      "order": 6,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(([\\w$]+)\\)\\{for\\(let ([\\w$]+)=0;\\3<\\2\\.length;\\3\\+\\+\\)\\{let ([\\w$]+)=\\2\\[\\3\\];if\\((\\4===\"--debug\"\\|\\|\\4===\"-d\"\\|\\|\\4===\"--debug-to-stderr\"\\|\\|\\4===\"-d2e\"\\|\\|\\4\\.startsWith\\(\"--debug=\"\\)\\|\\|\\4\\.startsWith\\(\"--debug-file=\"\\))\\)continue;if\\(\\4===\"--debug-file\"&&\\3\\+1<\\2\\.length\\)\\{\\3\\+\\+;continue\\}return!1\\}return!0\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_agents_session_id__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": true,
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Default Agents view with auto Chrome",
+      "type": "regex",
+      "order": 7,
+      "metadata": {
+        "patternSource": ",([\\w$]+)=([\\w$]+)\\.hasAgentsPositional&&([\\w$]+)\\(([\\w$]+)\\);if\\(\\(\\1\\|\\|\\3\\(([\\w$]+)\\)&&process\\.stdin\\.isTTY\\)&&process\\.stdout\\.isTTY\\)\\{",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_default_agents_view__*/",
+        "knownShape": {
+          "$type": "regexp",
+          "source": "hasAgentsPositional&&[\\w$]+\\([\\w$]+\\);if\\(\\([\\w$]+\\|\\|[\\w$]+\\([\\w$]+\\)&&process\\.stdin\\.isTTY\\)&&process\\.stdout\\.isTTY\\)",
+          "flags": ""
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": true,
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Chat Agent list fits terminal height",
+      "type": "regex",
+      "order": 8,
+      "metadata": {
+        "patternSource": "\\{columns:([\\w$]+)\\}=([\\w$]+)\\(\\)([\\s\\S]{0,8000}?)\\{windowStart:([\\w$]+),windowEnd:([\\w$]+),moreAbove:([\\w$]+),moreBelow:([\\w$]+)\\}=([\\w$]+)\\(([\\w$]+),([\\w$]+)\\.length,([\\w$]+)\\)",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_chat_agent_rows__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": true,
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Chat Agent list keeps overflow indicator",
+      "type": "regex",
+      "order": 9,
+      "metadata": {
+        "patternSource": "([\\w$]+)\\.length>([\\w$]+)&&([\\w$]+)\\.jsx\\(([\\w$]+),\\{justifyContent:\"flex-end\",children:",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_chat_agent_more__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": true,
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Agents directories default collapsed state",
+      "type": "regex",
+      "order": 10,
+      "metadata": {
+        "patternSource": ",\\[([\\w$]+),([\\w$]+)\\]=([\\w$]+)\\.useState\\(\\(\\)=>\\{let [\\w$]+=[\\w$]+;return new Set\\([\\s\\S]{0,500}?\\)\\}\\),([\\w$]+)=\\3\\.useRef\\(\\1\\);\\4\\.current=\\1;let\\[[\\w$]+,[\\w$]+\\]=\\3\\.useState\\(\\(\\)=>new Set\\)",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_collapsed_directory_state__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": true,
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Agents directories default collapsed rows",
+      "type": "regex",
+      "order": 11,
+      "metadata": {
+        "patternSource": "if\\(([\\w$]+)\\.size>0\\)([\\w$]+)=\\2\\.filter\\(\\(([\\w$]+)\\)=>\\3\\.kind===\"header\"\\|\\|!\\1\\.has\\(([\\w$]+)\\(\\3\\.group\\)\\)\\);function ",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_default_collapsed_directories__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": true,
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Claude in Chrome OAuth scope bypass",
+      "type": "regex",
+      "order": 12,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(([\\w$]+)\\)\\{if\\(![\\w$]+\\(\\)\\)return [\\w$]+\\(\"\\[Claude in Chrome\\] Disabled: OAuth token has no scope accepted by \\/api\\/oauth\\/validate[^\"]*\"\\),!1;if\\(\\2===!0\\)return!0;",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__ccpp_chrome_oauth_scope_bypass*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Claude in Chrome agents config state",
+      "type": "regex",
+      "order": 13,
+      "metadata": {
+        "patternSource": "([\\w$]+)=\\{addDir:\\[\\],pluginDir:\\[\\],pluginDirNoMcp:\\[\\],settings:void 0,mcpConfig:\\[\\],strictMcpConfig:!1\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "regexp",
+          "source": "[\\w$]+=\\{addDir:\\[\\],pluginDir:\\[\\],pluginDirNoMcp:\\[\\],settings:void 0,mcpConfig:\\[\\],strictMcpConfig:!1,chrome:!1,noChrome:!1\\}",
+          "flags": ""
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Claude in Chrome agents flag parser",
+      "type": "regex",
+      "order": 14,
+      "metadata": {
+        "patternSource": "if\\(([\\w$]+)===\"--strict-mcp-config\"\\)\\{([\\w$]+)\\.strictMcpConfig=!0;continue\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "regexp",
+          "source": "if\\([\\w$]+===\"--chrome\"\\)\\{[\\w$]+\\.chrome=!0;continue\\}if\\([\\w$]+===\"--no-chrome\"\\)\\{[\\w$]+\\.noChrome=!0;continue\\}",
+          "flags": ""
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Claude in Chrome agents config resolver",
+      "type": "regex",
+      "order": 15,
+      "metadata": {
+        "patternSource": "strictMcpConfig:([\\w$]+)\\.strictMcpConfig\\}\\}function ([\\w$]+)",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "regexp",
+          "source": "chrome:[\\w$]+\\.chrome&&![\\w$]+\\.noChrome,noChrome:[\\w$]+\\.noChrome",
+          "flags": ""
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Claude in Chrome agents dispatch args",
+      "type": "regex",
+      "order": 16,
+      "metadata": {
+        "patternSource": "\\.\\.\\.e\\.strictMcpConfig\\?\\[\"--strict-mcp-config\"\\]:\\[\\]\\]\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "__ccpp_agents_chrome_dispatch",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Computer Use subscription bypass",
+      "type": "regex",
+      "order": 17,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{let [\\w$]+=[\\w$]+\\(\\);return [\\w$]+===\"max\"\\|\\|[\\w$]+===\"pro\"\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_computer_use_subscription__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Computer Use default enabled",
+      "type": "regex",
+      "order": 18,
+      "metadata": {
+        "patternSource": "([\\w$]+=)\\{enabled:!1,pixelValidation",
+        "patternFlags": "g",
+        "sentinel": "{enabled:!1,pixelValidation",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Ultraplan enable",
+      "type": "regex",
+      "order": 19,
+      "metadata": {
+        "patternSource": "(name:\"ultraplan\",[\\s\\S]{1,500}?argumentHint:\"<prompt>\",isEnabled:\\(\\)=>)(?:!1|[\\w$]+\\(\\))",
+        "patternFlags": "g",
+        "sentinel": "name:\"ultraplan\"",
+        "appliedMarker": "argumentHint:\"<prompt>\",isEnabled:()=>!0",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Ultrareview enable (rQt gate)",
+      "type": "regex",
+      "order": 20,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{return ([\\w$]+)\\(\\)\\?\\.enabled===!0&&[\\w$]+\\(\\)&&![\\w$]+\\(\\)\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_ultrareview_enabled__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Ultrareview enable (direct literal, <=2.1.213)",
+      "type": "regex",
+      "order": 21,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{return ([\\w$]+)\\(\"tengu_review_bughunter_config\",null\\)(\\?\\.enabled===!0)?\\}",
+        "patternFlags": "g",
+        "sentinel": "(\"tengu_review_bughunter_config\",null)",
+        "appliedMarker": ",enabled:!0}:{enabled:!0}}",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Ultrareview enable (v2.1.215+ gate)",
+      "type": "regex",
+      "order": 22,
+      "metadata": {
+        "patternSource": "(function ([\\w$]+)\\(\\)\\{return [\\w$]+\\(ulu,null\\)\\})([\\s\\S]{0,1500}?)(function ([\\w$]+)\\(\\)\\{return \\2\\(\\)\\?\\.enabled===!0&&[\\w$]+\\(\\)&&![\\w$]+\\(\\)\\})",
+        "patternFlags": "g",
+        "sentinel": "var ulu=\"tengu_review_bughunter_config\"",
+        "appliedMarker": "/*__clawgod_ultrareview_enabled__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Computer Use gate bypass",
+      "type": "regex",
+      "order": 23,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{if\\([\\w$]+\\(\"hipaa\"\\)\\)return\\s*!1;return [\\w$]+\\(\\)&&[\\w$]+\\(\\)\\.enabled\\}",
+        "patternFlags": "g",
+        "sentinel": "\"hipaa\"",
+        "appliedMarker": "/*__clawgod_computer_use_gate__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Computer Use in noninteractive sessions",
+      "type": "regex",
+      "order": 24,
+      "metadata": {
+        "patternSource": "if\\(([\\w$]+)\\(\\)===\"macos\"&&!([\\w$]+)\\(\\)&&([\\w$]+)\\(\\)\\)try\\{let\\{setupComputerUseMCP:",
+        "patternFlags": "g",
+        "sentinel": "setupComputerUseMCP",
+        "appliedMarker": "/*__clawgod_computer_use_noninteractive__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Voice Mode enable (bypass GrowthBook kill)",
+      "type": "regex",
+      "order": 25,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{return![\\w$]+\\(\"tengu_amber_quartz_disabled\",!1\\)\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Auto-mode unlock for third-party API (provider helper gate)",
+      "type": "regex",
+      "order": 26,
+      "metadata": {
+        "patternSource": "if\\(!([\\w$]+)\\(([\\w$]+)\\)\\)return!1;(?=(?:(?!function\\s).){0,300}!==\"firstParty\")",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Auto-mode unlock for third-party API (inline gate)",
+      "type": "regex",
+      "order": 27,
+      "metadata": {
+        "patternSource": "if\\(([\\w$]+)!==\"firstParty\"&&(?:\\1!==\"anthropicAws\"|![\\w$]+\\(\\1\\))[^;]*\\)return!1;",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Auto-mode unlock for third-party API (provider opt-in helper)",
+      "type": "regex",
+      "order": 28,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(([\\w$]+)\\)\\{if\\(\\2===\"firstParty\"\\|\\|\\2===\"anthropicAws\"\\)return!0;return [\\w$]+\\(process\\.env\\.CLAUDE_CODE_ENABLE_AUTO_MODE\\)\\}",
+        "patternFlags": "g",
+        "sentinel": "process.env.CLAUDE_CODE_ENABLE_AUTO_MODE)}",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Redirect `claude update` to clawgod self-update",
+      "type": "regex",
+      "order": 29,
+      "metadata": {
+        "patternSource": "(\\.command\\(\"update\"\\)\\.alias\\(\"upgrade\"\\)\\.description\\(\"[^\"]+\"\\))(\\.action\\((?:t\\()?async\\([^)]*\\)=>\\{)",
+        "patternFlags": "g",
+        "sentinel": ".command(\"update\").alias(\"upgrade\")",
+        "appliedMarker": "[clawgod] 'claude update' is handled by clawgod self-update.",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Logo + brand color → green (RGB dark)",
+      "type": "regex",
+      "order": 30,
+      "metadata": {
+        "patternSource": "clawd_body:\"rgb\\(215,119,87\\)\"",
+        "patternFlags": "g",
+        "sentinel": "clawd_body:\"rgb(215,119,87)\"",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Logo + brand color → green (ANSI)",
+      "type": "regex",
+      "order": 31,
+      "metadata": {
+        "patternSource": "clawd_body:\"ansi:redBright\"",
+        "patternFlags": "g",
+        "sentinel": "clawd_body:\"ansi:redBright\"",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Theme claude color → green (dark)",
+      "type": "regex",
+      "order": 32,
+      "metadata": {
+        "patternSource": "claude:\"rgb\\(215,119,87\\)\"",
+        "patternFlags": "g",
+        "sentinel": "claude:\"rgb(215,119,87)\"",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Theme claude color → green (light)",
+      "type": "regex",
+      "order": 33,
+      "metadata": {
+        "patternSource": "claude:\"rgb\\(255,153,51\\)\"",
+        "patternFlags": "g",
+        "sentinel": "claude:\"rgb(255,153,51)\"",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Shimmer → green",
+      "type": "regex",
+      "order": 34,
+      "metadata": {
+        "patternSource": "claudeShimmer:\"rgb\\(2[34]5,1[45]9,1[12]7\\)\"",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "claudeShimmer:\"rgb(74,222,128)\"",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Shimmer light → green",
+      "type": "regex",
+      "order": 35,
+      "metadata": {
+        "patternSource": "claudeShimmer:\"rgb\\(255,183,101\\)\"",
+        "patternFlags": "g",
+        "sentinel": "claudeShimmer:\"rgb(255,183,101)\"",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Hex brand color → green",
+      "type": "regex",
+      "order": 36,
+      "metadata": {
+        "patternSource": "#da7756",
+        "patternFlags": "g",
+        "sentinel": "#da7756",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Theme claude color → green (ANSI)",
+      "type": "regex",
+      "order": 37,
+      "metadata": {
+        "patternSource": "claude:\"ansi:redBright\"",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Shimmer → green (ANSI)",
+      "type": "regex",
+      "order": 38,
+      "metadata": {
+        "patternSource": "claudeShimmer:\"ansi:yellowBright\"",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Brief label claude color → green (RGB dark)",
+      "type": "regex",
+      "order": 39,
+      "metadata": {
+        "patternSource": "briefLabelClaude:\"rgb\\(215,119,87\\)\"",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Brief label claude color → green (RGB light)",
+      "type": "regex",
+      "order": 40,
+      "metadata": {
+        "patternSource": "briefLabelClaude:\"rgb\\(255,153,51\\)\"",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Brief label claude color → green (ANSI)",
+      "type": "regex",
+      "order": 41,
+      "metadata": {
+        "patternSource": "briefLabelClaude:\"ansi:redBright\"",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "macOS Cmd+V image paste fallback to clipboard read",
+      "type": "regex",
+      "order": 42,
+      "metadata": {
+        "patternSource": "\\}else if\\(([\\w$]+)&&([\\w$]+)\\)([\\w$]+)\\(\\);else ([\\w$]+)\\(\"input_image_drag\",\"read_failed\"\\),([\\w$]+)\\(([\\w$]+)\\),([\\w$]+)\\(\\)",
+        "patternFlags": "g",
+        "sentinel": "\"input_image_drag\",\"read_failed\"",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Image paste: try native image processor regardless of standalone gate",
+      "type": "regex",
+      "order": 43,
+      "metadata": {
+        "patternSource": "if\\(([\\w$]+)\\(\\)\\)(try\\{let [\\w$]+=await Promise\\.resolve\\(\\)\\.then\\(\\(\\)\\s*=>\\s*\\([\\w$]+\\(\\),[\\w$]+\\)\\),[\\w$]+=[\\w$]+\\.sharp\\|\\|[\\w$]+\\.default;return [\\w$]+=\\{default:[\\w$]+\\},[\\w$]+\\}catch\\{console\\.warn\\(\"Native image processor not available, falling back to sharp\"\\)\\})",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "regexp",
+          "source": "return [\\w$]+\\.default;try\\{let [\\w$]+=await Promise\\.resolve\\(\\)\\.then\\(\\(\\)\\s*=>\\s*\\([\\w$]+\\(\\),[\\w$]+\\)\\)",
+          "flags": ""
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Image paste: recognize TIFF paths for macOS clipboard fallback",
+      "type": "regex",
+      "order": 44,
+      "metadata": {
+        "patternSource": "([\\w$]+)=\\/\\\\\\.\\(png\\|jpe\\?g\\|gif\\|webp\\)\\$\\/i(?=;[\\w$]+=\\/\\^\\(\\?:\\[A-Za-z\\]:\\\\\\\\\\|\\\\\\\\\\\\\\\\\\)\\/)",
+        "patternFlags": "g",
+        "sentinel": "/\\.(png|jpe?g|gif|webp)$/i;",
+        "appliedMarker": "/\\.(png|jpe?g|gif|webp|tiff?)$/i;",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": true,
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Image paste: keep HTTP image URLs as text",
+      "type": "regex",
+      "order": 45,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(([\\w$]+)\\)\\{let ([\\w$]+)=([\\w$]+)\\(\\2\\.trim\\(\\)\\),([\\w$]+)=([\\w$]+)\\(\\3\\);return ([\\w$]+)\\.test\\(\\5\\)\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/^https?:\\/\\//i.test(",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": true,
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Restore Glob/Grep tools (un-inline EMBEDDED_SEARCH_TOOLS)",
+      "type": "regex",
+      "order": 46,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{if\\(!([\\w$]+)\\(\"true\"\\)\\)return!1;if\\([\\w$]+\\(\\)\\)return!1;return process\\.env\\.CLAUDE_CODE_ENTRYPOINT!==\"local-agent\"\\}",
+        "patternFlags": "g",
+        "sentinel": "ct(\"true\")",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Neutralize geo-steganography in date string (qla)",
+      "type": "regex",
+      "order": 47,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\([\\w$]+\\)\\{let [\\w$]+=[\\w$]+\\(\\),[\\w$]+=[\\w$]+\\([\\w$]+\\?\\.[\\w$]+\\?\\?!1,[\\w$]+\\?\\.[\\w$]+\\?\\?!1\\),[\\w$]+=[\\w$]+\\?\\.[\\w$]+\\?[\\w$]+\\.replaceAll\\(\"-\",\"\\/\"\\):[\\w$]+;return`Today\\$\\{[\\w$]+\\}s date is \\$\\{[\\w$]+\\}\\.`\\}",
+        "patternFlags": "g",
+        "sentinel": "replaceAll(\"-\",\"/\")",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Neutralize geo-detection probe (rdp)",
+      "type": "regex",
+      "order": 48,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{if\\([\\w$]+\\(\\)\\)return null;let [\\w$]+=[\\w$]+\\(\\),[\\w$]+=[\\w$]+\\(\\),[\\w$]+=[\\w$]+===\"Asia\\/Shanghai\"\\|\\|[\\w$]+===\"Asia\\/Urumqi\"[\\s\\S]*?\\}\\}",
+        "patternFlags": "g",
+        "sentinel": "Asia/Shanghai",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Neutralize apostrophe steganography (odp)",
+      "type": "regex",
+      "order": 49,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(([\\w$]+),([\\w$]+)\\)\\{if\\(!\\2&&!\\3\\)return\"'\";if\\(\\2&&!\\3\\)return\"(?:\\\\u2019|\\u2019)\";if\\(!\\2&&\\3\\)return\"(?:\\\\u02[Bb][Cc]|\\u02BC)\";return\"(?:\\\\u02[Bb]9|\\u02B9)\"\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Remove CYBER_RISK_INSTRUCTION",
+      "type": "regex",
+      "order": 50,
+      "metadata": {
+        "patternSource": "([\\w$]+)=\"IMPORTANT: Assist with authorized security testing[^\"]*\"",
+        "patternFlags": "g",
+        "sentinel": "Assist with authorized security testing",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Remove URL generation restriction",
+      "type": "regex",
+      "order": 51,
+      "metadata": {
+        "patternSource": "\\n\\$\\{[\\w$]+\\}\\nIMPORTANT: You must NEVER generate or guess URLs[^.]*\\. You may use URLs provided by the user in their messages or local files\\.",
+        "patternFlags": "g",
+        "sentinel": "IMPORTANT: You must NEVER generate or guess URLs",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Remove cautious actions section",
+      "type": "regex",
+      "order": 52,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(([\\w$]*)\\)\\{(?:if\\([\\s\\S]{1,200}?\\)return`# Executing actions with care\\n\\n[\\s\\S]*?`;)?return`# Executing actions with care\\n\\n[\\s\\S]*?`\\}",
+        "patternFlags": "g",
+        "sentinel": "# Executing actions with care",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Remove \"Not logged in\" notice",
+      "type": "regex",
+      "order": 53,
+      "metadata": {
+        "patternSource": "Not logged in\\. Run [\\w ]+ to authenticate\\.",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Attachment filter bypass",
+      "type": "regex",
+      "order": 54,
+      "metadata": {
+        "patternSource": "([\\w$]+)\\(\\)!==\"ant\"(&&[\\w$]+\\.has\\([\\w$]+\\.attachment\\.type\\)|\\)\\{if\\([\\w$]+\\.attachment\\.type===\"hook_additional_context\")",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Message list filter bypass (legacy ternary)",
+      "type": "regex",
+      "order": 55,
+      "metadata": {
+        "patternSource": "([\\w$]+)\\(\\)!==\"ant\"\\?([\\w$]+)\\(([\\w$]+),([\\w$]+)\\(([\\w$]+)\\)\\):([\\w$]+)",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Message list filter bypass (s_8 form)",
+      "type": "regex",
+      "order": 56,
+      "metadata": {
+        "patternSource": "if\\(([\\w$]+)\\(\\)===\"ant\"\\)return ([\\w$]+);let ([\\w$]+)=([\\w$]+) instanceof Set\\?\\4:([\\w$]+)\\(\\4\\);return ([\\w$]+)\\(\\2,\\3\\)",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Shell integration → claude.orig (multitool dispatch fix)",
+      "type": "regex",
+      "order": 57,
+      "metadata": {
+        "patternSource": "([\\w$]+\\.join\\([\\w$]+\\(\\),[\\w$]+\\?)\"claude\\.exe\":\"claude\"(\\))",
+        "patternFlags": "g",
+        "sentinel": "?\"claude.exe\":\"claude\")",
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Fast mode model label reflects provider model",
+      "type": "regex",
+      "order": 58,
+      "metadata": {
+        "patternSource": "function ([\\w$]+)\\(\\)\\{return\"Opus 5\"\\}",
+        "patternFlags": "g",
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": "/*__clawgod_fast_model_label__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Claude in Chrome local socket fallback",
+      "type": "custom",
+      "order": 59
+    },
+    {
+      "name": "Context limit configurable",
+      "type": "custom",
+      "order": 61
+    },
+    {
+      "name": "Fast Messages protocol",
+      "type": "custom",
+      "order": 62
+    },
+    {
+      "name": "Fast mode org check bypass",
+      "type": "custom",
+      "order": 63
+    },
+    {
+      "name": "Claude API skill lazy docs",
+      "type": "custom",
+      "order": 64
+    }
+  ]
+}

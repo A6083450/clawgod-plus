@@ -1,44 +1,16 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
-const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
-const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
-
-function unixTemplate() {
-  const marker = 'cat > "$FETCH_SCRIPT" << \'FETCH_PACKAGE_EOF\'';
-  const start = unix.indexOf(marker);
-  assert.notEqual(start, -1, 'install.sh must generate fetch-package.mjs');
-  const bodyStart = unix.indexOf('\n', start) + 1;
-  const end = unix.indexOf('\nFETCH_PACKAGE_EOF', bodyStart);
-  assert.notEqual(end, -1, 'install.sh fetch-package.mjs template must end');
-  return unix.slice(bodyStart, end);
-}
-
-function powerShellTemplate() {
-  const marker = "$fetchScript = Join-Path $NativeBinTmpDir \"fetch-package.mjs\"\n    @'\n#!/usr/bin/env bun";
-  const start = windows.indexOf(marker);
-  assert.notEqual(start, -1, 'install.ps1 must generate fetch-package.mjs');
-  const bodyStart = windows.indexOf('#!/usr/bin/env bun', start);
-  const end = windows.indexOf("\n'@ | Set-Content $fetchScript", bodyStart);
-  assert.notEqual(end, -1, 'install.ps1 fetch-package.mjs template must end');
-  return windows.slice(bodyStart, end);
-}
-
-const unixModule = unixTemplate();
-const windowsModule = powerShellTemplate();
-const normalize = source => source.replace(/\r\n/g, '\n').trim();
-assert.equal(normalize(windowsModule), normalize(unixModule), 'Unix and Windows fetch-package.mjs bodies must be identical');
+const unix = readFileSync(new URL('../src/template/install.sh', import.meta.url), 'utf8');
+const windows = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
+const canonicalModuleUrl = new URL('../src/generic/runtime/fetch-package.mjs', import.meta.url);
 
 const fixtureDir = mkdtempSync(join(tmpdir(), 'clawgod-registry-'));
 try {
-  const modulePath = join(fixtureDir, 'fetch-package.mjs');
-  await Bun.write(modulePath, unixModule);
-  chmodSync(modulePath, 0o700);
-  const { fetchWithProxy, installPackage, proxyFor, resolvePackage } = await import(`${pathToFileURL(modulePath).href}?test=${Date.now()}`);
+  const { fetchWithProxy, installPackage, proxyFor, resolvePackage } = await import(`${canonicalModuleUrl.href}?test=${Date.now()}`);
 
   assert.equal(typeof proxyFor, 'function', 'fetch-package.mjs must export proxyFor');
   assert.equal(typeof fetchWithProxy, 'function', 'fetch-package.mjs must export fetchWithProxy');

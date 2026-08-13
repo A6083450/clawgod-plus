@@ -78,6 +78,50 @@ bash install.sh --lean-off        # 恢复完整工具集；默认值
 
 绿色品牌标识表示补丁运行时已经启用。安装器会在替换命令前备份原始版本。
 
+## 可选增强（Enhancements）
+
+ClawGod Plus 提供 13 项可选增强，默认启用全部。增强 ID 固定且按以下顺序排列：
+
+| 类型 | 增强 ID |
+|---|---|
+| 补丁 | `chrome`、`computer-use`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding` |
+| 插件 | `claude-hud`、`claude-mem`、`superpowers` |
+
+不传任何选项时，默认启用全部 13 项增强。选择会以严格 JSON 形式保存到 `~/.clawgod/enhancements.json`：
+
+```json
+{
+  "schemaVersion": 1,
+  "mode": "all",
+  "enabled": []
+}
+```
+
+`mode` 为 `all` 时始终启用清单中的全部增强（含未来新增的 ID）；`mode` 为 `custom` 时只启用 `enabled` 列表中的 ID。
+
+本地直接安装时可以交互式选择：
+
+```bash
+bash install.sh --choose-enhancements
+```
+
+也可以非交互式指定：
+
+```bash
+bash install.sh --enhancements chrome,computer-use,claude-hud
+bash install.sh --enhancements none   # 仅核心，不启用任何增强
+```
+
+Windows PowerShell 对应参数：
+
+```powershell
+.\install.ps1 -ChooseEnhancements
+.\install.ps1 -Enhancements chrome,computer-use,claude-hud
+.\install.ps1 -Enhancements none
+```
+
+后续运行 `claude update` 会复用 `~/.clawgod/enhancements.json` 中已保存的选择，并且从不主动询问。关闭 `claude-hud` 或 `claude-mem` 会恢复由 ClawGod 托管的对应配置；关闭 `superpowers` 只会停止托管，不会删除你已安装的插件。
+
 ## 命令与启动行为
 
 ```bash
@@ -98,14 +142,17 @@ CLAWGOD_NO_AUTO_CHROME=1 claude
 
 对于 ClawGod Plus 的多智能体和长时间运行任务，推荐搭配状态栏插件 [Claude HUD](https://github.com/jarrodwatts/claude-hud)。无需打开额外窗口，就能持续看到模型与上下文健康度、项目与 Git 状态、Claude 配置数量、用量、工具、Agent、Todo、成本、速度和会话时长。
 
-在 Claude Code 内安装：
+每次安装和更新都会自动确保以下可选 Claude Code 插件依赖：
 
-```text
-/plugin marketplace add jarrodwatts/claude-hud
-/plugin install claude-hud
-/reload-plugins
-/claude-hud:setup
-```
+| 插件 | Canonical ID | 基线版本 |
+|---|---|---|
+| Claude HUD | `claude-hud@claude-hud` | `0.7.0` |
+| claude-mem | `claude-mem@thedotmack` | `13.14.0` |
+| Superpowers | `superpowers@superpowers-marketplace` | `6.2.0` |
+
+缺失或低于基线时，ClawGod Plus 会安装固定基线；如果已经安装了更新版本，则保留已安装的更高版本。公开固定归档通过选定的 `hub.211107.xyz` 代理下载，只有字节长度和固定 SHA-256 都精确匹配才会解压。Bun 仍是唯一需要安装的 JavaScript 运行时。
+
+对于 HUD，安装器保留下面这份精确 profile，并且只托管 `~/.claude/settings.json` 的 `statusLine` 字段。该命令用 Bun 的绝对路径运行托管的 `claude-hud-statusline.mjs`，不会增加 Node 或 Bash 状态栏运行时。可选插件警告不会导致 ClawGod Plus 核心安装失败。
 
 下图展示的是这份推荐配置在多智能体会话中的实际效果。
 
@@ -219,6 +266,7 @@ CLAUDE_CODE_CONTEXT_LIMIT=1000000 claude
 
 安装 claude-mem 并将其配置为 Claude Provider 后，安装器可以：
 
+- 使用 Bun 运行选中的 claude-mem Hook 和 MCP 入口；
 - 复用当前 ClawGod Plus Provider 或 Claude 设置，无需把凭据写入 claude-mem 的 `.env`；
 - 通过专用 ClawGod Plus Launcher 启动 claude-mem SDK 子进程；
 - 只备份由兼容助手托管的设置，并在卸载时恢复；
@@ -226,6 +274,8 @@ CLAUDE_CODE_CONTEXT_LIMIT=1000000 claude
 - 清理重复失效的 Chroma MCP 进程并重启 Worker。
 
 如果 claude-mem 未安装、使用其他 Provider、没有可用凭据，或包含用户自有的冲突设置，ClawGod Plus 核心安装会继续执行，并且不会接管这些设置。
+
+托管集成状态采用 fail-closed 策略。未知的更高 claude-mem 归属 schema 会被保留并报告为未经 Bun 验证；ClawGod Plus 不会重写或删除它。
 
 ## 独立补丁工具
 
@@ -257,8 +307,11 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 6. 应用已融合的 Chrome、Computer Use、上下文上限、Worker、粘贴、Provider 和功能补丁。
 7. 验证 Bun 可以加载修改后的 CLI。
 8. 备份原始 Launcher，并写入 `claude` 和 `clawgod` Launcher。
+9. 使用生成的 `plugin-dependencies.mjs` 确保三个可选插件基线，再应用托管的 HUD 与 claude-mem 集成。
 
 `~/.clawgod/.source-version` 记录被修改的原生版本。后续启动时，Wrapper 会检测官方 Claude Code 升级并对新二进制重新打补丁。
+
+安装器脚本是确定性生成产物：`src/` 是唯一事实来源，`install.sh` 与 `install.ps1` 由 `bun build.mjs` 生成，请勿手工编辑。
 
 ## 更新
 
@@ -268,7 +321,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 claude update
 ```
 
-增强补丁会在本地 ClawGod Plus 安装器存在时把更新请求路由给它，下载目标 Claude Code 包、重新提取、应用完整补丁集并重写 Launcher。
+增强补丁会在本地 ClawGod Plus 安装器存在时把更新请求路由给它。普通的 `claude update` 会选择最新 Claude Code Release，重新提取、应用完整补丁集并重写 Launcher。插件基线独立管理：更新不会把 Claude Code 固定到插件版本。
 
 ```bash
 claude update --version 2.1.220  # 锁定已知 Claude Code 版本
@@ -290,7 +343,7 @@ hash -r
 .\install.ps1 -Uninstall
 ```
 
-卸载会恢复原始 Claude Launcher，移除 ClawGod Plus 别名和生成的运行时文件，并恢复仍由兼容助手托管的 claude-mem 设置。
+卸载会恢复原始 Claude Launcher，移除 ClawGod Plus 别名和生成的运行时文件，恢复之前的 HUD `statusLine` 和仍归 ClawGod 托管的 claude-mem 入口，并删除 ClawGod 自有的插件 helper、state 和 cache 文件。它会保留插件缓存、Marketplace 注册和 claude-mem 记忆数据；卸载 ClawGod Plus 不会卸载这些可选插件。
 
 ## 验证
 
