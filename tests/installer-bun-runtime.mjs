@@ -3,13 +3,15 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildPatcherBundle, renderTemplate } from '../build.mjs';
 import { publishVendorTransaction } from '../src/generic/runtime/vendor-transaction.mjs';
 
+const vendorTransactionPath = fileURLToPath(new URL('../src/generic/runtime/vendor-transaction.mjs', import.meta.url));
 const unix = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+const windowsTemplate = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
 const canonicalPlatform = Object.fromEntries(
   ['unix/lifecycle.sh', 'unix/launcher.sh', 'windows/lifecycle.ps1', 'windows/launcher.cmd'].map(name => [
     name,
@@ -36,6 +38,122 @@ function assertTemporaryPath(path, label) {
   const temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())];
   const resolvedPath = resolve(path);
   assert.ok(temporaryRoots.some(root => resolvedPath.startsWith(`${root}/`)), `${label} must stay under the system temporary directory`);
+}
+
+function writeVendorRootRacePreload(path) {
+  writeFileSync(path, `import { createRequire, syncBuiltinESMExports } from 'node:module';
+const require = createRequire(import.meta.url);
+const fs = require('node:fs');
+const { join } = require('node:path');
+const originalLstatSync = fs.lstatSync;
+let injected = false;
+let cleanupAssessmentTransactionChecks = 0;
+
+fs.lstatSync = function (path, ...args) {
+  const pathString = String(path);
+  const stack = String(new Error().stack);
+  const boundary = process.env.VENDOR_RACE_BOUNDARY;
+  const inCleanup = stack.includes('transactionCleanupSafe');
+  const inAssessment = stack.includes('assessPreMutationRollback');
+  if (boundary === 'cleanup-final-transaction'
+    && inCleanup
+    && inAssessment
+    && pathString === process.env.VENDOR_RACE_TRANSACTION_ROOT) {
+    cleanupAssessmentTransactionChecks += 1;
+  }
+  const shouldInject = (boundary === 'preflight' && pathString === process.env.VENDOR_RACE_OLD_ROOT)
+    || (boundary === 'cleanup' && inCleanup && pathString === process.env.VENDOR_RACE_OLD_ROOT)
+    || (boundary === 'cleanup-final-live' && inCleanup && inAssessment && pathString === process.env.VENDOR_RACE_RIPGREP)
+    || (boundary === 'cleanup-final-transaction' && cleanupAssessmentTransactionChecks === 2);
+  if (!injected && boundary === 'forged-preflight' && pathString === process.env.VENDOR_RACE_OLD_ROOT) {
+    injected = true;
+    const error = new Error('fixture preflight failure');
+    error.rootConflict = { root: 'live vendor', reason: 'forged-root-conflict' };
+    throw error;
+  }
+  if (!injected && shouldInject) {
+    injected = true;
+    fs.renameSync(process.env.VENDOR_RACE_TARGET_ROOT, process.env.VENDOR_RACE_DISPLACED_ROOT);
+    fs.renameSync(process.env.VENDOR_RACE_REPLACEMENT_ROOT, process.env.VENDOR_RACE_TARGET_ROOT);
+    if (process.env.VENDOR_RACE_PRESERVE_RIPGREP === '1') {
+      fs.renameSync(
+        join(process.env.VENDOR_RACE_DISPLACED_ROOT, 'ripgrep'),
+        join(process.env.VENDOR_RACE_TARGET_ROOT, 'ripgrep'),
+      );
+    }
+  }
+  return originalLstatSync.call(this, path, ...args);
+};
+
+syncBuiltinESMExports();
+`, 'utf8');
+}
+
+function runVendorRootRace({ root, boundary, replacementTarget = 'live', candidateRipgrep = false, oldRootBlocker = false, preserveRipgrepIdentity = false }) {
+  const transaction = join(root, 'transaction');
+  const candidate = join(transaction, 'candidate', 'vendor');
+  const oldRoot = join(transaction, 'old-vendor');
+  const live = join(root, 'runtime', 'vendor');
+  const replacement = join(root, 'replacement-vendor');
+  const displaced = join(root, 'displaced-vendor');
+  const preload = join(root, 'root-race-preload.mjs');
+  const liveNative = join(live, 'old-native.node');
+  const liveRipgrep = join(live, 'ripgrep');
+  const replacementSentinel = join(replacement, 'sentinel.bin');
+
+  mkdirSync(candidate, { recursive: true });
+  mkdirSync(live, { recursive: true });
+  mkdirSync(replacement);
+  if (candidateRipgrep) writeFileSync(join(candidate, 'ripgrep'), Buffer.from([0x63, 0x61, 0x6e, 0x64]));
+  if (oldRootBlocker) writeFileSync(oldRoot, 'preflight blocker\n', 'utf8');
+  writeFileSync(liveNative, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(liveRipgrep, Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(replacementSentinel, Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  const nativeBefore = lstatSync(liveNative);
+  const ripgrepBefore = lstatSync(liveRipgrep);
+  const sentinelBefore = lstatSync(replacementSentinel);
+  const transactionBefore = lstatSync(transaction);
+  const replacementBefore = lstatSync(replacement);
+  const targetRoot = replacementTarget === 'old' ? oldRoot : replacementTarget === 'transaction' ? transaction : live;
+  writeVendorRootRacePreload(preload);
+
+  const run = spawnSync(process.execPath, [
+    '--preload', preload,
+    vendorTransactionPath, 'publish', live, candidate, transaction,
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      HOME: root,
+      TMPDIR: root,
+      PATH: dirname(process.execPath),
+      VENDOR_RACE_BOUNDARY: boundary,
+      VENDOR_RACE_OLD_ROOT: oldRoot,
+      VENDOR_RACE_TRANSACTION_ROOT: transaction,
+      VENDOR_RACE_RIPGREP: liveRipgrep,
+      VENDOR_RACE_TARGET_ROOT: targetRoot,
+      VENDOR_RACE_DISPLACED_ROOT: displaced,
+      VENDOR_RACE_REPLACEMENT_ROOT: replacement,
+      VENDOR_RACE_PRESERVE_RIPGREP: preserveRipgrepIdentity ? '1' : '0',
+    },
+  });
+
+  return {
+    run,
+    transaction,
+    candidate,
+    oldRoot,
+    live,
+    targetRoot,
+    replacementTarget,
+    preserveRipgrepIdentity,
+    displaced,
+    nativeBefore,
+    ripgrepBefore,
+    sentinelBefore,
+    transactionBefore,
+    replacementBefore,
+  };
 }
 
 const vendorTransactionRoot = mkdtempSync(join(tmpdir(), 'clawgod-vendor-transaction-'));
@@ -134,6 +252,233 @@ try {
   assert.deepEqual(readFileSync(join(raceLive, 'sentinel.bin')), Buffer.from([0x5a, 0x00, 0xa5]), 'root conflict rollback must preserve replacement bytes');
   assert.equal(lstatSync(join(raceLive, 'sentinel.bin')).ino, raceSentinelBefore.ino, 'root conflict rollback must preserve replacement identity');
   assert.equal(existsSync(join(raceTransaction, 'vendor-rollback-conflict.json')), true, 'root conflict must retain recovery evidence');
+
+  const preflightRootRace = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'pre-mutation-bound-root-race'),
+    boundary: 'preflight',
+    oldRootBlocker: true,
+  });
+  const cleanupRootRace = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'cleanup-bound-root-race'),
+    boundary: 'cleanup',
+    replacementTarget: 'old',
+    candidateRipgrep: true,
+  });
+  const cleanupLiveRootRace = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'cleanup-live-root-race'),
+    boundary: 'cleanup',
+    replacementTarget: 'live',
+    candidateRipgrep: true,
+  });
+  const cleanupFinalLiveRootRace = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'cleanup-final-live-root-race'),
+    boundary: 'cleanup-final-live',
+    replacementTarget: 'live',
+    candidateRipgrep: true,
+    preserveRipgrepIdentity: true,
+  });
+  const cleanupFinalTransactionRootRace = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'cleanup-final-transaction-root-race'),
+    boundary: 'cleanup-final-transaction',
+    replacementTarget: 'transaction',
+    candidateRipgrep: true,
+  });
+  const forgedRootConflict = runVendorRootRace({
+    root: join(vendorTransactionRoot, 'forged-root-conflict'),
+    boundary: 'forged-preflight',
+    oldRootBlocker: true,
+  });
+  assert.deepEqual(
+    [
+      preflightRootRace.run.status,
+      cleanupRootRace.run.status,
+      cleanupLiveRootRace.run.status,
+      cleanupFinalLiveRootRace.run.status,
+      cleanupFinalTransactionRootRace.run.status,
+      forgedRootConflict.run.status,
+    ],
+    [21, 22, 21, 21, 21, 20],
+    `bound-root races must distinguish live conflicts from retained transaction-owned conflicts and ignore forged metadata:\n${preflightRootRace.run.stderr}${cleanupRootRace.run.stderr}${cleanupLiveRootRace.run.stderr}${cleanupFinalLiveRootRace.run.stderr}${cleanupFinalTransactionRootRace.run.stderr}${forgedRootConflict.run.stderr}`,
+  );
+  assert.match(forgedRootConflict.run.stderr, /fixture preflight failure/, 'forged-metadata fixture must execute its injected unbranded error');
+
+  const preflightEvidence = join(preflightRootRace.transaction, 'vendor-rollback-conflict.json');
+  assert.equal(existsSync(preflightEvidence), true, 'pre-mutation root conflict must retain recovery evidence in the trusted transaction root');
+  assert.ok(
+    JSON.parse(readFileSync(preflightEvidence, 'utf8')).conflicts.some(conflict => conflict.root === 'live vendor'),
+    'pre-mutation recovery evidence must identify the replaced live root',
+  );
+  for (const [label, fixture] of [
+    ['pre-mutation', preflightRootRace],
+    ['cleanup-old', cleanupRootRace],
+    ['cleanup-live', cleanupLiveRootRace],
+    ['cleanup-final-live', cleanupFinalLiveRootRace],
+    ['cleanup-final-transaction', cleanupFinalTransactionRootRace],
+  ]) {
+    const replacementSentinel = join(fixture.targetRoot, 'sentinel.bin');
+    const preservedLive = fixture.replacementTarget === 'live' ? fixture.displaced : fixture.live;
+    const preservedNative = join(preservedLive, 'old-native.node');
+    const preservedRipgrep = fixture.preserveRipgrepIdentity
+      ? join(fixture.targetRoot, 'ripgrep')
+      : join(preservedLive, 'ripgrep');
+    const expectedReplacementEntries = fixture.preserveRipgrepIdentity
+      ? ['ripgrep', 'sentinel.bin']
+      : ['sentinel.bin'];
+    assert.equal(existsSync(fixture.transaction), true, `${label}: unsafe transaction data must be retained`);
+    const replacementAfter = lstatSync(fixture.targetRoot);
+    assert.equal(replacementAfter.dev, fixture.replacementBefore.dev, `${label}: helper must preserve replacement root device`);
+    assert.equal(replacementAfter.ino, fixture.replacementBefore.ino, `${label}: helper must preserve replacement root identity`);
+    assert.equal(replacementAfter.isDirectory(), true, `${label}: helper must preserve replacement root type`);
+    assert.equal(replacementAfter.mode & 0o7777, fixture.replacementBefore.mode & 0o7777, `${label}: helper must preserve replacement root mode`);
+    assert.deepEqual(readdirSync(fixture.targetRoot).toSorted(), expectedReplacementEntries, `${label}: helper must not add files to the unknown replacement root`);
+    assert.deepEqual(readFileSync(replacementSentinel), Buffer.from([0x5a, 0x00, 0xa5]), `${label}: replacement sentinel bytes must remain unchanged`);
+    assert.equal(lstatSync(replacementSentinel).ino, fixture.sentinelBefore.ino, `${label}: replacement sentinel identity must remain unchanged`);
+    assert.equal(lstatSync(replacementSentinel).mode & 0o7777, 0o604, `${label}: replacement sentinel mode must remain unchanged`);
+    assert.deepEqual(readFileSync(preservedNative), Buffer.from([0x00, 0x11, 0x80, 0xff]), `${label}: live native bytes must remain unchanged`);
+    assert.equal(lstatSync(preservedNative).ino, fixture.nativeBefore.ino, `${label}: live native identity must remain unchanged`);
+    assert.deepEqual(readFileSync(preservedRipgrep), Buffer.from([0x72, 0x67, 0x00, 0xff]), `${label}: live ripgrep bytes must remain unchanged`);
+    assert.equal(lstatSync(preservedRipgrep).ino, fixture.ripgrepBefore.ino, `${label}: live ripgrep identity must remain unchanged`);
+    assert.equal(existsSync(join(fixture.targetRoot, 'vendor-rollback-conflict.json')), false, `${label}: helper must never write evidence into an unknown replacement root`);
+  }
+  const displacedTransaction = lstatSync(cleanupFinalTransactionRootRace.displaced);
+  assert.equal(displacedTransaction.dev, cleanupFinalTransactionRootRace.transactionBefore.dev, 'final transaction replacement must retain the original transaction device');
+  assert.equal(displacedTransaction.ino, cleanupFinalTransactionRootRace.transactionBefore.ino, 'final transaction replacement must retain the original transaction identity');
+  assert.equal(displacedTransaction.isDirectory(), true, 'final transaction replacement must retain the original transaction type');
+  assert.equal(displacedTransaction.mode & 0o7777, cleanupFinalTransactionRootRace.transactionBefore.mode & 0o7777, 'final transaction replacement must retain the original transaction mode');
+  assert.deepEqual(
+    readFileSync(join(cleanupFinalTransactionRootRace.displaced, 'candidate', 'vendor', 'ripgrep')),
+    Buffer.from([0x63, 0x61, 0x6e, 0x64]),
+    'final transaction replacement must retain original candidate recovery bytes',
+  );
+  assert.equal(existsSync(join(forgedRootConflict.transaction, 'vendor-rollback-conflict.json')), false, 'unbranded error metadata must not forge recovery evidence');
+  assert.deepEqual(readFileSync(join(forgedRootConflict.live, 'old-native.node')), Buffer.from([0x00, 0x11, 0x80, 0xff]), 'unbranded error metadata must preserve prior native bytes');
+  assert.equal(lstatSync(join(forgedRootConflict.live, 'old-native.node')).ino, forgedRootConflict.nativeBefore.ino, 'unbranded error metadata must preserve prior native identity');
+  assert.deepEqual(readFileSync(join(forgedRootConflict.live, 'ripgrep')), Buffer.from([0x72, 0x67, 0x00, 0xff]), 'unbranded error metadata must preserve managed ripgrep bytes');
+  assert.equal(lstatSync(join(forgedRootConflict.live, 'ripgrep')).ino, forgedRootConflict.ripgrepBefore.ino, 'unbranded error metadata must preserve managed ripgrep identity');
+
+  const evidenceLeafCase = join(vendorTransactionRoot, 'evidence-leaf-symlink');
+  const evidenceLeafTransaction = join(evidenceLeafCase, 'transaction');
+  const evidenceLeafCandidate = join(evidenceLeafTransaction, 'candidate', 'vendor');
+  const evidenceLeafLive = join(evidenceLeafCase, 'runtime', 'vendor');
+  const evidenceLeafReplacement = join(evidenceLeafCase, 'replacement-vendor');
+  const evidenceLeafDisplaced = join(evidenceLeafCase, 'displaced-vendor');
+  const evidenceLeafExternal = join(evidenceLeafCase, 'external-evidence-target.bin');
+  const evidenceLeafPath = join(evidenceLeafTransaction, 'vendor-rollback-conflict.json');
+  mkdirSync(evidenceLeafCandidate, { recursive: true });
+  mkdirSync(evidenceLeafLive, { recursive: true });
+  mkdirSync(evidenceLeafReplacement);
+  writeFileSync(join(evidenceLeafCandidate, 'candidate.node'), Buffer.from([0xca, 0xfe]));
+  writeFileSync(join(evidenceLeafLive, 'old-native.node'), Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(join(evidenceLeafLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(join(evidenceLeafReplacement, 'sentinel.bin'), Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  writeFileSync(evidenceLeafExternal, Buffer.from([0xde, 0xad, 0xbe, 0xef]), { mode: 0o600 });
+  const evidenceLeafExternalBefore = lstatSync(evidenceLeafExternal);
+  symlinkSync(evidenceLeafExternal, evidenceLeafPath);
+  let evidenceLeafError;
+  try {
+    publishVendorTransaction({
+      liveVendor: evidenceLeafLive,
+      candidateVendor: evidenceLeafCandidate,
+      transactionDir: evidenceLeafTransaction,
+      afterPublish: () => {
+        renameSync(evidenceLeafLive, evidenceLeafDisplaced);
+        renameSync(evidenceLeafReplacement, evidenceLeafLive);
+      },
+    });
+  } catch (error) {
+    evidenceLeafError = error;
+  }
+  assert.equal(evidenceLeafError?.rollbackComplete, false, 'evidence leaf fixture must retain the live-root rollback conflict');
+  assert.deepEqual(readFileSync(evidenceLeafExternal), Buffer.from([0xde, 0xad, 0xbe, 0xef]), 'conflict evidence must not follow a pre-existing symlink leaf');
+  assert.equal(lstatSync(evidenceLeafExternal).ino, evidenceLeafExternalBefore.ino, 'conflict evidence must preserve external target identity');
+  assert.equal(lstatSync(evidenceLeafExternal).mode & 0o7777, 0o600, 'conflict evidence must preserve external target mode');
+  assert.equal(lstatSync(evidenceLeafPath).isSymbolicLink(), true, 'conflict evidence must preserve a pre-existing symlink leaf');
+  assert.equal(readlinkSync(evidenceLeafPath), evidenceLeafExternal, 'conflict evidence must not replace a pre-existing symlink leaf');
+
+  const candidateRootCase = join(vendorTransactionRoot, 'candidate-root-conflict');
+  const candidateRootTransaction = join(candidateRootCase, 'transaction');
+  const candidateRoot = join(candidateRootTransaction, 'candidate', 'vendor');
+  const candidateRootDisplaced = join(candidateRootCase, 'displaced-candidate');
+  const candidateRootReplacement = join(candidateRootCase, 'replacement-candidate');
+  const candidateRootLive = join(candidateRootCase, 'runtime', 'vendor');
+  const candidateRootOldNative = join(candidateRootLive, 'old-native.node');
+  const candidateRootRipgrep = join(candidateRootLive, 'ripgrep');
+  const candidateRootSentinel = join(candidateRootReplacement, 'sentinel.bin');
+  mkdirSync(candidateRoot, { recursive: true });
+  mkdirSync(candidateRootLive, { recursive: true });
+  mkdirSync(candidateRootReplacement);
+  writeFileSync(join(candidateRoot, 'candidate.node'), Buffer.from([0xca, 0xfe]));
+  writeFileSync(candidateRootOldNative, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(candidateRootRipgrep, Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(candidateRootSentinel, Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  const candidateRootOldNativeBefore = lstatSync(candidateRootOldNative);
+  const candidateRootRipgrepBefore = lstatSync(candidateRootRipgrep);
+  const candidateRootSentinelBefore = lstatSync(candidateRootSentinel);
+  let candidateRootError;
+  try {
+    publishVendorTransaction({
+      liveVendor: candidateRootLive,
+      candidateVendor: candidateRoot,
+      transactionDir: candidateRootTransaction,
+      afterPublish: () => {
+        renameSync(candidateRoot, candidateRootDisplaced);
+        renameSync(candidateRootReplacement, candidateRoot);
+      },
+    });
+  } catch (error) {
+    candidateRootError = error;
+  }
+  assert.equal(candidateRootError?.rollbackComplete, true, 'a transaction-owned candidate root conflict must preserve completed live rollback');
+  assert.equal(candidateRootError?.cleanupSafe, false, 'a transaction-owned candidate root conflict must retain transaction recovery data');
+  assert.deepEqual(readdirSync(candidateRootLive).toSorted(), ['old-native.node', 'ripgrep'], 'candidate root conflict rollback must restore the exact prior live entry set');
+  assert.deepEqual(readFileSync(candidateRootOldNative), Buffer.from([0x00, 0x11, 0x80, 0xff]), 'candidate root conflict rollback must restore prior native bytes');
+  assert.equal(lstatSync(candidateRootOldNative).ino, candidateRootOldNativeBefore.ino, 'candidate root conflict rollback must restore prior native identity');
+  assert.deepEqual(readFileSync(candidateRootRipgrep), Buffer.from([0x72, 0x67, 0x00, 0xff]), 'candidate root conflict rollback must preserve managed ripgrep bytes');
+  assert.equal(lstatSync(candidateRootRipgrep).ino, candidateRootRipgrepBefore.ino, 'candidate root conflict rollback must preserve managed ripgrep identity');
+  assert.deepEqual(readFileSync(join(candidateRoot, 'sentinel.bin')), Buffer.from([0x5a, 0x00, 0xa5]), 'candidate root conflict rollback must not mutate replacement bytes');
+  assert.equal(lstatSync(join(candidateRoot, 'sentinel.bin')).ino, candidateRootSentinelBefore.ino, 'candidate root conflict rollback must preserve replacement identity');
+  assert.equal(existsSync(join(candidateRootTransaction, 'vendor-rollback-conflict.json')), true, 'candidate root conflict must retain recovery evidence');
+
+  const unknownEntryCase = join(vendorTransactionRoot, 'unknown-live-entry');
+  const unknownEntryTransaction = join(unknownEntryCase, 'transaction');
+  const unknownEntryCandidate = join(unknownEntryTransaction, 'candidate', 'vendor');
+  const unknownEntryLive = join(unknownEntryCase, 'runtime', 'vendor');
+  const unknownEntryOldNative = join(unknownEntryLive, 'old-native.node');
+  const unknownEntryRipgrep = join(unknownEntryLive, 'ripgrep');
+  const unknownEntryRogue = join(unknownEntryLive, 'rogue.node');
+  mkdirSync(unknownEntryCandidate, { recursive: true });
+  mkdirSync(unknownEntryLive, { recursive: true });
+  writeFileSync(join(unknownEntryCandidate, 'candidate.node'), Buffer.from([0xca, 0xfe]));
+  writeFileSync(unknownEntryOldNative, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(unknownEntryRipgrep, Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  const unknownEntryOldNativeBefore = lstatSync(unknownEntryOldNative);
+  const unknownEntryRipgrepBefore = lstatSync(unknownEntryRipgrep);
+  let unknownEntryRogueBefore;
+  let unknownEntryError;
+  try {
+    publishVendorTransaction({
+      liveVendor: unknownEntryLive,
+      candidateVendor: unknownEntryCandidate,
+      transactionDir: unknownEntryTransaction,
+      afterPublish: () => {
+        writeFileSync(unknownEntryRogue, Buffer.from([0x13, 0x37]), { mode: 0o601 });
+        unknownEntryRogueBefore = lstatSync(unknownEntryRogue);
+        throw new Error('fixture publication interruption');
+      },
+    });
+  } catch (error) {
+    unknownEntryError = error;
+  }
+  assert.equal(unknownEntryError?.rollbackComplete, false, 'an unknown live entry must make rollback incomplete');
+  assert.equal(unknownEntryError?.cleanupSafe, false, 'an unknown live entry must retain transaction recovery data');
+  assert.deepEqual(readFileSync(unknownEntryOldNative), Buffer.from([0x00, 0x11, 0x80, 0xff]), 'unknown-entry rollback must restore prior native bytes');
+  assert.equal(lstatSync(unknownEntryOldNative).ino, unknownEntryOldNativeBefore.ino, 'unknown-entry rollback must restore prior native identity');
+  assert.deepEqual(readFileSync(unknownEntryRipgrep), Buffer.from([0x72, 0x67, 0x00, 0xff]), 'unknown-entry rollback must preserve managed ripgrep bytes');
+  assert.equal(lstatSync(unknownEntryRipgrep).ino, unknownEntryRipgrepBefore.ino, 'unknown-entry rollback must preserve managed ripgrep identity');
+  assert.deepEqual(readFileSync(unknownEntryRogue), Buffer.from([0x13, 0x37]), 'unknown-entry rollback must not overwrite unknown bytes');
+  assert.equal(lstatSync(unknownEntryRogue).ino, unknownEntryRogueBefore.ino, 'unknown-entry rollback must not replace unknown identity');
+  assert.equal(lstatSync(unknownEntryRogue).mode & 0o7777, 0o601, 'unknown-entry rollback must preserve unknown mode');
+  assert.equal(existsSync(join(unknownEntryTransaction, 'vendor-rollback-conflict.json')), true, 'unknown-entry rollback must retain recovery evidence');
 } finally {
   rmSync(vendorTransactionRoot, { recursive: true, force: true });
 }
@@ -195,6 +540,52 @@ function powerShellFunction(name) {
   const end = windows.indexOf('\n}\n', start);
   assert.notEqual(end, -1, `install.ps1 must close ${name}`);
   return windows.slice(start, end + 3);
+}
+
+function powerShellApplyBlock(source, label) {
+  const start = source.indexOf('Write-Dim "Applying patches ..."');
+  const end = source.indexOf('\n# ─── Create default configs', start);
+  assert.ok(start >= 0 && end > start, `${label} must retain the patch application gate`);
+  return source.slice(start, end);
+}
+
+function assertPowerShellVendorStatusScope(source, label) {
+  const block = powerShellApplyBlock(source, label);
+  const probe = '$VendorNativePreferenceWasDefined = Test-Path Variable:PSNativeCommandUseErrorActionPreference';
+  const save = 'if ($VendorNativePreferenceWasDefined) { $VendorNativePreferenceValue = $PSNativeCommandUseErrorActionPreference }';
+  const disable = 'if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $false }';
+  const call = '& $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir';
+  const capture = '$vendorStatus = $LASTEXITCODE';
+  const restore = 'if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $VendorNativePreferenceValue }';
+  const remove = 'else { Remove-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue }';
+  const failureGate = 'if ($vendorStatus -ne 0) {';
+  const rollbackStatus = '$VendorRollbackComplete = $vendorStatus -eq 20 -or $vendorStatus -eq 22';
+  const retainedStatus = 'if ($vendorStatus -eq 22) { $RuntimeTransactionCleanupSafe = $false }';
+  const promote = 'throw "Native vendor publication failed."';
+  const positions = [probe, save, '    try {', disable, call, capture, '    } finally {', restore, remove, failureGate, rollbackStatus, retainedStatus, promote]
+    .map(needle => block.indexOf(needle));
+  assert.ok(positions.every(position => position >= 0), `${label} must preserve native-command state, capture rollback status, and promote vendor failure`);
+  assert.deepEqual(positions, positions.toSorted((left, right) => left - right), `${label} native-command status handling must stay in execution order`);
+  assert.equal(block.indexOf(call, positions[4] + call.length), -1, `${label} must invoke the vendor transaction helper exactly once`);
+  assert.equal(block.indexOf(capture, positions[5] + capture.length), -1, `${label} must capture native vendor status exactly once`);
+  assert.equal((block.match(/\$vendorStatus\s*=/g) || []).length, 1, `${label} must assign native vendor status exactly once`);
+  assert.equal(block.slice(positions[4] + call.length, positions[5]).trim(), '', `${label} must capture native vendor status immediately after helper publication`);
+  assert.equal((block.match(/\$PSNativeCommandUseErrorActionPreference\s*=\s*\$false/g) || []).length, 1, `${label} must disable native-command throwing only once`);
+  const preferenceScope = block.slice(positions[2], positions[8] + remove.length);
+  assert.equal((preferenceScope.match(/\$PSNativeCommandUseErrorActionPreference\s*=/g) || []).length, 2, `${label} must only disable and restore the native-command error preference`);
+  assert.doesNotMatch(preferenceScope, /\$ErrorActionPreference\s*=/, `${label} must not weaken ErrorActionPreference around vendor publication`);
+  return block;
+}
+
+function findPwsh() {
+  const pathValue = process.env.PATH || process.env.Path || '';
+  for (const directory of pathValue.split(delimiter)) {
+    for (const name of process.platform === 'win32' ? ['pwsh.exe', 'pwsh'] : ['pwsh']) {
+      const candidate = join(directory, name);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
 }
 
 const executableNode = /(?:^|[;\r\n])\s*(?:&\s*)?(?:node(?:\.exe)?|\$NodeBin)\b(?:\s|$)|\bStart-Process\s+(?:-FilePath\s+)?(?:node(?:\.exe)?)\b/i;
@@ -1396,10 +1787,69 @@ ${unixApplyBlock}
   rmSync(patchGateRoot, { recursive: true, force: true });
 }
 
-const windowsApplyStart = windows.indexOf('Write-Dim "Applying patches ..."');
-const windowsApplyEnd = windows.indexOf('\n# ─── Create default configs', windowsApplyStart);
-assert.ok(windowsApplyStart >= 0 && windowsApplyEnd > windowsApplyStart, 'install.ps1 must retain the patch application gate');
-const windowsApplyBlock = windows.slice(windowsApplyStart, windowsApplyEnd);
+const canonicalWindowsApplyBlock = assertPowerShellVendorStatusScope(windowsTemplate, 'src/template/install.ps1');
+const windowsApplyBlock = assertPowerShellVendorStatusScope(windows, 'install.ps1');
+assert.equal(windowsApplyBlock, canonicalWindowsApplyBlock, 'generated install.ps1 must preserve the canonical vendor status scope exactly');
+const preferenceMutation = windowsTemplate.replace(
+  'if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $false }',
+  '',
+);
+assert.notEqual(preferenceMutation, windowsTemplate, 'native-command preference mutation must remove production handling');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(preferenceMutation, 'mutated src/template/install.ps1'),
+  /must preserve native-command state/,
+  'removing scoped native-command preference handling must fail the semantic contract',
+);
+const missingPreferenceMutation = windowsTemplate.replace(
+  'else { Remove-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue }',
+  '',
+);
+assert.notEqual(missingPreferenceMutation, windowsTemplate, 'missing-variable mutation must remove production cleanup');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(missingPreferenceMutation, 'mutated missing-variable src/template/install.ps1'),
+  /must preserve native-command state/,
+  'removing the PowerShell 5.1 missing-variable cleanup path must fail the semantic contract',
+);
+const statusGapMutation = windowsTemplate.replace(
+  '& $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir\n        $vendorStatus = $LASTEXITCODE',
+  '& $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir\n        & $BunBin --version\n        $vendorStatus = $LASTEXITCODE',
+);
+assert.notEqual(statusGapMutation, windowsTemplate, 'native-status gap mutation must insert a clobbering command');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(statusGapMutation, 'mutated native-status-gap src/template/install.ps1'),
+  /must capture native vendor status immediately/,
+  'inserting a native command before LASTEXITCODE capture must fail the semantic contract',
+);
+const statusOverwriteMutation = windowsTemplate.replace(
+  '$vendorStatus = $LASTEXITCODE',
+  '$vendorStatus = $LASTEXITCODE\n        $vendorStatus = 0',
+);
+assert.notEqual(statusOverwriteMutation, windowsTemplate, 'native-status overwrite mutation must replace production handling');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(statusOverwriteMutation, 'mutated native-status-overwrite src/template/install.ps1'),
+  /must assign native vendor status exactly once/,
+  'overwriting captured LASTEXITCODE must fail the semantic contract',
+);
+const retainedStatusMutation = windowsTemplate.replace(
+  'if ($vendorStatus -eq 22) { $RuntimeTransactionCleanupSafe = $false }',
+  '',
+);
+assert.notEqual(retainedStatusMutation, windowsTemplate, 'retained-status mutation must remove production cleanup protection');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(retainedStatusMutation, 'mutated retained-status src/template/install.ps1'),
+  /must preserve native-command state/,
+  'removing exit 22 transaction retention must fail the semantic contract',
+);
+const nativePromotionMutation = windowsTemplate.replace(
+  'throw "Native vendor publication failed."',
+  '',
+);
+assert.notEqual(nativePromotionMutation, windowsTemplate, 'native-promotion mutation must remove production failure promotion');
+assert.throws(
+  () => assertPowerShellVendorStatusScope(nativePromotionMutation, 'mutated native-promotion src/template/install.ps1'),
+  /must preserve native-command state/,
+  'removing manual native failure promotion must fail the semantic contract',
+);
 assert.match(windowsApplyBlock, /\$patchOutput\s*=\s*&\s*\$BunBin/, 'install.ps1 must capture patch output');
 assert.match(
   windowsApplyBlock,
@@ -1414,6 +1864,103 @@ assert.match(windows, /&\s+\$BunBin\s+\$extractorPath\s+\$NativeBin\s+\$RuntimeC
 assert.match(windowsApplyBlock, /vendor-transaction\.mjs"\) publish \$RuntimeVendorDir \$RuntimeCandidateVendor \$RuntimeRollbackDir/, 'install.ps1 must publish candidate native modules through the shared transaction helper only after mandatory patches pass');
 assert.match(windowsApplyBlock, /\$VendorRollbackComplete\s*=\s*\$vendorStatus\s*-eq\s*20\s*-or\s*\$vendorStatus\s*-eq\s*22/, 'install.ps1 must restore the prior CLI only after the shared helper reports verified rollback');
 assert.doesNotMatch(windowsApplyBlock, /Move-Item[\s\S]*\$RuntimeCandidateVendor/, 'install.ps1 must not maintain a second native publication implementation');
+
+const pwsh = findPwsh();
+if (pwsh) {
+  const nativeStatusRoot = mkdtempSync(join(tmpdir(), 'clawgod-powershell-vendor-status-'));
+  assertTemporaryPath(nativeStatusRoot, 'PowerShell vendor status fixture');
+  try {
+    for (const expectedStatus of [20, 22]) {
+      const caseRoot = join(nativeStatusRoot, `status-${expectedStatus}`);
+      const clawDir = join(caseRoot, 'clawgod');
+      const transaction = join(clawDir, '.runtime-rollback');
+      const liveVendor = join(clawDir, 'vendor');
+      const candidateVendor = expectedStatus === 20
+        ? join(transaction, 'candidate', 'vendor')
+        : join(caseRoot, 'outside-candidate');
+      const target = join(clawDir, 'cli.original.cjs');
+      const script = join(caseRoot, 'vendor-status.ps1');
+      mkdirSync(transaction, { recursive: true });
+      mkdirSync(candidateVendor, { recursive: true });
+      mkdirSync(liveVendor, { recursive: true });
+      writeFileSync(join(liveVendor, 'ripgrep'), Buffer.from([0x72, 0x67]));
+      if (expectedStatus === 20) writeFileSync(join(candidateVendor, 'ripgrep'), Buffer.from([0x63, 0x61, 0x6e, 0x64]));
+      writeFileSync(join(clawDir, 'vendor-transaction.mjs'), canonicalRuntime['vendor-transaction.mjs'], 'utf8');
+      writeFileSync(join(clawDir, 'patch.mjs'), 'process.exit(0);\n', 'utf8');
+      writeFileSync(join(clawDir, 'enhancements.json'), '{}\n', 'utf8');
+      writeFileSync(target, 'candidate runtime\n', 'utf8');
+      writeFileSync(join(transaction, 'cli.original.cjs'), 'prior runtime\n', 'utf8');
+      writeFileSync(script, `$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+$BunBin = $env:CLAWGOD_TEST_BUN
+$ClawDir = $env:CLAWGOD_TEST_DIR
+$RuntimeTarget = Join-Path $ClawDir 'cli.original.cjs'
+$RuntimeSourceVersion = Join-Path $ClawDir '.source-version'
+$RuntimeRollbackDir = $env:CLAWGOD_TEST_TRANSACTION
+$RuntimeCandidateVendor = $env:CLAWGOD_TEST_CANDIDATE
+$RuntimeVendorDir = Join-Path $ClawDir 'vendor'
+$RuntimeHadTarget = $true
+$RuntimeHadSourceVersion = $false
+$RuntimeTransactionCommitted = $false
+$RuntimeVendorPublishStarted = $false
+$VendorRollbackComplete = $false
+$RuntimeTransactionCleanupSafe = $true
+$NoUpgrade = $false
+function Write-Dim { param([string]$Message) }
+function Write-Err { param([string]$Message); [Console]::Error.WriteLine($Message) }
+function Invoke-ChromePostInstallFix {}
+$Caught = $false
+try {
+    try {
+${windowsApplyBlock}
+} catch {
+    $Caught = $true
+}
+[ordered]@{
+    status = $vendorStatus
+    nativePreference = $PSNativeCommandUseErrorActionPreference
+    nativePreferenceDefined = Test-Path Variable:PSNativeCommandUseErrorActionPreference
+    errorActionPreference = $ErrorActionPreference
+    rollbackComplete = $VendorRollbackComplete
+    cleanupSafe = $RuntimeTransactionCleanupSafe
+    caught = $Caught
+    target = [System.IO.File]::ReadAllText($RuntimeTarget)
+    transactionExists = Test-Path -LiteralPath $RuntimeRollbackDir
+} | ConvertTo-Json -Compress
+`, 'utf8');
+
+      const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: caseRoot,
+          USERPROFILE: caseRoot,
+          CLAWGOD_TEST_BUN: process.execPath,
+          CLAWGOD_TEST_DIR: clawDir,
+          CLAWGOD_TEST_TRANSACTION: transaction,
+          CLAWGOD_TEST_CANDIDATE: candidateVendor,
+        },
+      });
+      assert.equal(run.status, 0, `PowerShell helper status ${expectedStatus} fixture must complete:\n${run.stdout}${run.stderr}`);
+      const resultLine = run.stdout.trim().split(/\r?\n/).findLast(line => line.startsWith('{'));
+      assert.ok(resultLine, `PowerShell helper status ${expectedStatus} fixture must emit JSON:\n${run.stdout}${run.stderr}`);
+      const result = JSON.parse(resultLine);
+      assert.equal(result.status, expectedStatus, `PowerShell must capture helper exit ${expectedStatus}`);
+      assert.equal(result.nativePreference, true, `PowerShell must restore native-command preference after helper exit ${expectedStatus}`);
+      assert.equal(result.nativePreferenceDefined, true, `PowerShell must restore native-command preference existence after helper exit ${expectedStatus}`);
+      assert.equal(result.errorActionPreference, 'Stop', `PowerShell must not weaken ErrorActionPreference around helper exit ${expectedStatus}`);
+      assert.equal(result.rollbackComplete, true, `PowerShell helper exit ${expectedStatus} must restore the prior CLI`);
+      assert.equal(result.cleanupSafe, expectedStatus === 20, `PowerShell helper exit ${expectedStatus} must preserve cleanup semantics`);
+      assert.equal(result.caught, true, `PowerShell helper exit ${expectedStatus} must reach caller failure handling`);
+      assert.equal(result.target, 'prior runtime\n', `PowerShell helper exit ${expectedStatus} must restore prior CLI bytes`);
+      assert.equal(result.transactionExists, expectedStatus === 22, `PowerShell helper exit ${expectedStatus} must ${expectedStatus === 22 ? 'retain' : 'clean'} transaction data`);
+    }
+  } finally {
+    rmSync(nativeStatusRoot, { recursive: true, force: true });
+  }
+} else {
+  console.log('PowerShell native vendor status checks skipped: pwsh unavailable');
+}
 
 const repatchRoot = mkdtempSync(join(tmpdir(), `clawgod repatch "quoted" 'gate' `));
 assert.equal(realpathSync(dirname(repatchRoot)), realpathSync(tmpdir()), 'repatch fixture must be created directly under the system temporary directory');

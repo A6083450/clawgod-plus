@@ -604,8 +604,16 @@ if ($patchStatus -ne 0) {
 }
 if (-not $NoUpgrade) {
     $RuntimeVendorPublishStarted = $true
-    & $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir
-    $vendorStatus = $LASTEXITCODE
+    $VendorNativePreferenceWasDefined = Test-Path Variable:PSNativeCommandUseErrorActionPreference
+    if ($VendorNativePreferenceWasDefined) { $VendorNativePreferenceValue = $PSNativeCommandUseErrorActionPreference }
+    try {
+        if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $false }
+        & $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir
+        $vendorStatus = $LASTEXITCODE
+    } finally {
+        if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $VendorNativePreferenceValue }
+        else { Remove-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue }
+    }
     if ($vendorStatus -ne 0) {
         $VendorRollbackComplete = $vendorStatus -eq 20 -or $vendorStatus -eq 22
         if ($vendorStatus -eq 22) { $RuntimeTransactionCleanupSafe = $false }
