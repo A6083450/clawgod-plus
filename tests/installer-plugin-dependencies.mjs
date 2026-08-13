@@ -35,6 +35,7 @@ async function pluginArchive(base, overrides = {}) {
     name: overrides.marketplaceName ?? base.archiveMarketplace ?? base.marketplace,
     plugins: [{ name: base.plugin, source }],
   };
+  if (overrides.owner !== undefined) marketplace.owner = overrides.owner;
   if (overrides.entryVersion !== undefined) marketplace.plugins[0].version = overrides.entryVersion;
   const plugin = {
     name: overrides.pluginName ?? base.plugin,
@@ -950,7 +951,7 @@ try {
   }, 'the HUD golden stdin must remain fixed');
   assert.equal(goldenFixture.transcript.flatMap(entry => entry.message.content).filter(block => block.type === 'tool_use' && block.name === 'Skill').length, 2);
   assert.equal(goldenFixture.transcript.flatMap(entry => entry.message.content).filter(block => block.type === 'tool_use' && block.name.startsWith('mcp__')).length, 3);
-  assert.equal(goldenFixture.expectedStdout, '\x1b[0m\x1b[36m[Opus]\x1b[0m \x1b[32m███\x1b[2m░░░░░░░\x1b[0m \x1b[32m52k/200k\x1b[0m | \x1b[33mmy-project\x1b[0m\n\x1b[0m\x1b[33m◐\x1b[0m \x1b[36mmcp__linear__get_issue\x1b[0m | \x1b[33m◐\x1b[0m \x1b[36mmcp__slack__search_messages\x1b[0m | \x1b[32m✓\x1b[0m Read \x1b[38;2;255;79;194m×1\x1b[0m\n\x1b[0m\x1b[32m✓\x1b[0m \x1b[35mexplore\x1b[0m \x1b[38;2;255;79;194m[haiku]\x1b[0m\x1b[38;2;255;79;194m: Finding auth code\x1b[0m \x1b[38;2;255;79;194m(<1s)\x1b[0m\n\x1b[0m\x1b[33m▸\x1b[0m Add tests \x1b[38;2;255;79;194m(1/2)\x1b[0m\n', 'the approved HUD stdout must remain byte-exact');
+  assert.equal(goldenFixture.expectedStdout, '\x1b[0m\x1b[36m[Opus]\x1b[0m \x1b[32m███\x1b[2m░░░░░░░\x1b[0m \x1b[32m52k/200k\x1b[0m | \x1b[33mmy-project\x1b[0m | \x1b[38;2;255;79;194m⏱️  <1m\x1b[0m\n\x1b[0m\x1b[33m◐\x1b[0m \x1b[36mmcp__linear__get_issue\x1b[0m | \x1b[33m◐\x1b[0m \x1b[36mmcp__slack__search_messages\x1b[0m | \x1b[32m✓\x1b[0m Skill \x1b[38;2;255;79;194m×2\x1b[0m | \x1b[32m✓\x1b[0m Read \x1b[38;2;255;79;194m×1\x1b[0m | \x1b[32m✓\x1b[0m Edit \x1b[38;2;255;79;194m×1\x1b[0m | \x1b[32m✓\x1b[0m mcp__github__get_pull_request \x1b[38;2;255;79;194m×1\x1b[0m\n\x1b[0m\x1b[32m✓\x1b[0m \x1b[35mexplore\x1b[0m \x1b[38;2;255;79;194m[haiku]\x1b[0m\x1b[38;2;255;79;194m: Finding auth code\x1b[0m \x1b[38;2;255;79;194m(<1s)\x1b[0m\n\x1b[0m\x1b[33m▸\x1b[0m Add tests \x1b[38;2;255;79;194m(0/2)\x1b[0m\n', 'the approved HUD stdout must remain byte-exact');
 
   function makeHudFixture(label, options = {}) {
     const root = join(fixtureRoot, `hud-${label}`);
@@ -1519,7 +1520,9 @@ process.exit(37);
   assert.equal(sha256(new TextEncoder().encode('abc')), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'SHA-256 must match the standard abc vector');
   for (const key of ['hud', 'memory', 'superpowers']) {
     const base = PLUGIN_BASELINES[key];
-    const bytes = await pluginArchive(base);
+    const bytes = await pluginArchive(base, key === 'superpowers'
+      ? { owner: { name: 'Jesse Vincent', email: 'jesse@fsck.com' } }
+      : {});
     validArchives[key] = bytes;
     const spec = archiveSpec(base, bytes);
     assert.equal(sha256(bytes), spec.sha256, `${key} fixtures must use the exported SHA-256 implementation`);
@@ -2297,8 +2300,9 @@ process.exit(67);
   assert.equal(superResult.status, 'installed');
   assert.deepEqual(JSON.parse(readFileSync(join(superFixture.persistentSource, '.claude-plugin', 'marketplace.json'), 'utf8')), {
     name: 'superpowers-marketplace',
+    owner: { name: 'Jesse Vincent', email: 'jesse@fsck.com' },
     plugins: [{ name: 'superpowers', version: '6.2.0', source: './plugin' }],
-  }, 'Superpowers must use the exact canonical wrapper manifest');
+  }, 'Superpowers wrapper manifest must preserve the source marketplace owner');
   assert.deepEqual(snapshotContentTree(join(superFixture.persistentSource, 'plugin')), verifiedSourceTrees.superpowers, 'the complete verified Superpowers repository must remain nested byte-for-byte with exact file modes');
   const installedSuperpowers = JSON.parse(readFileSync(superFixture.installedPath, 'utf8'));
   assert.equal(JSON.stringify(installedSuperpowers.plugins['superpowers@claude-plugins-official']), officialRecordBefore, 'the official Superpowers record must remain byte-identical');

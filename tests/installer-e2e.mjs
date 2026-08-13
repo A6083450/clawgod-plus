@@ -321,6 +321,8 @@ function validatePluginRetention(tempHome, expectedCanonicalIds, returnSelection
   assert.equal(installed !== null && typeof installed === 'object' && !Array.isArray(installed), true, 'installed plugin state must be an object');
   assert.equal(Number.isSafeInteger(installed.version) && installed.version === 2, true, 'installed plugin state must use numeric schema version 2');
   assert.equal(installed.plugins !== null && typeof installed.plugins === 'object' && !Array.isArray(installed.plugins), true, 'installed plugin state must contain a plugins object');
+  const known = readTrustedJson(tempHome, join(pluginRoot, 'known_marketplaces.json'), 'known marketplace state');
+  assert.equal(known !== null && typeof known === 'object' && !Array.isArray(known), true, 'known marketplace state must be an object');
   const selected = {};
   for (const spec of canonicalPluginRetentionSpecs) {
     const record = selectCanonicalPluginRecord(installed, spec);
@@ -328,10 +330,13 @@ function validatePluginRetention(tempHome, expectedCanonicalIds, returnSelection
     const expectedInstallPath = join(pluginRoot, 'cache', spec.marketplace, spec.plugin, record.version);
     assert.equal(resolve(record.installPath), expectedInstallPath, `retained plugin installPath is not canonical for ${spec.id}`);
     assertTrustedDirectoryPath(tempHome, expectedInstallPath, `retained plugin cache for ${spec.id}`);
-    assertTrustedDirectoryPath(tempHome, join(pluginRoot, 'marketplaces', spec.marketplace), `retained marketplace for ${spec.id}`);
     const persistentSource = join(pluginRoot, 'clawgod-marketplaces', spec.marketplace, spec.version);
     assertTrustedDirectoryPath(tempHome, persistentSource, `retained persistent source for ${spec.id}`);
     assert.ok(readdirSync(persistentSource).length > 0, `retained persistent marketplace has no source for ${spec.id}`);
+    const marketplace = known[spec.marketplace];
+    assert.equal(marketplace !== null && typeof marketplace === 'object' && !Array.isArray(marketplace), true, `retained marketplace is missing for ${spec.id}`);
+    assert.equal(typeof marketplace.installLocation, 'string', `retained marketplace must record an installLocation for ${spec.id}`);
+    assert.equal(resolve(marketplace.installLocation), resolve(persistentSource), `retained marketplace must reference the canonical persistent source for ${spec.id}`);
     selected[spec.key] = record;
   }
   return returnSelection ? selected : 'plugin retention: hud=present memory=present superpowers=present';
@@ -616,18 +621,33 @@ function runHudGoldenFixture(settings) {
   const projectDir = join(tempHome, 'my-project');
   const transcriptPath = join(projectDir, 'transcript.jsonl');
   mkdirSync(projectDir, { recursive: true });
-  writeFileSync(transcriptPath, `${fixture.transcript.map(entry => JSON.stringify(entry)).join('\n')}\n`, 'utf8');
+  const base = Date.now();
+  const transcript = fixture.transcript.map((entry, index) => ({
+    ...entry,
+    timestamp: new Date(base + index * 400).toISOString(),
+  }));
+  writeFileSync(transcriptPath, `${transcript.map(entry => JSON.stringify(entry)).join('\n')}\n`, 'utf8');
   const stdin = {
     ...fixture.stdin,
     cwd: projectDir,
     transcript_path: transcriptPath,
     workspace: { ...fixture.stdin.workspace, current_dir: projectDir, project_dir: projectDir },
   };
+  // claude-hud probes `git` whenever a cwd is set (its optional git-status
+  // feature). The probe is third-party plugin behavior, not a ClawGod runtime
+  // dependency, and it degrades gracefully when git fails. Give this consumer
+  // a benign failing `git` ahead of the forbidden shim so the probe cannot be
+  // mistaken for a Bun-only contract violation; every other forbidden tool
+  // remains shimmed for the HUD consumer.
+  const benignGitDir = join(tempHome, 'hud-benign-bin');
+  mkdirSync(benignGitDir, { recursive: true });
+  writeFileSync(join(benignGitDir, 'git'), '#!/bin/sh\nprintf "%s\\n" "fatal: not a git repository" >&2\nexit 128\n', 'utf8');
+  chmodSync(join(benignGitDir, 'git'), 0o700);
   const marker = executePersistedHudCommand({
     settings,
     shell: '/bin/sh',
     cwd: projectDir,
-    env: isolatedEnv,
+    env: { ...isolatedEnv, PATH: `${benignGitDir}:${isolatedEnv.PATH}` },
     inputBase64: Buffer.from(`${JSON.stringify(stdin)}\n`, 'utf8').toString('base64'),
     expectedBase64: Buffer.from(fixture.expectedStdout, 'utf8').toString('base64'),
     timeoutMs: 10_000,

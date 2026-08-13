@@ -1731,7 +1731,10 @@ for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', 
   assert.ok(pluginRestore >= 0 && pluginRestore < claudeMemRestore, `${name}: plugin restoration must run before claude-mem compatibility restore`);
   assert.ok(pluginRestore < launcherRestore, `${name}: plugin restoration must run before launcher restore`);
   assert.ok(pluginRestore < cleanup, `${name}: plugin restoration must run before managed runtime cleanup`);
-  for (const artifact of ['plugin-dependencies.mjs', 'claude-hud-statusline.mjs', 'plugin-dependencies-state.json', 'cache/claude-plugins', 'staging/claude-plugins']) {
+  const cleanupArtifacts = name === 'install.sh'
+    ? ['plugin-dependencies.mjs', 'claude-hud-statusline.mjs', 'plugin-dependencies-state.json', '"$CLAWGOD_DIR/cache"', '"$CLAWGOD_DIR/staging"']
+    : ['plugin-dependencies.mjs', 'claude-hud-statusline.mjs', 'plugin-dependencies-state.json', '"cache"', '"staging"'];
+  for (const artifact of cleanupArtifacts) {
     const expression = name === 'install.ps1' ? artifact.replaceAll('/', '\\') : artifact;
     assert.ok(uninstall.indexOf(expression, cleanup) >= cleanup, `${name}: successful cleanup must remove ${expression}`);
   }

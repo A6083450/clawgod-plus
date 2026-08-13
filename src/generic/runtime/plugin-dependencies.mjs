@@ -1940,12 +1940,15 @@ function materializePersistentSource(sourceRoot, spec, context) {
       safeDirectoryStatus(staged, spec);
       const manifestDirectory = join(staged, '.claude-plugin');
       mkdirSync(manifestDirectory, 0o700);
+      const sourceManifest = readJson(join(sourceRoot, '.claude-plugin', 'marketplace.json'), spec);
+      const wrapperManifest = {
+        name: 'superpowers-marketplace',
+        plugins: [{ name: 'superpowers', version: '6.2.0', source: './plugin' }],
+      };
+      if (sourceManifest.owner) wrapperManifest.owner = sourceManifest.owner;
       writeExclusive(
         join(manifestDirectory, 'marketplace.json'),
-        new TextEncoder().encode(JSON.stringify({
-          name: 'superpowers-marketplace',
-          plugins: [{ name: 'superpowers', version: '6.2.0', source: './plugin' }],
-        })),
+        new TextEncoder().encode(JSON.stringify(wrapperManifest)),
         false,
         spec,
       );

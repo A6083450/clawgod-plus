@@ -185,16 +185,21 @@ const retentionInstalledPath = join(retentionPluginRoot, 'installed_plugins.json
 function writeRetentionFixture() {
   rmSync(retentionPluginRoot, { recursive: true, force: true });
   const plugins = {};
+  const knownMarketplaces = {};
   for (const spec of retentionSpecs) {
     const installPath = join(retentionPluginRoot, 'cache', spec.marketplace, spec.plugin, spec.version);
     mkdirSync(installPath, { recursive: true });
-    mkdirSync(join(retentionPluginRoot, 'marketplaces', spec.marketplace), { recursive: true });
     const persistentSource = join(retentionPluginRoot, 'clawgod-marketplaces', spec.marketplace, spec.version);
     mkdirSync(persistentSource, { recursive: true });
     writeFileSync(join(persistentSource, 'source-marker.txt'), `${spec.id}\n`);
     plugins[spec.id] = [{ scope: 'user', version: spec.version, installPath }];
+    knownMarketplaces[spec.marketplace] = {
+      source: { source: 'directory', path: persistentSource },
+      installLocation: persistentSource,
+    };
   }
   writeFileSync(retentionInstalledPath, `${JSON.stringify({ version: 2, plugins }, null, 2)}\n`);
+  writeFileSync(join(retentionPluginRoot, 'known_marketplaces.json'), `${JSON.stringify(knownMarketplaces, null, 2)}\n`);
 }
 function mutateRetentionState(mutate) {
   const installed = JSON.parse(readFileSync(retentionInstalledPath, 'utf8'));
@@ -227,10 +232,18 @@ try {
   assert.match(missingCache.stderr, /cache|claude-mem|plugin/i);
 
   writeRetentionFixture();
-  rmSync(join(retentionPluginRoot, 'marketplaces', 'superpowers-marketplace'), { recursive: true });
+  const knownAfterRemoval = JSON.parse(readFileSync(join(retentionPluginRoot, 'known_marketplaces.json'), 'utf8'));
+  delete knownAfterRemoval['superpowers-marketplace'];
+  writeFileSync(join(retentionPluginRoot, 'known_marketplaces.json'), `${JSON.stringify(knownAfterRemoval, null, 2)}\n`);
   const missingMarketplace = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
-  assert.notEqual(missingMarketplace.status, 0, 'a removed marketplace must fail retention validation');
+  assert.notEqual(missingMarketplace.status, 0, 'a removed marketplace registration must fail retention validation');
   assert.match(missingMarketplace.stderr, /marketplace|superpowers|plugin/i);
+
+  writeRetentionFixture();
+  rmSync(join(retentionPluginRoot, 'clawgod-marketplaces', 'superpowers-marketplace', '6.2.0'), { recursive: true });
+  const missingPersistentSource = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
+  assert.notEqual(missingPersistentSource.status, 0, 'a removed persistent marketplace source must fail retention validation');
+  assert.match(missingPersistentSource.stderr, /persistent source|superpowers|plugin/i);
 
   writeRetentionFixture();
   mutateRetentionState(installed => { installed.version = '2'; });
