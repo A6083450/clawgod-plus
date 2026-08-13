@@ -90,15 +90,36 @@ function assertFastProtocol(name, output) {
 
 const fastResults = [];
 
-// Real 2.1.229 request closure: beta insertion is gated by `ae`, while body
-// speed is gated by `Fo.fastMode`. Forced policy must ultimately make these
-// states agree, but the current strict matcher must first reject this shape.
+// Real 2.1.229 request closure: beta insertion is gated by an independent `ae`
+// eligibility while body speed is gated by `Fo.fastMode`. The forced passthrough
+// patch must make the beta header agree with the body: `speed==="fast"` is the
+// only switch that adds the Fast beta capability, and a missing speed field
+// must remove every Fast beta capability even when `ae` pushed it.
 const real229FastClosureFixture = `${fixture}
 function RA(name,header){return{name,header}}
 let Fbr=RA("speed","fast-mode-2026-02-01");
 function buildRequest(Fo,ae){let caps=[...Fo.capabilities];if(ae)caps.push(Fbr);let speed;if(Fo.fastMode)speed="fast";let body={model:"claude-opus-5",messages:[],...speed!==void 0&&{speed:speed}},headers={"anthropic-beta":caps.map((cap)=>cap.header).toString()};return{body,headers}}
-console.log(JSON.stringify(buildRequest({fastMode:!0,capabilities:[]},!1)));
+console.log(JSON.stringify({fastTrueAeFalse:buildRequest({fastMode:!0,capabilities:[]},!1),fastFalseAeTrue:buildRequest({fastMode:!1,capabilities:[]},!0),fastFalseAeFalse:buildRequest({fastMode:!1,capabilities:[]},!1),fastDeduplicated:buildRequest({fastMode:!0,capabilities:[{header:"existing-alpha"},{header:"existing-alpha"},{header:"existing-omega"},{header:"fast-mode-2026-02-01"}]},!1),slowWithPriorFast:buildRequest({fastMode:!1,capabilities:[{header:"existing-alpha"},{header:"fast-mode-2026-02-01"}]},!0)}));
 `;
+
+function assertReal229Protocol(name, output) {
+  const checks = [
+    () => assert.deepEqual(output.fastTrueAeFalse.body, { model: 'claude-opus-5', messages: [], speed: 'fast' }, `${name}: fastMode true must add speed=fast even when ae is false`),
+    () => assert.equal(output.fastTrueAeFalse.headers['anthropic-beta'], 'fast-mode-2026-02-01', `${name}: fastMode true must force the Fast beta capability in`),
+    () => assert.deepEqual(output.fastFalseAeTrue.body, { model: 'claude-opus-5', messages: [] }, `${name}: fastMode false must keep the base body even when ae is true`),
+    () => assert.equal(output.fastFalseAeTrue.headers['anthropic-beta'], '', `${name}: fastMode false must not forward the Fast beta capability pushed by ae`),
+    () => assert.deepEqual(output.fastFalseAeFalse.body, { model: 'claude-opus-5', messages: [] }, `${name}: fastMode false must preserve the base body`),
+    () => assert.equal(output.fastFalseAeFalse.headers['anthropic-beta'], '', `${name}: fastMode false must keep an empty beta header`),
+    () => assert.deepEqual(output.fastDeduplicated.body, { model: 'claude-opus-5', messages: [], speed: 'fast' }, `${name}: forced Fast state must add only speed=fast`),
+    () => assert.equal(output.fastDeduplicated.headers['anthropic-beta'], 'existing-alpha,existing-omega,fast-mode-2026-02-01', `${name}: forced Fast state must fully deduplicate existing capabilities`),
+    () => assert.deepEqual(output.slowWithPriorFast.body, { model: 'claude-opus-5', messages: [] }, `${name}: slow state must keep the base body with prior capabilities`),
+    () => assert.equal(output.slowWithPriorFast.headers['anthropic-beta'], 'existing-alpha', `${name}: slow state must remove every Fast beta capability from the header`),
+  ];
+  const failures = [];
+  for (const check of checks) try { check(); } catch (error) { failures.push(error.message); }
+  if (failures.length) throw new Error(failures.join('\n'));
+}
+
 const real229Results = [];
 
 for (const [name, patcher] of [
@@ -171,6 +192,9 @@ for (const [name, patcher] of [
       ['mismatched speed condition', fastFixture.replace('if($c()&&P3()&&!xLe()&&T0(y)&&!!fast)fu="fast"', 'if($c()&&P3()&&!xLe()&&T0(y)&&!!different)fu="fast"')],
       ['ambiguous closure', fastFixture.replace('let __clawgodFastExisting', 'function duplicate(fast,existingBeta){let Fi=[...existingBeta],y="claude-opus-5",X=$c()&&P3()&&!xLe()&&T0(y)&&!!fast;if(X)Fi.push(Fbr);let ae=Fi.includes(Fbr),fu;if($c()&&P3()&&!xLe()&&T0(y)&&!!fast)fu="fast";let Rc={model:"claude-opus-5",messages:[],...fu!==void 0&&{speed:fu}},headers={"anthropic-beta":Fi.map((St)=>St.header).toString()};return{body:Rc,headers}}\nlet __clawgodFastExisting')],
       ['unmatched Fast capability', `${fixture}let Fbr={header:"fast-mode-2026-02-01"};function unrelated(){return Fbr.header}`],
+      ['mismatched real 2.1.229 header mapping', real229FastClosureFixture.replace('caps.map((cap)=>cap.header).toString()', 'caps.map((cap)=>cap.name).toString()')],
+      ['ambiguous real 2.1.229 closure', real229FastClosureFixture.replace('console.log(JSON.stringify(', 'function duplicate(Fo,ae){let caps=[...Fo.capabilities];if(ae)caps.push(Fbr);let speed;if(Fo.fastMode)speed="fast";let body={model:"claude-opus-5",messages:[],...speed!==void 0&&{speed:speed}},headers={"anthropic-beta":caps.map((cap)=>cap.header).toString()};return{body,headers}}\nconsole.log(JSON.stringify(')],
+      ['inconsistent real 2.1.229 speed variable', real229FastClosureFixture.replace('...speed!==void 0&&{speed:speed}', '...different!==void 0&&{speed:different}')],
     ];
     for (const [label, invalidFixture] of invalidFixtures) {
       writeFileSync(join(dir, 'cli.original.cjs'), invalidFixture, 'utf8');
@@ -189,12 +213,32 @@ for (const [name, patcher] of [
     writeFileSync(join(dir, 'cli.original.cjs'), real229FastClosureFixture, 'utf8');
     const real229 = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
     const output = real229.stdout + real229.stderr;
+    assert.equal(real229.status, 0, `${name}: real 2.1.229 closure must patch: ${output}`);
+    assert.match(output, /Fast Messages protocol \(1 replacement\)/, `${name}: real 2.1.229 closure must report its replacement`);
     const after = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
-    real229Results.push({ name, status: real229.status, output });
-    assert.notEqual(real229.status, 0, `${name}: strict real 2.1.229 closure must fail`);
-    assert.match(output, /Fast Messages protocol.*Fast request body\/header closure not found; upstream shape changed/s, `${name}: Fast closure mismatch must be explicit`);
-    assert.match(output, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: Fast mismatch must be mandatory`);
-    assert.equal(after, real229FastClosureFixture, `${name}: failed Fast closure must not write the fixture`);
+    assert.notEqual(after, real229FastClosureFixture, `${name}: real 2.1.229 closure patch must write`);
+    assert.match(after, /__clawgod_fast_messages_protocol__/, `${name}: real 2.1.229 closure patch must add the idempotency marker`);
+    assert.match(after, /if\(speed==="fast"&&!caps\.includes\(Fbr\)\)caps\.push\(Fbr\)/, `${name}: real 2.1.229 closure must be forced by the speed field only`);
+    const executeReal229 = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8' });
+    try {
+      assert.equal(executeReal229.status, 0, `${name}: real 2.1.229 fixture must execute: ${executeReal229.stderr}`);
+      assertReal229Protocol(name, JSON.parse(executeReal229.stdout));
+    } catch (error) {
+      real229Results.push({ name, status: real229.status, protocolError: error instanceof Error ? error.message : String(error), output });
+      throw error;
+    }
+    real229Results.push({ name, status: real229.status, protocolError: null, output });
+
+    const rerun = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(rerun.status, 0, `${name}: patched real 2.1.229 closure must re-run cleanly: ${rerun.stdout}${rerun.stderr}`);
+    assert.match(rerun.stdout + rerun.stderr, /Fast Messages protocol \(already applied\)/, `${name}: re-run must recognize the idempotency marker`);
+
+    writeFileSync(join(dir, 'cli.original.cjs'), real229FastClosureFixture, 'utf8');
+    const verifyReal229 = spawnSync(process.execPath, ['patch.mjs', '--verify'], { cwd: dir, encoding: 'utf8' });
+    const verifyReal229Output = verifyReal229.stdout + verifyReal229.stderr;
+    assert.equal(verifyReal229.status, 0, `${name}: ${verifyReal229Output}`);
+    assert.match(verifyReal229Output, /Fast Messages protocol — 1 match\(es\), not yet applied/, `${name}: verify must report the unapplied real 2.1.229 match`);
+    assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), real229FastClosureFixture, `${name}: verify must not write the real 2.1.229 closure`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -209,6 +253,13 @@ assert.equal(
     `${result.name}: patch=${result.patchStatus}, execute=${result.executeStatus}, ${result.protocolError ?? 'ok'}`,
   ).join('\n')}`,
 );
-assert.equal(real229Results.length, 2, 'strict real 2.1.229 closure must execute both patcher variants');
+assert.equal(real229Results.length, 2, 'real 2.1.229 closure must execute both patcher variants');
+assert.equal(
+  real229Results.filter((result) => result.protocolError !== null).length,
+  0,
+  `real 2.1.229 forced passthrough protocol missing:\n${real229Results.map((result) =>
+    `${result.name}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
+  ).join('\n')}`,
+);
 
 console.log('patcher 2.1.215 checks passed');

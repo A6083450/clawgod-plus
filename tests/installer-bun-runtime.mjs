@@ -900,7 +900,9 @@ for (const [name, patcher] of [
   assert.match(patcher, /applyFastMessagesProtocolPatch/, `${name} must embed the Fast Messages patch`);
   assert.match(patcher, /__clawgod_fast_messages_protocol__/, `${name} must mark the Fast Messages patch`);
   assert.match(patcher, /fast-mode-2026-02-01/, `${name} must include the Fast beta capability`);
-  assert.match(patcher, /speed[\s:]+["']fast["']/, `${name} must include the Fast body field`);
+  assert.match(patcher, /legacyRe/, `${name} must retain the frozen 2.1.215 Fast closure matcher`);
+  assert.match(patcher, /realRe/, `${name} must match the real 2.1.229 Fast closure`);
+  assert.match(patcher, /===\s*["']fast["']/, `${name} must force the Fast beta capability from the speed field`);
 }
 
 const unixApplyStart = unix.indexOf('dim "Applying patches ..."');

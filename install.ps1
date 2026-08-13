@@ -2674,15 +2674,48 @@ async function applyContextLimitPatch(source, { dryRun, verify }) {
 async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   const MARKER = '/*__clawgod_fast_messages_protocol__*/';
   if (source.includes(MARKER)) return { status: 'already', detail: 'already applied' };
-  const targetRe = /let ([\w$]+)=\[\.\.\.([\w$]+)\],([\w$]+)="([^"]+)",([\w$]+)=([^;]+&&!!([\w$]+));if\(([\w$]+)\)([\w$]+)\.push\(([\w$]+)\);let ([\w$]+)=([\w$]+)\.includes\(([\w$]+)\),([\w$]+);if\(([^;]+&&!!([\w$]+))\)([\w$]+)="fast";let ([\w$]+)=\{([^{}]*),\.\.\.([\w$]+)!==void 0&&\{speed:([\w$]+)\}\},headers=\{"anthropic-beta":([\w$]+)\.map\(\(([\w$]+)\)=>([\w$]+)\.header\)\.toString\(\)\};return\{body:([\w$]+),headers\}/g;
-  const matches = [...source.matchAll(targetRe)];
-  if (matches.length !== 1) return matches.length === 0 && !source.includes('fast-mode-2026-02-01') ? { status: 'skipped', detail: 'not present in this version' } : { status: 'failed', detail: matches.length === 0 ? 'Fast request body/header closure not found; upstream shape changed' : `Fast request body/header closure matched ${matches.length} times; refusing ambiguous patch` };
-  const [, capabilities, existingBeta, model, modelName, isFast, fastCondition, fastArg, pushCondition, pushCapabilities, fastCapability, hasFastCapability, includesCapabilities, includesCapability, speed, speedCondition, speedArg, speedName, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, capability, capabilityObject, returnBody] = matches[0];
-  if (isFast !== pushCondition || capabilities !== pushCapabilities || capabilities !== includesCapabilities || fastCapability !== includesCapability || fastCondition !== speedCondition || fastArg !== speedArg || speed !== speedName || speed !== bodySpeed || speed !== bodySpeedValue || capabilities !== headerCapabilities || capability !== capabilityObject || body !== returnBody) return { status: 'failed', detail: 'Fast request body/header closure matched an inconsistent Fast-state shape' };
+  const FAST_BETA = 'fast-mode-2026-02-01';
+  const hasFastBeta = source.includes(FAST_BETA);
+
+  // Frozen 2.1.215 request closure: the same `&&!!<arg>` Fast condition gates
+  // both the beta capability push and the body speed field.
+  const legacyRe = /let ([\w$]+)=\[\.\.\.([\w$]+)\],([\w$]+)="([^"]+)",([\w$]+)=([^;]+&&!!([\w$]+));if\(([\w$]+)\)([\w$]+)\.push\(([\w$]+)\);let ([\w$]+)=([\w$]+)\.includes\(([\w$]+)\),([\w$]+);if\(([^;]+&&!!([\w$]+))\)([\w$]+)="fast";let ([\w$]+)=\{([^{}]*),\.\.\.([\w$]+)!==void 0&&\{speed:([\w$]+)\}\},headers=\{"anthropic-beta":([\w$]+)\.map\(\(([\w$]+)\)=>([\w$]+)\.header\)\.toString\(\)\};return\{body:([\w$]+),headers\}/g;
+  const legacyMatches = [...source.matchAll(legacyRe)];
+
+  // Real 2.1.229 request closure: the beta capability push is gated by an
+  // independent `ae` eligibility while the body speed is gated by `Fo.fastMode`.
+  const realRe = /let ([\w$]+)=\[\.\.\.([\w$.]+)\](?:;let ([\w$]+)=([^;]+)|,([\w$]+)=([^;]+))?;if\(([\w$]+)\)([\w$]+)\.push\(([\w$]+)\);let ([\w$]+);if\(([^;]+)\)([\w$]+)="fast";let ([\w$]+)=\{([^{}]*),\.\.\.([\w$]+)!==void 0&&\{speed(?::([\w$]+))?\}\}(?:,|;)headers=\{"anthropic-beta":([\w$]+)\.map\(\(([\w$]+)\)=>([\w$]+)\.header\)\.toString\(\)\};return\{body(?::([\w$]+))?,headers(?::([\w$]+))?\}/g;
+  const realMatches = [...source.matchAll(realRe)];
+
+  const totalMatches = legacyMatches.length + realMatches.length;
+  if (totalMatches !== 1) {
+    if (totalMatches === 0 && !hasFastBeta) return { status: 'skipped', detail: 'not present in this version' };
+    return { status: 'failed', detail: totalMatches === 0 ? 'Fast request body/header closure not found; upstream shape changed' : `Fast request body/header closure matched ${totalMatches} times; refusing ambiguous patch` };
+  }
+
+  if (legacyMatches.length === 1) {
+    const [, capabilities, existingBeta, model, modelName, isFast, fastCondition, fastArg, pushCondition, pushCapabilities, fastCapability, hasFastCapability, includesCapabilities, includesCapability, speed, speedCondition, speedArg, speedName, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, capability, capabilityObject, returnBody] = legacyMatches[0];
+    if (isFast !== pushCondition || capabilities !== pushCapabilities || capabilities !== includesCapabilities || fastCapability !== includesCapability || fastCondition !== speedCondition || fastArg !== speedArg || speed !== speedName || speed !== bodySpeed || speed !== bodySpeedValue || capabilities !== headerCapabilities || capability !== capabilityObject || body !== returnBody) return { status: 'failed', detail: 'Fast request body/header closure matched an inconsistent Fast-state shape' };
+    if (verify) return { status: 'verify', count: 1 };
+    const replacement = `let ${capabilities}=[...${existingBeta}],${model}="${modelName}",${isFast}=!!${fastArg};if(${isFast}&&!${capabilities}.includes(${fastCapability}))${capabilities}.push(${fastCapability});let ${hasFastCapability}=${capabilities}.includes(${fastCapability}),${speed};if(${isFast})${speed}="fast";let ${body}={${bodyFields},...${speed}!==void 0&&{speed:${speed}}},headers={"anthropic-beta":${isFast}?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${capability})=>${capability}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('${FAST_BETA}'))__clawgodFastUniqueCapabilities.push('${FAST_BETA}');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${capability})=>${capability}.header).toString()};${MARKER}return{body:${body},headers}`;
+    if (dryRun) return { status: 'applied', count: 1, code: source };
+    const match = legacyMatches[0];
+    return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
+
+  // Forced passthrough for the real 2.1.229 closure: `body.speed==="fast"`
+  // (driven by `Fo.fastMode`) is the only switch. While Fast is active the Fast
+  // beta capability is forced in and every capability is deduplicated; while
+  // the speed field is absent every Fast beta capability is removed. The
+  // independent `ae` eligibility no longer limits the beta header.
+  const [, capabilities, prior, aeSeparate, eligibilitySeparate, aeCombined, eligibilityCombined, pushCondition, pushCapabilities, fastCapability, speed, speedCondition, speedAssignment, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, mapParameter, mapHeader, returnBody, returnHeaders] = realMatches[0];
+  const aeName = aeSeparate ?? aeCombined;
+  if ((aeName && aeName !== pushCondition) || capabilities !== pushCapabilities || capabilities !== headerCapabilities || speed !== speedAssignment || speed !== bodySpeed || (bodySpeedValue && bodySpeedValue !== speed) || mapParameter !== mapHeader || (returnBody && returnBody !== body) || (returnHeaders && returnHeaders !== 'headers')) return { status: 'failed', detail: 'Fast request body/header closure matched an inconsistent Fast-state shape' };
   if (verify) return { status: 'verify', count: 1 };
-  const replacement = `let ${capabilities}=[...${existingBeta}],${model}="${modelName}",${isFast}=!!${fastArg};if(${isFast}&&!${capabilities}.includes(${fastCapability}))${capabilities}.push(${fastCapability});let ${hasFastCapability}=${capabilities}.includes(${fastCapability}),${speed};if(${isFast})${speed}="fast";let ${body}={${bodyFields},...${speed}!==void 0&&{speed:"fast"}},headers={"anthropic-beta":${isFast}?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${capability})=>${capability}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('fast-mode-2026-02-01'))__clawgodFastUniqueCapabilities.push('fast-mode-2026-02-01');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${capability})=>${capability}.header).toString()};${MARKER}return{body:${body},headers}`;
+  const aeDeclaration = aeSeparate ? `;let ${aeSeparate}=${eligibilitySeparate}` : aeCombined ? `,${aeCombined}=${eligibilityCombined}` : '';
+  const replacement = `let ${capabilities}=[...${prior}]${aeDeclaration};let ${speed};if(${speedCondition})${speed}="fast";if(${speed}==="fast"&&!${capabilities}.includes(${fastCapability}))${capabilities}.push(${fastCapability});let ${body}={${bodyFields},...${speed}!==void 0&&{speed:${speed}}},headers={"anthropic-beta":${speed}==="fast"?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${mapParameter})=>${mapParameter}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('${FAST_BETA}'))__clawgodFastUniqueCapabilities.push('${FAST_BETA}');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${mapParameter})=>${mapParameter}.header).filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}").toString()};${MARKER}return{body:${body},headers}`;
   if (dryRun) return { status: 'applied', count: 1, code: source };
-  const match = matches[0];
+  const match = realMatches[0];
   return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
 }
 
