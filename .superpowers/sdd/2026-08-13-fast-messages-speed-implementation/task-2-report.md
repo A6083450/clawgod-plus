@@ -21,3 +21,8 @@ Completed.
 
 ## Concerns
 The matcher deliberately recognizes the 2.1.229 Fast closure shape frozen in the fixture. Versions containing the Fast capability but with a structurally different request closure fail visibly, while versions without the capability are skipped.
+
+## Review follow-up
+- Captures and compares the second `speed="fast"` condition and its Fast argument with the first closure condition; inconsistent closures fail before any write.
+- Fast headers now retain first-occurrence order while deduplicating every beta capability, not only Fast capability.
+- Added Unix/Windows coverage for `--verify` no-write semantics, mismatched condition rejection, ambiguous closures, and unmatched Fast-capability failure gating. The regression suite passes after these changes.

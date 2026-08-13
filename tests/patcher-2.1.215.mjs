@@ -68,13 +68,13 @@ const fastFixture = `${fixture}
 function $c(){return!1}function P3(){return!0}function xLe(){return!1}function T0(y){return!0}
 let Fbr={name:"speed",header:"fast-mode-2026-02-01"};
 function buildRequest(fast,existingBeta){let Fi=[...existingBeta],y="claude-opus-5",X=$c()&&P3()&&!xLe()&&T0(y)&&!!fast;if(X)Fi.push(Fbr);let ae=Fi.includes(Fbr),fu;if($c()&&P3()&&!xLe()&&T0(y)&&!!fast)fu="fast";let Rc={model:"claude-opus-5",messages:[],...fu!==void 0&&{speed:fu}},headers={"anthropic-beta":Fi.map((St)=>St.header).toString()};return{body:Rc,headers}}
-let __clawgodFastExisting=[{header:"existing-alpha"},{header:"existing-omega"}];
+let __clawgodFastExisting=[{header:"existing-alpha"},{header:"existing-alpha"},{header:"existing-omega"}];
 console.log(JSON.stringify({false:buildRequest(!1,__clawgodFastExisting),true:buildRequest(!0,__clawgodFastExisting),duplicate:buildRequest(!0,[...__clawgodFastExisting,Fbr])}));
 `;
 
 function assertFastProtocol(name, output) {
-  const expectedBeta = 'existing-alpha,existing-omega';
-  const expectedFastBeta = `${expectedBeta},fast-mode-2026-02-01`;
+  const expectedBeta = 'existing-alpha,existing-alpha,existing-omega';
+  const expectedFastBeta = 'existing-alpha,existing-omega,fast-mode-2026-02-01';
   const checks = [
     () => assert.deepEqual(output.false.body, { model: 'claude-opus-5', messages: [] }, `${name}: false Fast state must preserve the base body`),
     () => assert.equal(output.false.headers['anthropic-beta'], expectedBeta, `${name}: false Fast state must retain existing beta capabilities`),
@@ -148,10 +148,32 @@ for (const [name, patcher] of [
     }
     fastResults.push({ name, patchStatus: fast.status, executeStatus: execute.status, protocolError, fastOutput: fast.stdout + fast.stderr });
 
+    writeFileSync(join(dir, 'cli.original.cjs'), fastFixture, 'utf8');
+    const verify = spawnSync(process.execPath, ['patch.mjs', '--verify'], { cwd: dir, encoding: 'utf8' });
+    const verifyOutput = verify.stdout + verify.stderr;
+    assert.equal(verify.status, 0, `${name}: ${verifyOutput}`);
+    assert.match(verifyOutput, /Fast Messages protocol — 1 match\(es\), not yet applied/, `${name}: verify must report an unapplied match`);
+    assert.match(verifyOutput, /Result: \d+ applied, \d+ skipped, 0 failed/, `${name}: verify must not fail`);
+    assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), fastFixture, `${name}: verify must not write`);
+
+    const invalidFixtures = [
+      ['mismatched speed condition', fastFixture.replace('if($c()&&P3()&&!xLe()&&T0(y)&&!!fast)fu="fast"', 'if($c()&&P3()&&!xLe()&&T0(y)&&!!different)fu="fast"')],
+      ['ambiguous closure', fastFixture.replace('let __clawgodFastExisting', 'function duplicate(fast,existingBeta){let Fi=[...existingBeta],y="claude-opus-5",X=$c()&&P3()&&!xLe()&&T0(y)&&!!fast;if(X)Fi.push(Fbr);let ae=Fi.includes(Fbr),fu;if($c()&&P3()&&!xLe()&&T0(y)&&!!fast)fu="fast";let Rc={model:"claude-opus-5",messages:[],...fu!==void 0&&{speed:fu}},headers={"anthropic-beta":Fi.map((St)=>St.header).toString()};return{body:Rc,headers}}\nlet __clawgodFastExisting')],
+      ['unmatched Fast capability', `${fixture}let Fbr={header:"fast-mode-2026-02-01"};function unrelated(){return Fbr.header}`],
+    ];
+    for (const [label, invalidFixture] of invalidFixtures) {
+      writeFileSync(join(dir, 'cli.original.cjs'), invalidFixture, 'utf8');
+      const invalid = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+      const invalidOutput = invalid.stdout + invalid.stderr;
+      assert.notEqual(invalid.status, 0, `${name}: ${label} must fail`);
+      assert.match(invalidOutput, /Fast Messages protocol/, `${name}: ${label} must report Fast Messages protocol`);
+      assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
+      assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
+    }
+
     const second = spawnSync(process.execPath, ['patch.mjs', '--dry-run'], { cwd: dir, encoding: 'utf8' });
     const secondOutput = second.stdout + second.stderr;
-    assert.equal(second.status, 0, `${name}: ${secondOutput}`);
-    assert.match(secondOutput, /Result: \d+ applied, \d+ skipped, 0 failed/, `${name}: re-run is clean`);
+    assert.notEqual(second.status, 0, `${name}: unmatched Fast capability must fail in dry run`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
