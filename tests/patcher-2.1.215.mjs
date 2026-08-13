@@ -171,6 +171,15 @@ function assertReal229ZeProtocol(name, output) {
 
 const real229ZeResults = [];
 
+// Fast mode org-check bypass: `g0o()` (the CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK helper)
+// is the local gate that blocks `/fast` when the "penguin mode" org-status endpoint is
+// unreachable through third-party routing. The patch forces it to `true`.
+const fastModeOrgCheckFixture = `${fixture}
+var Q={};
+function g0o(){return Q.CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK}
+console.log(g0o());
+`;
+
 for (const [name, patcher] of [
   ['install.sh', extractUnixPatcher()],
   ['install.ps1', extractPowerShellPatcher()],
@@ -337,6 +346,36 @@ for (const [name, patcher] of [
       assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
       assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
     }
+    // Fast mode org-check bypass: forcing the skip helper to `true` unlocks the
+    // `/fast` toggle when the "penguin mode" org-status check is unreachable.
+    writeFileSync(join(dir, 'cli.original.cjs'), fastModeOrgCheckFixture, 'utf8');
+    const orgCheck = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    const orgCheckOutput = orgCheck.stdout + orgCheck.stderr;
+    assert.equal(orgCheck.status, 0, `${name}: fast mode org check must patch: ${orgCheckOutput}`);
+    assert.match(orgCheckOutput, /Fast mode org check bypass \(1 replacement\)/, `${name}: fast mode org check must report its replacement`);
+    const orgCheckAfter = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    assert.match(orgCheckAfter, /function g0o\(\)\{return!0\/\*__clawgod_fast_mode_org_check_bypass__\*\/\}/, `${name}: fast mode org check must force the skip helper to true`);
+    const orgCheckExecute = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(orgCheckExecute.status, 0, `${name}: fast mode org check fixture must execute: ${orgCheckExecute.stderr}`);
+    assert.equal(orgCheckExecute.stdout.trim(), 'true', `${name}: patched skip helper must evaluate to true`);
+
+    const orgCheckRerun = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(orgCheckRerun.status, 0, `${name}: patched fast mode org check must re-run cleanly: ${orgCheckRerun.stdout}${orgCheckRerun.stderr}`);
+    assert.match(orgCheckRerun.stdout + orgCheckRerun.stderr, /Fast mode org check bypass \(already applied\)/, `${name}: re-run must recognize the idempotency marker`);
+
+    writeFileSync(join(dir, 'cli.original.cjs'), fastModeOrgCheckFixture, 'utf8');
+    const orgCheckVerify = spawnSync(process.execPath, ['patch.mjs', '--verify'], { cwd: dir, encoding: 'utf8' });
+    const orgCheckVerifyOutput = orgCheckVerify.stdout + orgCheckVerify.stderr;
+    assert.equal(orgCheckVerify.status, 0, `${name}: ${orgCheckVerifyOutput}`);
+    assert.match(orgCheckVerifyOutput, /Fast mode org check bypass — 1 match\(es\), not yet applied/, `${name}: verify must report the unapplied fast mode org check match`);
+    assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), fastModeOrgCheckFixture, `${name}: verify must not write the fast mode org check fixture`);
+
+    writeFileSync(join(dir, 'cli.original.cjs'), `${fixture}var Q={};\n`, 'utf8');
+    const orgCheckMissing = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    const orgCheckMissingOutput = orgCheckMissing.stdout + orgCheckMissing.stderr;
+    assert.equal(orgCheckMissing.status, 0, `${name}: missing org-check helper must skip cleanly: ${orgCheckMissingOutput}`);
+    assert.match(orgCheckMissingOutput, /Fast mode org check bypass \(not present in this version\)/, `${name}: missing org-check helper must report skipped`);
+
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

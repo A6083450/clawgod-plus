@@ -14,7 +14,7 @@
     .\install.ps1 -Uninstall
 #>
 param(
-    [string]$Version = "latest",
+    [string]$Version = "",
     [switch]$NoUpgrade,
     [switch]$Uninstall,
     [switch]$LeanOff,
@@ -24,13 +24,27 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if ($env:CLAWGOD_VERSION -and $Version -eq "latest") { $Version = $env:CLAWGOD_VERSION }
+if ($env:CLAWGOD_VERSION -and -not $Version) { $Version = $env:CLAWGOD_VERSION }
 if ($env:CLAWGOD_NO_UPGRADE -eq "1") { $NoUpgrade = [switch]$true }
 if ($env:CLAWGOD_LEAN_OFF -eq "1") { $LeanOff = [switch]$true }
 if ($env:CLAWGOD_LEAN_ON -eq "1") { $LeanOn = [switch]$true }
 if ($env:CLAWGOD_LEAN_MAX -eq "1") { $LeanMax = [switch]$true }
 
 $ClawDir = Join-Path $env:USERPROFILE ".clawgod"
+
+# 未显式指定版本时，保持当前已安装的 Claude Code 版本（读 .source-version），
+# 避免重跑 install 把 Claude Code 意外升级到最新；全新安装才回退 latest。
+# `claude update` 路径会显式注入 CLAWGOD_VERSION（含 latest），不受此影响。
+if (-not $Version) {
+    $srcVer = Join-Path $ClawDir ".source-version"
+    if (Test-Path $srcVer) {
+        $pinned = ((Get-Content $srcVer -Raw -ErrorAction SilentlyContinue) -replace '\s', '')
+        # 仅接受形如 X.Y 的版本号，防御残留的非版本内容（如历史 repatch 写下的 basename）
+        if ($pinned -match '^\d+\.\d+') { $Version = $pinned }
+    }
+    if (-not $Version) { $Version = "latest" }
+}
+
 $BinDir  = Join-Path $env:USERPROFILE ".local\bin"
 $ClawSelfVersion = "0.0.0-dev"  # injected by release workflow from git tag
 
@@ -1033,7 +1047,7 @@ if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq 
 }
 $platformSuffix = "win32-$arch"
 
-# Detection policy: ALWAYS pull from the npm registry @latest.
+# Detection policy: ALWAYS pull from the npm registry (version resolved above).
 #
 # Earlier versions of this script also probed local install directories
 # (versions/, claude.orig, npm-global, bun-global) before falling back to
@@ -2754,6 +2768,29 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
 }
 
+async function applyFastModeOrgCheckPatch(source, { dryRun, verify }) {
+  const MARKER = '/*__clawgod_fast_mode_org_check_bypass__*/';
+  if (source.includes(MARKER)) return { status: 'already', detail: 'already applied' };
+
+  // `g0o()` is the fast-mode org-check skip helper (`CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK`).
+  // `/fast` availability is gated locally by LV(); through third-party routing the
+  // "penguin mode" org-status endpoint falls back to `disabled`/`unknown`, surfacing as
+  // "Fast mode is currently unavailable". Forcing this helper to `true` makes kEs()/jbr()
+  // mark the org status `enabled` and lets LV() skip its pending/disabled branches, so the
+  // toggle is no longer blocked by the org check. This is independent of the Fast Messages
+  // protocol patch, which only rewrites the outbound request after Fast is already enabled.
+  const re = /function ([\w$]+)\(\)\{return [\w$]+\.CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK\}/;
+  const match = re.exec(source);
+  if (!match) {
+    if (!source.includes('CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK')) return { status: 'skipped', detail: 'not present in this version' };
+    return { status: 'failed', detail: 'fast mode org-check skip helper shape changed' };
+  }
+  if (verify) return { status: 'verify', count: 1 };
+  const replacement = `function ${match[1]}(){return!0${MARKER}}`;
+  if (dryRun) return { status: 'applied', count: 1, code: source };
+  return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+}
+
 const patches = [
   {
     name: 'USER_TYPE → ant',
@@ -3079,7 +3116,7 @@ const patches = [
         `const __clawgodUpdateIndex=process.argv.findIndex(a=>a==="update"||a==="upgrade");` +
         `const __clawgodUpdateArgs=__clawgodUpdateIndex>=0?process.argv.slice(__clawgodUpdateIndex+1):[];` +
         `const __clawgodVersionIndex=__clawgodUpdateArgs.indexOf("--version");` +
-        `if(__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1])process.env.CLAWGOD_VERSION=__clawgodUpdateArgs[__clawgodVersionIndex+1];` +
+        `if(__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1])process.env.CLAWGOD_VERSION=__clawgodUpdateArgs[__clawgodVersionIndex+1];else process.env.CLAWGOD_VERSION="latest";` +
         `if(__clawgodUpdateArgs.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";` +
         `if(__clawgodUpdateArgs.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";` +
         `if(__clawgodUpdateArgs.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";` +
@@ -3446,6 +3483,18 @@ const patches = [
     sentinel: '?"claude.exe":"claude")',
     optional: true,  // v2.1.88-era bundles compute the path differently
   },
+  {
+    // `/fast on` prints "model set to Opus 5" via NV(), which is hardcoded in
+    // the upstream CLI and blind to the actually-routed model. Under a
+    // third-party provider (DeepSeek etc.) ANTHROPIC_MODEL carries the real
+    // model id, so surface it instead; fall back to "Opus 5" for plain
+    // Anthropic runs where no model override is set.
+    name: 'Fast mode model label reflects provider model',
+    pattern: /function ([\w$]+)\(\)\{return"Opus 5"\}/g,
+    replacer: (m, fn) => `function ${fn}(){return process.env.ANTHROPIC_MODEL||"Opus 5"/*__clawgod_fast_model_label__*/}`,
+    appliedMarker: '/*__clawgod_fast_model_label__*/',
+    optional: true,  // cosmetic; upstream may rename/remove the label in future versions
+  },
 ];
 
 // ─── Main ─────────────────────────────────────────────────
@@ -3631,6 +3680,25 @@ if (fastMessagesProtocolPatch.status === 'applied') {
   skipped++;
 } else {
   console.log(`  ❌ Fast Messages protocol — ${fastMessagesProtocolPatch.detail}`);
+  failed++;
+}
+
+const fastModeOrgCheckPatch = await applyFastModeOrgCheckPatch(code, { dryRun, verify });
+if (fastModeOrgCheckPatch.status === 'applied') {
+  if (!dryRun) code = fastModeOrgCheckPatch.code;
+  console.log(`  ✅ Fast mode org check bypass (${fastModeOrgCheckPatch.count} replacement${fastModeOrgCheckPatch.count > 1 ? 's' : ''})`);
+  applied++;
+} else if (fastModeOrgCheckPatch.status === 'verify') {
+  console.log(`  ⬚  Fast mode org check bypass — ${fastModeOrgCheckPatch.count} match(es), not yet applied`);
+  skipped++;
+} else if (fastModeOrgCheckPatch.status === 'already') {
+  console.log(`  ✅ Fast mode org check bypass (${fastModeOrgCheckPatch.detail})`);
+  applied++;
+} else if (fastModeOrgCheckPatch.status === 'skipped') {
+  console.log(`  ⏭  Fast mode org check bypass (${fastModeOrgCheckPatch.detail})`);
+  skipped++;
+} else {
+  console.log(`  ❌ Fast mode org check bypass — ${fastModeOrgCheckPatch.detail}`);
   failed++;
 }
 
