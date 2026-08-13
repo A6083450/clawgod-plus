@@ -497,6 +497,33 @@ for (const [path, markers] of Object.entries(localizedPluginContracts)) {
   for (const marker of markers) assert.ok(source.includes(marker), `${path} must document: ${marker}`);
 }
 
+const enhancementIds = [
+  'chrome', 'computer-use', 'agents', 'planning', 'voice', 'auto-mode',
+  'unrestricted-tools', 'paste-images', 'privacy', 'branding',
+  'claude-hud', 'claude-mem', 'superpowers',
+];
+const enhancementSemanticMarkers = {
+  'README.md': ['默认启用全部', 'claude update', '不会删除'],
+  'README_EN.md': ['all 13 enhancements are enabled by default', 'claude update', 'never deletes'],
+  'README_JP.md': ['デフォルトで 13', 'claude update', '削除しません'],
+};
+for (const path of ['README.md', 'README_EN.md', 'README_JP.md']) {
+  const source = read(path);
+  for (const id of enhancementIds) {
+    assert.ok(source.includes(id), `${path} must document enhancement ID ${id}`);
+  }
+  assert.match(source, /--enhancements/, `${path} must document the --enhancements flag`);
+  assert.match(source, /--choose-enhancements/, `${path} must document the --choose-enhancements flag`);
+  assert.match(source, /-Enhancements/, `${path} must document the -Enhancements flag`);
+  assert.match(source, /-ChooseEnhancements/, `${path} must document the -ChooseEnhancements flag`);
+  assert.match(source, /enhancements\.json/, `${path} must document the saved enhancements.json`);
+  assert.match(source, /src\//, `${path} must document that src/ is canonical`);
+  assert.match(source, /bun build\.mjs/, `${path} must document the generated installer build`);
+  for (const marker of enhancementSemanticMarkers[path]) {
+    assert.ok(source.includes(marker), `${path} must document: ${marker}`);
+  }
+}
+
 const agents = read('AGENTS.md');
 assert.match(agents, /two parts|两部分/i, 'AGENTS.md must describe the two-part repository');
 assert.match(agents, /@anthropic-ai\/claude-code-<platform>/, 'AGENTS.md must use the correct Claude Code package name');
@@ -505,6 +532,10 @@ assert.match(agents, /Linux[\s\S]{0,160}Windows|Windows[\s\S]{0,160}Linux/i, 'AG
 assert.match(agents, /plugin-dependencies\.mjs/, 'AGENTS.md must name the generated optional plugin manager');
 assert.match(agents, /bun tests\/installer-plugin-dependencies\.mjs/, 'AGENTS.md must name the focused optional plugin dependency test');
 assert.doesNotMatch(agents, /Task 7|temporary workflow exception|cache-cleanup-weekly/i, 'AGENTS.md must reject completed-task exceptions and deleted workflow references');
+assert.match(agents, /enhancements\.json/, 'AGENTS.md must document the persisted enhancement selection');
+assert.match(agents, /--enhancements/, 'AGENTS.md must document the Unix enhancement selection flags');
+assert.match(agents, /-Enhancements/, 'AGENTS.md must document the PowerShell enhancement selection flags');
+assert.match(agents, /claude update/, 'AGENTS.md must document that claude update reuses the selection');
 
 const workflow = read('.github/workflows/compat-daily.yml');
 const installerE2E = read('tests/installer-e2e.mjs');
@@ -520,6 +551,22 @@ for (const marker of [
 assert.equal(installerE2E.match(/validatePluginSummary\((?:initialInstallOutput|noUpgradeOutput)\)/g)?.length, 2, 'Unix installer E2E must validate the exact optional plugin summary after both installs');
 assert.match(installerE2E, /expectedSettingsAfterUninstall/, 'Unix installer E2E must derive settings by removing only managed statusLine');
 assert.match(installerE2E, /claude-mem[\s\S]{0,160}sentinel/i, 'Unix installer E2E must preserve claude-mem sentinel data');
+assert.match(installerE2E, /CLAWGOD_E2E_ENHANCEMENTS/, 'Unix installer E2E must accept an isolated enhancement selection mode');
+assert.match(installerE2E, /--enhancements/, 'Unix installer E2E must pass the --enhancements selection flag');
+assert.match(installerE2E, /enhancements\.json/, 'Unix installer E2E must assert the persisted enhancement config');
+assert.match(installerE2E, /Optional plugins: \(\\d\+\) ready, \(\\d\+\) disabled, \(\\d\+\) warnings\?/, 'Unix installer E2E must validate the three-way optional plugin summary');
+assert.match(installerE2E, /Choice:/, 'Unix installer E2E must reject an interactive enhancement prompt');
+
+const releaseWorkflow = read('.github/workflows/release.yml');
+assert.match(workflow, /bun build\.mjs --check/, 'compat-daily must verify generated installer freshness with bun build.mjs --check');
+assert.match(releaseWorkflow, /bun build\.mjs --check/, 'release must verify generated installer freshness with bun build.mjs --check');
+assert.match(releaseWorkflow, /oven-sh\/setup-bun@v2/, 'release must set up Bun before verifying the generated installers');
+assert.match(workflow, /CLAWGOD_E2E_ENHANCEMENTS='chrome,computer-use,claude-hud'/, 'Linux smoke must run an explicit representative enhancement subset');
+assert.match(workflow, /CLAWGOD_E2E_ENHANCEMENTS='none'/, 'Linux smoke must run an explicit core-only enhancement selection');
+assert.match(workflow, /-Enhancements/, 'Windows smoke must pass the -Enhancements selection flag');
+assert.match(workflow, /['"]chrome,computer-use,claude-hud['"]/, 'Windows smoke must run an explicit representative enhancement subset');
+assert.match(workflow, /enhancements\.json/, 'Windows smoke must assert the persisted enhancement config');
+
 assert.deepEqual(findForbiddenDependencies(workflow, { allowBadgePublishGit: true }), [], 'compat-daily must not require an external Node, npm, system Git, or system ripgrep executable outside badge publishing');
 assert.equal(workflow.match(/FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/g)?.length, 1, 'compat-daily must retain exactly one GitHub Actions runtime setting');
 assert.match(workflow, /^\s*FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*["']true["']\s*$/m, 'compat-daily must keep the exact GitHub Actions Node 24 opt-in');
@@ -576,7 +623,7 @@ assert.match(workflow, /mcpSearch\.args\.Count\s+-ne\s+2/, 'Windows claude-mem c
 assert.match(workflow, /Assert-ClaudeMemMcpConsumer[\s\S]{0,4000}claude-mem: mcp server not found/, 'Windows smoke must execute the saved MCP command in its safe missing-server branch');
 assert.match(workflow, /expectedSettingsAfterUninstall/, 'Windows smoke must derive settings by removing only managed statusLine');
 for (const marker of [
-  'Optional plugins: 3 ready, 0 warnings',
+  'Optional plugins: 3 ready, 0 disabled, 0 warnings',
   'HUD statusline: bun-only current-style=exact',
   'claude-mem entrypoints: hooks=bun mcp=bun',
   'plugin retention: hud=present memory=present superpowers=present',

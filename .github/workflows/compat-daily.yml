@@ -75,6 +75,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bun build.mjs --check
           bash -n install.sh
           bun scripts/rebuild-helper-zips.mjs --check
           for test in tests/*.mjs; do
@@ -116,13 +117,48 @@ jobs:
             echo '::error::installed Claude source version was not observed'
             exit 1
           }
+          grep -q '^no prompt: selection resolved without interaction$' "$log" || {
+            echo '::error::default install must resolve enhancement selection without prompting'
+            exit 1
+          }
           for contract in \
-            'Optional plugins: 3 ready, 0 warnings' \
+            'Optional plugins: 3 ready, 0 disabled, 0 warnings' \
             'HUD statusline: bun-only current-style=exact' \
             'claude-mem entrypoints: hooks=bun mcp=bun' \
             'plugin retention: hud=present memory=present superpowers=present'; do
             grep -q "^${contract}$" "$log" || {
               echo "::error::missing plugin lifecycle contract: ${contract}"
+              exit 1
+            }
+          done
+
+      - name: Run isolated installer E2E — subset and core-only selections
+        shell: bash
+        run: |
+          set -euo pipefail
+          subset_log="$RUNNER_TEMP/installer-e2e-subset.log"
+          CLAWGOD_E2E=1 CLAWGOD_E2E_ENHANCEMENTS='chrome,computer-use,claude-hud' bun tests/installer-e2e.mjs 2>&1 | tee "$subset_log"
+          for contract in \
+            'enhancement config initial: mode=custom enabled=3' \
+            'enhancement config no-upgrade: mode=custom enabled=3' \
+            'enhancements summary: 3 enabled, 10 disabled' \
+            'Optional plugins: 1 ready, 2 disabled, 0 warnings' \
+            'no prompt: selection resolved without interaction'; do
+            grep -q "^${contract}$" "$subset_log" || {
+              echo "::error::missing subset selection contract: ${contract}"
+              exit 1
+            }
+          done
+          none_log="$RUNNER_TEMP/installer-e2e-none.log"
+          CLAWGOD_E2E=1 CLAWGOD_E2E_ENHANCEMENTS='none' bun tests/installer-e2e.mjs 2>&1 | tee "$none_log"
+          for contract in \
+            'enhancement config initial: mode=custom enabled=0' \
+            'enhancement config no-upgrade: mode=custom enabled=0' \
+            'enhancements summary: 0 enabled, 13 disabled' \
+            'Optional plugins: 0 ready, 3 disabled, 0 warnings' \
+            'no prompt: selection resolved without interaction'; do
+            grep -q "^${contract}$" "$none_log" || {
+              echo "::error::missing core-only selection contract: ${contract}"
               exit 1
             }
           done
@@ -288,9 +324,18 @@ jobs:
           function Assert-PluginSummary([string]$Label, [object[]]$Output) {
             $lines = @(($Output | Out-String) -split '\r?\n' | Where-Object { $_.Contains('Optional plugins:') })
             if ($lines.Count -ne 1) { throw "$Label expected exactly one optional plugin summary, found $($lines.Count)" }
-            if ($lines[0].Trim() -cne 'Optional plugins: 3 ready, 0 warnings') {
+            if ($lines[0].Trim() -cne 'Optional plugins: 3 ready, 0 disabled, 0 warnings') {
               throw "$Label did not report all three optional plugins ready"
             }
+          }
+
+          function Assert-EnhancementConfig([string]$Label, [string]$ExpectedMode, [int]$ExpectedEnabled) {
+            $configPath = Join-Path $env:USERPROFILE '.clawgod\enhancements.json'
+            $config = Read-JsonFile $configPath
+            if ($config.schemaVersion -ne 1) { throw "$Label enhancement config must use schemaVersion 1" }
+            if ($config.mode -cne $ExpectedMode) { throw "$Label enhancement config mode must be $ExpectedMode" }
+            if (@($config.enabled).Count -ne $ExpectedEnabled) { throw "$Label enhancement config must enable $ExpectedEnabled items" }
+            Write-Host "enhancement config $Label mode=$($config.mode) enabled=$(@($config.enabled).Count)"
           }
 
           $pluginSpecs = @(
@@ -504,6 +549,7 @@ jobs:
           $initialSummary = Assert-PatchSummary 'initial' $initialOutput
           Write-Host "patch summary windows initial: $($initialSummary.Groups[1].Value) applied, $($initialSummary.Groups[2].Value) skipped, 0 failed"
           Assert-PluginSummary 'initial' $initialOutput
+          Assert-EnhancementConfig 'initial' 'all' 0
 
           $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
           if ($settings.disableWorkflows -ne $true) { throw '-LeanOn did not apply lean settings' }
@@ -534,6 +580,7 @@ jobs:
           $noUpgradeSummary = Assert-PatchSummary 'no-upgrade' $noUpgradeOutput
           Write-Host "patch summary windows no-upgrade: $($noUpgradeSummary.Groups[1].Value) applied, $($noUpgradeSummary.Groups[2].Value) skipped, 0 failed"
           Assert-PluginSummary 'no-upgrade' $noUpgradeOutput
+          Assert-EnhancementConfig 'no-upgrade' 'all' 0
           $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
           if ($null -ne $settings.disableWorkflows) { throw '-LeanOff did not remove lean settings' }
           if (-not (Test-Path (Join-Path $env:USERPROFILE '.clawgod\.lean-disabled'))) { throw '-LeanOff did not create its state marker' }
@@ -541,11 +588,19 @@ jobs:
           Assert-HudStatusLine $settings $hudStatusLineModule
           Assert-ClaudeMemEntrypoints $noUpgradePlugins['memory'].installPath
 
+          $subsetOutput = Invoke-Checked 'subset -Enhancements install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-NoUpgrade', '-Enhancements', 'chrome,computer-use,claude-hud')
+          $null = Assert-PatchSummary 'subset' $subsetOutput
+          Assert-EnhancementConfig 'subset' 'custom' 3
+
+          $noneOutput = Invoke-Checked 'core-only -Enhancements none install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-NoUpgrade', '-Enhancements', 'none')
+          $null = Assert-PatchSummary 'core-only' $noneOutput
+          Assert-EnhancementConfig 'core-only' 'custom' 0
+
           $expectedSettingsAfterUninstall = Get-Content $settingsPath -Raw | ConvertFrom-Json -AsHashtable
           $null = $expectedSettingsAfterUninstall.Remove('statusLine')
           $null = Invoke-Checked '-Uninstall' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-Uninstall')
           $managedRoot = Join-Path $env:USERPROFILE '.clawgod'
-          $allowedPersistent = @('provider.json', 'features.json', '.lean-disabled', '.lean-max')
+          $allowedPersistent = @('provider.json', 'features.json', 'enhancements.json', '.lean-disabled', '.lean-max')
           $remainingManaged = @(Get-ChildItem $managedRoot -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin $allowedPersistent })
           if ($remainingManaged.Count -ne 0) { throw "Uninstall retained managed artifacts: $($remainingManaged.Name -join ', ')" }
           $externalManaged = @(

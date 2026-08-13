@@ -24,6 +24,35 @@ import { spawnSync } from 'node:child_process';
 
 const forbiddenText = 'forbidden dependency invoked:';
 
+// Stable enhancement manifest (order matters; must match src/generic/enhancements.json).
+const ENHANCEMENT_IDS = Object.freeze([
+  'chrome', 'computer-use', 'agents', 'planning', 'voice', 'auto-mode',
+  'unrestricted-tools', 'paste-images', 'privacy', 'branding',
+  'claude-hud', 'claude-mem', 'superpowers',
+]);
+const PLUGIN_ENHANCEMENT_IDS = Object.freeze(['claude-hud', 'claude-mem', 'superpowers']);
+// '' = default all-enabled, 'none' = core-only, otherwise a CSV subset.
+const e2eEnhancements = process.env.CLAWGOD_E2E_ENHANCEMENTS ?? '';
+
+function requestedEnhancementIds() {
+  if (e2eEnhancements === '' || e2eEnhancements === 'none') return [];
+  return ENHANCEMENT_IDS.filter(id => e2eEnhancements.split(',').includes(id));
+}
+
+function pluginSummaryExpectation() {
+  const enabled = e2eEnhancements === '' ? PLUGIN_ENHANCEMENT_IDS : requestedEnhancementIds().filter(id => PLUGIN_ENHANCEMENT_IDS.includes(id));
+  return { ready: enabled.length, disabled: PLUGIN_ENHANCEMENT_IDS.length - enabled.length, warnings: 0 };
+}
+
+function enhancementConfigExpectation() {
+  if (e2eEnhancements === '') return { mode: 'all', enabled: [] };
+  return { mode: 'custom', enabled: requestedEnhancementIds() };
+}
+
+function enhancementSummaryExpectation() {
+  return { enabled: e2eEnhancements === '' ? ENHANCEMENT_IDS.length : requestedEnhancementIds().length };
+}
+
 function createIsolatedRuntime(tempHome, bunExecutable = process.execPath) {
   const shimDir = join(tempHome, 'forbidden-bin');
   const markerPath = join(tempHome, 'forbidden-dependency.log');
@@ -90,14 +119,45 @@ function validatePatchSummary(label, output) {
   return `patch summary ${label}: ${applied} applied, ${skipped} skipped, 0 failed`;
 }
 
-function validatePluginSummary(output) {
+function validatePluginSummary(output, expected = pluginSummaryExpectation()) {
   const summaryLines = output.split(/\r?\n/).filter(line => line.includes('Optional plugins:'));
   assert.equal(summaryLines.length, 1, `expected exactly one optional plugin summary, found ${summaryLines.length}`);
-  const match = /^Optional plugins: (\d+) ready, (\d+) warnings?$/.exec(summaryLines[0].trim());
-  assert.notEqual(match, null, 'optional plugin summary must use the canonical ready/warning format');
-  const result = { ready: Number(match[1]), warnings: Number(match[2]) };
-  assert.deepEqual(result, { ready: 3, warnings: 0 }, 'all three optional plugins must be ready without warnings');
+  const match = /^Optional plugins: (\d+) ready, (\d+) disabled, (\d+) warnings?$/.exec(summaryLines[0].trim());
+  assert.notEqual(match, null, 'optional plugin summary must use the canonical ready/disabled/warning format');
+  const result = { ready: Number(match[1]), disabled: Number(match[2]), warnings: Number(match[3]) };
+  assert.deepEqual(result, expected, 'optional plugin summary counts must match the enhancement selection');
   return result;
+}
+
+function validateEnhancementSummary(output) {
+  const lines = output.split(/\r?\n/).filter(line => line.includes('Enhancements:'));
+  assert.equal(lines.length, 1, `expected exactly one enhancements summary line, found ${lines.length}`);
+  const match = /Enhancements: (\d+) enabled, (\d+) disabled/.exec(lines[0].trim());
+  assert.notEqual(match, null, 'enhancements summary must use the canonical enabled/disabled format');
+  const expected = enhancementSummaryExpectation();
+  assert.equal(Number(match[1]), expected.enabled, 'enhancements enabled count must match the selection');
+  assert.equal(Number(match[2]), ENHANCEMENT_IDS.length - expected.enabled, 'enhancements disabled count must be the complement');
+  return `enhancements summary: ${match[1]} enabled, ${match[2]} disabled`;
+}
+
+function validateEnhancementConfigBytes(source, expected) {
+  let config;
+  try {
+    config = JSON.parse(source);
+  } catch {
+    assert.fail('enhancement config must be valid JSON');
+  }
+  assert.equal(config !== null && typeof config === 'object' && !Array.isArray(config), true, 'enhancement config must be an object');
+  assert.deepEqual(Object.keys(config).sort(), ['enabled', 'mode', 'schemaVersion'].sort(), 'enhancement config must contain exactly schemaVersion, mode, and enabled');
+  assert.equal(config.schemaVersion, 1, 'enhancement config must use schemaVersion 1');
+  assert.equal(config.mode, expected.mode, `enhancement config mode must be ${expected.mode}`);
+  assert.deepEqual(config.enabled, expected.enabled, 'enhancement config enabled list must match the selection');
+  return config;
+}
+
+function assertNoPrompt(output) {
+  assert.doesNotMatch(output, /Choice:/, 'installer output must not emit an interactive selection prompt');
+  return 'no prompt: selection resolved without interaction';
 }
 
 function quoteStatusLineContractPath(path) {
@@ -376,7 +436,7 @@ function validateWorkerResolver(source) {
 }
 
 function validateUninstallCleanup({ managedRoot, settingsPath, expectedSettingsBase64, expectedSettings, externalPaths }) {
-  const allowedPersistentEntries = new Set(['provider.json', 'features.json', '.lean-disabled', '.lean-max']);
+  const allowedPersistentEntries = new Set(['provider.json', 'features.json', 'enhancements.json', '.lean-disabled', '.lean-max']);
   const staleManaged = existsSync(managedRoot)
     ? readdirSync(managedRoot).filter(entry => !allowedPersistentEntries.has(entry))
     : [];
@@ -400,8 +460,19 @@ if (process.env.CLAWGOD_E2E_CONTRACT) {
     const input = process.env.CLAWGOD_E2E_CONTRACT_INPUT ?? '';
     let marker;
     if (process.env.CLAWGOD_E2E_CONTRACT === 'plugin-summary') {
-      const result = validatePluginSummary(input);
-      marker = `plugin summary: ready=${result.ready} warnings=${result.warnings}`;
+      const fixture = JSON.parse(input);
+      const result = validatePluginSummary(fixture.output, {
+        ready: fixture.ready ?? 3,
+        disabled: fixture.disabled ?? 0,
+        warnings: fixture.warnings ?? 0,
+      });
+      marker = `plugin summary: ready=${result.ready} disabled=${result.disabled} warnings=${result.warnings}`;
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'enhancement-config') {
+      const fixture = JSON.parse(input);
+      const config = validateEnhancementConfigBytes(fixture.source, { mode: fixture.mode, enabled: fixture.enabled ?? [] });
+      marker = `enhancement config: mode=${config.mode} enabled=${config.enabled.length}`;
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'no-prompt') {
+      marker = assertNoPrompt(input);
     } else if (process.env.CLAWGOD_E2E_CONTRACT === 'hud-statusline') {
       const fixture = JSON.parse(input);
       marker = validateHudStatusLine(fixture.settings, fixture.bunPath, fixture.managedModulePath);
@@ -629,6 +700,18 @@ function runClaudeMemConsumerSmoke(hooksJson, mcpJson, installPath, bunPath) {
   return marker;
 }
 
+function selectionArgs() {
+  return e2eEnhancements === '' ? [] : ['--enhancements', e2eEnhancements];
+}
+
+function assertEnhancementConfig(label) {
+  const config = validateEnhancementConfigBytes(
+    readFileSync(join(clawgodDir, 'enhancements.json'), 'utf8'),
+    enhancementConfigExpectation(),
+  );
+  return `enhancement config ${label}: mode=${config.mode} enabled=${config.enabled.length}`;
+}
+
 assertExactTemporaryHome(tempHome);
 let isolatedEnv;
 
@@ -659,20 +742,27 @@ try {
   mkdirSync(dirname(claudeMemSentinelPath), { recursive: true });
   writeFileSync(claudeMemSentinelPath, claudeMemSentinel);
 
-  const initialInstallOutput = run('initial --lean-on install', '/bin/bash', [join(root, 'install.sh'), '--lean-on']);
+  const fullPluginValidation = e2eEnhancements === '';
+  const initialInstallOutput = run('initial --lean-on install', '/bin/bash', [join(root, 'install.sh'), '--lean-on', ...selectionArgs()]);
   console.log(validatePatchSummary('unix initial', initialInstallOutput));
+  console.log(validateEnhancementSummary(initialInstallOutput));
   validatePluginSummary(initialInstallOutput);
+  console.log(assertNoPrompt(initialInstallOutput));
   assertHarborKitePreserved('initial install');
   assertLeanOn();
-  const initialPlugins = validateInstalledPluginState('initial install');
-  const managedHudModulePath = join(clawgodDir, 'claude-hud-statusline.mjs');
-  console.log(validateHudStatusLine(readSettings(), isolatedRuntime.bunPath, managedHudModulePath));
-  const memoryRecord = initialPlugins.get('memory');
-  const initialMemoryHooks = JSON.parse(readFileSync(join(memoryRecord.installPath, 'hooks', 'hooks.json'), 'utf8'));
-  const initialMemoryMcp = JSON.parse(readFileSync(join(memoryRecord.installPath, '.mcp.json'), 'utf8'));
-  console.log(validateClaudeMemEntrypoints(initialMemoryHooks, initialMemoryMcp, isolatedRuntime.bunPath));
-  console.log(runClaudeMemConsumerSmoke(initialMemoryHooks, initialMemoryMcp, memoryRecord.installPath, isolatedRuntime.bunPath));
-  console.log(runHudGoldenFixture(readSettings()));
+  console.log(assertEnhancementConfig('initial'));
+  let managedHudModulePath = join(clawgodDir, 'claude-hud-statusline.mjs');
+  let initialPlugins;
+  if (fullPluginValidation) {
+    initialPlugins = validateInstalledPluginState('initial install');
+    console.log(validateHudStatusLine(readSettings(), isolatedRuntime.bunPath, managedHudModulePath));
+    const memoryRecord = initialPlugins.get('memory');
+    const initialMemoryHooks = JSON.parse(readFileSync(join(memoryRecord.installPath, 'hooks', 'hooks.json'), 'utf8'));
+    const initialMemoryMcp = JSON.parse(readFileSync(join(memoryRecord.installPath, '.mcp.json'), 'utf8'));
+    console.log(validateClaudeMemEntrypoints(initialMemoryHooks, initialMemoryMcp, isolatedRuntime.bunPath));
+    console.log(runClaudeMemConsumerSmoke(initialMemoryHooks, initialMemoryMcp, memoryRecord.installPath, isolatedRuntime.bunPath));
+    console.log(runHudGoldenFixture(readSettings()));
+  }
   console.log(validateWorkerResolver(readFileSync(join(clawgodDir, 'cli.original.cjs'), 'utf8')));
 
   assert.equal(existsSync(ripgrepPath), true, 'initial install must create the private ripgrep binary');
@@ -691,17 +781,22 @@ try {
 
   const noUpgradeOutput = run('no-upgrade --lean-off install', '/bin/bash', [join(root, 'install.sh'), '--no-upgrade', '--lean-off']);
   console.log(validatePatchSummary('unix no-upgrade', noUpgradeOutput));
+  console.log(validateEnhancementSummary(noUpgradeOutput));
   validatePluginSummary(noUpgradeOutput);
+  console.log(assertNoPrompt(noUpgradeOutput));
   assertHarborKitePreserved('no-upgrade install');
   assertLeanOff();
-  const noUpgradePlugins = validateInstalledPluginState('no-upgrade install');
-  console.log(validateHudStatusLine(readSettings(), isolatedRuntime.bunPath, managedHudModulePath));
-  const noUpgradeMemory = noUpgradePlugins.get('memory');
-  console.log(validateClaudeMemEntrypoints(
-    JSON.parse(readFileSync(join(noUpgradeMemory.installPath, 'hooks', 'hooks.json'), 'utf8')),
-    JSON.parse(readFileSync(join(noUpgradeMemory.installPath, '.mcp.json'), 'utf8')),
-    isolatedRuntime.bunPath,
-  ));
+  console.log(assertEnhancementConfig('no-upgrade'));
+  if (fullPluginValidation) {
+    const noUpgradePlugins = validateInstalledPluginState('no-upgrade install');
+    console.log(validateHudStatusLine(readSettings(), isolatedRuntime.bunPath, managedHudModulePath));
+    const noUpgradeMemory = noUpgradePlugins.get('memory');
+    console.log(validateClaudeMemEntrypoints(
+      JSON.parse(readFileSync(join(noUpgradeMemory.installPath, 'hooks', 'hooks.json'), 'utf8')),
+      JSON.parse(readFileSync(join(noUpgradeMemory.installPath, '.mcp.json'), 'utf8')),
+      isolatedRuntime.bunPath,
+    ));
+  }
 
   const expectedSettingsAfterUninstall = structuredClone(readSettings());
   delete expectedSettingsAfterUninstall.statusLine;
@@ -718,7 +813,9 @@ try {
       join(tempHome, '.claude-mem', 'clawgod-settings-state.json'),
     ],
   }));
-  console.log(validatePluginRetention(tempHome, canonicalPluginRetentionSpecs.map(spec => spec.id)));
+  if (fullPluginValidation) {
+    console.log(validatePluginRetention(tempHome, canonicalPluginRetentionSpecs.map(spec => spec.id)));
+  }
   assert.deepEqual(readFileSync(claudeMemSentinelPath), claudeMemSentinel, 'uninstall must retain claude-mem sentinel data');
   for (const path of [
     join(clawgodDir, 'plugin-dependencies.mjs'),

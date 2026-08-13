@@ -103,6 +103,50 @@ bash install.sh --lean-off        # 全ツールを復元。デフォルト
 
 緑色のブランド表示はパッチ済みランタイムが有効であることを示します。元のコマンドは置換前にバックアップされます。
 
+## 任意の拡張機能（Enhancements）
+
+ClawGod Plus は 13 の任意拡張機能を提供し、デフォルトで全て有効です。拡張機能 ID は固定されており、次の順序です。
+
+| 種類 | 拡張機能 ID |
+|---|---|
+| パッチ | `chrome`、`computer-use`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding` |
+| プラグイン | `claude-hud`、`claude-mem`、`superpowers` |
+
+オプションを指定しない場合、デフォルトで 13 の拡張機能がすべて有効になります。選択内容は厳密な JSON として `~/.clawgod/enhancements.json` に保存されます。
+
+```json
+{
+  "schemaVersion": 1,
+  "mode": "all",
+  "enabled": []
+}
+```
+
+`mode` が `all` の場合はマニフェストにある全拡張機能（将来追加される ID を含む）を常に有効にし、`mode` が `custom` の場合は `enabled` に列挙された ID だけを有効にします。
+
+直接インストールする際に、対話的に選択できます。
+
+```bash
+bash install.sh --choose-enhancements
+```
+
+非対話で指定することもできます。
+
+```bash
+bash install.sh --enhancements chrome,computer-use,claude-hud
+bash install.sh --enhancements none   # コアのみ、拡張機能なし
+```
+
+Windows PowerShell では次の引数になります。
+
+```powershell
+.\install.ps1 -ChooseEnhancements
+.\install.ps1 -Enhancements chrome,computer-use,claude-hud
+.\install.ps1 -Enhancements none
+```
+
+その後の `claude update` は `~/.clawgod/enhancements.json` に保存済みの選択を再利用し、一切プロンプトを表示しません。`claude-hud` または `claude-mem` を無効化すると ClawGod が管理する設定を復元し、`superpowers` を無効化しても管理を停止するだけで、ユーザーがインストールしたプラグインは削除しません。
+
 ## コマンドと起動動作
 
 ```bash
@@ -283,6 +327,8 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 9. 生成した `plugin-dependencies.mjs` で 3 つの任意プラグインのベースラインを確保し、管理対象の HUD と claude-mem 統合を適用します。
 
 `~/.clawgod/.source-version` はパッチ対象のネイティブ版を記録します。その後の起動で Wrapper が公式 Claude Code の更新を検出し、新しいバイナリへ再パッチします。
+
+インストーラスクリプトは決定的に生成される成果物です。`src/` が唯一の正規ソースであり、`install.sh` と `install.ps1` は `bun build.mjs` によって生成されます。手動で編集しないでください。
 
 ## アップデート
 

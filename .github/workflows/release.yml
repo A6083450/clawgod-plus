@@ -23,6 +23,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Bun (canary)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: canary
+
+      - name: Verify installers are freshly generated
+        run: bun build.mjs --check
+
       - name: Build release notes without system Git
         uses: actions/github-script@v7
         with:

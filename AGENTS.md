@@ -72,6 +72,12 @@ Windows uninstall:
 
 `claude update` routes through the ClawGod Plus installer, fetches the requested Anthropic Claude Code package from the npm Registry, re-extracts and re-patches it, then rewrites the launchers.
 
+### Enhancement selection
+
+ClawGod Plus resolves a persisted, optionally interactive choice of 13 enhancements. The stable IDs, in manifest order, are `chrome`, `computer-use`, `agents`, `planning`, `voice`, `auto-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding` (patches), then `claude-hud`, `claude-mem`, `superpowers` (plugins). Selection is persisted as strict JSON at `~/.clawgod/enhancements.json` with the schema `{ "schemaVersion": 1, "mode": "all" | "custom", "enabled": [...] }`.
+
+Direct local installers accept `--enhancements <csv>` / `--choose-enhancements` (Unix) and `-Enhancements <csv>` / `-ChooseEnhancements` (PowerShell). With no explicit choice, all enhancements are enabled. `claude update` reuses the saved selection and never prompts. Disabling `claude-hud` or `claude-mem` restores the configuration ClawGod owns, while disabling `superpowers` never deletes the user's installed plugin.
+
 ## Project Architecture
 
 ClawGod Plus is an installer-driven runtime patch project for official Claude Code, not a conventional application library. The repository has two parts:

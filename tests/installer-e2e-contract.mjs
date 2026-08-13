@@ -17,26 +17,100 @@ function runContract(contract, input) {
   return spawnSync(process.execPath, [e2e.pathname], { encoding: 'utf8', env });
 }
 
-const pluginSummary = runContract('plugin-summary', [
-  'claude-hud@claude-hud: ready - installed 0.7.0',
-  'claude-mem@thedotmack: ready - installed 13.14.0',
-  'superpowers@superpowers-marketplace: ready - installed 6.2.0',
-  'Optional plugins: 3 ready, 0 warnings',
-  '',
-].join('\n'));
+const pluginSummary = runContract('plugin-summary', {
+  output: [
+    'claude-hud@claude-hud: ready - installed 0.7.0',
+    'claude-mem@thedotmack: ready - installed 13.14.0',
+    'superpowers@superpowers-marketplace: ready - installed 6.2.0',
+    'Optional plugins: 3 ready, 0 disabled, 0 warnings',
+    '',
+  ].join('\n'),
+  ready: 3,
+  disabled: 0,
+  warnings: 0,
+});
 assert.equal(pluginSummary.status, 0, pluginSummary.stderr);
-assert.match(pluginSummary.stdout, /^plugin summary: ready=3 warnings=0$/m);
+assert.match(pluginSummary.stdout, /^plugin summary: ready=3 disabled=0 warnings=0$/m);
 
-for (const [label, output] of [
-  ['missing summary', 'all plugin detail lines only\n'],
-  ['duplicate summary', 'Optional plugins: 3 ready, 0 warnings\nOptional plugins: 3 ready, 0 warnings\n'],
-  ['two ready', 'Optional plugins: 2 ready, 0 warnings\n'],
-  ['warning summary', 'Optional plugins: 2 ready, 1 warning\n'],
+const subsetPluginSummary = runContract('plugin-summary', {
+  output: [
+    'claude-hud@claude-hud: ready - installed 0.7.0',
+    'claude-mem@thedotmack: disabled - not selected',
+    'superpowers@superpowers-marketplace: disabled - not selected',
+    'Optional plugins: 1 ready, 2 disabled, 0 warnings',
+    '',
+  ].join('\n'),
+  ready: 1,
+  disabled: 2,
+  warnings: 0,
+});
+assert.equal(subsetPluginSummary.status, 0, subsetPluginSummary.stderr);
+assert.match(subsetPluginSummary.stdout, /^plugin summary: ready=1 disabled=2 warnings=0$/m);
+
+const nonePluginSummary = runContract('plugin-summary', {
+  output: 'Optional plugins: 0 ready, 3 disabled, 0 warnings\n',
+  ready: 0,
+  disabled: 3,
+  warnings: 0,
+});
+assert.equal(nonePluginSummary.status, 0, nonePluginSummary.stderr);
+assert.match(nonePluginSummary.stdout, /^plugin summary: ready=0 disabled=3 warnings=0$/m);
+
+for (const [label, fixture] of [
+  ['missing summary', { output: 'all plugin detail lines only\n', ready: 3, disabled: 0, warnings: 0 }],
+  ['duplicate summary', { output: 'Optional plugins: 3 ready, 0 disabled, 0 warnings\nOptional plugins: 3 ready, 0 disabled, 0 warnings\n', ready: 3, disabled: 0, warnings: 0 }],
+  ['two ready', { output: 'Optional plugins: 2 ready, 1 disabled, 0 warnings\n', ready: 3, disabled: 0, warnings: 0 }],
+  ['warning summary', { output: 'Optional plugins: 2 ready, 0 disabled, 1 warning\n', ready: 3, disabled: 0, warnings: 0 }],
+  ['legacy two-way summary', { output: 'Optional plugins: 3 ready, 0 warnings\n', ready: 3, disabled: 0, warnings: 0 }],
 ]) {
-  const run = runContract('plugin-summary', output);
+  const run = runContract('plugin-summary', fixture);
   assert.notEqual(run.status, 0, `${label} must fail plugin summary validation`);
-  assert.match(run.stderr, /plugin|summary|ready|warning/i, `${label} must explain the plugin summary failure`);
+  assert.match(run.stderr, /plugin|summary|ready|disabled|warning/i, `${label} must explain the plugin summary failure`);
 }
+
+const enhancementConfigAll = runContract('enhancement-config', {
+  source: '{\n  "schemaVersion": 1,\n  "mode": "all",\n  "enabled": []\n}\n',
+  mode: 'all',
+  enabled: [],
+});
+assert.equal(enhancementConfigAll.status, 0, enhancementConfigAll.stderr);
+assert.match(enhancementConfigAll.stdout, /^enhancement config: mode=all enabled=0$/m);
+
+const enhancementConfigSubset = runContract('enhancement-config', {
+  source: '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "chrome",\n    "computer-use",\n    "claude-hud"\n  ]\n}\n',
+  mode: 'custom',
+  enabled: ['chrome', 'computer-use', 'claude-hud'],
+});
+assert.equal(enhancementConfigSubset.status, 0, enhancementConfigSubset.stderr);
+assert.match(enhancementConfigSubset.stdout, /^enhancement config: mode=custom enabled=3$/m);
+
+const enhancementConfigNone = runContract('enhancement-config', {
+  source: '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": []\n}\n',
+  mode: 'custom',
+  enabled: [],
+});
+assert.equal(enhancementConfigNone.status, 0, enhancementConfigNone.stderr);
+assert.match(enhancementConfigNone.stdout, /^enhancement config: mode=custom enabled=0$/m);
+
+for (const [label, fixture] of [
+  ['missing schemaVersion', { source: '{\n  "mode": "all",\n  "enabled": []\n}\n', mode: 'all', enabled: [] }],
+  ['wrong schemaVersion', { source: '{\n  "schemaVersion": 2,\n  "mode": "all",\n  "enabled": []\n}\n', mode: 'all', enabled: [] }],
+  ['wrong mode', { source: '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": []\n}\n', mode: 'all', enabled: [] }],
+  ['wrong enabled list', { source: '{\n  "schemaVersion": 1,\n  "mode": "all",\n  "enabled": [\n    "chrome"\n  ]\n}\n', mode: 'all', enabled: [] }],
+  ['extra key', { source: '{\n  "schemaVersion": 1,\n  "mode": "all",\n  "enabled": [],\n  "extra": true\n}\n', mode: 'all', enabled: [] }],
+  ['invalid json', { source: 'not json', mode: 'all', enabled: [] }],
+]) {
+  const run = runContract('enhancement-config', fixture);
+  assert.notEqual(run.status, 0, `${label} must fail enhancement config validation`);
+  assert.match(run.stderr, /enhancement config|schemaVersion|mode|enabled|JSON/i, `${label} must explain the enhancement config failure`);
+}
+
+const noPrompt = runContract('no-prompt', 'installer output without an interactive selection prompt\n');
+assert.equal(noPrompt.status, 0, noPrompt.stderr);
+assert.match(noPrompt.stdout, /^no prompt: selection resolved without interaction$/m);
+const promptedOutput = runContract('no-prompt', '  Choice: select enhancements to install\n');
+assert.notEqual(promptedOutput.status, 0, 'an interactive Choice: prompt must fail the no-prompt contract');
+assert.match(promptedOutput.stderr, /prompt|Choice/i);
 
 const contractBunPath = '/tmp/clawgod-contract/bin/bun';
 const contractHudModulePath = '/tmp/clawgod-contract/home/.clawgod/claude-hud-statusline.mjs';

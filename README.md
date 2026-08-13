@@ -103,6 +103,50 @@ bash install.sh --lean-off        # 恢复完整工具集；默认值
 
 绿色品牌标识表示补丁运行时已经启用。安装器会在替换命令前备份原始版本。
 
+## 可选增强（Enhancements）
+
+ClawGod Plus 提供 13 项可选增强，默认启用全部。增强 ID 固定且按以下顺序排列：
+
+| 类型 | 增强 ID |
+|---|---|
+| 补丁 | `chrome`、`computer-use`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding` |
+| 插件 | `claude-hud`、`claude-mem`、`superpowers` |
+
+不传任何选项时，默认启用全部 13 项增强。选择会以严格 JSON 形式保存到 `~/.clawgod/enhancements.json`：
+
+```json
+{
+  "schemaVersion": 1,
+  "mode": "all",
+  "enabled": []
+}
+```
+
+`mode` 为 `all` 时始终启用清单中的全部增强（含未来新增的 ID）；`mode` 为 `custom` 时只启用 `enabled` 列表中的 ID。
+
+本地直接安装时可以交互式选择：
+
+```bash
+bash install.sh --choose-enhancements
+```
+
+也可以非交互式指定：
+
+```bash
+bash install.sh --enhancements chrome,computer-use,claude-hud
+bash install.sh --enhancements none   # 仅核心，不启用任何增强
+```
+
+Windows PowerShell 对应参数：
+
+```powershell
+.\install.ps1 -ChooseEnhancements
+.\install.ps1 -Enhancements chrome,computer-use,claude-hud
+.\install.ps1 -Enhancements none
+```
+
+后续运行 `claude update` 会复用 `~/.clawgod/enhancements.json` 中已保存的选择，并且从不主动询问。关闭 `claude-hud` 或 `claude-mem` 会恢复由 ClawGod 托管的对应配置；关闭 `superpowers` 只会停止托管，不会删除你已安装的插件。
+
 ## 命令与启动行为
 
 ```bash
@@ -283,6 +327,8 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 9. 使用生成的 `plugin-dependencies.mjs` 确保三个可选插件基线，再应用托管的 HUD 与 claude-mem 集成。
 
 `~/.clawgod/.source-version` 记录被修改的原生版本。后续启动时，Wrapper 会检测官方 Claude Code 升级并对新二进制重新打补丁。
+
+安装器脚本是确定性生成产物：`src/` 是唯一事实来源，`install.sh` 与 `install.ps1` 由 `bun build.mjs` 生成，请勿手工编辑。
 
 ## 更新
 
