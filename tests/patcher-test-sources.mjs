@@ -1,22 +1,15 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { copyFileSync, mkdirSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildPatcherBundle } from '../build.mjs';
 
 const entryUrl = new URL('../src/generic/patcher/entry.mjs', import.meta.url).href;
-const require = createRequire(import.meta.url);
+const acornFixturePath = fileURLToPath(new URL('./fixtures/acorn-8.16.0.cjs', import.meta.url));
 
 export function seedPatcherAcorn(rootDir) {
-  let source = process.env.CLAWGOD_TEST_ACORN_SOURCE;
-  if (!source) {
-    try {
-      source = require.resolve('acorn');
-    } catch {
-      return false;
-    }
-  }
+  const source = process.env.CLAWGOD_TEST_ACORN_SOURCE || acornFixturePath;
   const destination = join(rootDir, 'vendor', 'acorn.cjs');
   mkdirSync(dirname(destination), { recursive: true });
   copyFileSync(source, destination);

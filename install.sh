@@ -4557,6 +4557,11 @@ export function enabledPluginKeys(selection) {
   return keys;
 }
 
+function disabledPluginSelection(summary, error) {
+  const detail = error instanceof Error ? error.message : String(error);
+  return { enabled: [], warning: `${summary}: ${detail}` };
+}
+
 async function resolvePluginSelection(context) {
   const clawgodDir = resolve(context.clawgodDir);
   const manifestPath = process.env.CLAWGOD_ENHANCEMENT_MANIFEST_FILE || join(clawgodDir, 'enhancement-manifest.json');
@@ -4574,13 +4579,22 @@ async function resolvePluginSelection(context) {
   } catch {
     return null;
   }
-  let stored = null;
+  let raw;
   try {
-    stored = engine.parseStoredEnhancementConfig(readFileSync(configPath, 'utf8'), manifest);
-  } catch {
-    stored = null;
+    raw = readFileSync(configPath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { ...engine.resolveEnhancementSelection({}, manifest), warning: null };
+    }
+    return disabledPluginSelection('enhancement config is unreadable; optional plugins disabled', error);
   }
-  return engine.resolveEnhancementSelection({ stored }, manifest);
+  let stored;
+  try {
+    stored = engine.parseStoredEnhancementConfig(raw, manifest);
+  } catch (error) {
+    return disabledPluginSelection('enhancement config is invalid; optional plugins disabled', error);
+  }
+  return { ...engine.resolveEnhancementSelection({ stored }, manifest), warning: null };
 }
 
 async function deselectedPluginResult(spec, context) {
@@ -4612,6 +4626,9 @@ export async function ensurePluginDependencies(context, selection) {
   const enabled = enabledPluginKeys(selection);
   const state = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
   const results = [];
+  if (selection?.warning) {
+    results.push(pluginResult({ key: 'selection', id: 'plugin-selection' }, 'warning', false, null, selection.warning));
+  }
   for (const spec of specs) {
     if (!enabled.has(spec.key)) {
       results.push(await deselectedPluginResult(spec, context));

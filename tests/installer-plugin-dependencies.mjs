@@ -362,6 +362,27 @@ try {
   assert.match(outputLines(noneEnsure).find(line => line.includes(PLUGIN_BASELINES.memory.id)), /: disabled\b.*restored/, 'empty selection must disable and restore claude-mem');
   assert.match(outputLines(noneEnsure).find(line => line.includes(PLUGIN_BASELINES.superpowers.id)), /: disabled\b.*retained/, 'empty selection must disable and retain superpowers');
 
+  const corruptConfigLifecycle = makeLifecycleFixture('selection-corrupt-config');
+  writeFileSync(join(corruptConfigLifecycle.clawgodDir, 'enhancements.json'), '{"schemaVersion":1,"mode":"custom","enabled":["claude-hud"],\n');
+  const corruptConfigEnsure = runLifecycleCommand(corruptConfigLifecycle, 'ensure');
+  assert.equal(corruptConfigEnsure.exitCode, 0, new TextDecoder().decode(corruptConfigEnsure.stderr));
+  assert.deepEqual(
+    outputLines(corruptConfigEnsure).slice(-1),
+    ['Optional plugins: 0 ready, 3 disabled, 1 warnings'],
+    new TextDecoder().decode(corruptConfigEnsure.stdout),
+  );
+  const corruptConfigSelectionWarning = outputLines(corruptConfigEnsure).find(line => line.includes('plugin-selection'));
+  assert.ok(corruptConfigSelectionWarning, 'corrupt enhancement config must surface a selection warning');
+  assert.match(corruptConfigSelectionWarning, /: warning\b/, 'the selection warning must be reported as a warning');
+  assert.match(corruptConfigSelectionWarning, /enhancement config is invalid/i, 'the selection warning must describe the corrupt config');
+  for (const id of [PLUGIN_BASELINES.hud.id, PLUGIN_BASELINES.memory.id, PLUGIN_BASELINES.superpowers.id]) {
+    assert.match(
+      outputLines(corruptConfigEnsure).find(line => line.includes(id)),
+      /: disabled\b/,
+      `${id} must fail closed as disabled when enhancement config is corrupt`,
+    );
+  }
+
   const deselectLifecycle = makeLifecycleFixture('selection-deselect-restores');
   const memoryHookPath = join(deselectLifecycle.claudeConfigDir, 'plugins', 'cache', 'thedotmack', 'claude-mem', PLUGIN_BASELINES.memory.version, 'hooks', 'hooks.json');
   const memoryMcpPath = join(deselectLifecycle.claudeConfigDir, 'plugins', 'cache', 'thedotmack', 'claude-mem', PLUGIN_BASELINES.memory.version, '.mcp.json');
