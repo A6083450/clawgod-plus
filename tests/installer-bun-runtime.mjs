@@ -893,6 +893,16 @@ for (const [name, body] of Object.entries(unixTemplates)) {
   assert.match(windowsTemplates[name], /^#!\/usr\/bin\/env bun\n/, `install.ps1 ${name} must run with Bun`);
 }
 
+for (const [name, patcher] of [
+  ['install.sh', unixTemplates['patch.mjs']],
+  ['install.ps1', windowsTemplates['patch.mjs']],
+]) {
+  assert.match(patcher, /applyFastMessagesProtocolPatch/, `${name} must embed the Fast Messages patch`);
+  assert.match(patcher, /__clawgod_fast_messages_protocol__/, `${name} must mark the Fast Messages patch`);
+  assert.match(patcher, /fast-mode-2026-02-01/, `${name} must include the Fast beta capability`);
+  assert.match(patcher, /speed[\s:]+["']fast["']/, `${name} must include the Fast body field`);
+}
+
 const unixApplyStart = unix.indexOf('dim "Applying patches ..."');
 const unixApplyEnd = unix.indexOf('\n# ─── Create default configs', unixApplyStart);
 assert.ok(unixApplyStart >= 0 && unixApplyEnd > unixApplyStart, 'install.sh must retain the patch application gate');
