@@ -542,7 +542,8 @@ function runUnixTtyCase(label, lines, expected, {
       assert.equal(countOccurrences(output, `CLAWGOD_TEST_UNREAD=${expectedUnreadLine}`), 1, `${label}: installer must leave terminal input unread`);
     }
     if (expectedMenuCount > 0) {
-      const firstMenu = output.slice(0, output.indexOf('Choice:'));
+      const promptIndex = output.indexOf('  ↑/↓ 移动');
+      const firstMenu = promptIndex === -1 ? output : output.slice(0, promptIndex);
       let cursor = -1;
       for (const [index, id] of expectedIds.entries()) {
         const next = firstMenu.indexOf(`${index + 1})`, cursor + 1);
@@ -551,7 +552,12 @@ function runUnixTtyCase(label, lines, expected, {
         cursor = next;
       }
     }
-    assertOnlyConfig(fixture.home, expected);
+    if (expectedStatus === 0) {
+      assertOnlyConfig(fixture.home, expected);
+    } else {
+      assert.deepEqual(readdirSync(fixture.home), [], `${label}: cancelled install must not write any config`);
+      assert.equal(countOccurrences(output, '已取消安装'), 1, `${label}: cancel must print hint once`);
+    }
     return output;
   } finally {
     rmSync(fixture.fixtureRoot, { recursive: true, force: true });
@@ -588,18 +594,38 @@ runUnixTtyCase('ci', ['ci-input-must-remain-unread'], allConfig, {
   expectedUnreadLine: 'ci-input-must-remain-unread',
   expectedWarnings: ['Interactive enhancement selection unavailable; using saved selection or all enhancements.'],
 });
-runUnixTtyCase('auto-enter', [''], allConfig, { args: [], expectedMenuCount: 0, expectedModeMenuCount: 1 });
-runUnixTtyCase('auto-all', ['1'], allConfig, { args: [], expectedMenuCount: 0, expectedModeMenuCount: 1 });
-runUnixTtyCase('auto-core', ['2'], noneConfig, { args: [], expectedMenuCount: 0, expectedModeMenuCount: 1 });
-runUnixTtyCase('auto-invalid', ['x', '2'], noneConfig, {
+runUnixTtyCase('auto-enter', [], allConfig, { args: [], keys: '\r', expectedMenuCount: 0, expectedModeMenuCount: 1 });
+runUnixTtyCase('auto-all', [], allConfig, { args: [], keys: '1', expectedMenuCount: 0, expectedModeMenuCount: 1 });
+runUnixTtyCase('auto-core', [], noneConfig, { args: [], keys: '2', expectedMenuCount: 0, expectedModeMenuCount: 1 });
+runUnixTtyCase('auto-invalid', [], noneConfig, {
   args: [],
+  keys: 'x2',
   expectedMenuCount: 0,
   expectedModeMenuCount: 2,
   expectedWarnings: ['Invalid enhancement choice: x'],
 });
+runUnixTtyCase('custom-escape-return', [], allConfig, {
+  args: [],
+  keys: '3\x1b\r',
+  expectedMenuCount: 1,
+  expectedModeMenuCount: 2,
+});
+runUnixTtyCase('mode-escape-exit', [], allConfig, {
+  args: [],
+  keys: '\x1b',
+  expectedStatus: 130,
+  expectedMenuCount: 0,
+  expectedModeMenuCount: 1,
+});
+runUnixTtyCase('choose-escape-exit', [], allConfig, {
+  args: ['--choose-enhancements'],
+  keys: '\x1b',
+  expectedStatus: 130,
+  expectedMenuCount: 1,
+});
 runUnixTtyCase('auto-custom', [], withoutFirstTwoConfig, {
   args: [],
-  keys: '3\n \x1b[B \r',
+  keys: '3 \x1b[B \r',
   expectedMenuCount: 4,
   expectedModeMenuCount: 1,
 });

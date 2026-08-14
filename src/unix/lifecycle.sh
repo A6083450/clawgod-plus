@@ -202,17 +202,19 @@ clawgod_menu_read_key() {
   esac
 }
 
+clawgod_menu_cancel_exit() {
+  clawgod_menu_raw_off
+  printf '\n  已取消安装\n' > /dev/tty
+  exit 130
+}
+
 choose_enhancements() {
-  # 返回 0=已确认（ENHANCEMENT_CHOICE 就绪）；返回 1=raw 开启失败
+  # 返回 0=已确认（ENHANCEMENT_CHOICE 就绪）；返回 2=Esc 取消
   local count=${#CLAWGOD_ENHANCEMENT_IDS[@]}
   local -a selected
   local cursor=0 i marker prefix
   for ((i = 0; i < count; i++)); do selected[$i]=1; done
   CLAWGOD_MENU_RENDERED_LINES=0
-
-  if ! clawgod_menu_raw_on; then
-    return 1
-  fi
 
   while true; do
     if [ "$CLAWGOD_MENU_RENDERED_LINES" -gt 0 ]; then
@@ -241,6 +243,7 @@ choose_enhancements() {
           selected[$cursor]=1
         fi
         ;;
+      ESC) clawgod_menu_raw_off; return 2 ;;
       ENTER|EOF)
         local -a enabled=()
         for ((i = 0; i < count; i++)); do
@@ -261,23 +264,35 @@ choose_enhancements() {
 
 choose_enhancement_mode() {
   local count=${#CLAWGOD_ENHANCEMENT_IDS[@]}
-  local answer
+  CLAWGOD_MENU_RENDERED_LINES=0
   while true; do
+    if [ "$CLAWGOD_MENU_RENDERED_LINES" -gt 0 ]; then
+      printf '\033[%dA' "$CLAWGOD_MENU_RENDERED_LINES" > /dev/tty
+    fi
     printf '\n  ClawGod Plus 增强选择\n' > /dev/tty
     printf '   1) 全部 %d 项增强（默认，回车即选）\n' "$count" > /dev/tty
     printf '   2) 仅核心（不装任何增强）\n' > /dev/tty
     printf '   3) 自定义菜单（逐项勾选）\n' > /dev/tty
-    printf '  选择 [1]: ' > /dev/tty
-    IFS= read -r answer < /dev/tty
-    case "$answer" in
-      ''|1)
+    printf '  回车 全部增强 · Esc 退出\n' > /dev/tty
+    printf '\033[J' > /dev/tty
+    CLAWGOD_MENU_RENDERED_LINES=5
+
+    clawgod_menu_read_key
+    case "$CLAWGOD_MENU_KEY" in
+      CHAR:1|ENTER|EOF)
         local IFS=,
         ENHANCEMENT_CHOICE="${CLAWGOD_ENHANCEMENT_IDS[*]}"
         return 0
         ;;
-      2) ENHANCEMENT_CHOICE=none; return 0 ;;
-      3) choose_enhancements; return 0 ;;
-      *) enhancement_warn "Invalid enhancement choice: $answer" ;;
+      CHAR:2) ENHANCEMENT_CHOICE=none; return 0 ;;
+      CHAR:3)
+        if choose_enhancements; then
+          return 0
+        fi
+        CLAWGOD_MENU_RENDERED_LINES=0
+        ;;
+      ESC) clawgod_menu_cancel_exit ;;
+      *) enhancement_warn "Invalid enhancement choice: ${CLAWGOD_MENU_KEY#CHAR:}" ;;
     esac
   done
 }
@@ -311,18 +326,25 @@ configure_enhancement_selection() {
     return
   fi
   if [ "$CHOOSE_ENHANCEMENTS" = "1" ]; then
-    if enhancement_interaction_available && choose_enhancements; then
-      persist_enhancement_selection "$ENHANCEMENT_CHOICE"
-      return
+    if enhancement_interaction_available && clawgod_menu_raw_on; then
+      if choose_enhancements; then
+        clawgod_menu_raw_off
+        persist_enhancement_selection "$ENHANCEMENT_CHOICE"
+        return
+      fi
+      clawgod_menu_cancel_exit
     fi
     enhancement_warn 'Interactive enhancement selection unavailable; using saved selection or all enhancements.'
     persist_enhancement_selection '__CLAWGOD_SAVED__'
     return
   fi
-  if auto_prompt_available; then
-    choose_enhancement_mode
-    persist_enhancement_selection "$ENHANCEMENT_CHOICE"
-    return
+  if auto_prompt_available && clawgod_menu_raw_on; then
+    if choose_enhancement_mode; then
+      clawgod_menu_raw_off
+      persist_enhancement_selection "$ENHANCEMENT_CHOICE"
+      return
+    fi
+    clawgod_menu_cancel_exit
   fi
   persist_enhancement_selection '__CLAWGOD_SAVED__'
 }
