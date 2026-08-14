@@ -152,7 +152,7 @@ bun build.mjs --check  # 比较内存生成结果与已提交文件，不写磁�
 4. 已保存的 `~/.clawgod/enhancements.json`。
 5. 没有任何选择信息：全部增强。
 
-交互菜单默认全部勾选，支持输入编号切换、`a` 全选、`n` 清空、回车确认。Unix 仅在显式选择且 `/dev/tty` 可用时读取；Windows 使用 `Read-Host`。显式请求交互但没有 TTY 时打印 warning，并使用已保存选择或全部增强，不阻塞。
+交互菜单默认全部勾选，键盘逐键操作：`↑`/`↓` 移动光标（首尾循环）、`空格` 切换勾选、`回车` 确认、`Esc` 返回上级菜单（顶层为取消安装，exit 130）。Unix 用 `stty` 临时 raw mode + `dd` 逐字节读键，仅在显式选择且 `/dev/tty` 可用时交互；Windows 用 `[Console]::ReadKey`。显式请求交互但没有 TTY 时打印 warning，并使用已保存选择或全部增强，不阻塞。键盘交互细节见 [2026-08-14-enhancement-menu-keyboard-design.md](2026-08-14-enhancement-menu-keyboard-design.md)。
 
 `curl | bash`、`irm | iex`、CI 和普通 `claude update` 都不会自动进入交互。用户可通过下载后的本地安装器或现有本地副本显式执行选择：
 

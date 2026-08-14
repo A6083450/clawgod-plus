@@ -99,15 +99,17 @@ With no option and no interactive terminal (piped installs, CI, `claude update`)
 
 `mode` `all` always enables every enhancement in the manifest (including future IDs); `mode` `custom` enables only the IDs listed in `enabled`.
 
-Running the installer directly in a terminal asks automatically — no flags to remember:
+Running the installer directly in a terminal asks automatically, no flags to remember:
 
 ```
   ClawGod Plus 增强选择
    1) 全部 13 项增强（默认，回车即选）
    2) 仅核心（不装任何增强）
    3) 自定义菜单（逐项勾选）
-   选择 [1]:
+   回车 全部增强 · Esc 退出
 ```
+
+The custom menu is keyboard-driven: `↑`/`↓` move the cursor (wrapping at the ends), `Space` toggles the item, `Enter` confirms, `Esc` returns to the mode menu. Confirming with everything unchecked equals core-only. Pressing `Esc` at the top level cancels the install.
 
 You can also choose explicitly or specify non-interactively:
 
