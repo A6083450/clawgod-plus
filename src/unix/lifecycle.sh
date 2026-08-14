@@ -153,6 +153,7 @@ auto_prompt_available() {
 # --- raw-mode 菜单原语 ---
 CLAWGOD_MENU_RENDERED_LINES=0
 CLAWGOD_MENU_SAVED_STTY=""
+CLAWGOD_MENU_PUSHED=""
 
 clawgod_menu_raw_on() {
   CLAWGOD_MENU_SAVED_STTY="$(stty -g < /dev/tty 2>/dev/null)" || return 1
@@ -172,10 +173,17 @@ clawgod_menu_raw_off() {
 # 读取一个按键；置全局 CLAWGOD_MENU_KEY 为 UP / DOWN / SPACE / ENTER / ESC / EOF / CHAR:<单字节>
 # 常态 min 1 time 0 下 dd 返回空即 EOF；ESC 判定窗口（min 0 time 1）下 dd 返回空即超时。
 # dd bs=1 保证内核每次只交付 1 字节，多余字节留在队列，快速连按不吞键。
+# ESC 判定窗口读到的非 '[' 字节（快速连按 Esc+数字等）缓存到 CLAWGOD_MENU_PUSHED，
+# 下次 read_key 先消费缓存字节并按同一 case 分类，保证快速连按不吞键。
 # 超时读的 dd 返回非零是正常路径，必须 `|| :` 兜住——脚本带 set -e，命令替换失败会终止安装器。
 clawgod_menu_read_key() {
   local first second third
-  first="$(dd bs=1 count=1 2>/dev/null < /dev/tty)" || { CLAWGOD_MENU_KEY=EOF; return 0; }
+  if [ -n "$CLAWGOD_MENU_PUSHED" ]; then
+    first="$CLAWGOD_MENU_PUSHED"
+    CLAWGOD_MENU_PUSHED=""
+  else
+    first="$(dd bs=1 count=1 2>/dev/null < /dev/tty)" || { CLAWGOD_MENU_KEY=EOF; return 0; }
+  fi
   case "$first" in
     $'\e')
       stty min 0 time 1 < /dev/tty 2>/dev/null
@@ -187,10 +195,10 @@ clawgod_menu_read_key() {
         case "$third" in
           A) CLAWGOD_MENU_KEY=UP ;;
           B) CLAWGOD_MENU_KEY=DOWN ;;
-          *) CLAWGOD_MENU_KEY=ESC ;;
+          *) CLAWGOD_MENU_KEY=ESC; CLAWGOD_MENU_PUSHED="$third" ;;
         esac
       else
-        CLAWGOD_MENU_KEY=ESC
+        CLAWGOD_MENU_KEY=ESC; CLAWGOD_MENU_PUSHED="$second"
       fi
       stty min 1 time 0 < /dev/tty 2>/dev/null
       ;;
@@ -243,7 +251,7 @@ choose_enhancements() {
           selected[$cursor]=1
         fi
         ;;
-      ESC) clawgod_menu_raw_off; return 2 ;;
+      ESC) return 2 ;;
       ENTER|EOF)
         local -a enabled=()
         for ((i = 0; i < count; i++)); do
@@ -255,7 +263,6 @@ choose_enhancements() {
           local IFS=,
           ENHANCEMENT_CHOICE="${enabled[*]}"
         fi
-        clawgod_menu_raw_off
         return 0
         ;;
     esac

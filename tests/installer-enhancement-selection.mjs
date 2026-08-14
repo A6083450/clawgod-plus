@@ -610,6 +610,12 @@ runUnixTtyCase('custom-escape-return', [], allConfig, {
   expectedMenuCount: 1,
   expectedModeMenuCount: 2,
 });
+runUnixTtyCase('custom-escape-digit', [], noneConfig, {
+  args: [],
+  keys: '3\x1b2',
+  expectedMenuCount: 1,
+  expectedModeMenuCount: 2,
+});
 runUnixTtyCase('mode-escape-exit', [], allConfig, {
   args: [],
   keys: '\x1b',
