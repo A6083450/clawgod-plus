@@ -486,6 +486,7 @@ function runUnixTtyCase(label, lines, expected, {
   args = ['--choose-enhancements'],
   env = {},
   keys = null,
+  preDelay = 0.1,
   expectedStatus = 0,
   expectedMenuCount = 1,
   expectedPromptCount = expectedMenuCount,
@@ -505,9 +506,10 @@ function runUnixTtyCase(label, lines, expected, {
   chmodSync(runner, 0o700);
   try {
     const feed = keys === null ? `${lines.join('\n')}\n` : keys;
+    // ^C 等信号字节不排队——line discipline 立即转 SIGINT，须等 installer 完成启动（trap 注册）再喂入
     const shellCommand = process.platform === 'darwin'
-      ? '{ /bin/sleep 0.1; printf %s "$1"; /bin/sleep 0.1; } | "$2" -q -e /dev/null "$3"'
-      : '{ /bin/sleep 0.1; printf %s "$1"; /bin/sleep 0.1; } | "$2" -q -e -c "$3" /dev/null';
+      ? '{ /bin/sleep "$4"; printf %s "$1"; /bin/sleep 0.1; } | "$2" -q -e /dev/null "$3"'
+      : '{ /bin/sleep "$4"; printf %s "$1"; /bin/sleep 0.1; } | "$2" -q -e -c "$3" /dev/null';
     const run = spawnSync('/bin/bash', [
       '-c',
       shellCommand,
@@ -515,6 +517,7 @@ function runUnixTtyCase(label, lines, expected, {
       feed,
       scriptCommand,
       runner,
+      String(preDelay),
     ], {
       encoding: 'utf8',
       env: selectionEnvironment(fixture, env),
@@ -626,6 +629,21 @@ runUnixTtyCase('mode-escape-exit', [], allConfig, {
 runUnixTtyCase('choose-escape-exit', [], allConfig, {
   args: ['--choose-enhancements'],
   keys: '\x1b',
+  expectedStatus: 130,
+  expectedMenuCount: 1,
+});
+runUnixTtyCase('mode-sigint-exit', [], allConfig, {
+  args: [],
+  keys: '\x03',
+  preDelay: 0.6,
+  expectedStatus: 130,
+  expectedMenuCount: 0,
+  expectedModeMenuCount: 1,
+});
+runUnixTtyCase('choose-sigint-exit', [], allConfig, {
+  args: ['--choose-enhancements'],
+  keys: '\x03',
+  preDelay: 0.6,
   expectedStatus: 130,
   expectedMenuCount: 1,
 });

@@ -176,9 +176,13 @@ clawgod_menu_raw_on() {
     CLAWGOD_MENU_SAVED_STTY=""
     return 1
   }
+  # 菜单期间 Ctrl-C / TERM：恢复终端并取消安装（130 与 Esc 取消一致）。
+  # 不注册 EXIT trap——bash 只保留一个 EXIT trap，会覆盖 installer 的 rollback EXIT trap。
+  trap 'clawgod_menu_raw_off; printf "\n  已取消安装\n" > /dev/tty 2>/dev/null; exit 130' INT TERM
 }
 
 clawgod_menu_raw_off() {
+  trap - INT TERM 2>/dev/null
   if [ -n "$CLAWGOD_MENU_SAVED_STTY" ]; then
     stty "$CLAWGOD_MENU_SAVED_STTY" < /dev/tty 2>/dev/null
   fi
