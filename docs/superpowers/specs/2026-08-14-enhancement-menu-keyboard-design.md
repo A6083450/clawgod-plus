@@ -49,12 +49,15 @@ ClawGod 安装器的增强选择菜单（`--choose-enhancements` 与终端直接
 
 ### 按键读取与转义序列解析
 
-- `IFS= read -rsn1 key < /dev/tty` 逐字节读取
-- 读到 `\e`（ESC 字节）后用 `IFS= read -rsn1 -t 0.05 next < /dev/tty` 超时读区分两类输入：
-  - 超时（0.05s 内无后续字节）→ 判定为用户按了 Esc
-  - 读到 `[` → 再读一字节，`A` 判 ↑、`B` 判 ↓，其他序列视为 Esc
+- 常驻 raw mode 为 `stty -icanon -echo min 1 time 0`（阻塞等首字节），用 `key=$(dd bs=1 count=1 2>/dev/null < /dev/tty)` 逐字节读取——`bs=1` 保证内核每次只交付 1 字节、剩余字节留在队列，快速连按不会吞键；每次按键一个 dd 进程，spawn 开销对人无感知
+- 读到 `\e`（ESC 字节）后临时切 `stty min 0 time 1`（VMIN=0 / VTIME=1，100ms 超时读）判定键序：
+  - dd 读第二字节超时（空）→ 判定用户按了 Esc
+  - 读到 `[` → dd 读第三字节，`A` 判 ↑、`B` 判 ↓，其他视为 Esc
+  - 读到其他字节 → 视为 Esc
+- 分派后切回 `min 1 time 0`
 - 回车判定同时兼容 `\r`（真实终端 Enter 发送的字节）与 `\n`
-- read 返回失败（EOF，输入流提前结束）→ 视同确认当前状态：勾选菜单按当前勾选确认，顶层菜单按默认 1 处理——与现有行输入模式 EOF（空 answer）语义一致
+- 常态 dd 返回空（EOF，输入流提前结束）→ 视同确认当前状态：勾选菜单按当前勾选确认，顶层菜单按默认 1 处理——与现有行输入模式 EOF（空 answer）语义一致
+- 设计依据（已实测验证）：macOS `/bin/bash` 是 3.2.57，`read -t` 不支持小数超时（报 "invalid timeout specification"），且 `read -n1` 在 VMIN=0 下会死循环等待凑满字节；dd + VMIN/VTIME 不依赖 bash 版本特性，在 bash 3.2 + macOS pty 下原型验证通过（箭头序列三字节正确判定、单独 Esc 100ms 超时返回）
 
 ### 菜单渲染
 
@@ -95,7 +98,7 @@ harness 不变（`script -q -e` 伪终端 + 管道喂入），输入从「整行
 
 - 断言口径：菜单渲染次数 = 按键次数 + 1；harness 需支持期望非零退出码（顶层 Esc 用例）
 - 原数字输入用例（`numbers`、`leading-zero-numbers`、`none`、`none-all`、`invalid-*` 系列）删除
-- 每个单独 Esc 判定有约 50ms 的 `read -t` 超时开销，单用例总耗时可接受
+- 每个单独 Esc 判定有约 100ms 的 VTIME 超时开销，单用例总耗时可接受
 - compat-daily CI 是非交互跑安装器，不触发菜单，不受影响
 
 ### Windows 用例
