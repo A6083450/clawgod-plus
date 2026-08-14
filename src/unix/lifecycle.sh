@@ -150,79 +150,112 @@ auto_prompt_available() {
   enhancement_interaction_available
 }
 
+# --- raw-mode 菜单原语 ---
+CLAWGOD_MENU_RENDERED_LINES=0
+CLAWGOD_MENU_SAVED_STTY=""
+
+clawgod_menu_raw_on() {
+  CLAWGOD_MENU_SAVED_STTY="$(stty -g < /dev/tty 2>/dev/null)" || return 1
+  stty -icanon -echo min 1 time 0 < /dev/tty 2>/dev/null || {
+    CLAWGOD_MENU_SAVED_STTY=""
+    return 1
+  }
+}
+
+clawgod_menu_raw_off() {
+  if [ -n "$CLAWGOD_MENU_SAVED_STTY" ]; then
+    stty "$CLAWGOD_MENU_SAVED_STTY" < /dev/tty 2>/dev/null
+  fi
+  CLAWGOD_MENU_SAVED_STTY=""
+}
+
+# 读取一个按键；置全局 CLAWGOD_MENU_KEY 为 UP / DOWN / SPACE / ENTER / ESC / EOF / CHAR:<单字节>
+# 常态 min 1 time 0 下 dd 返回空即 EOF；ESC 判定窗口（min 0 time 1）下 dd 返回空即超时。
+# dd bs=1 保证内核每次只交付 1 字节，多余字节留在队列，快速连按不吞键。
+# 超时读的 dd 返回非零是正常路径，必须 `|| :` 兜住——脚本带 set -e，命令替换失败会终止安装器。
+clawgod_menu_read_key() {
+  local first second third
+  first="$(dd bs=1 count=1 2>/dev/null < /dev/tty)" || { CLAWGOD_MENU_KEY=EOF; return 0; }
+  case "$first" in
+    $'\e')
+      stty min 0 time 1 < /dev/tty 2>/dev/null
+      second="$(dd bs=1 count=1 2>/dev/null < /dev/tty)" || :
+      if [ -z "$second" ]; then
+        CLAWGOD_MENU_KEY=ESC
+      elif [ "$second" = "[" ]; then
+        third="$(dd bs=1 count=1 2>/dev/null < /dev/tty)" || :
+        case "$third" in
+          A) CLAWGOD_MENU_KEY=UP ;;
+          B) CLAWGOD_MENU_KEY=DOWN ;;
+          *) CLAWGOD_MENU_KEY=ESC ;;
+        esac
+      else
+        CLAWGOD_MENU_KEY=ESC
+      fi
+      stty min 1 time 0 < /dev/tty 2>/dev/null
+      ;;
+    $'\r'|$'\n') CLAWGOD_MENU_KEY=ENTER ;;
+    ' ') CLAWGOD_MENU_KEY=SPACE ;;
+    # ^D（EOT）是终端标准 EOF 约定；macOS script 在 stdin 关闭时向 pty 注入该字节而非关闭 master
+    $'\x04'|'') CLAWGOD_MENU_KEY=EOF ;;
+    *) CLAWGOD_MENU_KEY="CHAR:$first" ;;
+  esac
+}
+
 choose_enhancements() {
+  # 返回 0=已确认（ENHANCEMENT_CHOICE 就绪）；返回 1=raw 开启失败
   local count=${#CLAWGOD_ENHANCEMENT_IDS[@]}
   local -a selected
-  local -a tokens
-  local answer token index invalid marker normalized
-  local i
+  local cursor=0 i marker prefix
   for ((i = 0; i < count; i++)); do selected[$i]=1; done
+  CLAWGOD_MENU_RENDERED_LINES=0
+
+  if ! clawgod_menu_raw_on; then
+    return 1
+  fi
 
   while true; do
+    if [ "$CLAWGOD_MENU_RENDERED_LINES" -gt 0 ]; then
+      printf '\033[%dA' "$CLAWGOD_MENU_RENDERED_LINES" > /dev/tty
+    fi
     printf '\n  Enhancements\n' > /dev/tty
     for ((i = 0; i < count; i++)); do
       marker=' '
       [ "${selected[$i]}" = "1" ] && marker='x'
-      printf '  %2d) [%s] %-20s %s\n' "$((i + 1))" "$marker" "${CLAWGOD_ENHANCEMENT_IDS[$i]}" "${CLAWGOD_ENHANCEMENT_LABELS[$i]}" > /dev/tty
+      prefix='  '
+      [ "$i" = "$cursor" ] && prefix='> '
+      printf '%s%2d) [%s] %-20s %s\n' "$prefix" "$((i + 1))" "$marker" "${CLAWGOD_ENHANCEMENT_IDS[$i]}" "${CLAWGOD_ENHANCEMENT_LABELS[$i]}" > /dev/tty
     done
-    printf '  Choice: ' > /dev/tty
-    IFS= read -r answer < /dev/tty
+    printf '  ↑/↓ 移动 · 空格 勾选 · 回车 确认 · Esc 返回\n' > /dev/tty
+    printf '\033[J' > /dev/tty
+    CLAWGOD_MENU_RENDERED_LINES=$((count + 3))
 
-    if [ -z "$answer" ]; then
-      local -a enabled=()
-      for ((i = 0; i < count; i++)); do
-        [ "${selected[$i]}" = "1" ] && enabled+=("${CLAWGOD_ENHANCEMENT_IDS[$i]}")
-      done
-      if [ ${#enabled[@]} -eq 0 ]; then
-        ENHANCEMENT_CHOICE=none
-      else
-        local IFS=,
-        ENHANCEMENT_CHOICE="${enabled[*]}"
-      fi
-      return 0
-    fi
-
-    local -a candidate=("${selected[@]}")
-    invalid=""
-    local IFS=,
-    read -r -a tokens <<< "$answer"
-    case "$answer" in
-      ,*|*,|*,,*) invalid=1 ;;
+    clawgod_menu_read_key
+    case "$CLAWGOD_MENU_KEY" in
+      UP) cursor=$(( (cursor + count - 1) % count )) ;;
+      DOWN) cursor=$(( (cursor + 1) % count )) ;;
+      SPACE)
+        if [ "${selected[$cursor]}" = "1" ]; then
+          selected[$cursor]=0
+        else
+          selected[$cursor]=1
+        fi
+        ;;
+      ENTER|EOF)
+        local -a enabled=()
+        for ((i = 0; i < count; i++)); do
+          [ "${selected[$i]}" = "1" ] && enabled+=("${CLAWGOD_ENHANCEMENT_IDS[$i]}")
+        done
+        if [ ${#enabled[@]} -eq 0 ]; then
+          ENHANCEMENT_CHOICE=none
+        else
+          local IFS=,
+          ENHANCEMENT_CHOICE="${enabled[*]}"
+        fi
+        clawgod_menu_raw_off
+        return 0
+        ;;
     esac
-    for token in "${tokens[@]}"; do
-      case "$token" in
-        a)
-          for ((i = 0; i < count; i++)); do candidate[$i]=1; done
-          ;;
-        n)
-          for ((i = 0; i < count; i++)); do candidate[$i]=0; done
-          ;;
-        *[!0-9]*|'') invalid=1 ;;
-        *)
-          normalized="${token#"${token%%[!0]*}"}"
-          [ -n "$normalized" ] || normalized=0
-          index=""
-          for ((i = 1; i <= count; i++)); do
-            if [ "$normalized" = "$i" ]; then
-              index=$((i - 1))
-              break
-            fi
-          done
-          if [ -z "$index" ]; then
-            invalid=1
-          elif [ "${candidate[$index]}" = "1" ]; then
-            candidate[$index]=0
-          else
-            candidate[$index]=1
-          fi
-          ;;
-      esac
-    done
-    if [ -n "$invalid" ]; then
-      enhancement_warn "Invalid enhancement choice: $answer"
-      continue
-    fi
-    selected=("${candidate[@]}")
   done
 }
 
@@ -278,13 +311,15 @@ configure_enhancement_selection() {
     return
   fi
   if [ "$CHOOSE_ENHANCEMENTS" = "1" ]; then
-    if enhancement_interaction_available; then
-      choose_enhancements
+    if enhancement_interaction_available && choose_enhancements; then
       persist_enhancement_selection "$ENHANCEMENT_CHOICE"
       return
     fi
     enhancement_warn 'Interactive enhancement selection unavailable; using saved selection or all enhancements.'
-  elif auto_prompt_available; then
+    persist_enhancement_selection '__CLAWGOD_SAVED__'
+    return
+  fi
+  if auto_prompt_available; then
     choose_enhancement_mode
     persist_enhancement_selection "$ENHANCEMENT_CHOICE"
     return

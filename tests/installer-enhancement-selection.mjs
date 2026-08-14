@@ -106,6 +106,44 @@ const withoutFirstTwoConfig = `{
   ]
 }
 `;
+const withoutFirstConfig = `{
+  "schemaVersion": 1,
+  "mode": "custom",
+  "enabled": [
+    "computer-use",
+    "agents",
+    "planning",
+    "voice",
+    "auto-mode",
+    "unrestricted-tools",
+    "paste-images",
+    "privacy",
+    "branding",
+    "claude-hud",
+    "claude-mem",
+    "superpowers"
+  ]
+}
+`;
+const withoutSecondConfig = `{
+  "schemaVersion": 1,
+  "mode": "custom",
+  "enabled": [
+    "chrome",
+    "agents",
+    "planning",
+    "voice",
+    "auto-mode",
+    "unrestricted-tools",
+    "paste-images",
+    "privacy",
+    "branding",
+    "claude-hud",
+    "claude-mem",
+    "superpowers"
+  ]
+}
+`;
 function assertTemporaryPath(path, label, {
   pathApi = { isAbsolute, relative, resolve, sep },
   temporaryRoots = [resolve(tmpdir()), realpathSync(tmpdir())],
@@ -163,6 +201,8 @@ function fixturePath(fixtureRoot) {
     dirname: '/usr/bin/dirname',
     mkdir: '/bin/mkdir',
     rm: '/bin/rm',
+    dd: '/bin/dd',
+    stty: '/bin/stty',
   })) {
     const destination = join(bin, name);
     if (!existsSync(destination) && existsSync(target)) symlinkSync(target, destination);
@@ -445,6 +485,8 @@ function countOccurrences(output, literal) {
 function runUnixTtyCase(label, lines, expected, {
   args = ['--choose-enhancements'],
   env = {},
+  keys = null,
+  expectedStatus = 0,
   expectedMenuCount = 1,
   expectedPromptCount = expectedMenuCount,
   expectedModeMenuCount = 0,
@@ -462,6 +504,7 @@ function runUnixTtyCase(label, lines, expected, {
   writeFileSync(runner, runnerSource, 'utf8');
   chmodSync(runner, 0o700);
   try {
+    const feed = keys === null ? `${lines.join('\n')}\n` : keys;
     const shellCommand = process.platform === 'darwin'
       ? '{ /bin/sleep 0.1; printf %s "$1"; /bin/sleep 0.1; } | "$2" -q -e /dev/null "$3"'
       : '{ /bin/sleep 0.1; printf %s "$1"; /bin/sleep 0.1; } | "$2" -q -e -c "$3" /dev/null';
@@ -469,7 +512,7 @@ function runUnixTtyCase(label, lines, expected, {
       '-c',
       shellCommand,
       'clawgod-tty-test',
-      `${lines.join('\n')}\n`,
+      feed,
       scriptCommand,
       runner,
     ], {
@@ -478,9 +521,9 @@ function runUnixTtyCase(label, lines, expected, {
       timeout: 10_000,
     });
     const output = `${run.stdout}${run.stderr}`;
-    assert.equal(run.status, 0, `${label}: ${output}`);
+    assert.equal(run.status, expectedStatus, `${label}: ${output}`);
     assert.equal(countOccurrences(output, '  Enhancements'), expectedMenuCount, `${label}: exact menu count`);
-    assert.equal(countOccurrences(output, '  Choice: '), expectedPromptCount, `${label}: exact prompt count`);
+    assert.equal(countOccurrences(output, '  ↑/↓ 移动'), expectedPromptCount, `${label}: exact prompt count`);
     assert.equal(countOccurrences(output, 'ClawGod Plus 增强选择'), expectedModeMenuCount, `${label}: exact quick-menu count`);
     for (const warning of expectedWarnings) {
       assert.equal(countOccurrences(output, warning), 1, `${label}: exact warning count for ${warning}`);
@@ -515,28 +558,29 @@ function runUnixTtyCase(label, lines, expected, {
   }
 }
 
-runUnixTtyCase('enter', [''], allConfig);
-runUnixTtyCase('numbers', ['1,2', ''], withoutFirstTwoConfig, { expectedMenuCount: 2 });
-runUnixTtyCase('leading-zero-numbers', ['01,02', ''], withoutFirstTwoConfig, { expectedMenuCount: 2 });
-runUnixTtyCase('none', ['n', ''], noneConfig, { expectedMenuCount: 2 });
-runUnixTtyCase('none-all', ['n,a', ''], allConfig, { expectedMenuCount: 2 });
-runUnixTtyCase('invalid-valid', ['99', 'n', ''], noneConfig, {
-  expectedMenuCount: 3,
-  expectedWarnings: ['Invalid enhancement choice: 99'],
+runUnixTtyCase('enter', [], allConfig, { keys: '\r', expectedMenuCount: 1 });
+runUnixTtyCase('space-toggle-first', [], withoutFirstConfig, { keys: ' \r', expectedMenuCount: 2 });
+runUnixTtyCase('arrow-toggle', [], withoutSecondConfig, { keys: '\x1b[B \r', expectedMenuCount: 3 });
+runUnixTtyCase('uncheck-all', [], noneConfig, { keys: ' ' + '\x1b[B '.repeat(12) + '\r', expectedMenuCount: 26 });
+runUnixTtyCase('cursor-wrap', [], withoutFirstConfig, {
+  keys: '\x1b[B'.repeat(13) + ' \r',
+  expectedMenuCount: 15,
 });
-runUnixTtyCase('invalid-overflow', ['18446744073709551617', ''], allConfig, {
-  expectedMenuCount: 2,
-  expectedWarnings: ['Invalid enhancement choice: 18446744073709551617'],
-});
-for (const [label, invalid] of [
-  ['empty-token', '1,'],
-  ['signed-token', '+1'],
-  ['whitespace-token', ' 1'],
-]) {
-  runUnixTtyCase(`invalid-${label}`, [invalid, ''], allConfig, {
-    expectedMenuCount: 2,
-    expectedWarnings: [`Invalid enhancement choice: ${invalid}`],
+runUnixTtyCase('eof-confirm', [], allConfig, { keys: '', expectedMenuCount: 1 });
+
+{
+  const output = runUnixTtyCase('arrow-cursor-frame', [], withoutSecondConfig, {
+    keys: '\x1b[B \r',
+    expectedMenuCount: 3,
   });
+  assert.ok(output.includes('>  2) [ ] computer-use'), 'arrow-down frame must mark row 2 with >');
+}
+{
+  const output = runUnixTtyCase('wrap-cursor-frame', [], withoutFirstConfig, {
+    keys: '\x1b[B'.repeat(13) + ' \r',
+    expectedMenuCount: 15,
+  });
+  assert.ok(output.includes('>  1) [ ] chrome'), 'wrapped cursor frame must mark row 1 with >');
 }
 runUnixTtyCase('ci', ['ci-input-must-remain-unread'], allConfig, {
   env: { CI: '1' },
@@ -553,10 +597,11 @@ runUnixTtyCase('auto-invalid', ['x', '2'], noneConfig, {
   expectedModeMenuCount: 2,
   expectedWarnings: ['Invalid enhancement choice: x'],
 });
-runUnixTtyCase('auto-custom', ['3', '1,2', ''], withoutFirstTwoConfig, {
+runUnixTtyCase('auto-custom', [], withoutFirstTwoConfig, {
   args: [],
+  keys: '3\n \x1b[B \r',
+  expectedMenuCount: 4,
   expectedModeMenuCount: 1,
-  expectedMenuCount: 2,
 });
 runUnixTtyCase('auto-noninteractive-env', ['input-must-remain-unread'], allConfig, {
   args: [],
