@@ -99,17 +99,54 @@ function Test-EnhancementAutoPromptAvailable {
     return Test-EnhancementInteractionAvailable
 }
 
+function Read-EnhancementKey {
+    return [Console]::ReadKey($true).Key
+}
+
+function Write-EnhancementChoiceMenu {
+    param([int]$Cursor, [bool[]]$Selected)
+    if ($script:ClawGodMenuRendered -gt 0) {
+        [Console]::SetCursorPosition(0, $script:ClawGodMenuTop)
+    } else {
+        $script:ClawGodMenuTop = [Console]::CursorTop
+    }
+    Write-Host ''
+    Write-Host '  Enhancements'
+    for ($i = 0; $i -lt $EnhancementIds.Count; $i++) {
+        $marker = if ($Selected[$i]) { 'x' } else { ' ' }
+        $prefix = if ($i -eq $Cursor) { '> ' } else { '  ' }
+        Write-Host ('{0}{1,2}) [{2}] {3,-20} {4}' -f $prefix, ($i + 1), $marker, $EnhancementIds[$i], $EnhancementLabels[$i])
+    }
+    Write-Host '  ↑/↓ 移动 · 空格 勾选 · 回车 确认 · Esc 返回'
+    $script:ClawGodMenuRendered = $EnhancementIds.Count + 3
+}
+
+function Write-EnhancementModeMenu {
+    if ($script:ClawGodMenuRendered -gt 0) {
+        [Console]::SetCursorPosition(0, $script:ClawGodMenuTop)
+    } else {
+        $script:ClawGodMenuTop = [Console]::CursorTop
+    }
+    Write-Host ''
+    Write-Host '  ClawGod Plus 增强选择'
+    Write-Host ('   1) 全部 {0} 项增强（默认，回车即选）' -f $EnhancementIds.Count)
+    Write-Host '   2) 仅核心（不装任何增强）'
+    Write-Host '   3) 自定义菜单（逐项勾选）'
+    Write-Host '  回车 全部增强 · Esc 退出'
+    $script:ClawGodMenuRendered = 5
+}
+
 function Read-EnhancementChoice {
     $selected = @($EnhancementIds | ForEach-Object { $true })
+    $cursor = 0
+    $script:ClawGodMenuRendered = 0
     while ($true) {
-        Write-Host ''
-        Write-Host '  Enhancements'
-        for ($i = 0; $i -lt $EnhancementIds.Count; $i++) {
-            $marker = if ($selected[$i]) { 'x' } else { ' ' }
-            Write-Host ('  {0,2}) [{1}] {2,-20} {3}' -f ($i + 1), $marker, $EnhancementIds[$i], $EnhancementLabels[$i])
-        }
-        $answer = Read-Host '  Choice'
-        if ([string]::IsNullOrEmpty($answer)) {
+        Write-EnhancementChoiceMenu -Cursor $cursor -Selected $selected
+        $key = Read-EnhancementKey
+        if ($key -eq [ConsoleKey]::ArrowUp) { $cursor = ($cursor + $EnhancementIds.Count - 1) % $EnhancementIds.Count }
+        elseif ($key -eq [ConsoleKey]::ArrowDown) { $cursor = ($cursor + 1) % $EnhancementIds.Count }
+        elseif ($key -eq [ConsoleKey]::Spacebar) { $selected[$cursor] = -not $selected[$cursor] }
+        elseif ($key -eq [ConsoleKey]::Enter) {
             $enabled = @()
             for ($i = 0; $i -lt $EnhancementIds.Count; $i++) {
                 if ($selected[$i]) { $enabled += $EnhancementIds[$i] }
@@ -117,45 +154,25 @@ function Read-EnhancementChoice {
             if ($enabled.Count -eq 0) { return 'none' }
             return $enabled -join ','
         }
-
-        $candidate = @($selected)
-        $invalid = $false
-        foreach ($token in $answer.Split(',')) {
-            if ($token -eq 'a') {
-                for ($i = 0; $i -lt $candidate.Count; $i++) { $candidate[$i] = $true }
-            } elseif ($token -eq 'n') {
-                for ($i = 0; $i -lt $candidate.Count; $i++) { $candidate[$i] = $false }
-            } else {
-                $number = 0
-                if ([int]::TryParse($token, [ref]$number)) {
-                    $index = $number - 1
-                    if ($index -lt 0 -or $index -ge $candidate.Count) { $invalid = $true }
-                    else { $candidate[$index] = -not $candidate[$index] }
-                } else {
-                    $invalid = $true
-                }
-            }
-        }
-        if ($invalid) {
-            Write-Warn "Invalid enhancement choice: $answer"
-            continue
-        }
-        $selected = $candidate
+        elseif ($key -eq [ConsoleKey]::Escape) { return $null }
     }
 }
 
 function Read-EnhancementMode {
+    $script:ClawGodMenuRendered = 0
     while ($true) {
-        Write-Host ''
-        Write-Host '  ClawGod Plus 增强选择'
-        Write-Host ('   1) 全部 {0} 项增强（默认，回车即选）' -f $EnhancementIds.Count)
-        Write-Host '   2) 仅核心（不装任何增强）'
-        Write-Host '   3) 自定义菜单（逐项勾选）'
-        $answer = Read-Host '  选择 [1]'
-        if ([string]::IsNullOrEmpty($answer) -or $answer -eq '1') { return ($EnhancementIds -join ',') }
-        if ($answer -eq '2') { return 'none' }
-        if ($answer -eq '3') { return (Read-EnhancementChoice) }
-        Write-Warn "Invalid enhancement choice: $answer"
+        Write-EnhancementModeMenu
+        $key = Read-EnhancementKey
+        if ($key -eq [ConsoleKey]::Enter -or $key -eq [ConsoleKey]::D1) { return ($EnhancementIds -join ',') }
+        if ($key -eq [ConsoleKey]::D2) { return 'none' }
+        if ($key -eq [ConsoleKey]::D3) {
+            $choice = Read-EnhancementChoice
+            if ($null -ne $choice) { return $choice }
+            $script:ClawGodMenuRendered = 0
+            continue
+        }
+        if ($key -eq [ConsoleKey]::Escape) { return '__CLAWGOD_CANCELLED__' }
+        Write-Warn ("Invalid enhancement choice: $key")
     }
 }
 
@@ -192,13 +209,23 @@ function Initialize-EnhancementSelection {
     }
     if ($ChooseEnhancements) {
         if (Test-EnhancementInteractionAvailable) {
-            Write-EnhancementSelection -Explicit (Read-EnhancementChoice)
+            $choice = Read-EnhancementChoice
+            if ($null -eq $choice) {
+                Write-Host '  已取消安装'
+                exit 130
+            }
+            Write-EnhancementSelection -Explicit $choice
             return
         }
         Write-Warn 'Interactive enhancement selection unavailable; using saved selection or all enhancements.'
     }
     elseif (Test-EnhancementAutoPromptAvailable) {
-        Write-EnhancementSelection -Explicit (Read-EnhancementMode)
+        $choice = Read-EnhancementMode
+        if ($choice -eq '__CLAWGOD_CANCELLED__') {
+            Write-Host '  已取消安装'
+            exit 130
+        }
+        Write-EnhancementSelection -Explicit $choice
         return
     }
     Write-EnhancementSelection -Explicit '__CLAWGOD_SAVED__'
