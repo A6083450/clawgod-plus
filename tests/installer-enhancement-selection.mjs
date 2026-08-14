@@ -687,7 +687,7 @@ function findPwsh() {
   return null;
 }
 
-function createPowerShellFixture(prefix, promptAnswers = null, keySequence = null) {
+function createPowerShellFixture(prefix, keySequence = null) {
   const fixture = createUnixFixture(prefix);
   const script = join(fixture.fixtureRoot, 'selection fixture.ps1');
   writeFileSync(script, `${windowsLifecycle}
@@ -730,7 +730,7 @@ if ($env:CLAWGOD_TEST_KEYS) {
 }
 Initialize-EnhancementSelection
 `, 'utf8');
-  return { ...fixture, script, promptAnswers, keySequence };
+  return { ...fixture, script, keySequence };
 }
 
 function powerShellEnvironment(fixture, extra = {}) {
@@ -757,8 +757,8 @@ function powerShellEnvironment(fixture, extra = {}) {
   };
 }
 
-function runPowerShell(pwsh, label, args, expected, { promptAnswers = null, keySequence = null, prepare, env = {} } = {}) {
-  const fixture = createPowerShellFixture(`clawgod-selection-pwsh-${label}-`, promptAnswers, keySequence);
+function runPowerShell(pwsh, label, args, expected, { keySequence = null, prepare, env = {} } = {}) {
+  const fixture = createPowerShellFixture(`clawgod-selection-pwsh-${label}-`, keySequence);
   try {
     if (prepare) prepare(fixture);
     const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fixture.script, ...args], {
@@ -831,7 +831,7 @@ if (pwsh) {
   }
 
   {
-    const fixture = createPowerShellFixture('clawgod-selection-pwsh-cancel-', null, ['Escape']);
+    const fixture = createPowerShellFixture('clawgod-selection-pwsh-cancel-', ['Escape']);
     try {
       const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fixture.script], {
         encoding: 'utf8',
