@@ -236,7 +236,18 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   const real229ZeRe = /if\(\$c\(\)&&P3\(\)&&!xLe\(\)&&T0\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,2000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,2000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
   const real229ZeMatches = [...source.matchAll(real229ZeRe)];
 
-  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length;
+  // Real 2.1.232 request builder: same structure as the 2.1.229 Ze builder
+  // with renamed gates (`uu()&&j3()&&!aFe()&&TC(y)`), a sticky-betases
+  // `le` eligibility, and the `iLs`/`ZUu` allowlist (`iLs` passes through
+  // for first-party/foundry, otherwise filters to `ZUu`, which excludes the
+  // Fast capability). The forced passthrough operates on the final betas:
+  // `os==="fast"` is the only switch — while Fast is active the Fast beta
+  // capability is forced in and every capability is deduplicated; while the
+  // speed field is absent every Fast beta capability is removed.
+  const real232Re = /if\(uu\(\)&&j3\(\)&&!aFe\(\)&&TC\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,3000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,3000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
+  const real232Matches = [...source.matchAll(real232Re)];
+
+  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length + real232Matches.length;
   if (totalMatches !== 1) {
     if (totalMatches === 0 && !hasFastBeta) return { status: 'skipped', detail: 'not present in this version' };
     return { status: 'failed', detail: totalMatches === 0 ? 'Fast request body/header closure not found; upstream shape changed' : `Fast request body/header closure matched ${totalMatches} times; refusing ambiguous patch` };
@@ -270,6 +281,7 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
     return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
   }
 
+  if (real229ZeMatches.length === 1) {
   // Forced passthrough for the real 2.1.229 Ze request builder: the matched
   // span runs from the Fast speed gate through the `ae`-gated push, the
   // simulated-proxy `$u`/`ma` derivation, the `betas` body field and the
@@ -288,6 +300,30 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
   if (dryRun) return { status: 'applied', count: 1, code: source };
   return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
+
+  if (real232Matches.length === 1) {
+    // Forced passthrough for the real 2.1.232 request builder. The matched
+    // span runs from the Fast speed gate through the sticky-`le` push, the
+    // simulated-proxy `rh`/`Hs` derivation, the `betas` body field and the
+    // `speed` body field of the same request object. Only the `betas` field
+    // is rewritten (single minimal replacement); everything else is
+    // preserved byte-for-byte. The SDK later joins the betas array into the
+    // `anthropic-beta` header. The `iLs` allowlist drops the Fast capability
+    // for third-party providers, so the forced passthrough operates on the
+    // final betas exactly like the 2.1.229 Ze branch.
+    const [, , speed, , caps, fastCapability, , , betasSource, capsElse, , , betaSerializer, betaAllowlist] = real232Matches[0];
+    if (caps !== capsElse) return { status: 'failed', detail: 'Fast request betas closure matched an inconsistent capability list' };
+    if (!source.includes(`${fastCapability}=LA("speed","${FAST_BETA}")`)) return { status: 'failed', detail: 'Fast beta capability registration shape changed' };
+    if (verify) return { status: 'verify', count: 1 };
+    const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
+    const match = real232Matches[0];
+    const betasIndex = match[0].lastIndexOf(betasField);
+    if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex) return { status: 'failed', detail: 'Fast request betas field is not unique inside the matched 2.1.232 closure' };
+    const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
+    if (dryRun) return { status: 'applied', count: 1, code: source };
+    return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
 }
 
 async function applyFastModeOrgCheckPatch(source, { dryRun, verify }) {

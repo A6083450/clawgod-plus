@@ -163,6 +163,54 @@ function assertReal229ZeProtocol(name, output) {
 
 const real229ZeResults = [];
 
+// Real 2.1.232 request builder: renamed gates (`uu()&&j3()&&!aFe()&&TC(y)`),
+// sticky-betases `le` eligibility, simulated-proxy `rh`/`Hs` derivation and
+// the `iLs`/`ZUu` allowlist (`iLs` passes through for first-party providers,
+// otherwise filters to `ZUu`, which excludes Fbr). The fixture replicates the
+// Je closure token shape together with the real allowlist behavior, so the
+// forced passthrough must operate on the final betas: `os==="fast"` is the
+// only switch that adds the Fast beta capability, and a missing speed field
+// must remove every Fast beta capability even when `le` pushed it or a
+// first-party allowlist would have kept it.
+const real232FastClosureFixture = `${fixture}
+function LA(name,header){return{name,header}}
+let C9t=LA("claude_code","claude-code-20250219"),dEt=LA("oauth_auth","oauth"),e0r=LA("interleaved_thinking","interleaved-thinking-2025-05-14"),o0r=LA("speed","fast-mode-2026-02-01");
+var ZUu;ZUu=new Set([C9t,e0r]);
+function hU(e){return e.map((t)=>t.header)}
+function iLs(e){if(WPo())return e;return e.filter((t)=>ZUu.has(t))}
+var __clawgodFirstParty=!1;
+function WPo(){return __clawgodFirstParty}
+function Hn(v){return!1}
+function uu(){return!0}function j3(){return!0}function aFe(){return!1}function TC(y){return!0}
+function nJf(o){return{}}
+function zCi(m){return!0}
+let y="claude-opus-5";
+function buildRequest(no,le,existing){let us=[...existing];let cc=nJf({hasThinking:!0}),Ls=zCi(y),os;if(uu()&&j3()&&!aFe()&&TC(y)&&!!no.fastMode)os="fast";if(le&&!us.includes(o0r))us.push(o0r);let rh=Hn(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Hs=rh?us.filter((nn)=>nn===dEt):us;let re=!0;let Wa={model:y,...re&&(!rh||Hs.length>0)&&{betas:hU(iLs(Hs))},...os!==void 0&&{speed:os}};return Wa}
+function snapshot(fastMode,le,existing,firstParty){__clawgodFirstParty=firstParty;let Wa=buildRequest({fastMode},le,existing);return{betas:Wa.betas??null,speed:Wa.speed??null,header:Wa.betas?.join(",")??""}}
+console.log(JSON.stringify({fastThirdParty:snapshot(!0,!0,[C9t,e0r],!1),fastThirdPartyDedup:snapshot(!0,!0,[C9t,C9t,e0r],!1),slowThirdPartyPrior:snapshot(!1,!1,[C9t],!1),slowFirstPartySticky:snapshot(!1,!0,[C9t,o0r],!0),fastFirstParty:snapshot(!0,!0,[],!0)}));
+`;
+
+function assertReal232Protocol(name, output) {
+  const checks = [
+    () => assert.deepEqual(output.fastThirdParty.betas, ['claude-code-20250219', 'interleaved-thinking-2025-05-14', 'fast-mode-2026-02-01'], `${name}: fast third-party betas must force the Fast capability through the iLs/ZUu allowlist`),
+    () => assert.equal(output.fastThirdParty.header, 'claude-code-20250219,interleaved-thinking-2025-05-14,fast-mode-2026-02-01', `${name}: fast third-party SDK header must carry the forced Fast capability`),
+    () => assert.equal(output.fastThirdParty.speed, 'fast', `${name}: fast third-party body must keep speed=fast`),
+    () => assert.deepEqual(output.fastThirdPartyDedup.betas, ['claude-code-20250219', 'interleaved-thinking-2025-05-14', 'fast-mode-2026-02-01'], `${name}: fast betas must deduplicate every capability`),
+    () => assert.deepEqual(output.slowThirdPartyPrior.betas, ['claude-code-20250219'], `${name}: slow third-party betas must keep allowlisted capabilities`),
+    () => assert.equal(output.slowThirdPartyPrior.speed, null, `${name}: slow third-party body must keep no speed field`),
+    () => assert.deepEqual(output.slowFirstPartySticky.betas, ['claude-code-20250219'], `${name}: slow first-party betas must drop the Fast capability the first-party allowlist would keep`),
+    () => assert.equal(output.slowFirstPartySticky.header, 'claude-code-20250219', `${name}: slow first-party SDK header must drop the sticky Fast capability`),
+    () => assert.equal(output.slowFirstPartySticky.speed, null, `${name}: slow first-party body must keep no speed field`),
+    () => assert.deepEqual(output.fastFirstParty.betas, ['fast-mode-2026-02-01'], `${name}: fast first-party betas must carry exactly one Fast capability`),
+    () => assert.equal(output.fastFirstParty.speed, 'fast', `${name}: fast first-party body must keep speed=fast`),
+  ];
+  const failures = [];
+  for (const check of checks) try { check(); } catch (error) { failures.push(error.message); }
+  if (failures.length) throw new Error(failures.join('\n'));
+}
+
+const real232Results = [];
+
 // Fast mode org-check bypass: `g0o()` (the CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK helper)
 // is the local gate that blocks `/fast` when the "penguin mode" org-status endpoint is
 // unreachable through third-party routing. The patch forces it to `true`.
@@ -376,6 +424,53 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
       assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
     }
+    writeFileSync(join(dir, 'cli.original.cjs'), real232FastClosureFixture, 'utf8');
+    const real232 = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    const real232Output = real232.stdout + real232.stderr;
+    assert.equal(real232.status, 0, `${name}: real 2.1.232 closure must patch: ${real232Output}`);
+    assert.match(real232Output, /Fast Messages protocol \(1 replacement\)/, `${name}: real 2.1.232 closure must report its replacement`);
+    const real232After = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    assert.notEqual(real232After, real232FastClosureFixture, `${name}: real 2.1.232 closure patch must write`);
+    assert.match(real232After, /__clawgod_fast_messages_protocol__/, `${name}: real 2.1.232 closure patch must add the idempotency marker`);
+    assert.match(real232After, /betas:\(\(\)=>\{/, `${name}: real 2.1.232 closure must rewrite the betas body field`);
+    assert.doesNotMatch(real232After, /\{betas:hU\(iLs\(Hs\)\)\}/, `${name}: real 2.1.232 closure must replace the raw betas field`);
+    const executeReal232 = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8' });
+    try {
+      assert.equal(executeReal232.status, 0, `${name}: real 2.1.232 fixture must execute: ${executeReal232.stderr}`);
+      assertReal232Protocol(name, JSON.parse(executeReal232.stdout));
+    } catch (error) {
+      real232Results.push({ name, status: real232.status, protocolError: error instanceof Error ? error.message : String(error), output: real232Output });
+      throw error;
+    }
+    real232Results.push({ name, status: real232.status, protocolError: null, output: real232Output });
+
+    const real232Rerun = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(real232Rerun.status, 0, `${name}: patched real 2.1.232 closure must re-run cleanly: ${real232Rerun.stdout}${real232Rerun.stderr}`);
+    assert.match(real232Rerun.stdout + real232Rerun.stderr, /Fast Messages protocol \(already applied\)/, `${name}: 2.1.232 re-run must recognize the idempotency marker`);
+
+    writeFileSync(join(dir, 'cli.original.cjs'), real232FastClosureFixture, 'utf8');
+    const verifyReal232 = spawnSync(process.execPath, ['patch.mjs', '--verify'], { cwd: dir, encoding: 'utf8' });
+    const verifyReal232Output = verifyReal232.stdout + verifyReal232.stderr;
+    assert.equal(verifyReal232.status, 0, `${name}: ${verifyReal232Output}`);
+    assert.match(verifyReal232Output, /Fast Messages protocol — 1 match\(es\), not yet applied/, `${name}: verify must report the unapplied real 2.1.232 match`);
+    assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), real232FastClosureFixture, `${name}: verify must not write the real 2.1.232 closure`);
+
+    const invalid232Fixtures = [
+      ['mismatched real 2.1.232 betas source', real232FastClosureFixture.replace('{betas:hU(iLs(Hs))}', '{betas:hU(iLs(Hx))}')],
+      ['ambiguous real 2.1.232 closure', real232FastClosureFixture.replace('function snapshot(', 'function duplicate(no,le,existing){let us=[...existing];let cc=nJf({hasThinking:!0}),Ls=zCi(y),os;if(uu()&&j3()&&!aFe()&&TC(y)&&!!no.fastMode)os="fast";if(le&&!us.includes(o0r))us.push(o0r);let rh=Hn(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Hs=rh?us.filter((nn)=>nn===dEt):us;let re=!0;let Wa={model:y,...re&&(!rh||Hs.length>0)&&{betas:hU(iLs(Hs))},...os!==void 0&&{speed:os}};return Wa}\nfunction snapshot(')],
+      ['inconsistent real 2.1.232 capability list', real232FastClosureFixture.replace('if(le&&!us.includes(o0r))us.push(o0r)', 'if(le&&!uj.includes(o0r))uj.push(o0r)')],
+      ['mismatched real 2.1.232 speed variable', real232FastClosureFixture.replace('...os!==void 0&&{speed:os}', '...os!==void 0&&{speed:oq}')],
+      ['mismatched real 2.1.232 Fast registration', real232FastClosureFixture.replace('o0r=LA("speed","fast-mode-2026-02-01")', 'o0r=LA("speed","fast-mode-2027-01-01")')],
+    ];
+    for (const [label, invalidFixture] of invalid232Fixtures) {
+      writeFileSync(join(dir, 'cli.original.cjs'), invalidFixture, 'utf8');
+      const invalid = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+      const invalidOutput = invalid.stdout + invalid.stderr;
+      assert.notEqual(invalid.status, 0, `${name}: ${label} must fail`);
+      assert.match(invalidOutput, /Fast Messages protocol/, `${name}: ${label} must report Fast Messages protocol`);
+      assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
+      assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
+    }
     // Fast mode org-check bypass: forcing the skip helper to `true` unlocks the
     // `/fast` toggle when the "penguin mode" org-status check is unreachable.
     writeFileSync(join(dir, 'cli.original.cjs'), fastModeOrgCheckFixture, 'utf8');
@@ -433,6 +528,15 @@ assert.equal(
   real229ZeResults.filter((result) => result.protocolError !== null).length,
   0,
   `real 2.1.229 Ze forced passthrough protocol missing:\n${real229ZeResults.map((result) =>
+    `${result.name}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
+  ).join('\n')}`,
+);
+
+assert.equal(real232Results.length, 2, 'real 2.1.232 closure must execute both patcher variants');
+assert.equal(
+  real232Results.filter((result) => result.protocolError !== null).length,
+  0,
+  `real 2.1.232 forced passthrough protocol missing:\n${real232Results.map((result) =>
     `${result.name}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
   ).join('\n')}`,
 );

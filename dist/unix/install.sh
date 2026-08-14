@@ -8203,54 +8203,76 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   const realMatches = [...source.matchAll(realRe)];
   const real229ZeRe = /if\(\$c\(\)&&P3\(\)&&!xLe\(\)&&T0\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,2000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,2000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
   const real229ZeMatches = [...source.matchAll(real229ZeRe)];
-  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length;
+  const real232Re = /if\(uu\(\)&&j3\(\)&&!aFe\(\)&&TC\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,3000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,3000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
+  const real232Matches = [...source.matchAll(real232Re)];
+  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length + real232Matches.length;
   if (totalMatches !== 1) {
     if (totalMatches === 0 && !hasFastBeta)
       return { status: "skipped", detail: "not present in this version" };
     return { status: "failed", detail: totalMatches === 0 ? "Fast request body/header closure not found; upstream shape changed" : `Fast request body/header closure matched ${totalMatches} times; refusing ambiguous patch` };
   }
   if (legacyMatches.length === 1) {
-    const [, capabilities, existingBeta, model, modelName, isFast, fastCondition, fastArg, pushCondition, pushCapabilities, fastCapability2, hasFastCapability, includesCapabilities, includesCapability, speed2, speedCondition, speedArg, speedName, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, capability, capabilityObject, returnBody] = legacyMatches[0];
-    if (isFast !== pushCondition || capabilities !== pushCapabilities || capabilities !== includesCapabilities || fastCapability2 !== includesCapability || fastCondition !== speedCondition || fastArg !== speedArg || speed2 !== speedName || speed2 !== bodySpeed || speed2 !== bodySpeedValue || capabilities !== headerCapabilities || capability !== capabilityObject || body !== returnBody)
+    const [, capabilities, existingBeta, model, modelName, isFast, fastCondition, fastArg, pushCondition, pushCapabilities, fastCapability, hasFastCapability, includesCapabilities, includesCapability, speed, speedCondition, speedArg, speedName, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, capability, capabilityObject, returnBody] = legacyMatches[0];
+    if (isFast !== pushCondition || capabilities !== pushCapabilities || capabilities !== includesCapabilities || fastCapability !== includesCapability || fastCondition !== speedCondition || fastArg !== speedArg || speed !== speedName || speed !== bodySpeed || speed !== bodySpeedValue || capabilities !== headerCapabilities || capability !== capabilityObject || body !== returnBody)
       return { status: "failed", detail: "Fast request body/header closure matched an inconsistent Fast-state shape" };
     if (verify)
       return { status: "verify", count: 1 };
-    const replacement2 = `let ${capabilities}=[...${existingBeta}],${model}="${modelName}",${isFast}=!!${fastArg};if(${isFast}&&!${capabilities}.includes(${fastCapability2}))${capabilities}.push(${fastCapability2});let ${hasFastCapability}=${capabilities}.includes(${fastCapability2}),${speed2};if(${isFast})${speed2}="fast";let ${body}={${bodyFields},...${speed2}!==void 0&&{speed:${speed2}}},headers={"anthropic-beta":${isFast}?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${capability})=>${capability}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('${FAST_BETA}'))__clawgodFastUniqueCapabilities.push('${FAST_BETA}');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${capability})=>${capability}.header).toString()};${MARKER}return{body:${body},headers}`;
+    const replacement = `let ${capabilities}=[...${existingBeta}],${model}="${modelName}",${isFast}=!!${fastArg};if(${isFast}&&!${capabilities}.includes(${fastCapability}))${capabilities}.push(${fastCapability});let ${hasFastCapability}=${capabilities}.includes(${fastCapability}),${speed};if(${isFast})${speed}="fast";let ${body}={${bodyFields},...${speed}!==void 0&&{speed:${speed}}},headers={"anthropic-beta":${isFast}?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${capability})=>${capability}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('${FAST_BETA}'))__clawgodFastUniqueCapabilities.push('${FAST_BETA}');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${capability})=>${capability}.header).toString()};${MARKER}return{body:${body},headers}`;
     if (dryRun)
       return { status: "applied", count: 1, code: source };
-    const match2 = legacyMatches[0];
-    return { status: "applied", count: 1, code: source.slice(0, match2.index) + replacement2 + source.slice(match2.index + match2[0].length) };
+    const match = legacyMatches[0];
+    return { status: "applied", count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
   }
   if (realMatches.length === 1) {
-    const [, capabilities, prior, aeSeparate, eligibilitySeparate, aeCombined, eligibilityCombined, pushCondition, pushCapabilities, fastCapability2, speed2, speedCondition, speedAssignment, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, mapParameter, mapHeader, returnBody, returnHeaders] = realMatches[0];
+    const [, capabilities, prior, aeSeparate, eligibilitySeparate, aeCombined, eligibilityCombined, pushCondition, pushCapabilities, fastCapability, speed, speedCondition, speedAssignment, body, bodyFields, bodySpeed, bodySpeedValue, headerCapabilities, mapParameter, mapHeader, returnBody, returnHeaders] = realMatches[0];
     const aeName = aeSeparate ?? aeCombined;
-    if (aeName && aeName !== pushCondition || capabilities !== pushCapabilities || capabilities !== headerCapabilities || speed2 !== speedAssignment || speed2 !== bodySpeed || bodySpeedValue && bodySpeedValue !== speed2 || mapParameter !== mapHeader || returnBody && returnBody !== body || returnHeaders && returnHeaders !== "headers")
+    if (aeName && aeName !== pushCondition || capabilities !== pushCapabilities || capabilities !== headerCapabilities || speed !== speedAssignment || speed !== bodySpeed || bodySpeedValue && bodySpeedValue !== speed || mapParameter !== mapHeader || returnBody && returnBody !== body || returnHeaders && returnHeaders !== "headers")
       return { status: "failed", detail: "Fast request body/header closure matched an inconsistent Fast-state shape" };
     if (verify)
       return { status: "verify", count: 1 };
     const aeDeclaration = aeSeparate ? `;let ${aeSeparate}=${eligibilitySeparate}` : aeCombined ? `,${aeCombined}=${eligibilityCombined}` : "";
-    const replacement2 = `let ${capabilities}=[...${prior}]${aeDeclaration};let ${speed2};if(${speedCondition})${speed2}="fast";if(${speed2}==="fast"&&!${capabilities}.includes(${fastCapability2}))${capabilities}.push(${fastCapability2});let ${body}={${bodyFields},...${speed2}!==void 0&&{speed:${speed2}}},headers={"anthropic-beta":${speed2}==="fast"?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${mapParameter})=>${mapParameter}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('${FAST_BETA}'))__clawgodFastUniqueCapabilities.push('${FAST_BETA}');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${mapParameter})=>${mapParameter}.header).filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}").toString()};${MARKER}return{body:${body},headers}`;
+    const replacement = `let ${capabilities}=[...${prior}]${aeDeclaration};let ${speed};if(${speedCondition})${speed}="fast";if(${speed}==="fast"&&!${capabilities}.includes(${fastCapability}))${capabilities}.push(${fastCapability});let ${body}={${bodyFields},...${speed}!==void 0&&{speed:${speed}}},headers={"anthropic-beta":${speed}==="fast"?(()=>{const __clawgodFastCapabilities=String(${capabilities}.map((${mapParameter})=>${mapParameter}.header).toString()||'').split(',').map(__clawgodFastCapability=>__clawgodFastCapability.trim()).filter(Boolean);const __clawgodFastUniqueCapabilities=[];for(const __clawgodFastCapability of __clawgodFastCapabilities)if(!__clawgodFastUniqueCapabilities.includes(__clawgodFastCapability))__clawgodFastUniqueCapabilities.push(__clawgodFastCapability);if(!__clawgodFastUniqueCapabilities.includes('${FAST_BETA}'))__clawgodFastUniqueCapabilities.push('${FAST_BETA}');return __clawgodFastUniqueCapabilities.join(',')})():${capabilities}.map((${mapParameter})=>${mapParameter}.header).filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}").toString()};${MARKER}return{body:${body},headers}`;
     if (dryRun)
       return { status: "applied", count: 1, code: source };
-    const match2 = realMatches[0];
-    return { status: "applied", count: 1, code: source.slice(0, match2.index) + replacement2 + source.slice(match2.index + match2[0].length) };
+    const match = realMatches[0];
+    return { status: "applied", count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
   }
-  const [, fastModeHolder, speed, ae, caps, fastCapability, simulatedProxy, envReader, betasSource, capsElse, filterParam, betaSpread, betaSerializer, betaAllowlist, speedTail] = real229ZeMatches[0];
-  if (caps !== capsElse)
-    return { status: "failed", detail: "Fast request betas closure matched an inconsistent capability list" };
-  if (!source.includes(`${fastCapability}=RA("speed","${FAST_BETA}")`))
-    return { status: "failed", detail: "Fast beta capability registration shape changed" };
-  if (verify)
-    return { status: "verify", count: 1 };
-  const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
-  const match = real229ZeMatches[0];
-  const betasIndex = match[0].lastIndexOf(betasField);
-  if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex)
-    return { status: "failed", detail: "Fast request betas field is not unique inside the matched Ze closure" };
-  const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
-  if (dryRun)
-    return { status: "applied", count: 1, code: source };
-  return { status: "applied", count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  if (real229ZeMatches.length === 1) {
+    const [, fastModeHolder, speed, ae, caps, fastCapability, simulatedProxy, envReader, betasSource, capsElse, filterParam, betaSpread, betaSerializer, betaAllowlist, speedTail] = real229ZeMatches[0];
+    if (caps !== capsElse)
+      return { status: "failed", detail: "Fast request betas closure matched an inconsistent capability list" };
+    if (!source.includes(`${fastCapability}=RA("speed","${FAST_BETA}")`))
+      return { status: "failed", detail: "Fast beta capability registration shape changed" };
+    if (verify)
+      return { status: "verify", count: 1 };
+    const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
+    const match = real229ZeMatches[0];
+    const betasIndex = match[0].lastIndexOf(betasField);
+    if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex)
+      return { status: "failed", detail: "Fast request betas field is not unique inside the matched Ze closure" };
+    const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
+    if (dryRun)
+      return { status: "applied", count: 1, code: source };
+    return { status: "applied", count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
+  if (real232Matches.length === 1) {
+    const [, , speed, , caps, fastCapability, , , betasSource, capsElse, , , betaSerializer, betaAllowlist] = real232Matches[0];
+    if (caps !== capsElse)
+      return { status: "failed", detail: "Fast request betas closure matched an inconsistent capability list" };
+    if (!source.includes(`${fastCapability}=LA("speed","${FAST_BETA}")`))
+      return { status: "failed", detail: "Fast beta capability registration shape changed" };
+    if (verify)
+      return { status: "verify", count: 1 };
+    const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
+    const match = real232Matches[0];
+    const betasIndex = match[0].lastIndexOf(betasField);
+    if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex)
+      return { status: "failed", detail: "Fast request betas field is not unique inside the matched 2.1.232 closure" };
+    const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
+    if (dryRun)
+      return { status: "applied", count: 1, code: source };
+    return { status: "applied", count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
 }
 async function applyFastModeOrgCheckPatch(source, { dryRun, verify }) {
   const MARKER = "/*__clawgod_fast_mode_org_check_bypass__*/";
