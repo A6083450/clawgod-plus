@@ -656,9 +656,13 @@ runUnixTtyCase('auto-noninteractive-env', ['input-must-remain-unread'], allConfi
 
 assert.match(windowsLifecycle, /\[string\]\$Enhancements/, 'PowerShell lifecycle must expose -Enhancements <csv>');
 assert.match(windowsLifecycle, /\[switch\]\$ChooseEnhancements/, 'PowerShell lifecycle must expose -ChooseEnhancements');
-assert.match(windowsLifecycle, /Read-Host/, 'PowerShell direct local interaction must use Read-Host');
+assert.match(windowsLifecycle, /Read-EnhancementKey/, 'PowerShell menu must read keys through a dedicated function');
+assert.match(windowsLifecycle, /\[Console\]::ReadKey/, 'PowerShell key reading must use Console.ReadKey');
+assert.match(windowsLifecycle, /\[ConsoleKey\]::ArrowUp/, 'PowerShell menu must handle ArrowUp');
+assert.match(windowsLifecycle, /\[ConsoleKey\]::Spacebar/, 'PowerShell menu must handle Spacebar');
+assert.match(windowsLifecycle, /\[ConsoleKey\]::Escape/, 'PowerShell menu must handle Escape');
+assert.match(windowsLifecycle, /SetCursorPosition/, 'PowerShell menu must redraw via SetCursorPosition');
 assert.match(windowsLifecycle, /IsInputRedirected/, 'PowerShell interaction must reject redirected input');
-assert.match(windowsLifecycle, /\[int\]::TryParse/, 'PowerShell menu parsing must reject integer overflow without terminating interaction');
 assert.match(windowsLifecycle, /ClawGod Plus 增强选择/, 'PowerShell lifecycle must embed the quick enhancement prompt');
 const windowsExplicitBranch = windowsLifecycle.indexOf('if ($EnhancementsSpecified)');
 const windowsChooseBranch = windowsLifecycle.indexOf('if ($ChooseEnhancements)', windowsExplicitBranch);
@@ -683,7 +687,7 @@ function findPwsh() {
   return null;
 }
 
-function createPowerShellFixture(prefix, promptAnswers = null) {
+function createPowerShellFixture(prefix, promptAnswers = null, keySequence = null) {
   const fixture = createUnixFixture(prefix);
   const script = join(fixture.fixtureRoot, 'selection fixture.ps1');
   writeFileSync(script, `${windowsLifecycle}
@@ -692,24 +696,41 @@ function Write-Warn {
     [Console]::Error.WriteLine($Message)
 }
 $BunBin = $env:CLAWGOD_TEST_BUN
-if ($env:CLAWGOD_TEST_PROMPT_ANSWERS) {
-    $script:ClawGodTestPromptAnswers = @(ConvertFrom-Json $env:CLAWGOD_TEST_PROMPT_ANSWERS)
-    $script:ClawGodTestPromptIndex = 0
+if ($env:CLAWGOD_TEST_KEYS) {
+    $script:ClawGodTestKeys = @(ConvertFrom-Json $env:CLAWGOD_TEST_KEYS)
+    $script:ClawGodTestKeyIndex = 0
     function Test-EnhancementInteractionAvailable { return $true }
-    function Read-Host {
-        param([string]$Prompt)
-        if ($script:ClawGodTestPromptIndex -ge $script:ClawGodTestPromptAnswers.Count) {
-            throw 'prompt fixture exhausted'
+    function Read-EnhancementKey {
+        if ($script:ClawGodTestKeyIndex -ge $script:ClawGodTestKeys.Count) {
+            throw 'key fixture exhausted'
         }
-        $answer = [string]$script:ClawGodTestPromptAnswers[$script:ClawGodTestPromptIndex]
-        $script:ClawGodTestPromptIndex++
-        Write-Host ('{0}:' -f $Prompt)
-        return $answer
+        $key = [ConsoleKey]$script:ClawGodTestKeys[$script:ClawGodTestKeyIndex]
+        $script:ClawGodTestKeyIndex++
+        return $key
+    }
+    function Write-EnhancementChoiceMenu {
+        param([int]$Cursor, [bool[]]$Selected)
+        Write-Host ''
+        Write-Host '  Enhancements'
+        for ($i = 0; $i -lt $EnhancementIds.Count; $i++) {
+            $marker = if ($Selected[$i]) { 'x' } else { ' ' }
+            $prefix = if ($i -eq $Cursor) { '> ' } else { '  ' }
+            Write-Host ('{0}{1,2}) [{2}] {3,-20} {4}' -f $prefix, ($i + 1), $marker, $EnhancementIds[$i], $EnhancementLabels[$i])
+        }
+        Write-Host '  ↑/↓ 移动 · 空格 勾选 · 回车 确认 · Esc 返回'
+    }
+    function Write-EnhancementModeMenu {
+        Write-Host ''
+        Write-Host '  ClawGod Plus 增强选择'
+        Write-Host ('   1) 全部 {0} 项增强（默认，回车即选）' -f $EnhancementIds.Count)
+        Write-Host '   2) 仅核心（不装任何增强）'
+        Write-Host '   3) 自定义菜单（逐项勾选）'
+        Write-Host '  回车 全部增强 · Esc 退出'
     }
 }
 Initialize-EnhancementSelection
 `, 'utf8');
-  return { ...fixture, script, promptAnswers };
+  return { ...fixture, script, promptAnswers, keySequence };
 }
 
 function powerShellEnvironment(fixture, extra = {}) {
@@ -731,13 +752,13 @@ function powerShellEnvironment(fixture, extra = {}) {
     XDG_CACHE_HOME: join(fixture.fixtureRoot, 'xdg-cache'),
     CLAWGOD_ENHANCEMENT_CONFIG_MODULE: join(root, 'src/generic/enhancement-config.mjs'),
     CLAWGOD_ENHANCEMENT_MANIFEST_FILE: join(root, 'src/generic/enhancements.json'),
-    ...(fixture.promptAnswers === null ? {} : { CLAWGOD_TEST_PROMPT_ANSWERS: JSON.stringify(fixture.promptAnswers) }),
+    ...(fixture.keySequence === null ? {} : { CLAWGOD_TEST_KEYS: JSON.stringify(fixture.keySequence) }),
     ...extra,
   };
 }
 
-function runPowerShell(pwsh, label, args, expected, { promptAnswers = null, prepare, env = {} } = {}) {
-  const fixture = createPowerShellFixture(`clawgod-selection-pwsh-${label}-`, promptAnswers);
+function runPowerShell(pwsh, label, args, expected, { promptAnswers = null, keySequence = null, prepare, env = {} } = {}) {
+  const fixture = createPowerShellFixture(`clawgod-selection-pwsh-${label}-`, promptAnswers, keySequence);
   try {
     if (prepare) prepare(fixture);
     const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fixture.script, ...args], {
@@ -766,15 +787,16 @@ if (pwsh) {
   assert.doesNotMatch(output, /Choice|interactive enhancement selection unavailable/i, 'PowerShell explicit CSV must win over choose');
 
   runPowerShell(pwsh, 'ordinary', [], allConfig);
-  output = runPowerShell(pwsh, 'auto-enter', [], allConfig, { promptAnswers: [''] });
+  output = runPowerShell(pwsh, 'auto-enter', [], allConfig, { keySequence: ['Enter'] });
   assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, 'PowerShell auto prompt must not fall back');
   assert.equal(countOccurrences(output, 'ClawGod Plus 增强选择'), 1, 'PowerShell auto prompt exact quick-menu count');
-  runPowerShell(pwsh, 'auto-core', [], noneConfig, { promptAnswers: ['2'] });
-  runPowerShell(pwsh, 'auto-custom', [], withoutFirstTwoConfig, { promptAnswers: ['3', '1,2', ''] });
+  runPowerShell(pwsh, 'auto-core', [], noneConfig, { keySequence: ['D2'] });
+  runPowerShell(pwsh, 'auto-custom', [], withoutFirstTwoConfig, { keySequence: ['D3', 'Spacebar', 'ArrowDown', 'Spacebar', 'Enter'] });
   runPowerShell(pwsh, 'auto-noninteractive', [], allConfig, {
     env: { CLAWGOD_NONINTERACTIVE: '1' },
-    promptAnswers: [],
+    keySequence: [],
   });
+  runPowerShell(pwsh, 'custom-escape-return', [], allConfig, { keySequence: ['D3', 'Escape', 'Enter'] });
   runPowerShell(pwsh, 'saved', [], chromeBrandingConfig, {
     prepare(fixture) {
       const clawgod = join(fixture.home, '.clawgod');
@@ -797,28 +819,28 @@ if (pwsh) {
   output = runPowerShell(pwsh, 'ci', ['-ChooseEnhancements'], allConfig, { env: { CI: '1' } });
   assert.equal((output.match(/interactive enhancement selection unavailable/gi) || []).length, 1, 'PowerShell CI choose must warn exactly once');
 
-  for (const [label, promptAnswers, expected, warnings] of [
-    ['enter', [''], allConfig, []],
-    ['numbers', ['1,2', ''], withoutFirstTwoConfig, []],
-    ['none', ['n', ''], noneConfig, []],
-    ['none-all', ['n,a', ''], allConfig, []],
-    ['invalid-valid', ['99', 'n', ''], noneConfig, ['Invalid enhancement choice: 99']],
-    ['invalid-overflow', ['18446744073709551617', ''], allConfig, ['Invalid enhancement choice: 18446744073709551617']],
+  for (const [label, keySequence, expected, warnings] of [
+    ['enter', ['Enter'], allConfig, []],
+    ['arrow-toggle', ['ArrowDown', 'Spacebar', 'Enter'], withoutSecondConfig, []],
+    ['uncheck-all', ['Spacebar', ...Array(12).fill(['ArrowDown', 'Spacebar']).flat(), 'Enter'], noneConfig, []],
   ]) {
-    output = runPowerShell(pwsh, `prompt-${label}`, ['-ChooseEnhancements'], expected, { promptAnswers });
+    output = runPowerShell(pwsh, `prompt-${label}`, ['-ChooseEnhancements'], expected, { keySequence });
     assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, `PowerShell ${label} prompt must not fall back`);
-    assert.equal(countOccurrences(output, '  Enhancements'), promptAnswers.length, `PowerShell ${label} exact menu count`);
-    assert.equal(countOccurrences(output, '  Choice:'), promptAnswers.length, `PowerShell ${label} exact prompt count`);
+    assert.equal(countOccurrences(output, '  Enhancements'), keySequence.filter(k => k !== 'Enter').length + 1, `PowerShell ${label} exact menu count`);
     for (const warning of warnings) assert.equal(countOccurrences(output, warning), 1, `PowerShell ${label} exact warning count`);
-    assert.equal(countOccurrences(output, 'Invalid enhancement choice:'), warnings.length, `PowerShell ${label} no unexpected invalid warnings`);
-    if (label === 'enter') {
-      let cursor = -1;
-      for (const [index, id] of expectedIds.entries()) {
-        const next = output.indexOf(`${index + 1})`, cursor + 1);
-        assert.ok(next > cursor, `PowerShell prompt must keep manifest index ${index + 1}`);
-        assert.ok(output.indexOf(id, next) >= next, `PowerShell prompt must show stable ID ${id}`);
-        cursor = next;
-      }
+  }
+
+  {
+    const fixture = createPowerShellFixture('clawgod-selection-pwsh-cancel-', null, ['Escape']);
+    try {
+      const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fixture.script], {
+        encoding: 'utf8',
+        env: powerShellEnvironment(fixture),
+      });
+      assert.equal(run.status, 130, `PowerShell cancel must exit 130: ${run.stdout}${run.stderr}`);
+      assert.deepEqual(readdirSync(fixture.home), [], 'PowerShell cancel must not write config');
+    } finally {
+      rmSync(fixture.fixtureRoot, { recursive: true, force: true });
     }
   }
 } else {
