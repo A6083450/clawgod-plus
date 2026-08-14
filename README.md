@@ -87,7 +87,7 @@ ClawGod Plus 提供 13 项可选增强，默认启用全部。增强 ID 固定�
 | 补丁 | `chrome`、`computer-use`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding` |
 | 插件 | `claude-hud`、`claude-mem`、`superpowers` |
 
-不传任何选项时，默认启用全部 13 项增强。选择会以严格 JSON 形式保存到 `~/.clawgod/enhancements.json`：
+非交互环境（管道安装、CI、`claude update`）不传任何选项时，默认启用全部 13 项增强。选择会以严格 JSON 形式保存到 `~/.clawgod/enhancements.json`：
 
 ```json
 {
@@ -99,15 +99,20 @@ ClawGod Plus 提供 13 项可选增强，默认启用全部。增强 ID 固定�
 
 `mode` 为 `all` 时始终启用清单中的全部增强（含未来新增的 ID）；`mode` 为 `custom` 时只启用 `enabled` 列表中的 ID。
 
-本地直接安装时可以交互式选择：
+在终端里直接运行安装器时会自动询问，无需记参数：
 
-```bash
-bash install.sh --choose-enhancements
+```
+  ClawGod Plus 增强选择
+   1) 全部 13 项增强（默认，回车即选）
+   2) 仅核心（不装任何增强）
+   3) 自定义菜单（逐项勾选）
+   选择 [1]:
 ```
 
-也可以非交互式指定：
+也可以显式交互选择或非交互指定：
 
 ```bash
+bash install.sh --choose-enhancements   # 直接打开逐项自定义菜单
 bash install.sh --enhancements chrome,computer-use,claude-hud
 bash install.sh --enhancements none   # 仅核心，不启用任何增强
 ```

@@ -87,7 +87,7 @@ ClawGod Plus は 13 の任意拡張機能を提供し、デフォルトで全て
 | パッチ | `chrome`、`computer-use`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding` |
 | プラグイン | `claude-hud`、`claude-mem`、`superpowers` |
 
-オプションを指定しない場合、デフォルトで 13 の拡張機能がすべて有効になります。選択内容は厳密な JSON として `~/.clawgod/enhancements.json` に保存されます。
+非対話環境（パイプインストール、CI、`claude update`）でオプションを指定しない場合、デフォルトで 13 の拡張機能がすべて有効になります。選択内容は厳密な JSON として `~/.clawgod/enhancements.json` に保存されます。
 
 ```json
 {
@@ -99,15 +99,20 @@ ClawGod Plus は 13 の任意拡張機能を提供し、デフォルトで全て
 
 `mode` が `all` の場合はマニフェストにある全拡張機能（将来追加される ID を含む）を常に有効にし、`mode` が `custom` の場合は `enabled` に列挙された ID だけを有効にします。
 
-直接インストールする際に、対話的に選択できます。
+ターミナルでインストーラーを直接実行すると、引数を覚えることなく自動で選択画面が表示されます。
 
-```bash
-bash install.sh --choose-enhancements
+```
+  ClawGod Plus 增强选择
+   1) 全部 13 项增强（默认、回车即选）
+   2) 仅核心（不装任何增强）
+   3) 自定义菜单（逐项勾选）
+   选择 [1]:
 ```
 
-非対話で指定することもできます。
+明示的な対話選択や、非対話での指定も可能です。
 
 ```bash
+bash install.sh --choose-enhancements   # 項目ごとのカスタムメニューを直接開く
 bash install.sh --enhancements chrome,computer-use,claude-hud
 bash install.sh --enhancements none   # コアのみ、拡張機能なし
 ```

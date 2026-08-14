@@ -101,7 +101,7 @@ copyFileSync(process.env.INSTALLER_FIXTURE,destination);
   if (!options.spawnFailure) {
     makeExecutable(join(bin, runnerName), `
 const args=process.argv.slice(2);
-await Bun.write(process.env.RUN_CAPTURE,JSON.stringify(args));
+await Bun.write(process.env.RUN_CAPTURE,JSON.stringify({args,noninteractive:process.env.CLAWGOD_NONINTERACTIVE||''}));
 if(process.env.REQUIRE_POWERSHELL_BYPASS==='1'){
   const expected=['-NoProfile','-ExecutionPolicy','Bypass','-File',args[4]];
   if(args.length!==expected.length||args.some((value,index)=>value!==expected[index]))process.exit(91);
@@ -176,19 +176,21 @@ for (const [label, code] of patchedUpdateBranches) {
     assert.match(remote.fetch.url, windows ? /install\.ps1$/ : /install\.sh$/, `${label} ${platform} must fetch the fixed platform installer URL`);
     assert.ok(remote.fetch.destination.includes('clawgod-update-'), `${label} ${platform} must download inside a private temporary directory`);
     assert.deepEqual(
-      remote.invoked,
+      remote.invoked.args,
       windows ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', remote.fetch.destination] : [remote.fetch.destination],
       `${label} ${platform} must invoke the downloaded installer with the complete argument array`,
     );
+    assert.equal(remote.invoked.noninteractive, '1', `${label} ${platform} must mark the spawned installer noninteractive`);
 
     const local = runUpdateCase(`${label} ${platform} local update`, code, { windows, localInstaller: true });
     assert.equal(local.run.status, 0, `${label} ${platform} local update must succeed`);
     assert.equal(local.fetch, null, `${label} ${platform} local update must skip remote fetching`);
     assert.deepEqual(
-      local.invoked,
+      local.invoked.args,
       windows ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(local.clawgod, 'install.ps1')] : [join(local.clawgod, 'install.sh')],
       `${label} ${platform} must retain the managed local-installer path`,
     );
+    assert.equal(local.invoked.noninteractive, '1', `${label} ${platform} must mark the local installer noninteractive`);
 
     const nonzero = runUpdateCase(`${label} ${platform} installer nonzero`, code, { windows, runExit: 23 });
     assert.equal(nonzero.run.status, 23, `${label} ${platform} must propagate installer exit status`);

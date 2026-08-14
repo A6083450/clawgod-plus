@@ -78,6 +78,11 @@ function Test-EnhancementInteractionAvailable {
     }
 }
 
+function Test-EnhancementAutoPromptAvailable {
+    if ($env:CLAWGOD_NONINTERACTIVE -eq '1') { return $false }
+    return Test-EnhancementInteractionAvailable
+}
+
 function Read-EnhancementChoice {
     $selected = @($EnhancementIds | ForEach-Object { $true })
     while ($true) {
@@ -123,6 +128,21 @@ function Read-EnhancementChoice {
     }
 }
 
+function Read-EnhancementMode {
+    while ($true) {
+        Write-Host ''
+        Write-Host '  ClawGod Plus 增强选择'
+        Write-Host ('   1) 全部 {0} 项增强（默认，回车即选）' -f $EnhancementIds.Count)
+        Write-Host '   2) 仅核心（不装任何增强）'
+        Write-Host '   3) 自定义菜单（逐项勾选）'
+        $answer = Read-Host '  选择 [1]'
+        if ([string]::IsNullOrEmpty($answer) -or $answer -eq '1') { return ($EnhancementIds -join ',') }
+        if ($answer -eq '2') { return 'none' }
+        if ($answer -eq '3') { return (Read-EnhancementChoice) }
+        Write-Warn "Invalid enhancement choice: $answer"
+    }
+}
+
 function Write-EnhancementSelection {
     param([Parameter(Mandatory = $true)][string]$Explicit)
     $configModule = if ($env:CLAWGOD_ENHANCEMENT_CONFIG_MODULE) { $env:CLAWGOD_ENHANCEMENT_CONFIG_MODULE } else { Join-Path $ClawDir 'enhancement-config.mjs' }
@@ -160,6 +180,10 @@ function Initialize-EnhancementSelection {
             return
         }
         Write-Warn 'Interactive enhancement selection unavailable; using saved selection or all enhancements.'
+    }
+    elseif (Test-EnhancementAutoPromptAvailable) {
+        Write-EnhancementSelection -Explicit (Read-EnhancementMode)
+        return
     }
     Write-EnhancementSelection -Explicit '__CLAWGOD_SAVED__'
 }

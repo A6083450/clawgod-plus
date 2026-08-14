@@ -144,6 +144,12 @@ enhancement_interaction_available() {
   ( : > /dev/tty ) 2>/dev/null || return 1
 }
 
+auto_prompt_available() {
+  [ "${CLAWGOD_NONINTERACTIVE:-}" = "1" ] && return 1
+  [ -t 0 ] || return 1
+  enhancement_interaction_available
+}
+
 choose_enhancements() {
   local count=${#CLAWGOD_ENHANCEMENT_IDS[@]}
   local -a selected
@@ -220,6 +226,29 @@ choose_enhancements() {
   done
 }
 
+choose_enhancement_mode() {
+  local count=${#CLAWGOD_ENHANCEMENT_IDS[@]}
+  local answer
+  while true; do
+    printf '\n  ClawGod Plus 增强选择\n' > /dev/tty
+    printf '   1) 全部 %d 项增强（默认，回车即选）\n' "$count" > /dev/tty
+    printf '   2) 仅核心（不装任何增强）\n' > /dev/tty
+    printf '   3) 自定义菜单（逐项勾选）\n' > /dev/tty
+    printf '  选择 [1]: ' > /dev/tty
+    IFS= read -r answer < /dev/tty
+    case "$answer" in
+      ''|1)
+        local IFS=,
+        ENHANCEMENT_CHOICE="${CLAWGOD_ENHANCEMENT_IDS[*]}"
+        return 0
+        ;;
+      2) ENHANCEMENT_CHOICE=none; return 0 ;;
+      3) choose_enhancements; return 0 ;;
+      *) enhancement_warn "Invalid enhancement choice: $answer" ;;
+    esac
+  done
+}
+
 persist_enhancement_selection() {
   local explicit="$1"
   local config_module="${CLAWGOD_ENHANCEMENT_CONFIG_MODULE:-$CLAWGOD_DIR/enhancement-config.mjs}"
@@ -255,6 +284,10 @@ configure_enhancement_selection() {
       return
     fi
     enhancement_warn 'Interactive enhancement selection unavailable; using saved selection or all enhancements.'
+  elif auto_prompt_available; then
+    choose_enhancement_mode
+    persist_enhancement_selection "$ENHANCEMENT_CHOICE"
+    return
   fi
   persist_enhancement_selection '__CLAWGOD_SAVED__'
 }

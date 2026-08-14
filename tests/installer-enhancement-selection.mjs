@@ -48,6 +48,7 @@ const generatedSelectionBootstrap = generatedUnix.slice(generatedBootstrapStart,
 
 assert.ok(generatedUnix.includes(unixLauncher), 'install.sh must embed the canonical Unix launcher source exactly');
 assert.ok(generatedWindows.includes(windowsLauncher), 'install.ps1 must embed the canonical Windows launcher source exactly');
+assert.match(generatedUnix, /ClawGod Plus 增强选择/, 'install.sh must embed the quick enhancement prompt');
 
 const expectedIds = [
   'chrome',
@@ -446,6 +447,7 @@ function runUnixTtyCase(label, lines, expected, {
   env = {},
   expectedMenuCount = 1,
   expectedPromptCount = expectedMenuCount,
+  expectedModeMenuCount = 0,
   expectedUnreadLine = null,
   expectedWarnings = [],
 } = {}) {
@@ -479,6 +481,7 @@ function runUnixTtyCase(label, lines, expected, {
     assert.equal(run.status, 0, `${label}: ${output}`);
     assert.equal(countOccurrences(output, '  Enhancements'), expectedMenuCount, `${label}: exact menu count`);
     assert.equal(countOccurrences(output, '  Choice: '), expectedPromptCount, `${label}: exact prompt count`);
+    assert.equal(countOccurrences(output, 'ClawGod Plus 增强选择'), expectedModeMenuCount, `${label}: exact quick-menu count`);
     for (const warning of expectedWarnings) {
       assert.equal(countOccurrences(output, warning), 1, `${label}: exact warning count for ${warning}`);
     }
@@ -541,10 +544,26 @@ runUnixTtyCase('ci', ['ci-input-must-remain-unread'], allConfig, {
   expectedUnreadLine: 'ci-input-must-remain-unread',
   expectedWarnings: ['Interactive enhancement selection unavailable; using saved selection or all enhancements.'],
 });
-runUnixTtyCase('ordinary', ['ordinary-input-must-remain-unread'], allConfig, {
+runUnixTtyCase('auto-enter', [''], allConfig, { args: [], expectedMenuCount: 0, expectedModeMenuCount: 1 });
+runUnixTtyCase('auto-all', ['1'], allConfig, { args: [], expectedMenuCount: 0, expectedModeMenuCount: 1 });
+runUnixTtyCase('auto-core', ['2'], noneConfig, { args: [], expectedMenuCount: 0, expectedModeMenuCount: 1 });
+runUnixTtyCase('auto-invalid', ['x', '2'], noneConfig, {
   args: [],
   expectedMenuCount: 0,
-  expectedUnreadLine: 'ordinary-input-must-remain-unread',
+  expectedModeMenuCount: 2,
+  expectedWarnings: ['Invalid enhancement choice: x'],
+});
+runUnixTtyCase('auto-custom', ['3', '1,2', ''], withoutFirstTwoConfig, {
+  args: [],
+  expectedModeMenuCount: 1,
+  expectedMenuCount: 2,
+});
+runUnixTtyCase('auto-noninteractive-env', ['input-must-remain-unread'], allConfig, {
+  args: [],
+  env: { CLAWGOD_NONINTERACTIVE: '1' },
+  expectedMenuCount: 0,
+  expectedModeMenuCount: 0,
+  expectedUnreadLine: 'input-must-remain-unread',
 });
 
 {
@@ -563,14 +582,17 @@ assert.match(windowsLifecycle, /\[switch\]\$ChooseEnhancements/, 'PowerShell lif
 assert.match(windowsLifecycle, /Read-Host/, 'PowerShell direct local interaction must use Read-Host');
 assert.match(windowsLifecycle, /IsInputRedirected/, 'PowerShell interaction must reject redirected input');
 assert.match(windowsLifecycle, /\[int\]::TryParse/, 'PowerShell menu parsing must reject integer overflow without terminating interaction');
+assert.match(windowsLifecycle, /ClawGod Plus 增强选择/, 'PowerShell lifecycle must embed the quick enhancement prompt');
 const windowsExplicitBranch = windowsLifecycle.indexOf('if ($EnhancementsSpecified)');
 const windowsChooseBranch = windowsLifecycle.indexOf('if ($ChooseEnhancements)', windowsExplicitBranch);
 const windowsExplicitWrite = windowsLifecycle.indexOf('Write-EnhancementSelection -Explicit $Enhancements', windowsExplicitBranch);
+const windowsAutoBranch = windowsLifecycle.indexOf('elseif (Test-EnhancementAutoPromptAvailable)', windowsChooseBranch);
 assert.ok(windowsExplicitBranch >= 0 && windowsChooseBranch > windowsExplicitBranch, 'PowerShell explicit selection branch must precede choose');
 assert.ok(
   windowsExplicitWrite >= windowsExplicitBranch && windowsExplicitWrite < windowsChooseBranch,
   'PowerShell explicit branch must persist its CSV before choose can run',
 );
+assert.ok(windowsAutoBranch > windowsChooseBranch, 'PowerShell auto prompt branch must follow explicit choose');
 for (const id of expectedIds) assert.match(windowsLifecycle, new RegExp(`['\"]${id}['\"]`), `PowerShell menu must include ${id}`);
 
 function findPwsh() {
@@ -667,6 +689,15 @@ if (pwsh) {
   assert.doesNotMatch(output, /Choice|interactive enhancement selection unavailable/i, 'PowerShell explicit CSV must win over choose');
 
   runPowerShell(pwsh, 'ordinary', [], allConfig);
+  output = runPowerShell(pwsh, 'auto-enter', [], allConfig, { promptAnswers: [''] });
+  assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, 'PowerShell auto prompt must not fall back');
+  assert.equal(countOccurrences(output, 'ClawGod Plus 增强选择'), 1, 'PowerShell auto prompt exact quick-menu count');
+  runPowerShell(pwsh, 'auto-core', [], noneConfig, { promptAnswers: ['2'] });
+  runPowerShell(pwsh, 'auto-custom', [], withoutFirstTwoConfig, { promptAnswers: ['3', '1,2', ''] });
+  runPowerShell(pwsh, 'auto-noninteractive', [], allConfig, {
+    env: { CLAWGOD_NONINTERACTIVE: '1' },
+    promptAnswers: [],
+  });
   runPowerShell(pwsh, 'saved', [], chromeBrandingConfig, {
     prepare(fixture) {
       const clawgod = join(fixture.home, '.clawgod');

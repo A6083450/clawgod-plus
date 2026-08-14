@@ -159,6 +159,12 @@ enhancement_interaction_available() {
   ( : > /dev/tty ) 2>/dev/null || return 1
 }
 
+auto_prompt_available() {
+  [ "${CLAWGOD_NONINTERACTIVE:-}" = "1" ] && return 1
+  [ -t 0 ] || return 1
+  enhancement_interaction_available
+}
+
 choose_enhancements() {
   local count=${#CLAWGOD_ENHANCEMENT_IDS[@]}
   local -a selected
@@ -235,6 +241,29 @@ choose_enhancements() {
   done
 }
 
+choose_enhancement_mode() {
+  local count=${#CLAWGOD_ENHANCEMENT_IDS[@]}
+  local answer
+  while true; do
+    printf '\n  ClawGod Plus 增强选择\n' > /dev/tty
+    printf '   1) 全部 %d 项增强（默认，回车即选）\n' "$count" > /dev/tty
+    printf '   2) 仅核心（不装任何增强）\n' > /dev/tty
+    printf '   3) 自定义菜单（逐项勾选）\n' > /dev/tty
+    printf '  选择 [1]: ' > /dev/tty
+    IFS= read -r answer < /dev/tty
+    case "$answer" in
+      ''|1)
+        local IFS=,
+        ENHANCEMENT_CHOICE="${CLAWGOD_ENHANCEMENT_IDS[*]}"
+        return 0
+        ;;
+      2) ENHANCEMENT_CHOICE=none; return 0 ;;
+      3) choose_enhancements; return 0 ;;
+      *) enhancement_warn "Invalid enhancement choice: $answer" ;;
+    esac
+  done
+}
+
 persist_enhancement_selection() {
   local explicit="$1"
   local config_module="${CLAWGOD_ENHANCEMENT_CONFIG_MODULE:-$CLAWGOD_DIR/enhancement-config.mjs}"
@@ -270,6 +299,10 @@ configure_enhancement_selection() {
       return
     fi
     enhancement_warn 'Interactive enhancement selection unavailable; using saved selection or all enhancements.'
+  elif auto_prompt_available; then
+    choose_enhancement_mode
+    persist_enhancement_selection "$ENHANCEMENT_CHOICE"
+    return
   fi
   persist_enhancement_selection '__CLAWGOD_SAVED__'
 }
@@ -8137,7 +8170,7 @@ var patches = [
     order: 29,
     name: "Redirect `claude update` to clawgod self-update",
     pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\((?:t\()?async\([^)]*\)=>\{)/g,
-    replacer: (match, chain, action) => chain + ".allowUnknownOption()" + action + `const __clawgodUpdateIndex=process.argv.findIndex(a=>a==="update"||a==="upgrade");const __clawgodUpdateArgs=__clawgodUpdateIndex>=0?process.argv.slice(__clawgodUpdateIndex+1):[];const __clawgodVersionIndex=__clawgodUpdateArgs.indexOf("--version");if(__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1])process.env.CLAWGOD_VERSION=__clawgodUpdateArgs[__clawgodVersionIndex+1];else process.env.CLAWGOD_VERSION="latest";if(__clawgodUpdateArgs.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";if(__clawgodUpdateArgs.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";if(__clawgodUpdateArgs.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";if(__clawgodUpdateArgs.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");const _w=process.platform==='win32';const __clawgodUpdateStatus=(()=>{const __fs=require('fs'),__path=require('path'),__os=require('os'),__cp=require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh');if(!__fs.existsSync(__installer)){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:process.env});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();process.exit(__clawgodUpdateStatus);`,
+    replacer: (match, chain, action) => chain + ".allowUnknownOption()" + action + `const __clawgodUpdateIndex=process.argv.findIndex(a=>a==="update"||a==="upgrade");const __clawgodUpdateArgs=__clawgodUpdateIndex>=0?process.argv.slice(__clawgodUpdateIndex+1):[];const __clawgodVersionIndex=__clawgodUpdateArgs.indexOf("--version");if(__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1])process.env.CLAWGOD_VERSION=__clawgodUpdateArgs[__clawgodVersionIndex+1];else process.env.CLAWGOD_VERSION="latest";if(__clawgodUpdateArgs.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";if(__clawgodUpdateArgs.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";if(__clawgodUpdateArgs.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";if(__clawgodUpdateArgs.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");const _w=process.platform==='win32';const __clawgodUpdateStatus=(()=>{const __fs=require('fs'),__path=require('path'),__os=require('os'),__cp=require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh');if(!__fs.existsSync(__installer)){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:{...process.env,CLAWGOD_NONINTERACTIVE:'1'}});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();process.exit(__clawgodUpdateStatus);`,
     sentinel: '.command("update").alias("upgrade")',
     appliedMarker: "[clawgod] 'claude update' is handled by clawgod self-update."
   },

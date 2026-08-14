@@ -148,8 +148,9 @@ bun build.mjs --check  # 比较内存生成结果与已提交文件，不写磁�
 
 1. `--enhancements chrome,computer-use,...` 或 PowerShell 对等参数：非交互显式选择。
 2. `--choose-enhancements` 或 PowerShell 对等开关：显示交互菜单。
-3. 已保存的 `~/.clawgod/enhancements.json`。
-4. 没有任何选择信息：全部增强。
+3. **自动询问（2026-08-14 补充）**：未传显式参数、stdin 为 TTY 且交互可用时，先显示三选一快捷菜单（全部增强 / 仅核心 / 自定义菜单）。`curl | bash`、`irm | iex`、CI 不满足 TTY 条件不询问；`claude update` 补丁向安装器注入 `CLAWGOD_NONINTERACTIVE=1` 强制跳过。
+4. 已保存的 `~/.clawgod/enhancements.json`。
+5. 没有任何选择信息：全部增强。
 
 交互菜单默认全部勾选，支持输入编号切换、`a` 全选、`n` 清空、回车确认。Unix 仅在显式选择且 `/dev/tty` 可用时读取；Windows 使用 `Read-Host`。显式请求交互但没有 TTY 时打印 warning，并使用已保存选择或全部增强，不阻塞。
 

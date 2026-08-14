@@ -76,7 +76,7 @@ Windows uninstall:
 
 ClawGod Plus resolves a persisted, optionally interactive choice of 13 enhancements. The stable IDs, in manifest order, are `chrome`, `computer-use`, `agents`, `planning`, `voice`, `auto-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding` (patches), then `claude-hud`, `claude-mem`, `superpowers` (plugins). Selection is persisted as strict JSON at `~/.clawgod/enhancements.json` with the schema `{ "schemaVersion": 1, "mode": "all" | "custom", "enabled": [...] }`.
 
-Direct local installers accept `--enhancements <csv>` / `--choose-enhancements` (Unix) and `-Enhancements <csv>` / `-ChooseEnhancements` (PowerShell). With no explicit choice, all enhancements are enabled. `claude update` reuses the saved selection and never prompts. Disabling `claude-hud` or `claude-mem` restores the configuration ClawGod owns, while disabling `superpowers` never deletes the user's installed plugin.
+Direct local installers accept `--enhancements <csv>` / `--choose-enhancements` (Unix) and `-Enhancements <csv>` / `-ChooseEnhancements` (PowerShell). Running the installer directly in a terminal auto-prompts a quick choice (all / core-only / custom menu) via stdin-TTY detection; piped installs, CI, and `claude update` never prompt (the update patch marks its installer spawn with `CLAWGOD_NONINTERACTIVE=1`) and reuse the saved selection, defaulting to all enhancements. Disabling `claude-hud` or `claude-mem` restores the configuration ClawGod owns, while disabling `superpowers` never deletes the user's installed plugin.
 
 ## Project Architecture
 

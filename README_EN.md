@@ -87,7 +87,7 @@ ClawGod Plus offers 13 optional enhancements, all enabled by default. The enhanc
 | Patch | `chrome`, `computer-use`, `agents`, `planning`, `voice`, `auto-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding` |
 | Plugin | `claude-hud`, `claude-mem`, `superpowers` |
 
-With no option, all 13 enhancements are enabled by default. The selection is persisted as strict JSON in `~/.clawgod/enhancements.json`:
+With no option and no interactive terminal (piped installs, CI, `claude update`), all 13 enhancements are enabled by default. The selection is persisted as strict JSON in `~/.clawgod/enhancements.json`:
 
 ```json
 {
@@ -99,15 +99,20 @@ With no option, all 13 enhancements are enabled by default. The selection is per
 
 `mode` `all` always enables every enhancement in the manifest (including future IDs); `mode` `custom` enables only the IDs listed in `enabled`.
 
-Choose interactively when installing directly:
+Running the installer directly in a terminal asks automatically — no flags to remember:
 
-```bash
-bash install.sh --choose-enhancements
+```
+  ClawGod Plus 增强选择
+   1) 全部 13 项增强（默认，回车即选）
+   2) 仅核心（不装任何增强）
+   3) 自定义菜单（逐项勾选）
+   选择 [1]:
 ```
 
-Or specify non-interactively:
+You can also choose explicitly or specify non-interactively:
 
 ```bash
+bash install.sh --choose-enhancements   # open the per-item custom menu directly
 bash install.sh --enhancements chrome,computer-use,claude-hud
 bash install.sh --enhancements none   # core only, no enhancements
 ```
