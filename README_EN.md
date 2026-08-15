@@ -157,7 +157,7 @@ Every install and update automatically ensures these optional Claude Code plugin
 | claude-mem | `claude-mem@thedotmack` | `13.14.0` |
 | Superpowers | `superpowers@superpowers-marketplace` | `6.2.0` |
 
-ClawGod Plus installs a missing or older plugin at the baseline, but preserves any installed newer version. Public fixed archives use the selected `hub.211107.xyz` proxy and are accepted only after their exact byte length and fixed SHA-256 match. Bun remains the only installed JavaScript runtime dependency.
+ClawGod Plus installs a missing or older plugin at the baseline, but preserves any installed newer version. Public fixed archives are downloaded directly from GitHub and are accepted only after their exact byte length and fixed SHA-256 match. Bun remains the only installed JavaScript runtime dependency.
 
 For HUD, the installer keeps the exact profile below and manages only the `statusLine` field in `~/.claude/settings.json`. That command invokes the managed `claude-hud-statusline.mjs` with the absolute Bun path; it does not add a Node or Bash status-line runtime. An optional plugin warning is reported without failing the core ClawGod Plus installation.
 

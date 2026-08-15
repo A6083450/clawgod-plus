@@ -157,7 +157,7 @@ ClawGod Plus のマルチエージェント処理や長時間タスクには、�
 | claude-mem | `claude-mem@thedotmack` | `13.14.0` |
 | Superpowers | `superpowers@superpowers-marketplace` | `6.2.0` |
 
-未導入またはベースライン未満なら固定ベースラインを導入し、インストール済みの新しいバージョンを維持します。公開固定アーカイブは選択済みの `hub.211107.xyz` プロキシを使用し、正確なバイト長と固定 SHA-256 の両方が一致した場合だけ展開します。インストールが必要な JavaScript ランタイムは引き続き Bun だけです。
+未導入またはベースライン未満なら固定ベースラインを導入し、インストール済みの新しいバージョンを維持します。公開固定アーカイブは GitHub から直接ダウンロードし、正確なバイト長と固定 SHA-256 の両方が一致した場合だけ展開します。インストールが必要な JavaScript ランタイムは引き続き Bun だけです。
 
 HUD では、インストーラが以下の正確な profile を維持し、`~/.claude/settings.json` の `statusLine` フィールドだけを管理します。このコマンドは Bun の絶対パスで管理対象の `claude-hud-statusline.mjs` を実行し、Node や Bash のステータスラインランタイムを追加しません。任意プラグインの警告が発生しても ClawGod Plus 本体のインストールは失敗しません。
 

@@ -157,7 +157,7 @@ CLAWGOD_NO_AUTO_CHROME=1 claude
 | claude-mem | `claude-mem@thedotmack` | `13.14.0` |
 | Superpowers | `superpowers@superpowers-marketplace` | `6.2.0` |
 
-缺失或低于基线时，ClawGod Plus 会安装固定基线；如果已经安装了更新版本，则保留已安装的更高版本。公开固定归档通过选定的 `hub.211107.xyz` 代理下载，只有字节长度和固定 SHA-256 都精确匹配才会解压。Bun 仍是唯一需要安装的 JavaScript 运行时。
+缺失或低于基线时，ClawGod Plus 会安装固定基线；如果已经安装了更新版本，则保留已安装的更高版本。公开固定归档直接从 GitHub 拉取，只有字节长度和固定 SHA-256 都精确匹配才会解压。Bun 仍是唯一需要安装的 JavaScript 运行时。
 
 对于 HUD，安装器保留下面这份精确 profile，并且只托管 `~/.claude/settings.json` 的 `statusLine` 字段。该命令用 Bun 的绝对路径运行托管的 `claude-hud-statusline.mjs`，不会增加 Node 或 Bash 状态栏运行时。可选插件警告不会导致 ClawGod Plus 核心安装失败。
 
