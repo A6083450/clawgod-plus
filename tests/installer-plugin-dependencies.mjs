@@ -155,20 +155,20 @@ const expected = {
     key: 'hud', id: 'claude-hud@claude-hud', marketplace: 'claude-hud', plugin: 'claude-hud',
     version: '0.7.0', bytes: 754443,
     sha256: '59bd3ec17e7b9181d8069c93cc7c5e1db8b1d33e6a94e4041f6589dd8b87c912',
-    url: 'https://hub.211107.xyz/https://github.com/jarrodwatts/claude-hud/archive/refs/tags/v0.7.0.tar.gz',
+    url: 'https://github.com/jarrodwatts/claude-hud/archive/refs/tags/v0.7.0.tar.gz',
   },
   memory: {
     key: 'memory', id: 'claude-mem@thedotmack', marketplace: 'thedotmack', plugin: 'claude-mem',
     version: '13.14.0', bytes: 11817347,
     sha256: 'a64f7dd038308da0db52f10d8f4fc2b3b3acfec5d9ddfdcfea9f6e473e54bed0',
-    url: 'https://hub.211107.xyz/https://github.com/thedotmack/claude-mem/archive/refs/tags/v13.14.0.tar.gz',
+    url: 'https://github.com/thedotmack/claude-mem/archive/refs/tags/v13.14.0.tar.gz',
   },
   superpowers: {
     key: 'superpowers', id: 'superpowers@superpowers-marketplace', marketplace: 'superpowers-marketplace', plugin: 'superpowers',
     archiveMarketplace: 'superpowers-dev',
     version: '6.2.0', bytes: 516401,
     sha256: '468246a7b4981d4c014c2b58d9ee538700ffded075279d5810059cdc1abeb5f3',
-    url: 'https://hub.211107.xyz/https://github.com/obra/superpowers/archive/refs/tags/v6.2.0.tar.gz',
+    url: 'https://github.com/obra/superpowers/archive/refs/tags/v6.2.0.tar.gz',
   },
 };
 
@@ -1986,7 +1986,13 @@ writeFileSync(process.env.FIXTURE_FETCH_LOG, JSON.stringify(process.env));
     downloadAndStage(hudSpec, context),
     error => {
       assert.match(error.message, /hud: download failed/i);
-      assert.doesNotMatch(error.message, /secret|proxy|token|stack/i, 'downloader errors must be credential-free');
+      assert.ok(
+        error.message.includes(`download failed from ${hudSpec.url} (exit code 23)`),
+        'download errors must name the exact source URL and exit code',
+      );
+      assert.match(error.message, /check your network connection/i, 'download errors must include troubleshooting guidance');
+      assert.doesNotMatch(error.message, /\b(?:secret|proxy|token|stack)\b/i, 'downloader errors must be credential-free');
+      assert.doesNotMatch(error.message, /fixture downloader failure/i, 'downloader stderr must not leak into managed errors');
       assert.equal(error.message.split('\n').length, 1, 'downloader errors must be one line');
       return true;
     },
