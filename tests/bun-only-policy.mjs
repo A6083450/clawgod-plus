@@ -475,7 +475,7 @@ for (const path of ['README.md', 'README_EN.md', 'README_JP.md']) {
   assert.doesNotMatch(source, /包含 8 个针对性回归脚本|includes eight focused regression scripts|8 本の回帰スクリプト/, `${path} must not hard-code the stale focused-test count`);
   for (const marker of [
     'claude-hud@claude-hud', 'claude-mem@thedotmack', 'superpowers@superpowers-marketplace',
-    '0.7.0', '13.14.0', '6.2.0', 'hub.211107.xyz', 'statusLine',
+    '0.7.0', '13.14.0', '6.2.0', 'GitHub', 'statusLine',
   ]) {
     assert.ok(source.includes(marker), `${path} must document managed plugin dependency marker ${marker}`);
   }
