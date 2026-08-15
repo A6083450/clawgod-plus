@@ -475,10 +475,16 @@ for (const path of ['README.md', 'README_EN.md', 'README_JP.md']) {
   assert.doesNotMatch(source, /包含 8 个针对性回归脚本|includes eight focused regression scripts|8 本の回帰スクリプト/, `${path} must not hard-code the stale focused-test count`);
   for (const marker of [
     'claude-hud@claude-hud', 'claude-mem@thedotmack', 'superpowers@superpowers-marketplace',
-    '0.7.0', '13.14.0', '6.2.0', 'GitHub', 'statusLine',
+    '0.7.0', '13.14.0', '6.2.0', 'statusLine',
   ]) {
     assert.ok(source.includes(marker), `${path} must document managed plugin dependency marker ${marker}`);
   }
+  const downloadSourceMarkers = {
+    'README.md': 'GitHub 拉取',
+    'README_EN.md': 'directly from GitHub',
+    'README_JP.md': 'GitHub から直接',
+  };
+  assert.ok(source.includes(downloadSourceMarkers[path]), `${path} must document its GitHub download source`);
   assert.match(source, /SHA-256/i, `${path} must document fixed plugin archive hashes`);
   assert.match(source, /statusLine[\s\S]{0,240}Bun|Bun[\s\S]{0,240}statusLine/i, `${path} must document the Bun HUD statusLine`);
   const claudeMemSection = source.match(/## claude-mem[^\n]*\n[\s\S]*?(?=\n## )/i)?.[0] ?? '';
