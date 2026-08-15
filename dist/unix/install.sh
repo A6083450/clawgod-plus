@@ -2214,20 +2214,20 @@ export const PLUGIN_BASELINES = Object.freeze({
     key: 'hud', id: 'claude-hud@claude-hud', marketplace: 'claude-hud', plugin: 'claude-hud',
     version: '0.7.0', bytes: 754443,
     sha256: '59bd3ec17e7b9181d8069c93cc7c5e1db8b1d33e6a94e4041f6589dd8b87c912',
-    url: 'https://hub.211107.xyz/https://github.com/jarrodwatts/claude-hud/archive/refs/tags/v0.7.0.tar.gz',
+    url: 'https://github.com/jarrodwatts/claude-hud/archive/refs/tags/v0.7.0.tar.gz',
   }),
   memory: Object.freeze({
     key: 'memory', id: 'claude-mem@thedotmack', marketplace: 'thedotmack', plugin: 'claude-mem',
     version: '13.14.0', bytes: 11817347,
     sha256: 'a64f7dd038308da0db52f10d8f4fc2b3b3acfec5d9ddfdcfea9f6e473e54bed0',
-    url: 'https://hub.211107.xyz/https://github.com/thedotmack/claude-mem/archive/refs/tags/v13.14.0.tar.gz',
+    url: 'https://github.com/thedotmack/claude-mem/archive/refs/tags/v13.14.0.tar.gz',
   }),
   superpowers: Object.freeze({
     key: 'superpowers', id: 'superpowers@superpowers-marketplace', marketplace: 'superpowers-marketplace', plugin: 'superpowers',
     archiveMarketplace: 'superpowers-dev',
     version: '6.2.0', bytes: 516401,
     sha256: '468246a7b4981d4c014c2b58d9ee538700ffded075279d5810059cdc1abeb5f3',
-    url: 'https://hub.211107.xyz/https://github.com/obra/superpowers/archive/refs/tags/v6.2.0.tar.gz',
+    url: 'https://github.com/obra/superpowers/archive/refs/tags/v6.2.0.tar.gz',
   }),
 });
 
@@ -3763,6 +3763,14 @@ export async function extractPluginArchive(bytes, spec, destination) {
   }
 }
 
+function fetchStderrSummary(result) {
+  if (!result?.stderr) return '';
+  const text = Buffer.from(result.stderr).toString('utf8').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (/\b(?:secret|token|proxy|stack)\b/i.test(text)) return '';
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+}
+
 export async function downloadAndStage(spec, context) {
   validateSpecFilenameComponents(spec);
   const cacheDirectory = ensureTrustedDirectory(context.clawgodDir, ['cache', 'claude-plugins'], spec);
@@ -3797,10 +3805,13 @@ export async function downloadAndStage(spec, context) {
           stdout: 'pipe',
           stderr: 'pipe',
         });
-      } catch {
-        throw new Error(`${spec.key}: download failed`);
+      } catch (error) {
+        throw new Error(`${spec.key}: download failed from ${spec.url}: ${error instanceof Error ? error.message : String(error)}`);
       }
-      if (result.exitCode !== 0) throw new Error(`${spec.key}: download failed`);
+      if (result.exitCode !== 0) {
+        const summary = fetchStderrSummary(result);
+        throw new Error(`${spec.key}: download failed from ${spec.url} (exit code ${result.exitCode})${summary ? `: ${summary}` : ''} — check your network connection or configure HTTPS_PROXY`);
+      }
       assertTrustedDirectoryIdentity(context.clawgodDir, ['cache', 'claude-plugins'], cacheDirectoryIdentity, spec);
       const temporaryFile = readSingleLinkFile(temporaryArchive);
       if (!temporaryFile) throw new Error(`${spec.key}: download failed`);
