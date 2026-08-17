@@ -199,6 +199,7 @@ await engine.writeEnhancementConfig({ homeDir, manifest, selection });
 '@
     # bun -e 走命令行传参，Windows 的 CreateProcess 往返会吞掉脚本里的内嵌双引号
     # （unix execve 传 argv 数组无此问题），所以落盘后传文件路径执行。
+    New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
     $selectionScriptFile = Join-Path $ClawDir 'enhancement-selection.mjs'
     Set-Content -Path $selectionScriptFile -Value $selectionScript -Encoding ASCII
     & $BunBin $selectionScriptFile $configModule $manifestFile $env:USERPROFILE $Explicit
