@@ -235,6 +235,48 @@ console.log(JSON.stringify({fastThirdParty:snapshot(!0,!0,[C9t,e0r],!1),fastThir
 
 const real232WinResults = [];
 
+// Linux-x64 2.1.233 request builder: renamed gates
+// (`Tu()&&Xz()&&!SBe()&&L0(y)`) and the `jk` registration helper.
+const real233LinuxFastClosureFixture = `${fixture}
+function jk(name,header){return{name,header}}
+let C9t=jk("claude_code","claude-code-20250219"),XAt=jk("oauth_auth","oauth"),e0r=jk("interleaved_thinking","interleaved-thinking-2025-05-14"),QHr=jk("speed","fast-mode-2026-02-01");
+var ZUu;ZUu=new Set([C9t,e0r]);
+function vU(e){return e.map((t)=>t.header)}
+function l1s(e){if(WPo())return e;return e.filter((t)=>ZUu.has(t))}
+var __clawgodFirstParty=!1;
+function WPo(){return __clawgodFirstParty}
+function Mn(v){return!1}
+function Tu(){return!0}function Xz(){return!0}function SBe(){return!1}function L0(y){return!0}
+function nJf(o){return{}}
+function zCi(m){return!0}
+let y="claude-opus-5";
+function buildRequest(ho,ce,existing){let ji=[...existing];let cc=nJf({hasThinking:!0}),Iu=zCi(y),ps;if(Tu()&&Xz()&&!SBe()&&L0(y)&&!!ho.fastMode)ps="fast";if(ce&&!ji.includes(QHr))ji.push(QHr);let Vc=Mn(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Sa=Vc?ji.filter((Hs)=>Hs===XAt):ji;let ne=!0;let Rd={model:y,...ne&&(!Vc||Sa.length>0)&&{betas:vU(l1s(Sa))},...ps!==void 0&&{speed:ps}};return Rd}
+function snapshot(fastMode,ce,existing,firstParty){__clawgodFirstParty=firstParty;let Rd=buildRequest({fastMode},ce,existing);return{betas:Rd.betas??null,speed:Rd.speed??null,header:Rd.betas?.join(",")??""}}
+console.log(JSON.stringify({fastThirdParty:snapshot(!0,!0,[C9t,e0r],!1),fastThirdPartyDedup:snapshot(!0,!0,[C9t,C9t,e0r],!1),slowThirdPartyPrior:snapshot(!1,!1,[C9t],!1),slowFirstPartySticky:snapshot(!1,!0,[C9t,QHr],!0),fastFirstParty:snapshot(!0,!0,[],!0)}));
+`;
+
+// Win32-x64 2.1.233 request builder: renamed gates
+// (`ku()&&Qz()&&!wFe()&&PT(y)`) and the `zx` registration helper.
+const real233WinFastClosureFixture = `${fixture}
+function zx(name,header){return{name,header}}
+let C9t=zx("claude_code","claude-code-20250219"),Y0t=zx("oauth_auth","oauth"),e0r=zx("interleaved_thinking","interleaved-thinking-2025-05-14"),XAr=zx("speed","fast-mode-2026-02-01");
+var ZUu;ZUu=new Set([C9t,e0r]);
+function TB(e){return e.map((t)=>t.header)}
+function uNs(e){if(WPo())return e;return e.filter((t)=>ZUu.has(t))}
+var __clawgodFirstParty=!1;
+function WPo(){return __clawgodFirstParty}
+function On(v){return!1}
+function ku(){return!0}function Qz(){return!0}function wFe(){return!1}function PT(y){return!0}
+function nJf(o){return{}}
+function zCi(m){return!0}
+let y="claude-opus-5";
+function buildRequest(ho,ce,existing){let ji=[...existing];let cc=nJf({hasThinking:!0}),Hu=zCi(y),ps;if(ku()&&Qz()&&!wFe()&&PT(y)&&!!ho.fastMode)ps="fast";if(ce&&!ji.includes(XAr))ji.push(XAr);let qc=On(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Sa=qc?ji.filter((Ts)=>Ts===Y0t):ji;let ne=!0;let Id={model:y,...ne&&(!qc||Sa.length>0)&&{betas:TB(uNs(Sa))},...ps!==void 0&&{speed:ps}};return Id}
+function snapshot(fastMode,ce,existing,firstParty){__clawgodFirstParty=firstParty;let Id=buildRequest({fastMode},ce,existing);return{betas:Id.betas??null,speed:Id.speed??null,header:Id.betas?.join(",")??""}}
+console.log(JSON.stringify({fastThirdParty:snapshot(!0,!0,[C9t,e0r],!1),fastThirdPartyDedup:snapshot(!0,!0,[C9t,C9t,e0r],!1),slowThirdPartyPrior:snapshot(!1,!1,[C9t],!1),slowFirstPartySticky:snapshot(!1,!0,[C9t,XAr],!0),fastFirstParty:snapshot(!0,!0,[],!0)}));
+`;
+
+const real233Results = [];
+
 // Fast mode org-check bypass: `g0o()` (the CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK helper)
 // is the local gate that blocks `/fast` when the "penguin mode" org-status endpoint is
 // unreachable through third-party routing. The patch forces it to `true`.
@@ -542,6 +584,64 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
       assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
     }
+    const real233Variants = [
+      {
+        label: 'linux 2.1.233',
+        fixture: real233LinuxFastClosureFixture,
+        ambiguousDuplicate: 'function duplicate(ho,ce,existing){let ji=[...existing];let cc=nJf({hasThinking:!0}),Iu=zCi(y),ps;if(Tu()&&Xz()&&!SBe()&&L0(y)&&!!ho.fastMode)ps="fast";if(ce&&!ji.includes(QHr))ji.push(QHr);let Vc=Mn(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Sa=Vc?ji.filter((Hs)=>Hs===XAt):ji;let ne=!0;let Rd={model:y,...ne&&(!Vc||Sa.length>0)&&{betas:vU(l1s(Sa))},...ps!==void 0&&{speed:ps}};return Rd}\nfunction snapshot(',
+        invalidCaps: ['if(ce&&!ji.includes(QHr))ji.push(QHr)', 'if(ce&&!jq.includes(QHr))jq.push(QHr)'],
+        invalidRegistration: ['QHr=jk("speed","fast-mode-2026-02-01")', 'QHr=jk("speed","fast-mode-2027-01-01")'],
+        rawBetas: /\{betas:vU\(l1s\(Sa\)\)\}/,
+      },
+      {
+        label: 'win32 2.1.233',
+        fixture: real233WinFastClosureFixture,
+        ambiguousDuplicate: 'function duplicate(ho,ce,existing){let ji=[...existing];let cc=nJf({hasThinking:!0}),Hu=zCi(y),ps;if(ku()&&Qz()&&!wFe()&&PT(y)&&!!ho.fastMode)ps="fast";if(ce&&!ji.includes(XAr))ji.push(XAr);let qc=On(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Sa=qc?ji.filter((Ts)=>Ts===Y0t):ji;let ne=!0;let Id={model:y,...ne&&(!qc||Sa.length>0)&&{betas:TB(uNs(Sa))},...ps!==void 0&&{speed:ps}};return Id}\nfunction snapshot(',
+        invalidCaps: ['if(ce&&!ji.includes(XAr))ji.push(XAr)', 'if(ce&&!jq.includes(XAr))jq.push(XAr)'],
+        invalidRegistration: ['XAr=zx("speed","fast-mode-2026-02-01")', 'XAr=zx("speed","fast-mode-2027-01-01")'],
+        rawBetas: /\{betas:TB\(uNs\(Sa\)\)\}/,
+      },
+    ];
+    for (const variant of real233Variants) {
+      writeFileSync(join(dir, 'cli.original.cjs'), variant.fixture, 'utf8');
+      const real233 = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+      const real233Output = real233.stdout + real233.stderr;
+      assert.equal(real233.status, 0, `${name}: ${variant.label} closure must patch: ${real233Output}`);
+      assert.match(real233Output, /Fast Messages protocol \(1 replacement\)/, `${name}: ${variant.label} closure must report its replacement`);
+      const real233After = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+      assert.notEqual(real233After, variant.fixture, `${name}: ${variant.label} closure patch must write`);
+      assert.match(real233After, /__clawgod_fast_messages_protocol__/, `${name}: ${variant.label} closure patch must add the idempotency marker`);
+      assert.match(real233After, /betas:\(\(\)=>\{/, `${name}: ${variant.label} closure must rewrite the betas body field`);
+      assert.doesNotMatch(real233After, variant.rawBetas, `${name}: ${variant.label} closure must replace the raw betas field`);
+      const executeReal233 = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8' });
+      try {
+        assert.equal(executeReal233.status, 0, `${name}: ${variant.label} fixture must execute: ${executeReal233.stderr}`);
+        assertReal232Protocol(name, JSON.parse(executeReal233.stdout));
+      } catch (error) {
+        real233Results.push({ name, label: variant.label, status: real233.status, protocolError: error instanceof Error ? error.message : String(error), output: real233Output });
+        throw error;
+      }
+      real233Results.push({ name, label: variant.label, status: real233.status, protocolError: null, output: real233Output });
+
+      const real233Rerun = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+      assert.equal(real233Rerun.status, 0, `${name}: patched ${variant.label} closure must re-run cleanly: ${real233Rerun.stdout}${real233Rerun.stderr}`);
+      assert.match(real233Rerun.stdout + real233Rerun.stderr, /Fast Messages protocol \(already applied\)/, `${name}: ${variant.label} re-run must recognize the idempotency marker`);
+
+      const invalid233Fixtures = [
+        [`ambiguous ${variant.label} closure`, variant.fixture.replace('function snapshot(', variant.ambiguousDuplicate)],
+        [`inconsistent ${variant.label} capability list`, variant.fixture.replace(variant.invalidCaps[0], variant.invalidCaps[1])],
+        [`mismatched ${variant.label} Fast registration`, variant.fixture.replace(variant.invalidRegistration[0], variant.invalidRegistration[1])],
+      ];
+      for (const [label, invalidFixture] of invalid233Fixtures) {
+        writeFileSync(join(dir, 'cli.original.cjs'), invalidFixture, 'utf8');
+        const invalid = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+        const invalidOutput = invalid.stdout + invalid.stderr;
+        assert.notEqual(invalid.status, 0, `${name}: ${label} must fail`);
+        assert.match(invalidOutput, /Fast Messages protocol/, `${name}: ${label} must report Fast Messages protocol`);
+        assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
+        assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
+      }
+    }
     // Fast mode org-check bypass: forcing the skip helper to `true` unlocks the
     // `/fast` toggle when the "penguin mode" org-status check is unreachable.
     writeFileSync(join(dir, 'cli.original.cjs'), fastModeOrgCheckFixture, 'utf8');
@@ -618,6 +718,15 @@ assert.equal(
   0,
   `real win32 2.1.232 forced passthrough protocol missing:\n${real232WinResults.map((result) =>
     `${result.name}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
+  ).join('\n')}`,
+);
+
+assert.equal(real233Results.length, 4, 'real 2.1.233 closures must execute both patcher variants per platform');
+assert.equal(
+  real233Results.filter((result) => result.protocolError !== null).length,
+  0,
+  `real 2.1.233 forced passthrough protocol missing:\n${real233Results.map((result) =>
+    `${result.name}/${result.label}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
   ).join('\n')}`,
 );
 

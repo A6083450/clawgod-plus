@@ -8292,7 +8292,11 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   const real232Matches = [...source.matchAll(real232Re)];
   const real232WinRe = /if\(uu\(\)&&Wz\(\)&&!aFe\(\)&&ET\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,3000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,3000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
   const real232WinMatches = [...source.matchAll(real232WinRe)];
-  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length + real232Matches.length + real232WinMatches.length;
+  const real233LinuxRe = /if\(Tu\(\)&&Xz\(\)&&!SBe\(\)&&L0\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,3000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,3000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
+  const real233LinuxMatches = [...source.matchAll(real233LinuxRe)];
+  const real233WinRe = /if\(ku\(\)&&Qz\(\)&&!wFe\(\)&&PT\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,3000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,3000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
+  const real233WinMatches = [...source.matchAll(real233WinRe)];
+  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length + real232Matches.length + real232WinMatches.length + real233LinuxMatches.length + real233WinMatches.length;
   if (totalMatches !== 1) {
     if (totalMatches === 0 && !hasFastBeta)
       return { status: "skipped", detail: "not present in this version" };
@@ -8373,6 +8377,42 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
     const betasIndex = match[0].lastIndexOf(betasField);
     if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex)
       return { status: "failed", detail: "Fast request betas field is not unique inside the matched win32 2.1.232 closure" };
+    const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
+    if (dryRun)
+      return { status: "applied", count: 1, code: source };
+    return { status: "applied", count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
+  if (real233LinuxMatches.length === 1) {
+    const [, , speed, , caps, fastCapability, , , betasSource, capsElse, , , betaSerializer, betaAllowlist] = real233LinuxMatches[0];
+    if (caps !== capsElse)
+      return { status: "failed", detail: "Fast request betas closure matched an inconsistent capability list" };
+    if (!source.includes(`${fastCapability}=jk("speed","${FAST_BETA}")`))
+      return { status: "failed", detail: "Fast beta capability registration shape changed" };
+    if (verify)
+      return { status: "verify", count: 1 };
+    const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
+    const match = real233LinuxMatches[0];
+    const betasIndex = match[0].lastIndexOf(betasField);
+    if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex)
+      return { status: "failed", detail: "Fast request betas field is not unique inside the matched linux 2.1.233 closure" };
+    const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
+    if (dryRun)
+      return { status: "applied", count: 1, code: source };
+    return { status: "applied", count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
+  if (real233WinMatches.length === 1) {
+    const [, , speed, , caps, fastCapability, , , betasSource, capsElse, , , betaSerializer, betaAllowlist] = real233WinMatches[0];
+    if (caps !== capsElse)
+      return { status: "failed", detail: "Fast request betas closure matched an inconsistent capability list" };
+    if (!source.includes(`${fastCapability}=zx("speed","${FAST_BETA}")`))
+      return { status: "failed", detail: "Fast beta capability registration shape changed" };
+    if (verify)
+      return { status: "verify", count: 1 };
+    const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
+    const match = real233WinMatches[0];
+    const betasIndex = match[0].lastIndexOf(betasField);
+    if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex)
+      return { status: "failed", detail: "Fast request betas field is not unique inside the matched win32 2.1.233 closure" };
     const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
     if (dryRun)
       return { status: "applied", count: 1, code: source };

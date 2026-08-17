@@ -1951,7 +1951,7 @@ ${windowsApplyBlock}
     status = $vendorStatus
     nativePreference = $PSNativeCommandUseErrorActionPreference
     nativePreferenceDefined = Test-Path Variable:PSNativeCommandUseErrorActionPreference
-    errorActionPreference = $ErrorActionPreference
+    errorActionPreference = [string]$ErrorActionPreference
     rollbackComplete = $VendorRollbackComplete
     cleanupSafe = $RuntimeTransactionCleanupSafe
     caught = $Caught
