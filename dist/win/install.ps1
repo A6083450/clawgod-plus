@@ -209,7 +209,9 @@ await engine.writeEnhancementConfig({ homeDir, manifest, selection });
     $selectionScriptFile = Join-Path $ClawDir 'enhancement-selection.mjs'
     Set-Content -Path $selectionScriptFile -Value $selectionScript -Encoding ASCII
     & $BunBin $selectionScriptFile $configModule $manifestFile $env:USERPROFILE $Explicit
-    if ($LASTEXITCODE -ne 0) { throw "enhancement selection exited $LASTEXITCODE" }
+    $selectionExit = $LASTEXITCODE
+    Remove-Item -LiteralPath $selectionScriptFile -Force -ErrorAction SilentlyContinue
+    if ($selectionExit -ne 0) { throw "enhancement selection exited $selectionExit" }
 }
 
 function Initialize-EnhancementSelection {
