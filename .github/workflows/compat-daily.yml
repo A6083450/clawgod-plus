@@ -530,9 +530,22 @@ jobs:
             # claude-hud 在设置 cwd 时会探测 git（第三方插件行为，失败时优雅
             # 降级）。给 HUD 消费者一个 benign 失败的 git，避免其探测撞上
             # forbidden shim 被误判为 Bun-only 契约违规（与 unix E2E 同策略）。
+            # Windows 上 spawn 解析为 git.exe，需要真正的可执行文件（不能是
+            # .cmd shim），用 bun 编译一个 benign git.exe 置于 PATH 前端。
             $benignGitDir = Join-Path $sandbox 'hud-benign-bin'
             New-Item -ItemType Directory -Force -Path $benignGitDir | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $benignGitDir 'git.cmd'), '@echo off' + "`r`n" + 'echo fatal: not a git repository 1>&2' + "`r`n" + 'exit /b 128' + "`r`n", [System.Text.UTF8Encoding]::new($false))
+            $benignGitExeSource = Join-Path $sandbox 'benign-git.mjs'
+            $benignGitExeProgram = @'
+console.error('fatal: not a git repository');
+process.exit(128);
+'@
+            [System.IO.File]::WriteAllText($benignGitExeSource, $benignGitExeProgram, [System.Text.UTF8Encoding]::new($false))
+            $benignGitExe = Join-Path $benignGitDir 'git.exe'
+            $benignGitExeBuild = & $bunBin build --compile $benignGitExeSource --outfile $benignGitExe 2>&1
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $benignGitExe -PathType Leaf)) {
+              throw "Bun failed to compile the benign git.exe: $($benignGitExeBuild | Out-String)"
+            }
             $startInfo.Environment['PATH'] = $benignGitDir + ';' + $startInfo.Environment['PATH']
             $process = [System.Diagnostics.Process]::new()
             $process.StartInfo = $startInfo
