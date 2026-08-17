@@ -501,7 +501,7 @@ jobs:
             $transcriptIndex = 0
             $transcriptLines = @($fixture.transcript | ForEach-Object {
               $entry = $_ | ConvertTo-Json -Depth 100 -Compress | ConvertFrom-Json
-              $entry | Add-Member -NotePropertyName timestamp -NotePropertyValue ([DateTimeOffset]::FromUnixTimeMilliseconds($transcriptBase + $transcriptIndex * 400).UtcDateTime.ToString('o'))
+              $entry | Add-Member -NotePropertyName timestamp -NotePropertyValue ([DateTimeOffset]::FromUnixTimeMilliseconds($transcriptBase + $transcriptIndex * 400).UtcDateTime.ToString('o')) -Force
               $transcriptIndex++
               $entry | ConvertTo-Json -Depth 100 -Compress
             })
