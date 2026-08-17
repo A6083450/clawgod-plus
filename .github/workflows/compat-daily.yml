@@ -427,8 +427,8 @@ jobs:
             }
             if ($versionCount -lt 1 -or $runnerCount -lt 1) { throw 'claude-mem Hook rewrite is partial' }
             $mcpSearch = $mcp.mcpServers.'mcp-search'
-            if ($mcpSearch.type -cne 'stdio' -or $mcpSearch.command -cne $bunBin -or $mcpSearch.args.Count -ne 2
-              -or $mcpSearch.args[0] -cne '-e' -or [string]::IsNullOrEmpty([string]$mcpSearch.args[1])) {
+            if ($mcpSearch.type -cne 'stdio' -or $mcpSearch.command -cne $bunBin -or $mcpSearch.args.Count -ne 2 -or
+              $mcpSearch.args[0] -cne '-e' -or [string]::IsNullOrEmpty([string]$mcpSearch.args[1])) {
               throw 'claude-mem MCP entrypoint is not Bun-managed'
             }
             Write-Host 'claude-mem entrypoints: hooks=bun mcp=bun'

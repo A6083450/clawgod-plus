@@ -668,7 +668,13 @@ async function observeOrphanLockStaleEvidence(fileSystem, directoryPath, platfor
       }
       const current = await lstatIfPresent(fileSystem, root);
       if (!current) continue;
+      // dev+ino alone is not enough: tmpfs recycles inode numbers immediately,
+      // so a rm+mkdir replacement can keep the same identity. ctime/mtime
+      // (nanosecond precision surfaced through the millisecond floats) change
+      // on any replacement; reading the directory updates neither field.
       if (!sameIdentity(fileIdentity(current), fileIdentity(status))
+        || current.ctimeMs !== status.ctimeMs
+        || current.mtimeMs !== status.mtimeMs
         || !configDirectoryStatusIsSafe(current, platform)) {
         throw new Error('Enhancement config stale lock evidence changed during observation');
       }
