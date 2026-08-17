@@ -137,7 +137,7 @@ function hudFileSnapshot(root, path, label, parseJson = false) {
     if (part) current = join(current, part);
     let status;
     try { status = lstatSync(current); } catch { throw new Error(`hud: unsafe ${label} ancestor`); }
-    if (status.isSymbolicLink() || !status.isDirectory() || (status.mode & 0o022) !== 0) {
+    if (status.isSymbolicLink() || !status.isDirectory() || (process.platform !== 'win32' && (status.mode & 0o022) !== 0)) {
       throw new Error(`hud: unsafe ${label} ancestor`);
     }
   }
@@ -149,7 +149,7 @@ function hudFileSnapshot(root, path, label, parseJson = false) {
     }
     throw new Error(`hud: unsafe ${label}`);
   }
-  if (status.isSymbolicLink() || !status.isFile() || (status.mode & 0o022) !== 0) {
+  if (status.isSymbolicLink() || !status.isFile() || (process.platform !== 'win32' && (status.mode & 0o022) !== 0)) {
     throw new Error(`hud: unsafe ${label}`);
   }
   const bytes = readFileSync(path);
