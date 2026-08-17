@@ -168,7 +168,7 @@ function Write-EnhancementSelection {
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const [modulePath, manifestPath, homeDir, explicit] = process.argv.slice(1);
+const [modulePath, manifestPath, homeDir, explicit] = process.argv.slice(2);
 const engine = await import(pathToFileURL(modulePath).href);
 const manifest = engine.loadEnhancementManifest(await readFile(manifestPath), { filename: "enhancements.json" });
 const stored = await engine.readEnhancementConfig({ homeDir, manifest });
@@ -181,7 +181,11 @@ const selection = explicit === "__CLAWGOD_SAVED__"
   : engine.resolveEnhancementSelection({ explicit }, manifest);
 await engine.writeEnhancementConfig({ homeDir, manifest, selection });
 '@
-    & $BunBin -e $selectionScript $configModule $manifestFile $env:USERPROFILE $Explicit
+    # bun -e 走命令行传参，Windows 的 CreateProcess 往返会吞掉脚本里的内嵌双引号
+    # （unix execve 传 argv 数组无此问题），所以落盘后传文件路径执行。
+    $selectionScriptFile = Join-Path $ClawDir 'enhancement-selection.mjs'
+    Set-Content -Path $selectionScriptFile -Value $selectionScript -Encoding ASCII
+    & $BunBin $selectionScriptFile $configModule $manifestFile $env:USERPROFILE $Explicit
     if ($LASTEXITCODE -ne 0) { throw "enhancement selection exited $LASTEXITCODE" }
 }
 

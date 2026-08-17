@@ -184,7 +184,7 @@ function Write-EnhancementSelection {
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const [modulePath, manifestPath, homeDir, explicit] = process.argv.slice(1);
+const [modulePath, manifestPath, homeDir, explicit] = process.argv.slice(2);
 const engine = await import(pathToFileURL(modulePath).href);
 const manifest = engine.loadEnhancementManifest(await readFile(manifestPath), { filename: "enhancements.json" });
 const stored = await engine.readEnhancementConfig({ homeDir, manifest });
@@ -197,7 +197,11 @@ const selection = explicit === "__CLAWGOD_SAVED__"
   : engine.resolveEnhancementSelection({ explicit }, manifest);
 await engine.writeEnhancementConfig({ homeDir, manifest, selection });
 '@
-    & $BunBin -e $selectionScript $configModule $manifestFile $env:USERPROFILE $Explicit
+    # bun -e 走命令行传参，Windows 的 CreateProcess 往返会吞掉脚本里的内嵌双引号
+    # （unix execve 传 argv 数组无此问题），所以落盘后传文件路径执行。
+    $selectionScriptFile = Join-Path $ClawDir 'enhancement-selection.mjs'
+    Set-Content -Path $selectionScriptFile -Value $selectionScript -Encoding ASCII
+    & $BunBin $selectionScriptFile $configModule $manifestFile $env:USERPROFILE $Explicit
     if ($LASTEXITCODE -ne 0) { throw "enhancement selection exited $LASTEXITCODE" }
 }
 
@@ -520,7 +524,7 @@ if ($Uninstall) {
         Write-OK "Removed clawgod alias"
     }
 
-    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","openai-proxy.cjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
+    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","openai-proxy.cjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
@@ -903,7 +907,7 @@ if ($LeanOff) {
     New-Item -ItemType File -Force -Path $leanOffFlag | Out-Null
     if (Test-Path $leanMaxFlag) { Remove-Item $leanMaxFlag -Force }
     $leanRemoveScript = @'
-const fs=require("fs"),p=process.argv[1];
+const fs=require("fs"),p=process.argv[2];
 const allDeny=new Set(["DesignSync","NotebookEdit","PushNotification","RemoteTrigger","CronCreate","CronDelete","CronList","EnterPlanMode","ExitPlanMode","SendMessage","ScheduleWakeup","AskUserQuestion","ReportFindings"]);
 const allFlags=["disableWorkflows","disableRemoteControl","disableClaudeAiConnectors","disableArtifact","disableBundledSkills"];
 let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{process.exit(0)}
@@ -912,7 +916,12 @@ if(Array.isArray(s.permissions?.deny))s.permissions.deny=s.permissions.deny.filt
 fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");
 '@
     if (Test-Path $claudeSettings) {
-        try { & $BunBin -e $leanRemoveScript "$claudeSettings" 2>$null } catch {}
+        try {
+            # bun -e 在 Windows 下会丢失多行脚本中的双引号，落盘后传文件路径执行
+            $leanRemoveScriptFile = Join-Path $ClawDir 'lean-remove.mjs'
+            Set-Content -Path $leanRemoveScriptFile -Value $leanRemoveScript -Encoding ASCII
+            & $BunBin $leanRemoveScriptFile "$claudeSettings" 2>$null
+        } catch {}
     }
     Write-OK "Lean mode disabled (all tools restored)"
 } elseif ($LeanOn) {
@@ -927,8 +936,8 @@ if (-not (Test-Path $leanOffFlag)) {
     $leanIsMax = (Test-Path $leanMaxFlag)
     $leanApplyScript = @'
 const fs = require("fs");
-const settingsPath = process.argv[1];
-const isMax = process.argv[2] === "true";
+const settingsPath = process.argv[2];
+const isMax = process.argv[3] === "true";
 const baseDeny = ["DesignSync","NotebookEdit","PushNotification","RemoteTrigger","CronCreate","CronDelete","CronList"];
 const maxDeny = ["EnterPlanMode","ExitPlanMode","SendMessage","ScheduleWakeup","AskUserQuestion","ReportFindings"];
 const baseFlags = ["disableWorkflows","disableRemoteControl","disableClaudeAiConnectors","disableArtifact"];
@@ -946,7 +955,10 @@ for (const t of deny) { if (!ex.has(t)) { s.permissions.deny.push(t); changed = 
 if (changed) fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + "\n");
 '@
     try {
-        & $BunBin -e $leanApplyScript "$claudeSettings" "$leanIsMax" 2>$null
+        # bun -e 在 Windows 下会丢失多行脚本中的双引号，落盘后传文件路径执行
+        $leanApplyScriptFile = Join-Path $ClawDir 'lean-apply.mjs'
+        Set-Content -Path $leanApplyScriptFile -Value $leanApplyScript -Encoding ASCII
+        & $BunBin $leanApplyScriptFile "$claudeSettings" "$leanIsMax" 2>$null
         if ($leanIsMax) { Write-OK "Lean settings applied: max (~/.claude/settings.json)" }
         else { Write-OK "Lean settings applied: on (~/.claude/settings.json)" }
     } catch {}
