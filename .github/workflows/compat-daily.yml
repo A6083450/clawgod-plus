@@ -536,10 +536,7 @@ jobs:
             New-Item -ItemType Directory -Force -Path $benignGitDir | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $benignGitDir 'git.cmd'), '@echo off' + "`r`n" + 'echo fatal: not a git repository 1>&2' + "`r`n" + 'exit /b 128' + "`r`n", [System.Text.UTF8Encoding]::new($false))
             $benignGitExeSource = Join-Path $sandbox 'benign-git.mjs'
-            $benignGitExeProgram = @'
-console.error('fatal: not a git repository');
-process.exit(128);
-'@
+            $benignGitExeProgram = "console.error('fatal: not a git repository');`nprocess.exit(128);`n"
             [System.IO.File]::WriteAllText($benignGitExeSource, $benignGitExeProgram, [System.Text.UTF8Encoding]::new($false))
             $benignGitExe = Join-Path $benignGitDir 'git.exe'
             $benignGitExeBuild = & $bunBin build --compile $benignGitExeSource --outfile $benignGitExe 2>&1
