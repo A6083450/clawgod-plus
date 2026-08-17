@@ -80,19 +80,17 @@ jobs:
             bun "$test"
           done
 
+      - name: Set up Bun stable for E2E extraction
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
       - name: Run isolated Bun-only installer E2E
         shell: bash
         run: |
           set -euo pipefail
-          # GitHub 的 canary release（1.4.0-canary.1+5c050bc33）在 runner 真 x64
-          # CPU 上提取 cli.js 时挂起（qemu/容器下不可复现），E2E 改用 stable
-          # 1.3.14（满足安装器 MinBunVersion，容器实测 E2E 全绿）。
-          curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip -o "$RUNNER_TEMP/bun-stable.zip"
-          unzip -q -o "$RUNNER_TEMP/bun-stable.zip" -d "$RUNNER_TEMP/bun-stable"
-          export BUN_STABLE="$RUNNER_TEMP/bun-stable/bun-linux-x64/bun"
-          chmod +x "$BUN_STABLE"
           log="$RUNNER_TEMP/installer-e2e.log"
-          CLAWGOD_E2E=1 "$BUN_STABLE" tests/installer-e2e.mjs 2>&1 | tee "$log"
+          CLAWGOD_E2E=1 bun tests/installer-e2e.mjs 2>&1 | tee "$log"
           if grep -q 'forbidden dependency invoked:' "$log"; then
             echo '::error::installer invoked a forbidden system dependency'
             exit 1
@@ -141,14 +139,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -x "$RUNNER_TEMP/bun-stable/bun-linux-x64/bun" ]; then
-            curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip -o "$RUNNER_TEMP/bun-stable.zip"
-            unzip -q -o "$RUNNER_TEMP/bun-stable.zip" -d "$RUNNER_TEMP/bun-stable"
-            chmod +x "$RUNNER_TEMP/bun-stable/bun-linux-x64/bun"
-          fi
-          export BUN_STABLE="$RUNNER_TEMP/bun-stable/bun-linux-x64/bun"
           subset_log="$RUNNER_TEMP/installer-e2e-subset.log"
-          CLAWGOD_E2E=1 CLAWGOD_E2E_ENHANCEMENTS='chrome,computer-use,claude-hud' "$BUN_STABLE" tests/installer-e2e.mjs 2>&1 | tee "$subset_log"
+          CLAWGOD_E2E=1 CLAWGOD_E2E_ENHANCEMENTS='chrome,computer-use,claude-hud' bun tests/installer-e2e.mjs 2>&1 | tee "$subset_log"
           for contract in \
             'enhancement config initial: mode=custom enabled=3' \
             'enhancement config no-upgrade: mode=custom enabled=3' \
@@ -161,7 +153,7 @@ jobs:
             }
           done
           none_log="$RUNNER_TEMP/installer-e2e-none.log"
-          CLAWGOD_E2E=1 CLAWGOD_E2E_ENHANCEMENTS='none' "$BUN_STABLE" tests/installer-e2e.mjs 2>&1 | tee "$none_log"
+          CLAWGOD_E2E=1 CLAWGOD_E2E_ENHANCEMENTS='none' bun tests/installer-e2e.mjs 2>&1 | tee "$none_log"
           for contract in \
             'enhancement config initial: mode=custom enabled=0' \
             'enhancement config no-upgrade: mode=custom enabled=0' \
