@@ -526,6 +526,13 @@ jobs:
             $startInfo.RedirectStandardOutput = $true
             $startInfo.RedirectStandardError = $true
             $startInfo.StandardInputEncoding = [System.Text.UTF8Encoding]::new($false)
+            # claude-hud 在设置 cwd 时会探测 git（第三方插件行为，失败时优雅
+            # 降级）。给 HUD 消费者一个 benign 失败的 git，避免其探测撞上
+            # forbidden shim 被误判为 Bun-only 契约违规（与 unix E2E 同策略）。
+            $benignGitDir = Join-Path $sandbox 'hud-benign-bin'
+            New-Item -ItemType Directory -Force -Path $benignGitDir | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $benignGitDir 'git.cmd'), '@echo off' + "`r`n" + 'echo fatal: not a git repository 1>&2' + "`r`n" + 'exit /b 128' + "`r`n", [System.Text.UTF8Encoding]::new($false))
+            $startInfo.Environment['PATH'] = $benignGitDir + ';' + $startInfo.Environment['PATH']
             $process = [System.Diagnostics.Process]::new()
             $process.StartInfo = $startInfo
             if (-not $process.Start()) { throw 'HUD golden fixture process did not start' }
