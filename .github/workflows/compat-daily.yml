@@ -490,7 +490,14 @@ jobs:
             $projectDir = Join-Path $env:USERPROFILE 'my-project'
             $transcriptPath = Join-Path $projectDir 'transcript.jsonl'
             New-Item -ItemType Directory -Force -Path $projectDir | Out-Null
-            $transcriptLines = @($fixture.transcript | ForEach-Object { $_ | ConvertTo-Json -Depth 100 -Compress })
+            $transcriptBase = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            $transcriptIndex = 0
+            $transcriptLines = @($fixture.transcript | ForEach-Object {
+              $entry = $_ | ConvertTo-Json -Depth 100 -Compress | ConvertFrom-Json
+              $entry | Add-Member -NotePropertyName timestamp -NotePropertyValue ([DateTimeOffset]::FromUnixTimeMilliseconds($transcriptBase + $transcriptIndex * 400).UtcDateTime.ToString('o'))
+              $transcriptIndex++
+              $entry | ConvertTo-Json -Depth 100 -Compress
+            })
             [System.IO.File]::WriteAllText($transcriptPath, ($transcriptLines -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
             $stdinValue = $fixture.stdin | ConvertTo-Json -Depth 100 | ConvertFrom-Json
             $stdinValue | Add-Member -NotePropertyName cwd -NotePropertyValue $projectDir
