@@ -84,6 +84,22 @@ jobs:
         with:
           path: dist
 
+      - name: Wait for release to exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          for i in $(seq 1 60); do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Release $tag is ready"
+              exit 0
+            fi
+            echo "Waiting for release $tag... ($i/60)"
+            sleep 5
+          done
+          echo "Release $tag was not created within 5 minutes" >&2
+          exit 1
+
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
