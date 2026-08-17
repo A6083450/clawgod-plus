@@ -143,8 +143,8 @@ function Read-EnhancementChoice {
     while ($true) {
         Write-EnhancementChoiceMenu -Cursor $cursor -Selected $selected
         $key = Read-EnhancementKey
-        if ($key -eq [ConsoleKey]::ArrowUp) { $cursor = ($cursor + $EnhancementIds.Count - 1) % $EnhancementIds.Count }
-        elseif ($key -eq [ConsoleKey]::ArrowDown) { $cursor = ($cursor + 1) % $EnhancementIds.Count }
+        if ($key -eq [ConsoleKey]::UpArrow) { $cursor = ($cursor + $EnhancementIds.Count - 1) % $EnhancementIds.Count }
+        elseif ($key -eq [ConsoleKey]::DownArrow) { $cursor = ($cursor + 1) % $EnhancementIds.Count }
         elseif ($key -eq [ConsoleKey]::Spacebar) { $selected[$cursor] = -not $selected[$cursor] }
         elseif ($key -eq [ConsoleKey]::Enter) {
             $enabled = @()

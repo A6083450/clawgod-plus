@@ -677,7 +677,7 @@ assert.match(windowsLifecycle, /\[string\]\$Enhancements/, 'PowerShell lifecycle
 assert.match(windowsLifecycle, /\[switch\]\$ChooseEnhancements/, 'PowerShell lifecycle must expose -ChooseEnhancements');
 assert.match(windowsLifecycle, /Read-EnhancementKey/, 'PowerShell menu must read keys through a dedicated function');
 assert.match(windowsLifecycle, /\[Console\]::ReadKey/, 'PowerShell key reading must use Console.ReadKey');
-assert.match(windowsLifecycle, /\[ConsoleKey\]::ArrowUp/, 'PowerShell menu must handle ArrowUp');
+assert.match(windowsLifecycle, /\[ConsoleKey\]::UpArrow/, 'PowerShell menu must handle ArrowUp');
 assert.match(windowsLifecycle, /\[ConsoleKey\]::Spacebar/, 'PowerShell menu must handle Spacebar');
 assert.match(windowsLifecycle, /\[ConsoleKey\]::Escape/, 'PowerShell menu must handle Escape');
 assert.match(windowsLifecycle, /SetCursorPosition/, 'PowerShell menu must redraw via SetCursorPosition');
