@@ -140,24 +140,28 @@ function writeLauncher(mainBin) {
 
 function install() {
   const worker = findWorker();
-  if (!fs.existsSync(settingsPath) && !worker) return false;
+  const settingsExists = fs.existsSync(settingsPath);
+  if (!settingsExists && !worker) return false;
   const settings = readJson(settingsPath, null);
-  if (!settings) throw new Error(`Cannot read claude-mem settings: ${settingsPath}`);
-  if (settings.CLAUDE_MEM_PROVIDER && settings.CLAUDE_MEM_PROVIDER !== 'claude') return false;
+  if (!settings && settingsExists) throw new Error(`Cannot read claude-mem settings: ${settingsPath}`);
+  // 全新安装时插件已落地（worker 存在于插件缓存）但 claude-mem 尚未首次
+  // 运行、settings.json 还不存在——用空配置初始化而非报错。
+  const current = settings || {};
+  if (current.CLAUDE_MEM_PROVIDER && current.CLAUDE_MEM_PROVIDER !== 'claude') return false;
   const gateway = configuredGateway();
   if (!gateway.credential) return false;
   const state = readJson(statePath, null);
-  if (state && managedKeys.some(key => settings[key] !== state[key])) return false;
+  if (state && managedKeys.some(key => current[key] !== state[key])) return false;
   if (!fs.existsSync(backupPath)) {
     const backup = {};
-    for (const key of managedKeys) if (Object.hasOwn(settings, key)) backup[key] = settings[key];
+    for (const key of managedKeys) if (Object.hasOwn(current, key)) backup[key] = current[key];
     writeJson(backupPath, backup);
   }
   const authMethod = gateway.baseURL && !/anthropic\.com/i.test(gateway.baseURL) ? 'gateway' : 'api-key';
   const defaultBin = path.join(home, '.local', 'bin', isWindows ? 'claude.cmd' : 'claude');
   const requestedBin = process.env.CLAWGOD_CLAUDE_BIN || defaultBin;
   const mainBin = /(?:^|[\\/])cmux-cli-shims(?:[\\/]|$)/i.test(requestedBin) && fs.existsSync(defaultBin) ? defaultBin : requestedBin;
-  const next = { ...settings, CLAUDE_MEM_PROVIDER: 'claude', CLAUDE_MEM_MODEL: 'haiku', CLAUDE_MEM_CLAUDE_AUTH_METHOD: authMethod, CLAUDE_CODE_PATH: launcherPath };
+  const next = { ...current, CLAUDE_MEM_PROVIDER: 'claude', CLAUDE_MEM_MODEL: 'haiku', CLAUDE_MEM_CLAUDE_AUTH_METHOD: authMethod, CLAUDE_CODE_PATH: launcherPath };
   writeJson(settingsPath, next);
   writeJson(statePath, Object.fromEntries(managedKeys.map(key => [key, next[key]])));
   writeLauncher(mainBin);
