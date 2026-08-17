@@ -235,10 +235,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Bun (canary)
+      # Windows runner 同属真 x64，canary（+5c050bc33）在提取 cli.js 时挂起
+      # （与 Linux E2E 同根因），windows-smoke 全程用 stable 1.3.14。
+      - name: Set up Bun (stable for Windows smoke)
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: canary
+          bun-version: 1.3.14
 
       - name: Run isolated Bun-only Windows install lifecycle
         shell: pwsh
