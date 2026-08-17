@@ -211,6 +211,30 @@ function assertReal232Protocol(name, output) {
 
 const real232Results = [];
 
+// Win32-x64 2.1.232 request builder: the darwin 2.1.232 structure with
+// win32-renamed gates (`Wz()`/`ET(y)`) and the win32 `Lx` capability
+// registration helper. Forced passthrough semantics are identical to the
+// darwin 2.1.232 branch.
+const real232WinFastClosureFixture = `${fixture}
+function Lx(name,header){return{name,header}}
+let C9t=Lx("claude_code","claude-code-20250219"),c0t=Lx("oauth_auth","oauth"),e0r=Lx("interleaved_thinking","interleaved-thinking-2025-05-14"),rAr=Lx("speed","fast-mode-2026-02-01");
+var ZUu;ZUu=new Set([C9t,e0r]);
+function _B(e){return e.map((t)=>t.header)}
+function sLs(e){if(WPo())return e;return e.filter((t)=>ZUu.has(t))}
+var __clawgodFirstParty=!1;
+function WPo(){return __clawgodFirstParty}
+function Ln(v){return!1}
+function uu(){return!0}function Wz(){return!0}function aFe(){return!1}function ET(y){return!0}
+function nJf(o){return{}}
+function zCi(m){return!0}
+let y="claude-opus-5";
+function buildRequest(no,le,existing){let us=[...existing];let cc=nJf({hasThinking:!0}),Os=zCi(y),os;if(uu()&&Wz()&&!aFe()&&ET(y)&&!!no.fastMode)os="fast";if(le&&!us.includes(rAr))us.push(rAr);let th=Ln(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Ls=th?us.filter((nn)=>nn===c0t):us;let re=!0;let Wa={model:y,...re&&(!th||Ls.length>0)&&{betas:_B(sLs(Ls))},...os!==void 0&&{speed:os}};return Wa}
+function snapshot(fastMode,le,existing,firstParty){__clawgodFirstParty=firstParty;let Wa=buildRequest({fastMode},le,existing);return{betas:Wa.betas??null,speed:Wa.speed??null,header:Wa.betas?.join(",")??""}}
+console.log(JSON.stringify({fastThirdParty:snapshot(!0,!0,[C9t,e0r],!1),fastThirdPartyDedup:snapshot(!0,!0,[C9t,C9t,e0r],!1),slowThirdPartyPrior:snapshot(!1,!1,[C9t],!1),slowFirstPartySticky:snapshot(!1,!0,[C9t,rAr],!0),fastFirstParty:snapshot(!0,!0,[],!0)}));
+`;
+
+const real232WinResults = [];
+
 // Fast mode org-check bypass: `g0o()` (the CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK helper)
 // is the local gate that blocks `/fast` when the "penguin mode" org-status endpoint is
 // unreachable through third-party routing. The patch forces it to `true`.
@@ -471,6 +495,53 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
       assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
     }
+    writeFileSync(join(dir, 'cli.original.cjs'), real232WinFastClosureFixture, 'utf8');
+    const real232Win = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    const real232WinOutput = real232Win.stdout + real232Win.stderr;
+    assert.equal(real232Win.status, 0, `${name}: real win32 2.1.232 closure must patch: ${real232WinOutput}`);
+    assert.match(real232WinOutput, /Fast Messages protocol \(1 replacement\)/, `${name}: real win32 2.1.232 closure must report its replacement`);
+    const real232WinAfter = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    assert.notEqual(real232WinAfter, real232WinFastClosureFixture, `${name}: real win32 2.1.232 closure patch must write`);
+    assert.match(real232WinAfter, /__clawgod_fast_messages_protocol__/, `${name}: real win32 2.1.232 closure patch must add the idempotency marker`);
+    assert.match(real232WinAfter, /betas:\(\(\)=>\{/, `${name}: real win32 2.1.232 closure must rewrite the betas body field`);
+    assert.doesNotMatch(real232WinAfter, /\{betas:_B\(sLs\(Ls\)\)\}/, `${name}: real win32 2.1.232 closure must replace the raw betas field`);
+    const executeReal232Win = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8' });
+    try {
+      assert.equal(executeReal232Win.status, 0, `${name}: real win32 2.1.232 fixture must execute: ${executeReal232Win.stderr}`);
+      assertReal232Protocol(name, JSON.parse(executeReal232Win.stdout));
+    } catch (error) {
+      real232WinResults.push({ name, status: real232Win.status, protocolError: error instanceof Error ? error.message : String(error), output: real232WinOutput });
+      throw error;
+    }
+    real232WinResults.push({ name, status: real232Win.status, protocolError: null, output: real232WinOutput });
+
+    const real232WinRerun = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(real232WinRerun.status, 0, `${name}: patched real win32 2.1.232 closure must re-run cleanly: ${real232WinRerun.stdout}${real232WinRerun.stderr}`);
+    assert.match(real232WinRerun.stdout + real232WinRerun.stderr, /Fast Messages protocol \(already applied\)/, `${name}: win32 2.1.232 re-run must recognize the idempotency marker`);
+
+    writeFileSync(join(dir, 'cli.original.cjs'), real232WinFastClosureFixture, 'utf8');
+    const verifyReal232Win = spawnSync(process.execPath, ['patch.mjs', '--verify'], { cwd: dir, encoding: 'utf8' });
+    const verifyReal232WinOutput = verifyReal232Win.stdout + verifyReal232Win.stderr;
+    assert.equal(verifyReal232Win.status, 0, `${name}: ${verifyReal232WinOutput}`);
+    assert.match(verifyReal232WinOutput, /Fast Messages protocol — 1 match\(es\), not yet applied/, `${name}: verify must report the unapplied real win32 2.1.232 match`);
+    assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), real232WinFastClosureFixture, `${name}: verify must not write the real win32 2.1.232 closure`);
+
+    const invalid232WinFixtures = [
+      ['mismatched real win32 2.1.232 betas source', real232WinFastClosureFixture.replace('{betas:_B(sLs(Ls))}', '{betas:_B(sLs(Lx))}')],
+      ['ambiguous real win32 2.1.232 closure', real232WinFastClosureFixture.replace('function snapshot(', 'function duplicate(no,le,existing){let us=[...existing];let cc=nJf({hasThinking:!0}),Os=zCi(y),os;if(uu()&&Wz()&&!aFe()&&ET(y)&&!!no.fastMode)os="fast";if(le&&!us.includes(rAr))us.push(rAr);let th=Ln(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Ls=th?us.filter((nn)=>nn===c0t):us;let re=!0;let Wa={model:y,...re&&(!th||Ls.length>0)&&{betas:_B(sLs(Ls))},...os!==void 0&&{speed:os}};return Wa}\nfunction snapshot(')],
+      ['inconsistent real win32 2.1.232 capability list', real232WinFastClosureFixture.replace('if(le&&!us.includes(rAr))us.push(rAr)', 'if(le&&!uj.includes(rAr))uj.push(rAr)')],
+      ['mismatched real win32 2.1.232 speed variable', real232WinFastClosureFixture.replace('...os!==void 0&&{speed:os}', '...os!==void 0&&{speed:oq}')],
+      ['mismatched real win32 2.1.232 Fast registration', real232WinFastClosureFixture.replace('rAr=Lx("speed","fast-mode-2026-02-01")', 'rAr=Lx("speed","fast-mode-2027-01-01")')],
+    ];
+    for (const [label, invalidFixture] of invalid232WinFixtures) {
+      writeFileSync(join(dir, 'cli.original.cjs'), invalidFixture, 'utf8');
+      const invalid = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+      const invalidOutput = invalid.stdout + invalid.stderr;
+      assert.notEqual(invalid.status, 0, `${name}: ${label} must fail`);
+      assert.match(invalidOutput, /Fast Messages protocol/, `${name}: ${label} must report Fast Messages protocol`);
+      assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
+      assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
+    }
     // Fast mode org-check bypass: forcing the skip helper to `true` unlocks the
     // `/fast` toggle when the "penguin mode" org-status check is unreachable.
     writeFileSync(join(dir, 'cli.original.cjs'), fastModeOrgCheckFixture, 'utf8');
@@ -537,6 +608,15 @@ assert.equal(
   real232Results.filter((result) => result.protocolError !== null).length,
   0,
   `real 2.1.232 forced passthrough protocol missing:\n${real232Results.map((result) =>
+    `${result.name}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
+  ).join('\n')}`,
+);
+
+assert.equal(real232WinResults.length, 2, 'real win32 2.1.232 closure must execute both patcher variants');
+assert.equal(
+  real232WinResults.filter((result) => result.protocolError !== null).length,
+  0,
+  `real win32 2.1.232 forced passthrough protocol missing:\n${real232WinResults.map((result) =>
     `${result.name}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
   ).join('\n')}`,
 );

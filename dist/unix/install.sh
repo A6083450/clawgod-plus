@@ -1442,7 +1442,13 @@ async function observeOrphanLockStaleEvidence(fileSystem, directoryPath, platfor
       }
       const current = await lstatIfPresent(fileSystem, root);
       if (!current) continue;
+      // dev+ino alone is not enough: tmpfs recycles inode numbers immediately,
+      // so a rm+mkdir replacement can keep the same identity. ctime/mtime
+      // (nanosecond precision surfaced through the millisecond floats) change
+      // on any replacement; reading the directory updates neither field.
       if (!sameIdentity(fileIdentity(current), fileIdentity(status))
+        || current.ctimeMs !== status.ctimeMs
+        || current.mtimeMs !== status.mtimeMs
         || !configDirectoryStatusIsSafe(current, platform)) {
         throw new Error('Enhancement config stale lock evidence changed during observation');
       }
@@ -7831,7 +7837,7 @@ async function observeOrphanLockStaleEvidence(fileSystem, directoryPath, platfor
       const current = await lstatIfPresent(fileSystem, root);
       if (!current)
         continue;
-      if (!sameIdentity(fileIdentity(current), fileIdentity(status)) || !configDirectoryStatusIsSafe(current, platform)) {
+      if (!sameIdentity(fileIdentity(current), fileIdentity(status)) || current.ctimeMs !== status.ctimeMs || current.mtimeMs !== status.mtimeMs || !configDirectoryStatusIsSafe(current, platform)) {
         throw new Error("Enhancement config stale lock evidence changed during observation");
       }
       for (const entry of entries) {
@@ -8284,7 +8290,9 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   const real229ZeMatches = [...source.matchAll(real229ZeRe)];
   const real232Re = /if\(uu\(\)&&j3\(\)&&!aFe\(\)&&TC\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,3000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,3000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
   const real232Matches = [...source.matchAll(real232Re)];
-  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length + real232Matches.length;
+  const real232WinRe = /if\(uu\(\)&&Wz\(\)&&!aFe\(\)&&ET\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,3000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,3000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
+  const real232WinMatches = [...source.matchAll(real232WinRe)];
+  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length + real232Matches.length + real232WinMatches.length;
   if (totalMatches !== 1) {
     if (totalMatches === 0 && !hasFastBeta)
       return { status: "skipped", detail: "not present in this version" };
@@ -8347,6 +8355,24 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
     const betasIndex = match[0].lastIndexOf(betasField);
     if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex)
       return { status: "failed", detail: "Fast request betas field is not unique inside the matched 2.1.232 closure" };
+    const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
+    if (dryRun)
+      return { status: "applied", count: 1, code: source };
+    return { status: "applied", count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
+  if (real232WinMatches.length === 1) {
+    const [, , speed, , caps, fastCapability, , , betasSource, capsElse, , , betaSerializer, betaAllowlist] = real232WinMatches[0];
+    if (caps !== capsElse)
+      return { status: "failed", detail: "Fast request betas closure matched an inconsistent capability list" };
+    if (!source.includes(`${fastCapability}=Lx("speed","${FAST_BETA}")`))
+      return { status: "failed", detail: "Fast beta capability registration shape changed" };
+    if (verify)
+      return { status: "verify", count: 1 };
+    const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
+    const match = real232WinMatches[0];
+    const betasIndex = match[0].lastIndexOf(betasField);
+    if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex)
+      return { status: "failed", detail: "Fast request betas field is not unique inside the matched win32 2.1.232 closure" };
     const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
     if (dryRun)
       return { status: "applied", count: 1, code: source };
