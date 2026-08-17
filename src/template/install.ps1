@@ -308,6 +308,8 @@ if ($Uninstall) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
+    Get-ChildItem -Path $ClawDir -Filter 'cli.original.js.backup-*' -ErrorAction SilentlyContinue | Remove-Item -Force
+    Get-ChildItem -Path $ClawDir -Filter 'cli.original.cjs.backup-*' -ErrorAction SilentlyContinue | Remove-Item -Force
     Write-OK "ClawGod Plus uninstalled"
     Write-Host ""
     Write-Dim "Restart your terminal for changes to take effect."

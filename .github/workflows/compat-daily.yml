@@ -503,7 +503,9 @@ jobs:
             $startInfo.ArgumentList.Add('/d')
             $startInfo.ArgumentList.Add('/s')
             $startInfo.ArgumentList.Add('/c')
-            $startInfo.ArgumentList.Add('"' + $SettingsValue.statusLine.command + '"')
+            $commandScript = Join-Path $sandbox 'hud-golden-command.cmd'
+            [System.IO.File]::WriteAllText($commandScript, '@echo off' + "`r`n" + $SettingsValue.statusLine.command + "`r`n", [System.Text.UTF8Encoding]::new($false))
+            $startInfo.ArgumentList.Add($commandScript)
             $startInfo.WorkingDirectory = $projectDir
             $startInfo.UseShellExecute = $false
             $startInfo.RedirectStandardInput = $true
