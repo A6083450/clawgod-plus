@@ -5574,7 +5574,11 @@ function rollback({ roots, published, oldEntries, cause }) {
         const livePath = join(roots.live.path, entry.name);
         const liveIdentity = status(livePath);
         if (liveIdentity === null) continue;
-        if (!sameIdentity(liveIdentity, entry.identity)) {
+        // dev+ino 在 inode 回收复用（tmpfs/ext4 均可能）下会把替换对象误判为
+        // 原对象；ctime 在 rename 后不变、替换后必然变化（纳秒精度体现在
+        // 毫秒浮点），作为身份佐证。
+        if (!sameIdentity(liveIdentity, entry.identity)
+          || liveIdentity.ctimeMs !== entry.identity.ctimeMs) {
           conflicts.push({ entry: entry.name, reason: 'published-entry-identity-changed', expected: entry.identity, actual: liveIdentity });
           continue;
         }
