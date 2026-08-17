@@ -811,7 +811,7 @@ if (pwsh) {
   assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, 'PowerShell auto prompt must not fall back');
   assert.equal(countOccurrences(output, 'ClawGod Plus 增强选择'), 1, 'PowerShell auto prompt exact quick-menu count');
   runPowerShell(pwsh, 'auto-core', [], noneConfig, { keySequence: ['D2'] });
-  runPowerShell(pwsh, 'auto-custom', [], withoutFirstTwoConfig, { keySequence: ['D3', 'Spacebar', 'ArrowDown', 'Spacebar', 'Enter'] });
+  runPowerShell(pwsh, 'auto-custom', [], withoutFirstTwoConfig, { keySequence: ['D3', 'Spacebar', 'DownArrow', 'Spacebar', 'Enter'] });
   runPowerShell(pwsh, 'auto-noninteractive', [], allConfig, {
     env: { CLAWGOD_NONINTERACTIVE: '1' },
     keySequence: [],
@@ -841,8 +841,8 @@ if (pwsh) {
 
   for (const [label, keySequence, expected, warnings] of [
     ['enter', ['Enter'], allConfig, []],
-    ['arrow-toggle', ['ArrowDown', 'Spacebar', 'Enter'], withoutSecondConfig, []],
-    ['uncheck-all', ['Spacebar', ...Array(12).fill(['ArrowDown', 'Spacebar']).flat(), 'Enter'], noneConfig, []],
+    ['arrow-toggle', ['DownArrow', 'Spacebar', 'Enter'], withoutSecondConfig, []],
+    ['uncheck-all', ['Spacebar', ...Array(12).fill(['DownArrow', 'Spacebar']).flat(), 'Enter'], noneConfig, []],
   ]) {
     output = runPowerShell(pwsh, `prompt-${label}`, ['-ChooseEnhancements'], expected, { keySequence });
     assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, `PowerShell ${label} prompt must not fall back`);
