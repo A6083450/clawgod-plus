@@ -5317,6 +5317,10 @@ function status(path) {
       dev: value.dev,
       ino: value.ino,
       type: value.isDirectory() ? 'directory' : value.isSymbolicLink() ? 'symlink' : value.isFile() ? 'file' : 'other',
+      mode: value.mode,
+      nlink: value.nlink,
+      ctimeMs: value.ctimeMs,
+      mtimeMs: value.mtimeMs,
     };
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
