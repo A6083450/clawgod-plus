@@ -273,7 +273,7 @@ install_chrome_fix_script() {
 
   if [ -n "$local_src" ] && [ -f "$local_src" ]; then
     cp "$local_src" "$dst"
-  elif "$BUN_BIN" "$CLAWGOD_DIR/fetch-file.mjs" "https://raw.githubusercontent.com/A6083450/clawgod-plus/main/apply-claude-code-chrome-fix.sh" "$dst"; then
+  elif "$BUN_BIN" "$CLAWGOD_DIR/fetch-file.mjs" "https://raw.githubusercontent.com/A6083450/clawgod-plus/main/dist/unix/apply-claude-code-chrome-fix.sh" "$dst"; then
     :
   else
     return 1

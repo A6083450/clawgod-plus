@@ -266,7 +266,7 @@ function Install-ChromeFixScript {
     }
 
     try {
-        & $BunBin (Join-Path $ClawDir "fetch-file.mjs") "https://raw.githubusercontent.com/A6083450/clawgod-plus/main/apply-claude-code-chrome-fix.ps1" $dst
+        & $BunBin (Join-Path $ClawDir "fetch-file.mjs") "https://raw.githubusercontent.com/A6083450/clawgod-plus/main/dist/win/apply-claude-code-chrome-fix.ps1" $dst
         if ($LASTEXITCODE -ne 0) { return $false }
         return $true
     } catch {
