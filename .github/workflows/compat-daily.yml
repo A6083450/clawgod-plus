@@ -290,7 +290,8 @@ jobs:
           function Assert-NoForbiddenDependency([object[]]$Output) {
             $text = $Output | Out-String
             if ($text -match 'forbidden dependency invoked:' -or (Test-Path $marker)) {
-              throw 'Installer invoked a forbidden system dependency'
+              $markerContent = if (Test-Path -LiteralPath $marker -PathType Leaf) { (Get-Content -LiteralPath $marker -Raw) } else { '(no marker file)' }
+              throw "Installer invoked a forbidden system dependency. Marker: $markerContent"
             }
           }
 
