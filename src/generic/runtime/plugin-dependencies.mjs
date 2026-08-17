@@ -885,7 +885,7 @@ export async function restoreHud(context, state) {
     operations.push({
       root: context.clawgodDir,
       snapshot: stateSnapshot,
-      bytes: stateSnapshot.bytes,
+      bytes: Buffer.from(JSON.stringify({ ...ownershipState, hud: {} }, null, 2) + '\n'),
       mode: stateSnapshot.mode,
       remove: false,
       label: 'ownership state',
