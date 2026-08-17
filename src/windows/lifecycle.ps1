@@ -184,6 +184,12 @@ await engine.writeEnhancementConfig({ homeDir, manifest, selection });
     # bun -e 走命令行传参，Windows 的 CreateProcess 往返会吞掉脚本里的内嵌双引号
     # （unix execve 传 argv 数组无此问题），所以落盘后传文件路径执行。
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
+    # POSIX 下 pwsh 的 New-Item 按 umask 创建（通常 755），enhancement-config
+    # 要求配置目录 0700；收紧权限。Windows 的 ACL 语义不受 POSIX mode 影响，
+    # 且 Windows PowerShell 5.1 无 Platform 键、无 chmod，两条判断都自然跳过。
+    if ($PSVersionTable.Platform -ne 'Win32NT' -and (Get-Command chmod -ErrorAction SilentlyContinue)) {
+      & chmod 0700 $ClawDir 2>$null
+    }
     $selectionScriptFile = Join-Path $ClawDir 'enhancement-selection.mjs'
     Set-Content -Path $selectionScriptFile -Value $selectionScript -Encoding ASCII
     & $BunBin $selectionScriptFile $configModule $manifestFile $env:USERPROFILE $Explicit
