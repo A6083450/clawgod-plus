@@ -277,10 +277,10 @@ function rollback({ roots, published, oldEntries, cause }) {
         const liveIdentity = status(livePath);
         if (liveIdentity === null) continue;
         // dev+ino 在 inode 回收复用（tmpfs/ext4 均可能）下会把替换对象误判为
-        // 原对象；ctime 在 rename 后不变、替换后必然变化（纳秒精度体现在
-        // 毫秒浮点），作为身份佐证。
+        // 原对象；mtime 跨平台 rename 不变、对象替换后必然变化，作为身份佐证
+        // （ctime 不可用：APFS 的 rename 会更新 ctime，ext4 不会，语义不一致）。
         if (!sameIdentity(liveIdentity, entry.identity)
-          || liveIdentity.ctimeMs !== entry.identity.ctimeMs) {
+          || liveIdentity.mtimeMs !== entry.identity.mtimeMs) {
           conflicts.push({ entry: entry.name, reason: 'published-entry-identity-changed', expected: entry.identity, actual: liveIdentity });
           continue;
         }
