@@ -566,9 +566,13 @@ function run(label, executable, args) {
     env: isolatedEnv,
     encoding: 'utf8',
     maxBuffer: 256 * 1024 * 1024,
+    timeout: 600_000,
   });
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
   process.stdout.write(output);
+  if (result.error?.code === 'ETIMEDOUT') {
+    throw new Error(`${label} timed out after 600s; partial output above may reveal the hung step\n${output}`);
+  }
   assertNoForbiddenDependency(output);
   assert.equal(result.error, undefined, `${label} must start successfully`);
   assert.equal(result.status, 0, `${label} exited ${result.status}\n${output}`);

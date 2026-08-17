@@ -61,7 +61,7 @@ jobs:
       - name: Set up Bun (canary)
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: canary
 
       - name: Print runtime versions
         shell: bash
@@ -233,7 +233,7 @@ jobs:
       - name: Set up Bun (canary)
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: canary
 
       - name: Run isolated Bun-only Windows install lifecycle
         shell: pwsh
