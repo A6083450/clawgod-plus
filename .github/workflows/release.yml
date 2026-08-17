@@ -42,15 +42,19 @@ jobs:
             const { data: tags } = await github.rest.repos.listTags({ owner, repo, per_page: 100 });
             const index = tags.findIndex((entry) => entry.name === currentTag);
             const previousTag = index >= 0 ? tags[index + 1]?.name : undefined;
+            const previousTagSha = previousTag ? tags[index + 1]?.commit?.sha : undefined;
             let commits;
             if (previousTag) {
-              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+              // GitHub fork 的 compare API 持续 404（known issue），改用
+              // listCommits 获取当前 tag 的提交历史，手动截取到 previousTag。
+              const history = await github.rest.repos.listCommits({
                 owner,
                 repo,
-                basehead: `${previousTag}...${currentTag}`,
+                sha: currentTag,
                 per_page: 100,
               });
-              commits = comparison.data.commits;
+              const previousIndex = history.data.findIndex((entry) => entry.sha === previousTagSha);
+              commits = previousIndex >= 0 ? history.data.slice(0, previousIndex) : history.data;
             } else {
               const history = await github.rest.repos.listCommits({ owner, repo, sha: currentTag, per_page: 100 });
               commits = history.data;
