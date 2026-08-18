@@ -26,7 +26,7 @@ const forbiddenText = 'forbidden dependency invoked:';
 
 // Stable enhancement manifest (order matters; must match src/generic/enhancements.json).
 const ENHANCEMENT_IDS = Object.freeze([
-  'chrome', 'computer-use', 'agents', 'planning', 'voice', 'auto-mode',
+  'chrome', 'computer-use', 'design-canvas', 'agents', 'planning', 'voice', 'auto-mode',
   'unrestricted-tools', 'paste-images', 'privacy', 'branding',
   'claude-hud', 'claude-mem', 'superpowers',
 ]);
