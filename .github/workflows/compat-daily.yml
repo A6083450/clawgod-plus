@@ -144,7 +144,7 @@ jobs:
           for contract in \
             'enhancement config initial: mode=custom enabled=3' \
             'enhancement config no-upgrade: mode=custom enabled=3' \
-            'enhancements summary: 3 enabled, 10 disabled' \
+            'enhancements summary: 3 enabled, 11 disabled' \
             'Optional plugins: 1 ready, 2 disabled, 0 warnings' \
             'no prompt: selection resolved without interaction'; do
             grep -q "^${contract}$" "$subset_log" || {
@@ -157,7 +157,7 @@ jobs:
           for contract in \
             'enhancement config initial: mode=custom enabled=0' \
             'enhancement config no-upgrade: mode=custom enabled=0' \
-            'enhancements summary: 0 enabled, 13 disabled' \
+            'enhancements summary: 0 enabled, 14 disabled' \
             'Optional plugins: 0 ready, 3 disabled, 0 warnings' \
             'no prompt: selection resolved without interaction'; do
             grep -q "^${contract}$" "$none_log" || {
