@@ -6,6 +6,7 @@ import { autoModeRegistry } from './enhancements/auto-mode.mjs';
 import { brandingRegistry } from './enhancements/branding.mjs';
 import { chromeRegistry } from './enhancements/chrome.mjs';
 import { computerUseRegistry } from './enhancements/computer-use.mjs';
+import { designCanvasRegistry } from './enhancements/design-canvas.mjs';
 import { pasteImagesRegistry } from './enhancements/paste-images.mjs';
 import { planningRegistry } from './enhancements/planning.mjs';
 import { privacyRegistry } from './enhancements/privacy.mjs';
@@ -21,6 +22,7 @@ const patchIds = enhancementManifest
 const registryById = new Map([
   [chromeRegistry.id, chromeRegistry],
   [computerUseRegistry.id, computerUseRegistry],
+  [designCanvasRegistry.id, designCanvasRegistry],
   [planningRegistry.id, planningRegistry],
   [voiceRegistry.id, voiceRegistry],
   [autoModeRegistry.id, autoModeRegistry],

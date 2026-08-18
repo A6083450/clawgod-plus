@@ -53,6 +53,7 @@ assert.match(generatedUnix, /ClawGod Plus 增强选择/, 'install.sh must embed 
 const expectedIds = [
   'chrome',
   'computer-use',
+  'design-canvas',
   'agents',
   'planning',
   'voice',
@@ -92,6 +93,7 @@ const withoutFirstTwoConfig = `{
   "schemaVersion": 1,
   "mode": "custom",
   "enabled": [
+    "design-canvas",
     "agents",
     "planning",
     "voice",
@@ -111,6 +113,7 @@ const withoutFirstConfig = `{
   "mode": "custom",
   "enabled": [
     "computer-use",
+    "design-canvas",
     "agents",
     "planning",
     "voice",
@@ -130,6 +133,7 @@ const withoutSecondConfig = `{
   "mode": "custom",
   "enabled": [
     "chrome",
+    "design-canvas",
     "agents",
     "planning",
     "voice",
@@ -571,10 +575,10 @@ function runUnixTtyCase(label, lines, expected, {
 runUnixTtyCase('enter', [], allConfig, { keys: '\r', expectedMenuCount: 1 });
 runUnixTtyCase('space-toggle-first', [], withoutFirstConfig, { keys: ' \r', expectedMenuCount: 2 });
 runUnixTtyCase('arrow-toggle', [], withoutSecondConfig, { keys: '\x1b[B \r', expectedMenuCount: 3 });
-runUnixTtyCase('uncheck-all', [], noneConfig, { keys: ' ' + '\x1b[B '.repeat(12) + '\r', expectedMenuCount: 26 });
+runUnixTtyCase('uncheck-all', [], noneConfig, { keys: ' ' + '\x1b[B '.repeat(13) + '\r', expectedMenuCount: 28 });
 runUnixTtyCase('cursor-wrap', [], withoutFirstConfig, {
-  keys: '\x1b[B'.repeat(13) + ' \r',
-  expectedMenuCount: 15,
+  keys: '\x1b[B'.repeat(14) + ' \r',
+  expectedMenuCount: 16,
 });
 runUnixTtyCase('eof-confirm', [], allConfig, { keys: '', expectedMenuCount: 1 });
 
@@ -587,8 +591,8 @@ runUnixTtyCase('eof-confirm', [], allConfig, { keys: '', expectedMenuCount: 1 })
 }
 {
   const output = runUnixTtyCase('wrap-cursor-frame', [], withoutFirstConfig, {
-    keys: '\x1b[B'.repeat(13) + ' \r',
-    expectedMenuCount: 15,
+    keys: '\x1b[B'.repeat(14) + ' \r',
+    expectedMenuCount: 16,
   });
   assert.ok(output.includes('>  1) [ ] chrome'), 'wrapped cursor frame must mark row 1 with >');
 }
@@ -842,7 +846,7 @@ if (pwsh) {
   for (const [label, keySequence, expected, warnings] of [
     ['enter', ['Enter'], allConfig, []],
     ['arrow-toggle', ['DownArrow', 'Spacebar', 'Enter'], withoutSecondConfig, []],
-    ['uncheck-all', ['Spacebar', ...Array(12).fill(['DownArrow', 'Spacebar']).flat(), 'Enter'], noneConfig, []],
+    ['uncheck-all', ['Spacebar', ...Array(13).fill(['DownArrow', 'Spacebar']).flat(), 'Enter'], noneConfig, []],
   ]) {
     output = runPowerShell(pwsh, `prompt-${label}`, ['-ChooseEnhancements'], expected, { keySequence });
     assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, `PowerShell ${label} prompt must not fall back`);

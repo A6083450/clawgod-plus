@@ -48,6 +48,7 @@ fi
 CLAWGOD_ENHANCEMENT_IDS=(
   chrome
   computer-use
+  design-canvas
   agents
   planning
   voice
@@ -64,6 +65,7 @@ CLAWGOD_ENHANCEMENT_IDS=(
 CLAWGOD_ENHANCEMENT_LABELS=(
   'Chrome'
   'Computer Use'
+  'Design Canvas'
   'Agents'
   'Planning'
   'Voice'

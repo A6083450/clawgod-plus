@@ -191,6 +191,16 @@ if (!process.env.CLAUDE_INTERNAL_FC_OVERRIDES && existsSync(featuresFile)) {
   } catch {}
 }
 
+// Design canvas editor payload: cli.original.cjs resolves it through the
+// Bun standalone embed path /$bunfs/root/payload.template.html.asset,
+// which does not exist when the bundle runs as a plain file under Bun.
+// extract-natives.mjs extracts the asset (loader=file) into
+// <clawgod-dir>/assets/ and the design-canvas patch reads this env.
+const designPayload = join(providerDir, 'assets', 'payload.template.html.asset');
+if (!process.env.CLAWGOD_DESIGN_PAYLOAD && existsSync(designPayload)) {
+  process.env.CLAWGOD_DESIGN_PAYLOAD = designPayload;
+}
+
 // Keep process.execPath as the Bun runtime. Claude Code's background daemon
 // launch path respawns this patched JS entrypoint as:
 //   process.execPath process.argv[1] daemon run ...

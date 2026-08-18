@@ -96,7 +96,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     const result = runSelectionCase(name, patcherSource, 'all', allConfig, representativeFixture);
     try {
       assert.equal(result.run.status, 0, `${name}: all selection must patch cleanly: ${result.output}`);
-      assert.match(result.output, /Enhancements: 13 enabled, 0 disabled/, `${name}: all summary must be exact`);
+      assert.match(result.output, /Enhancements: 14 enabled, 0 disabled/, `${name}: all summary must be exact`);
       assert.match(result.patched, /function teams\(\)\{return!0\}/, `${name}: all must enable agents`);
       assert.match(result.patched, /clawd_body:"rgb\(34,197,94\)"/, `${name}: all must enable branding`);
     } finally {
@@ -114,7 +114,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     );
     try {
       assert.equal(result.run.status, 0, `${name}: subset must patch cleanly: ${result.output}`);
-      assert.match(result.output, /Enhancements: 3 enabled, 10 disabled/, `${name}: subset summary must be exact`);
+      assert.match(result.output, /Enhancements: 3 enabled, 11 disabled/, `${name}: subset summary must be exact`);
       assert.match(result.patched, /function Sub\(\)\{\/\*__clawgod_computer_use_subscription__\*\/return!0\}/, `${name}: subset must apply computer-use`);
       assert.match(result.patched, /argumentHint:"<prompt>",isEnabled:\(\)=>!0/, `${name}: subset must apply planning`);
       assert.match(result.patched, /clawd_body:"rgb\(34,197,94\)"/, `${name}: subset must apply branding`);
@@ -131,7 +131,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     const result = runSelectionCase(name, patcherSource, 'agents-only', customConfig(['agents']), agentsFixture);
     try {
       assert.equal(result.run.status, 0, `${name}: agents without chrome must be valid: ${result.output}`);
-      assert.match(result.output, /Enhancements: 1 enabled, 12 disabled/, `${name}: agents-only summary must be exact`);
+      assert.match(result.output, /Enhancements: 1 enabled, 13 disabled/, `${name}: agents-only summary must be exact`);
       assert.match(result.patched, /function teamGate\(\)\{return!0\}/, `${name}: agents selection must apply agents descriptors`);
       assert.match(result.patched, /let mode="chat"/, `${name}: agents without chrome must retain chat default`);
       assert.match(result.patched, /claudeInChrome/, `${name}: agents must not silently enable chrome patches`);
@@ -145,7 +145,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     const result = runSelectionCase(name, patcherSource, 'none', customConfig([]), representativeFixture);
     try {
       assert.equal(result.run.status, 0, `${name}: none/core-only must patch cleanly: ${result.output}`);
-      assert.match(result.output, /Enhancements: 0 enabled, 13 disabled/, `${name}: none summary must be exact`);
+      assert.match(result.output, /Enhancements: 0 enabled, 14 disabled/, `${name}: none summary must be exact`);
       assert.match(result.patched, /function teams\(\)\{if\(!enabled/, `${name}: none must leave agents untouched`);
       assert.match(result.patched, /clawd_body:"rgb\(215,119,87\)"/, `${name}: none must leave branding untouched`);
       assert.doesNotMatch(result.output, /Agent Teams enable|Brand RGB green/, `${name}: none must not search disabled descriptors`);
@@ -165,7 +165,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     );
     try {
       assert.equal(result.run.status, 0, `${name}: ${mode} with saved selection must succeed: ${result.output}`);
-      assert.match(result.output, /Enhancements: 1 enabled, 12 disabled/, `${name}: ${mode} summary must be exact`);
+      assert.match(result.output, /Enhancements: 1 enabled, 13 disabled/, `${name}: ${mode} summary must be exact`);
       assert.equal(result.patched, result.original, `${name}: ${mode} must not write the runtime`);
       assert.equal(result.backupExists, false, `${name}: ${mode} must not create a runtime backup`);
       assert.doesNotMatch(result.output, /Agent Teams enable|Voice Mode enable|Security permissions unrestricted/, `${name}: ${mode} must not report disabled descriptors`);

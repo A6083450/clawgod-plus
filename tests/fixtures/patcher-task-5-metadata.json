@@ -1,10 +1,10 @@
 {
   "source": {
-    "commit": "6672d49",
+    "commit": "uncommitted",
     "path": "src/generic/patcher/registry.mjs",
-    "fileSha256": "e624b24032aa99624231a10cc56bb7b9d5f44c1ecaa9815d9466fc9bae44d856",
-    "descriptorBlockLines": "45-60",
-    "descriptorBlockSha256": "2754fdecbeb01066e37bd038bea71004e1ac6e43a29bb5a24dd3ae0d2b6003fa"
+    "fileSha256": "66500617fcda16cd4cb3f448dbb403d9e54e0dac5eded64d300ebcb4ed04b65f",
+    "descriptorBlockLines": "46-62",
+    "descriptorBlockSha256": "abbbae92482e7e0ce94b166f13074abb52c4ccce601e9bc63e72d62aa73eef0e"
   },
   "descriptors": [
     {
@@ -1457,27 +1457,169 @@
     {
       "name": "Claude in Chrome local socket fallback",
       "type": "custom",
-      "order": 59
+      "order": 59,
+      "metadata": {
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
     },
     {
       "name": "Context limit configurable",
       "type": "custom",
-      "order": 61
+      "order": 61,
+      "metadata": {
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
     },
     {
       "name": "Fast Messages protocol",
       "type": "custom",
-      "order": 62
+      "order": 62,
+      "metadata": {
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
     },
     {
       "name": "Fast mode org check bypass",
       "type": "custom",
-      "order": 63
+      "order": 63,
+      "metadata": {
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
     },
     {
       "name": "Claude API skill lazy docs",
       "type": "custom",
-      "order": 64
+      "order": 64,
+      "metadata": {
+        "sentinel": {
+          "$type": "undefined"
+        },
+        "appliedMarker": {
+          "$type": "undefined"
+        },
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": {
+          "$type": "undefined"
+        },
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Design canvas enable (skip claude.ai login/subscription gate)",
+      "type": "regex",
+      "order": 65,
+      "metadata": {
+        "patternSource": "(isDesignCanvasSkillEnabled:\\(\\)=>)([\\w$]+),registerDesignCanvasSkill:\\(\\)=>([\\w$]+)\\}\\);function \\2\\(\\)\\{return [\\w$]+\\(\\)&&[\\w$]+\\(\\)\\}",
+        "patternFlags": "g",
+        "sentinel": "isDesignCanvasSkillEnabled",
+        "appliedMarker": "/*__clawgod_design_canvas__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
+    },
+    {
+      "name": "Design canvas payload path → CLAWGOD_DESIGN_PAYLOAD",
+      "type": "regex",
+      "order": 66,
+      "metadata": {
+        "patternSource": "var ([\\w$]+)=(\"(?:[A-Z]:)?\\/(?:\\$bunfs|~BUN)\\/root\\/payload\\.template\\.html\\.asset\")",
+        "patternFlags": "g",
+        "sentinel": "payload.template.html.asset",
+        "appliedMarker": "/*__clawgod_design_payload__*/",
+        "knownShape": {
+          "$type": "undefined"
+        },
+        "optional": true,
+        "unique": {
+          "$type": "undefined"
+        },
+        "selectIndex": {
+          "$type": "undefined"
+        }
+      }
     }
   ]
 }

@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const expectedManifest = [
   { id: 'chrome', kind: 'patch' },
   { id: 'computer-use', kind: 'patch' },
+  { id: 'design-canvas', kind: 'patch' },
   { id: 'agents', kind: 'patch' },
   { id: 'planning', kind: 'patch' },
   { id: 'voice', kind: 'patch' },
@@ -22,11 +23,11 @@ const expectedManifest = [
 ];
 
 const expectedTask5Source = {
-  commit: '6672d49',
+  commit: 'uncommitted',
   path: 'src/generic/patcher/registry.mjs',
-  fileSha256: 'e624b24032aa99624231a10cc56bb7b9d5f44c1ecaa9815d9466fc9bae44d856',
-  descriptorBlockLines: '45-60',
-  descriptorBlockSha256: '2754fdecbeb01066e37bd038bea71004e1ac6e43a29bb5a24dd3ae0d2b6003fa',
+  fileSha256: '66500617fcda16cd4cb3f448dbb403d9e54e0dac5eded64d300ebcb4ed04b65f',
+  descriptorBlockLines: '46-62',
+  descriptorBlockSha256: 'abbbae92482e7e0ce94b166f13074abb52c4ccce601e9bc63e72d62aa73eef0e',
 };
 
 const task5Snapshot = JSON.parse(readFileSync(
@@ -95,6 +96,8 @@ const expectedRegexOrder = [
   'Message list filter bypass (s_8 form)',
   'Shell integration → claude.orig (multitool dispatch fix)',
   'Fast mode model label reflects provider model',
+  'Design canvas enable (skip claude.ai login/subscription gate)',
+  'Design canvas payload path → CLAWGOD_DESIGN_PAYLOAD',
 ];
 
 const manifest = JSON.parse(readFileSync(new URL('../src/generic/enhancements.json', import.meta.url), 'utf8'));
@@ -125,7 +128,7 @@ const ownedDescriptors = patchRegistries.flatMap(registry => [
   ...registry.patches.map(descriptor => ({ descriptor, owner: registry.id })),
   ...registry.customPatches.map(descriptor => ({ descriptor, owner: registry.id })),
 ]);
-assert.equal(ownedDescriptors.length, 64, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(ownedDescriptors.length, 66, 'every regex and custom patch descriptor must retain exactly one owner');
 assert.equal(
   new Set(ownedDescriptors.map(({ descriptor }) => descriptor)).size,
   ownedDescriptors.length,
@@ -147,7 +150,7 @@ const canonicalDescriptors = ownedDescriptors
 assert.deepEqual(
   canonicalDescriptors.map(({ descriptor, type }) => ({ name: descriptor.name, type, order: descriptor.order })),
   task5Snapshot.descriptors.map(({ name, type, order }) => ({ name, type, order })),
-  'all 64 descriptor names, types, and exact global order values must remain at the merged baseline',
+  'all 66 descriptor names, types, and exact global order values must remain at the merged baseline',
 );
 
 function normalizeMetadataValue(value) {

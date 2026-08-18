@@ -425,8 +425,8 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       /(?:⚠️|!!) Computer Use gate bypass/,
       `${name}: no unverifiable Computer Use alternative`,
     );
-    assert.match(firstOutput, /Result: 26 applied, 38 skipped, 0 failed/, `${name}: default-all summary must remain canonical`);
-    assert.match(firstOutput, /Enhancements: 13 enabled, 0 disabled/, `${name}: default-all enhancement summary must be stable`);
+    assert.match(firstOutput, /Result: 26 applied, 40 skipped, 0 failed/, `${name}: default-all summary must remain canonical`);
+    assert.match(firstOutput, /Enhancements: 14 enabled, 0 disabled/, `${name}: default-all enhancement summary must be stable`);
 
     writeFileSync(join(dir, 'cli.original.cjs'), fastFixture, 'utf8');
     const fast = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });

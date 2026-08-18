@@ -63,6 +63,7 @@ fi
 CLAWGOD_ENHANCEMENT_IDS=(
   chrome
   computer-use
+  design-canvas
   agents
   planning
   voice
@@ -79,6 +80,7 @@ CLAWGOD_ENHANCEMENT_IDS=(
 CLAWGOD_ENHANCEMENT_LABELS=(
   'Chrome'
   'Computer Use'
+  'Design Canvas'
   'Agents'
   'Planning'
   'Voice'
@@ -728,7 +730,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -2090,6 +2092,7 @@ cat > "$CLAWGOD_DIR/enhancement-manifest.json" << 'ENHANCEMENT_MANIFEST_EOF'
 [
   { "id": "chrome", "kind": "patch" },
   { "id": "computer-use", "kind": "patch" },
+  { "id": "design-canvas", "kind": "patch" },
   { "id": "agents", "kind": "patch" },
   { "id": "planning", "kind": "patch" },
   { "id": "voice", "kind": "patch" },
@@ -6490,13 +6493,31 @@ function main() {
   mkdirSync(outputDir, { recursive: true });
   mkdirSync(join(outputDir, 'vendor'));
 
-  let cliCount = 0, napiCount = 0, dropped = 0;
+  let cliCount = 0, napiCount = 0, assetCount = 0, dropped = 0;
   for (const m of modules) {
     if (m.entry) {
       const out = join(outputDir, 'cli.original.js');
       writeFileSync(out, m.content);
       console.log(`  cli.js   ${(m.content.length / 1024 / 1024).toFixed(2)} MB → ${out} (${m.name})`);
       cliCount++;
+    } else if (m.loader === 'file' || m.name.endsWith('.asset')) {
+      // Bun embedded file assets (e.g. the design-canvas editor payload
+      // /$bunfs/root/payload.template.html.asset). cli.original.js keeps
+      // referencing them through /$bunfs/root/..., which does not exist
+      // under the plain Bun runtime — the wrapper redirects them to
+      // <clawgod-dir>/assets/<basename> via CLAWGOD_DESIGN_PAYLOAD.
+      const base = basename(m.name.replaceAll('\\', '/'));
+      if (!base || base === '.asset') {
+        console.warn(`  skip asset ${m.name}: empty basename`);
+        dropped++;
+        continue;
+      }
+      const dir = join(outputDir, 'assets');
+      mkdirSync(dir, { recursive: true });
+      const out = join(dir, base);
+      writeFileSync(out, m.content);
+      console.log(`  asset    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
+      assetCount++;
     } else if (m.loader === 'napi') {
       const base = napiBasename(m.name);
       if (!base) { console.warn(`  skip napi ${m.name}: empty basename`); dropped++; continue; }
@@ -6510,7 +6531,7 @@ function main() {
       dropped++;
     }
   }
-  console.log(`Extracted: ${cliCount} cli.js + ${napiCount} napi (${dropped} dropped)`);
+  console.log(`Extracted: ${cliCount} cli.js + ${napiCount} napi + ${assetCount} asset (${dropped} dropped)`);
   if (cliCount !== 1) {
     console.error(`error: expected exactly 1 entry-point, got ${cliCount}`);
     process.exit(2);
@@ -6590,6 +6611,12 @@ cp "$CLAWGOD_DIR/post-process.mjs" "$RUNTIME_CANDIDATE_DIR/post-process.mjs"
 "$BUN_BIN" "$RUNTIME_CANDIDATE_DIR/post-process.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
 [ -f "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" ] || { err "Post-process failed"; exit 1; }
 mv "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs"
+# Design canvas editor payload (loader=file asset from the binary) — see
+# wrapper.cjs CLAWGOD_DESIGN_PAYLOAD export.
+if [ -d "$RUNTIME_CANDIDATE_DIR/assets" ]; then
+  rm -rf "$CLAWGOD_DIR/assets"
+  mv "$RUNTIME_CANDIDATE_DIR/assets" "$CLAWGOD_DIR/assets"
+fi
 RUNTIME_HAS_CANDIDATE_VENDOR=1
 
 # Stamp the source version so the wrapper can detect drift on next launch
@@ -6674,6 +6701,12 @@ try {
   run('post-process', [candidatePostProc]);
   rmSync(target, { force: true });
   renameSync(join(candidateDir, 'cli.original.cjs'), target);
+  const candidateAssets = join(candidateDir, 'assets');
+  const assetsDir = join(here, 'assets');
+  if (existsSync(candidateAssets)) {
+    rmSync(assetsDir, { recursive: true, force: true });
+    renameSync(candidateAssets, assetsDir);
+  }
   run('patcher', [patcher, '--enhancements-file', enhancementsFile]);
 
   writeFileSync(sourceVersion, basename(nativeBin) + '\n');
@@ -7161,6 +7194,16 @@ if (!process.env.CLAUDE_INTERNAL_FC_OVERRIDES && existsSync(featuresFile)) {
     JSON.parse(raw);
     process.env.CLAUDE_INTERNAL_FC_OVERRIDES = raw;
   } catch {}
+}
+
+// Design canvas editor payload: cli.original.cjs resolves it through the
+// Bun standalone embed path /$bunfs/root/payload.template.html.asset,
+// which does not exist when the bundle runs as a plain file under Bun.
+// extract-natives.mjs extracts the asset (loader=file) into
+// <clawgod-dir>/assets/ and the design-canvas patch reads this env.
+const designPayload = join(providerDir, 'assets', 'payload.template.html.asset');
+if (!process.env.CLAWGOD_DESIGN_PAYLOAD && existsSync(designPayload)) {
+  process.env.CLAWGOD_DESIGN_PAYLOAD = designPayload;
 }
 
 // Keep process.execPath as the Bun runtime. Claude Code's background daemon
@@ -8569,6 +8612,7 @@ var coreRegistry = Object.freeze({
 var enhancements_default = `[
   { "id": "chrome", "kind": "patch" },
   { "id": "computer-use", "kind": "patch" },
+  { "id": "design-canvas", "kind": "patch" },
   { "id": "agents", "kind": "patch" },
   { "id": "planning", "kind": "patch" },
   { "id": "voice", "kind": "patch" },
@@ -9055,8 +9099,35 @@ var computerUseRegistry = Object.freeze({
   customPatches: Object.freeze([])
 });
 
-// src/generic/patcher/enhancements/paste-images.mjs
+// src/generic/patcher/enhancements/design-canvas.mjs
 var patches6 = [
+  {
+    order: 65,
+    name: "Design canvas enable (skip claude.ai login/subscription gate)",
+    pattern: /(isDesignCanvasSkillEnabled:\(\)=>)([\w$]+),registerDesignCanvasSkill:\(\)=>([\w$]+)\}\);function \2\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\}/g,
+    replacer: (match, prefix, fn, regFn) => `${prefix}${fn},registerDesignCanvasSkill:()=>${regFn}});function ${fn}(){return!0/*__clawgod_design_canvas__*/}`,
+    sentinel: "isDesignCanvasSkillEnabled",
+    appliedMarker: "/*__clawgod_design_canvas__*/",
+    optional: true
+  },
+  {
+    order: 66,
+    name: "Design canvas payload path \u2192 CLAWGOD_DESIGN_PAYLOAD",
+    pattern: /var ([\w$]+)=("(?:[A-Z]:)?\/(?:\$bunfs|~BUN)\/root\/payload\.template\.html\.asset")/g,
+    replacer: (match, v, originalPath) => `var ${v}=process.env.CLAWGOD_DESIGN_PAYLOAD||${originalPath}/*__clawgod_design_payload__*/`,
+    sentinel: "payload.template.html.asset",
+    appliedMarker: "/*__clawgod_design_payload__*/",
+    optional: true
+  }
+];
+var designCanvasRegistry = Object.freeze({
+  id: "design-canvas",
+  patches: Object.freeze(patches6),
+  customPatches: Object.freeze([])
+});
+
+// src/generic/patcher/enhancements/paste-images.mjs
+var patches7 = [
   {
     order: 42,
     name: "macOS Cmd+V image paste fallback to clipboard read",
@@ -9092,12 +9163,12 @@ var patches6 = [
 ];
 var pasteImagesRegistry = Object.freeze({
   id: "paste-images",
-  patches: Object.freeze(patches6),
+  patches: Object.freeze(patches7),
   customPatches: Object.freeze([])
 });
 
 // src/generic/patcher/enhancements/planning.mjs
-var patches7 = [
+var patches8 = [
   {
     order: 19,
     name: "Ultraplan enable",
@@ -9134,12 +9205,12 @@ var patches7 = [
 ];
 var planningRegistry = Object.freeze({
   id: "planning",
-  patches: Object.freeze(patches7),
+  patches: Object.freeze(patches8),
   customPatches: Object.freeze([])
 });
 
 // src/generic/patcher/enhancements/privacy.mjs
-var patches8 = [
+var patches9 = [
   {
     order: 47,
     name: "Neutralize geo-steganography in date string (qla)",
@@ -9176,12 +9247,12 @@ var patches8 = [
 ];
 var privacyRegistry = Object.freeze({
   id: "privacy",
-  patches: Object.freeze(patches8),
+  patches: Object.freeze(patches9),
   customPatches: Object.freeze([])
 });
 
 // src/generic/patcher/enhancements/unrestricted-tools.mjs
-var patches9 = [
+var patches10 = [
   {
     order: 46,
     name: "Restore Glob/Grep tools (un-inline EMBEDDED_SEARCH_TOOLS)",
@@ -9242,12 +9313,12 @@ var patches9 = [
 ];
 var unrestrictedToolsRegistry = Object.freeze({
   id: "unrestricted-tools",
-  patches: Object.freeze(patches9),
+  patches: Object.freeze(patches10),
   customPatches: Object.freeze([])
 });
 
 // src/generic/patcher/enhancements/voice.mjs
-var patches10 = [{
+var patches11 = [{
   order: 25,
   name: "Voice Mode enable (bypass GrowthBook kill)",
   pattern: /function ([\w$]+)\(\)\{return![\w$]+\("tengu_amber_quartz_disabled",!1\)\}/g,
@@ -9256,7 +9327,7 @@ var patches10 = [{
 }];
 var voiceRegistry = Object.freeze({
   id: "voice",
-  patches: Object.freeze(patches10),
+  patches: Object.freeze(patches11),
   customPatches: Object.freeze([])
 });
 
@@ -9266,6 +9337,7 @@ var patchIds = enhancementManifest.filter((entry) => entry.kind === "patch").map
 var registryById = new Map([
   [chromeRegistry.id, chromeRegistry],
   [computerUseRegistry.id, computerUseRegistry],
+  [designCanvasRegistry.id, designCanvasRegistry],
   [planningRegistry.id, planningRegistry],
   [voiceRegistry.id, voiceRegistry],
   [autoModeRegistry.id, autoModeRegistry],
@@ -9305,7 +9377,7 @@ for (const { descriptor } of ownedDescriptors) {
 function orderedDescriptors(type) {
   return Object.freeze(ownedDescriptors.filter((entry) => entry.type === type).map((entry) => entry.descriptor).sort((left, right) => left.order - right.order));
 }
-var patches11 = orderedDescriptors("regex");
+var patches12 = orderedDescriptors("regex");
 var customPatches3 = orderedDescriptors("custom");
 function orderedRegistryDescriptors(registry, type) {
   const descriptors = type === "regex" ? registry.patches : registry.customPatches;
@@ -9356,7 +9428,7 @@ async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.slice(2)
     stored = await readEnhancementConfig({ homeDir, manifest: enhancementManifest });
   }
   const selection = resolveEnhancementSelection({ stored }, enhancementManifest);
-  const { patches: patches12, customPatches: customPatches4 } = createPatchSelection(selection.enabled);
+  const { patches: patches13, customPatches: customPatches4 } = createPatchSelection(selection.enabled);
   if (revert) {
     if (!existsSync2(backup)) {
       console.error("\u274C No backup found");
@@ -9383,7 +9455,7 @@ ${"\u2550".repeat(55)}`);
   let applied = 0;
   let skipped = 0;
   let failed = 0;
-  for (const patch of patches12) {
+  for (const patch of patches13) {
     const matches = [...code.matchAll(patch.pattern)];
     let relevant = matches;
     if (patch.validate) {
@@ -9523,6 +9595,9 @@ if [ ! -f "$CLAWGOD_DIR/features.json" ]; then
   "tengu_destructive_command_warning": true,
   "tengu_immediate_model_command": true,
   "tengu_desktop_upsell": false,
+  "tengu_ethereal_nova": true,
+  "tengu_omelette_fouet": true,
+  "tengu_slate_quill": true,
   "tengu_malort_pedway": {"enabled": true},
   "tengu_amber_quartz_disabled": false,
   "tengu_prompt_cache_1h_config": {"allowlist": ["*"]},

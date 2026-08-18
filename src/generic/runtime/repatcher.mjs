@@ -64,6 +64,12 @@ try {
   run('post-process', [candidatePostProc]);
   rmSync(target, { force: true });
   renameSync(join(candidateDir, 'cli.original.cjs'), target);
+  const candidateAssets = join(candidateDir, 'assets');
+  const assetsDir = join(here, 'assets');
+  if (existsSync(candidateAssets)) {
+    rmSync(assetsDir, { recursive: true, force: true });
+    renameSync(candidateAssets, assetsDir);
+  }
   run('patcher', [patcher, '--enhancements-file', enhancementsFile]);
 
   writeFileSync(sourceVersion, basename(nativeBin) + '\n');

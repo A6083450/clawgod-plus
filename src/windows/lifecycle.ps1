@@ -39,6 +39,7 @@ $ClawSelfVersion = "0.0.0-dev"  # injected by release workflow from git tag
 $EnhancementIds = @(
     'chrome',
     'computer-use',
+    'design-canvas',
     'agents',
     'planning',
     'voice',
@@ -55,6 +56,7 @@ $EnhancementIds = @(
 $EnhancementLabels = @(
     'Chrome',
     'Computer Use',
+    'Design Canvas',
     'Agents',
     'Planning',
     'Voice',

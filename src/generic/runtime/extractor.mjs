@@ -329,13 +329,31 @@ function main() {
   mkdirSync(outputDir, { recursive: true });
   mkdirSync(join(outputDir, 'vendor'));
 
-  let cliCount = 0, napiCount = 0, dropped = 0;
+  let cliCount = 0, napiCount = 0, assetCount = 0, dropped = 0;
   for (const m of modules) {
     if (m.entry) {
       const out = join(outputDir, 'cli.original.js');
       writeFileSync(out, m.content);
       console.log(`  cli.js   ${(m.content.length / 1024 / 1024).toFixed(2)} MB → ${out} (${m.name})`);
       cliCount++;
+    } else if (m.loader === 'file' || m.name.endsWith('.asset')) {
+      // Bun embedded file assets (e.g. the design-canvas editor payload
+      // /$bunfs/root/payload.template.html.asset). cli.original.js keeps
+      // referencing them through /$bunfs/root/..., which does not exist
+      // under the plain Bun runtime — the wrapper redirects them to
+      // <clawgod-dir>/assets/<basename> via CLAWGOD_DESIGN_PAYLOAD.
+      const base = basename(m.name.replaceAll('\\', '/'));
+      if (!base || base === '.asset') {
+        console.warn(`  skip asset ${m.name}: empty basename`);
+        dropped++;
+        continue;
+      }
+      const dir = join(outputDir, 'assets');
+      mkdirSync(dir, { recursive: true });
+      const out = join(dir, base);
+      writeFileSync(out, m.content);
+      console.log(`  asset    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
+      assetCount++;
     } else if (m.loader === 'napi') {
       const base = napiBasename(m.name);
       if (!base) { console.warn(`  skip napi ${m.name}: empty basename`); dropped++; continue; }
@@ -349,7 +367,7 @@ function main() {
       dropped++;
     }
   }
-  console.log(`Extracted: ${cliCount} cli.js + ${napiCount} napi (${dropped} dropped)`);
+  console.log(`Extracted: ${cliCount} cli.js + ${napiCount} napi + ${assetCount} asset (${dropped} dropped)`);
   if (cliCount !== 1) {
     console.error(`error: expected exactly 1 entry-point, got ${cliCount}`);
     process.exit(2);

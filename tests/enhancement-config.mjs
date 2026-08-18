@@ -42,6 +42,7 @@ import {
 const EXPECTED_IDS = [
   'chrome',
   'computer-use',
+  'design-canvas',
   'agents',
   'planning',
   'voice',
@@ -57,6 +58,7 @@ const EXPECTED_IDS = [
 const EXPECTED_MANIFEST = [
   { id: 'chrome', kind: 'patch' },
   { id: 'computer-use', kind: 'patch' },
+  { id: 'design-canvas', kind: 'patch' },
   { id: 'agents', kind: 'patch' },
   { id: 'planning', kind: 'patch' },
   { id: 'voice', kind: 'patch' },
