@@ -299,6 +299,48 @@ console.log(JSON.stringify({fastThirdParty:snapshot(!0,!0,[C9t,e0r],!1),fastThir
 
 const real234Results = [];
 
+// Linux-x64 2.1.234 request builder: renamed gates
+// (`Tu()&&W4()&&!b2e()&&yT(y)`) and the `AC` registration helper.
+const real234LinuxFastClosureFixture = `${fixture}
+function AC(name,header){return{name,header}}
+let C9t=AC("claude_code","claude-code-20250219"),rkt=AC("oauth_auth","oauth"),e0r=AC("interleaved_thinking","interleaved-thinking-2025-05-14"),gxr=AC("speed","fast-mode-2026-02-01");
+var ZUu;ZUu=new Set([C9t,e0r]);
+function gj(e){return e.map((t)=>t.header)}
+function P4s(e){if(WPo())return e;return e.filter((t)=>ZUu.has(t))}
+var __clawgodFirstParty=!1;
+function WPo(){return __clawgodFirstParty}
+function $n(v){return!1}
+function Tu(){return!0}function W4(){return!0}function b2e(){return!1}function yT(y){return!0}
+function nJf(o){return{}}
+function zCi(m){return!0}
+let y="claude-opus-5";
+function buildRequest(ho,ce,existing){let bi=[...existing];let cc=nJf({hasThinking:!0}),Hu=zCi(y),Uu;if(Tu()&&W4()&&!b2e()&&yT(y)&&!!ho.fastMode)Uu="fast";if(ce&&!bi.includes(gxr))bi.push(gxr);let Kc=$n(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Qp=Kc?bi.filter((od)=>od===rkt):bi;let ee=!0;let j_={model:y,...ee&&(!Kc||Qp.length>0)&&{betas:gj(P4s(Qp))},...Uu!==void 0&&{speed:Uu}};return j_}
+function snapshot(fastMode,ce,existing,firstParty){__clawgodFirstParty=firstParty;let j_=buildRequest({fastMode},ce,existing);return{betas:j_.betas??null,speed:j_.speed??null,header:j_.betas?.join(",")??""}}
+console.log(JSON.stringify({fastThirdParty:snapshot(!0,!0,[C9t,e0r],!1),fastThirdPartyDedup:snapshot(!0,!0,[C9t,C9t,e0r],!1),slowThirdPartyPrior:snapshot(!1,!1,[C9t],!1),slowFirstPartySticky:snapshot(!1,!0,[C9t,gxr],!0),fastFirstParty:snapshot(!0,!0,[],!0)}));
+`;
+
+// Win32-x64 2.1.234 request builder: renamed gates
+// (`ku()&&K4()&&!vUe()&&yk(y)`) and the `TC` registration helper.
+const real234WinFastClosureFixture = `${fixture}
+function TC(name,header){return{name,header}}
+let C9t=TC("claude_code","claude-code-20250219"),ext=TC("oauth_auth","oauth"),e0r=TC("interleaved_thinking","interleaved-thinking-2025-05-14"),mRr=TC("speed","fast-mode-2026-02-01");
+var ZUu;ZUu=new Set([C9t,e0r]);
+function vj(e){return e.map((t)=>t.header)}
+function L4s(e){if(WPo())return e;return e.filter((t)=>ZUu.has(t))}
+var __clawgodFirstParty=!1;
+function WPo(){return __clawgodFirstParty}
+function Ln(v){return!1}
+function ku(){return!0}function K4(){return!0}function vUe(){return!1}function yk(y){return!0}
+function nJf(o){return{}}
+function zCi(m){return!0}
+let y="claude-opus-5";
+function buildRequest(ho,ce,existing){let bi=[...existing];let cc=nJf({hasThinking:!0}),Hu=zCi(y),Bu;if(ku()&&K4()&&!vUe()&&yk(y)&&!!ho.fastMode)Bu="fast";if(ce&&!bi.includes(mRr))bi.push(mRr);let Kc=Ln(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Qp=Kc?bi.filter((od)=>od===ext):bi;let ee=!0;let B_={model:y,...ee&&(!Kc||Qp.length>0)&&{betas:vj(L4s(Qp))},...Bu!==void 0&&{speed:Bu}};return B_}
+function snapshot(fastMode,ce,existing,firstParty){__clawgodFirstParty=firstParty;let B_=buildRequest({fastMode},ce,existing);return{betas:B_.betas??null,speed:B_.speed??null,header:B_.betas?.join(",")??""}}
+console.log(JSON.stringify({fastThirdParty:snapshot(!0,!0,[C9t,e0r],!1),fastThirdPartyDedup:snapshot(!0,!0,[C9t,C9t,e0r],!1),slowThirdPartyPrior:snapshot(!1,!1,[C9t],!1),slowFirstPartySticky:snapshot(!1,!0,[C9t,mRr],!0),fastFirstParty:snapshot(!0,!0,[],!0)}));
+`;
+
+const real234PlatformResults = [];
+
 // Fast mode org-check bypass: `g0o()` (the CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK helper)
 // is the local gate that blocks `/fast` when the "penguin mode" org-status endpoint is
 // unreachable through third-party routing. The patch forces it to `true`.
@@ -711,6 +753,64 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
       assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
     }
+    const real234PlatformVariants = [
+      {
+        label: 'linux 2.1.234',
+        fixture: real234LinuxFastClosureFixture,
+        ambiguousDuplicate: 'function duplicate(ho,ce,existing){let bi=[...existing];let cc=nJf({hasThinking:!0}),Hu=zCi(y),Uu;if(Tu()&&W4()&&!b2e()&&yT(y)&&!!ho.fastMode)Uu="fast";if(ce&&!bi.includes(gxr))bi.push(gxr);let Kc=$n(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Qp=Kc?bi.filter((od)=>od===rkt):bi;let ee=!0;let j_={model:y,...ee&&(!Kc||Qp.length>0)&&{betas:gj(P4s(Qp))},...Uu!==void 0&&{speed:Uu}};return j_}\nfunction snapshot(',
+        invalidCaps: ['if(ce&&!bi.includes(gxr))bi.push(gxr)', 'if(ce&&!bj.includes(gxr))bj.push(gxr)'],
+        invalidRegistration: ['gxr=AC("speed","fast-mode-2026-02-01")', 'gxr=AC("speed","fast-mode-2027-01-01")'],
+        rawBetas: /\{betas:gj\(P4s\(Qp\)\)\}/,
+      },
+      {
+        label: 'win32 2.1.234',
+        fixture: real234WinFastClosureFixture,
+        ambiguousDuplicate: 'function duplicate(ho,ce,existing){let bi=[...existing];let cc=nJf({hasThinking:!0}),Hu=zCi(y),Bu;if(ku()&&K4()&&!vUe()&&yk(y)&&!!ho.fastMode)Bu="fast";if(ce&&!bi.includes(mRr))bi.push(mRr);let Kc=Ln(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Qp=Kc?bi.filter((od)=>od===ext):bi;let ee=!0;let B_={model:y,...ee&&(!Kc||Qp.length>0)&&{betas:vj(L4s(Qp))},...Bu!==void 0&&{speed:Bu}};return B_}\nfunction snapshot(',
+        invalidCaps: ['if(ce&&!bi.includes(mRr))bi.push(mRr)', 'if(ce&&!bj.includes(mRr))bj.push(mRr)'],
+        invalidRegistration: ['mRr=TC("speed","fast-mode-2026-02-01")', 'mRr=TC("speed","fast-mode-2027-01-01")'],
+        rawBetas: /\{betas:vj\(L4s\(Qp\)\)\}/,
+      },
+    ];
+    for (const variant of real234PlatformVariants) {
+      writeFileSync(join(dir, 'cli.original.cjs'), variant.fixture, 'utf8');
+      const real234p = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+      const real234pOutput = real234p.stdout + real234p.stderr;
+      assert.equal(real234p.status, 0, `${name}: ${variant.label} closure must patch: ${real234pOutput}`);
+      assert.match(real234pOutput, /Fast Messages protocol \(1 replacement\)/, `${name}: ${variant.label} closure must report its replacement`);
+      const real234pAfter = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+      assert.notEqual(real234pAfter, variant.fixture, `${name}: ${variant.label} closure patch must write`);
+      assert.match(real234pAfter, /__clawgod_fast_messages_protocol__/, `${name}: ${variant.label} closure patch must add the idempotency marker`);
+      assert.match(real234pAfter, /betas:\(\(\)=>\{/, `${name}: ${variant.label} closure must rewrite the betas body field`);
+      assert.doesNotMatch(real234pAfter, variant.rawBetas, `${name}: ${variant.label} closure must replace the raw betas field`);
+      const executeReal234p = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8' });
+      try {
+        assert.equal(executeReal234p.status, 0, `${name}: ${variant.label} fixture must execute: ${executeReal234p.stderr}`);
+        assertReal232Protocol(name, JSON.parse(executeReal234p.stdout));
+      } catch (error) {
+        real234PlatformResults.push({ name, label: variant.label, status: real234p.status, protocolError: error instanceof Error ? error.message : String(error), output: real234pOutput });
+        throw error;
+      }
+      real234PlatformResults.push({ name, label: variant.label, status: real234p.status, protocolError: null, output: real234pOutput });
+
+      const real234pRerun = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+      assert.equal(real234pRerun.status, 0, `${name}: patched ${variant.label} closure must re-run cleanly: ${real234pRerun.stdout}${real234pRerun.stderr}`);
+      assert.match(real234pRerun.stdout + real234pRerun.stderr, /Fast Messages protocol \(already applied\)/, `${name}: ${variant.label} re-run must recognize the idempotency marker`);
+
+      const invalid234pFixtures = [
+        [`ambiguous ${variant.label} closure`, variant.fixture.replace('function snapshot(', variant.ambiguousDuplicate)],
+        [`inconsistent ${variant.label} capability list`, variant.fixture.replace(variant.invalidCaps[0], variant.invalidCaps[1])],
+        [`mismatched ${variant.label} Fast registration`, variant.fixture.replace(variant.invalidRegistration[0], variant.invalidRegistration[1])],
+      ];
+      for (const [label, invalidFixture] of invalid234pFixtures) {
+        writeFileSync(join(dir, 'cli.original.cjs'), invalidFixture, 'utf8');
+        const invalid = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+        const invalidOutput = invalid.stdout + invalid.stderr;
+        assert.notEqual(invalid.status, 0, `${name}: ${label} must fail`);
+        assert.match(invalidOutput, /Fast Messages protocol/, `${name}: ${label} must report Fast Messages protocol`);
+        assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
+        assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
+      }
+    }
     // Fast mode org-check bypass: forcing the skip helper to `true` unlocks the
     // `/fast` toggle when the "penguin mode" org-status check is unreachable.
     writeFileSync(join(dir, 'cli.original.cjs'), fastModeOrgCheckFixture, 'utf8');
@@ -805,6 +905,15 @@ assert.equal(
   0,
   `real darwin 2.1.234 forced passthrough protocol missing:\n${real234Results.map((result) =>
     `${result.name}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
+  ).join('\n')}`,
+);
+
+assert.equal(real234PlatformResults.length, 4, 'real 2.1.234 platform closures must execute both patcher variants per platform');
+assert.equal(
+  real234PlatformResults.filter((result) => result.protocolError !== null).length,
+  0,
+  `real 2.1.234 platform forced passthrough protocol missing:\n${real234PlatformResults.map((result) =>
+    `${result.name}/${result.label}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
   ).join('\n')}`,
 );
 

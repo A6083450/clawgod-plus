@@ -269,7 +269,17 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
   const real234Re = /if\(ku\(\)&&G3\(\)&&!vBe\(\)&&yk\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,3000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,3000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
   const real234Matches = [...source.matchAll(real234Re)];
 
-  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length + real232Matches.length + real232WinMatches.length + real233LinuxMatches.length + real233WinMatches.length + real234Matches.length;
+  // Linux-x64 2.1.234 request builder: renamed gates
+  // (`Tu()&&W4()&&!b2e()&&yT(y)`) and the `AC` registration helper.
+  const real234LinuxRe = /if\(Tu\(\)&&W4\(\)&&!b2e\(\)&&yT\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,3000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,3000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
+  const real234LinuxMatches = [...source.matchAll(real234LinuxRe)];
+
+  // Win32-x64 2.1.234 request builder: renamed gates
+  // (`ku()&&K4()&&!vUe()&&yk(y)`) and the `TC` registration helper.
+  const real234WinRe = /if\(ku\(\)&&K4\(\)&&!vUe\(\)&&yk\(y\)&&!!([\w$]+)\.fastMode\)([\w$]+)="fast";if\(([\w$]+)&&!([\w$]+)\.includes\(([\w$]+)\)\)\4\.push\(\5\);[\s\S]{0,3000}?let ([\w$]+)=([\w$]+)\(process\.env\.CLAUDE_CODE_SIMULATE_PROXY_USAGE\),([\w$]+)=\6\?([\w$]+)\.filter\(\(([\w$]+)\)=>\10===[\w$]+\):\9;[\s\S]{0,3000}?\.\.\.([\w$]+)&&\(!\6\|\|\8\.length>0\)&&\{betas:([\w$]+)\(([\w$]+)\(\8\)\)\}([\s\S]{0,600}?\.\.\.\2!==void 0&&\{speed:\2\})/g;
+  const real234WinMatches = [...source.matchAll(real234WinRe)];
+
+  const totalMatches = legacyMatches.length + realMatches.length + real229ZeMatches.length + real232Matches.length + real232WinMatches.length + real233LinuxMatches.length + real233WinMatches.length + real234Matches.length + real234LinuxMatches.length + real234WinMatches.length;
   if (totalMatches !== 1) {
     if (totalMatches === 0 && !hasFastBeta) return { status: 'skipped', detail: 'not present in this version' };
     return { status: 'failed', detail: totalMatches === 0 ? 'Fast request body/header closure not found; upstream shape changed' : `Fast request body/header closure matched ${totalMatches} times; refusing ambiguous patch` };
@@ -408,6 +418,38 @@ async function applyFastMessagesProtocolPatch(source, { dryRun, verify }) {
     const match = real234Matches[0];
     const betasIndex = match[0].lastIndexOf(betasField);
     if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex) return { status: 'failed', detail: 'Fast request betas field is not unique inside the matched 2.1.234 closure' };
+    const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
+    if (dryRun) return { status: 'applied', count: 1, code: source };
+    return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
+
+  if (real234LinuxMatches.length === 1) {
+    // Forced passthrough for the linux-x64 2.1.234 request builder — the
+    // same rewrite as the 2.1.232 branches; registration helper is `AC`.
+    const [, , speed, , caps, fastCapability, , , betasSource, capsElse, , , betaSerializer, betaAllowlist] = real234LinuxMatches[0];
+    if (caps !== capsElse) return { status: 'failed', detail: 'Fast request betas closure matched an inconsistent capability list' };
+    if (!source.includes(`${fastCapability}=AC("speed","${FAST_BETA}")`)) return { status: 'failed', detail: 'Fast beta capability registration shape changed' };
+    if (verify) return { status: 'verify', count: 1 };
+    const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
+    const match = real234LinuxMatches[0];
+    const betasIndex = match[0].lastIndexOf(betasField);
+    if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex) return { status: 'failed', detail: 'Fast request betas field is not unique inside the matched linux 2.1.234 closure' };
+    const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
+    if (dryRun) return { status: 'applied', count: 1, code: source };
+    return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
+  }
+
+  if (real234WinMatches.length === 1) {
+    // Forced passthrough for the win32-x64 2.1.234 request builder — the
+    // same rewrite as the 2.1.232 branches; registration helper is `TC`.
+    const [, , speed, , caps, fastCapability, , , betasSource, capsElse, , , betaSerializer, betaAllowlist] = real234WinMatches[0];
+    if (caps !== capsElse) return { status: 'failed', detail: 'Fast request betas closure matched an inconsistent capability list' };
+    if (!source.includes(`${fastCapability}=TC("speed","${FAST_BETA}")`)) return { status: 'failed', detail: 'Fast beta capability registration shape changed' };
+    if (verify) return { status: 'verify', count: 1 };
+    const betasField = `{betas:${betaSerializer}(${betaAllowlist}(${betasSource}))}`;
+    const match = real234WinMatches[0];
+    const betasIndex = match[0].lastIndexOf(betasField);
+    if (betasIndex === -1 || match[0].indexOf(betasField) !== betasIndex) return { status: 'failed', detail: 'Fast request betas field is not unique inside the matched win32 2.1.234 closure' };
     const replacement = match[0].slice(0, betasIndex) + `{betas:(()=>{${MARKER}const __clawgodFastHeaders=${betaSerializer}(${betaAllowlist}(${betasSource}));const __clawgodFastFiltered=__clawgodFastHeaders.filter((__clawgodFastHeader)=>__clawgodFastHeader!=="${FAST_BETA}");const __clawgodFastUnique=[];for(const __clawgodFastHeader of __clawgodFastFiltered)if(!__clawgodFastUnique.includes(__clawgodFastHeader))__clawgodFastUnique.push(__clawgodFastHeader);return ${speed}==="fast"?[...__clawgodFastUnique,"${FAST_BETA}"]:__clawgodFastFiltered})()}` + match[0].slice(betasIndex + betasField.length);
     if (dryRun) return { status: 'applied', count: 1, code: source };
     return { status: 'applied', count: 1, code: source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length) };
