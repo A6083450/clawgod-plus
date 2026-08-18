@@ -277,6 +277,28 @@ console.log(JSON.stringify({fastThirdParty:snapshot(!0,!0,[C9t,e0r],!1),fastThir
 
 const real233Results = [];
 
+// Darwin-arm64 2.1.234 request builder: renamed gates
+// (`ku()&&G3()&&!vBe()&&yk(y)`) and the `ER` registration helper.
+const real234FastClosureFixture = `${fixture}
+function ER(name,header){return{name,header}}
+let C9t=ER("claude_code","claude-code-20250219"),XAt=ER("oauth_auth","oauth"),e0r=ER("interleaved_thinking","interleaved-thinking-2025-05-14"),hxr=ER("speed","fast-mode-2026-02-01");
+var ZUu;ZUu=new Set([C9t,e0r]);
+function y4(e){return e.map((t)=>t.header)}
+function H3s(e){if(WPo())return e;return e.filter((t)=>ZUu.has(t))}
+var __clawgodFirstParty=!1;
+function WPo(){return __clawgodFirstParty}
+function Hn(v){return!1}
+function ku(){return!0}function G3(){return!0}function vBe(){return!1}function yk(y){return!0}
+function nJf(o){return{}}
+function zCi(m){return!0}
+let y="claude-opus-5";
+function buildRequest(ho,ce,existing){let bi=[...existing];let cc=nJf({hasThinking:!0}),Hu=zCi(y),Uu;if(ku()&&G3()&&!vBe()&&yk(y)&&!!ho.fastMode)Uu="fast";if(ce&&!bi.includes(hxr))bi.push(hxr);let Kc=Hn(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Qp=Kc?bi.filter((Ts)=>Ts===XAt):bi;let ee=!0;let j_={model:y,...ee&&(!Kc||Qp.length>0)&&{betas:y4(H3s(Qp))},...Uu!==void 0&&{speed:Uu}};return j_}
+function snapshot(fastMode,ce,existing,firstParty){__clawgodFirstParty=firstParty;let j_=buildRequest({fastMode},ce,existing);return{betas:j_.betas??null,speed:j_.speed??null,header:j_.betas?.join(",")??""}}
+console.log(JSON.stringify({fastThirdParty:snapshot(!0,!0,[C9t,e0r],!1),fastThirdPartyDedup:snapshot(!0,!0,[C9t,C9t,e0r],!1),slowThirdPartyPrior:snapshot(!1,!1,[C9t],!1),slowFirstPartySticky:snapshot(!1,!0,[C9t,hxr],!0),fastFirstParty:snapshot(!0,!0,[],!0)}));
+`;
+
+const real234Results = [];
+
 // Fast mode org-check bypass: `g0o()` (the CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK helper)
 // is the local gate that blocks `/fast` when the "penguin mode" org-status endpoint is
 // unreachable through third-party routing. The patch forces it to `true`.
@@ -642,6 +664,53 @@ for (const [name, patcherSource] of await getPatcherSources()) {
         assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
       }
     }
+    writeFileSync(join(dir, 'cli.original.cjs'), real234FastClosureFixture, 'utf8');
+    const real234 = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    const real234Output = real234.stdout + real234.stderr;
+    assert.equal(real234.status, 0, `${name}: real darwin 2.1.234 closure must patch: ${real234Output}`);
+    assert.match(real234Output, /Fast Messages protocol \(1 replacement\)/, `${name}: real darwin 2.1.234 closure must report its replacement`);
+    const real234After = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    assert.notEqual(real234After, real234FastClosureFixture, `${name}: real darwin 2.1.234 closure patch must write`);
+    assert.match(real234After, /__clawgod_fast_messages_protocol__/, `${name}: real darwin 2.1.234 closure patch must add the idempotency marker`);
+    assert.match(real234After, /betas:\(\(\)=>\{/, `${name}: real darwin 2.1.234 closure must rewrite the betas body field`);
+    assert.doesNotMatch(real234After, /\{betas:y4\(H3s\(Qp\)\)\}/, `${name}: real darwin 2.1.234 closure must replace the raw betas field`);
+    const executeReal234 = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8' });
+    try {
+      assert.equal(executeReal234.status, 0, `${name}: real darwin 2.1.234 fixture must execute: ${executeReal234.stderr}`);
+      assertReal232Protocol(name, JSON.parse(executeReal234.stdout));
+    } catch (error) {
+      real234Results.push({ name, status: real234.status, protocolError: error instanceof Error ? error.message : String(error), output: real234Output });
+      throw error;
+    }
+    real234Results.push({ name, status: real234.status, protocolError: null, output: real234Output });
+
+    const real234Rerun = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(real234Rerun.status, 0, `${name}: patched real darwin 2.1.234 closure must re-run cleanly: ${real234Rerun.stdout}${real234Rerun.stderr}`);
+    assert.match(real234Rerun.stdout + real234Rerun.stderr, /Fast Messages protocol \(already applied\)/, `${name}: darwin 2.1.234 re-run must recognize the idempotency marker`);
+
+    writeFileSync(join(dir, 'cli.original.cjs'), real234FastClosureFixture, 'utf8');
+    const verifyReal234 = spawnSync(process.execPath, ['patch.mjs', '--verify'], { cwd: dir, encoding: 'utf8' });
+    const verifyReal234Output = verifyReal234.stdout + verifyReal234.stderr;
+    assert.equal(verifyReal234.status, 0, `${name}: ${verifyReal234Output}`);
+    assert.match(verifyReal234Output, /Fast Messages protocol — 1 match\(es\), not yet applied/, `${name}: verify must report the unapplied real darwin 2.1.234 match`);
+    assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), real234FastClosureFixture, `${name}: verify must not write the real darwin 2.1.234 closure`);
+
+    const invalid234Fixtures = [
+      ['mismatched real 2.1.234 betas source', real234FastClosureFixture.replace('{betas:y4(H3s(Qp))}', '{betas:y4(H3s(Qx))}')],
+      ['ambiguous real 2.1.234 closure', real234FastClosureFixture.replace('function snapshot(', 'function duplicate(ho,ce,existing){let bi=[...existing];let cc=nJf({hasThinking:!0}),Hu=zCi(y),Uu;if(ku()&&G3()&&!vBe()&&yk(y)&&!!ho.fastMode)Uu="fast";if(ce&&!bi.includes(hxr))bi.push(hxr);let Kc=Hn(process.env.CLAUDE_CODE_SIMULATE_PROXY_USAGE),Qp=Kc?bi.filter((Ts)=>Ts===XAt):bi;let ee=!0;let j_={model:y,...ee&&(!Kc||Qp.length>0)&&{betas:y4(H3s(Qp))},...Uu!==void 0&&{speed:Uu}};return j_}\nfunction snapshot(')],
+      ['inconsistent real 2.1.234 capability list', real234FastClosureFixture.replace('if(ce&&!bi.includes(hxr))bi.push(hxr)', 'if(ce&&!bj.includes(hxr))bj.push(hxr)')],
+      ['mismatched real 2.1.234 speed variable', real234FastClosureFixture.replace('...Uu!==void 0&&{speed:Uu}', '...Uu!==void 0&&{speed:Uq}')],
+      ['mismatched real 2.1.234 Fast registration', real234FastClosureFixture.replace('hxr=ER("speed","fast-mode-2026-02-01")', 'hxr=ER("speed","fast-mode-2027-01-01")')],
+    ];
+    for (const [label, invalidFixture] of invalid234Fixtures) {
+      writeFileSync(join(dir, 'cli.original.cjs'), invalidFixture, 'utf8');
+      const invalid = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+      const invalidOutput = invalid.stdout + invalid.stderr;
+      assert.notEqual(invalid.status, 0, `${name}: ${label} must fail`);
+      assert.match(invalidOutput, /Fast Messages protocol/, `${name}: ${label} must report Fast Messages protocol`);
+      assert.match(invalidOutput, /Result: \d+ applied, \d+ skipped, 1 failed/, `${name}: ${label} must increment failed gate`);
+      assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), invalidFixture, `${name}: ${label} must not write`);
+    }
     // Fast mode org-check bypass: forcing the skip helper to `true` unlocks the
     // `/fast` toggle when the "penguin mode" org-status check is unreachable.
     writeFileSync(join(dir, 'cli.original.cjs'), fastModeOrgCheckFixture, 'utf8');
@@ -727,6 +796,15 @@ assert.equal(
   0,
   `real 2.1.233 forced passthrough protocol missing:\n${real233Results.map((result) =>
     `${result.name}/${result.label}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
+  ).join('\n')}`,
+);
+
+assert.equal(real234Results.length, 2, 'real darwin 2.1.234 closure must execute both patcher variants');
+assert.equal(
+  real234Results.filter((result) => result.protocolError !== null).length,
+  0,
+  `real darwin 2.1.234 forced passthrough protocol missing:\n${real234Results.map((result) =>
+    `${result.name}: patch=${result.status}, ${result.protocolError ?? 'ok'}`,
   ).join('\n')}`,
 );
 
