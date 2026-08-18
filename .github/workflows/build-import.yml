@@ -89,8 +89,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF_NAME}"
+          # attach-to-release 没有 checkout 步骤，gh 必须从 --repo 取仓库上下文，
+          # 否则 gh release view 立即报 "not a git repository"（被重定向吞掉）
+          # 导致循环 60 次全部失败、5 分钟超时。
           for i in $(seq 1 60); do
-            if gh release view "$tag" >/dev/null 2>&1; then
+            if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
               echo "Release $tag is ready"
               exit 0
             fi
