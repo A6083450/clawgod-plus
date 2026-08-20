@@ -1025,16 +1025,20 @@ try {
   writeFileSync(existingHud.configPath, originalConfig, { mode: 0o640 });
   writeFileSync(existingHud.settingsPath, JSON.stringify({ theme: 'dark', statusLine: originalStatusLine }, null, 4) + '\n', { mode: 0o640 });
   const existingState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
-  await configureHud(existingHud.context, existingState);
-  assert.equal(lstatSync(existingHud.configPath).mode & 0o777, 0o640, 'HUD config replacement must preserve mode');
+  const existingResult = await configureHud(existingHud.context, existingState);
+  assert.equal(existingResult.ready, true, 'a pre-existing user HUD config must not block configuration');
+  assert.match(existingResult.detail, /kept existing user config/i, 'a preserved user HUD config must be reported');
+  assert.deepEqual(readFileSync(existingHud.configPath), originalConfig, 'a pre-existing user HUD config must be preserved byte-for-byte');
+  assert.equal(lstatSync(existingHud.configPath).mode & 0o777, 0o640, 'a preserved user HUD config must keep its mode');
   assert.equal(lstatSync(existingHud.settingsPath).mode & 0o777, 0o640, 'settings replacement must preserve mode');
-  assert.equal(Buffer.from(existingState.hud.config.originalBase64, 'base64').toString(), originalConfig.toString(), 'existing HUD bytes must be the restore point');
+  assert.deepEqual(existingState.hud.config, { userOwned: true }, 'a pre-existing user HUD config must be marked user-owned');
   assert.deepEqual(existingState.hud.statusLine.originalValue, originalStatusLine, 'existing statusLine must be the field restore point');
   assert.equal(JSON.parse(readFileSync(existingHud.settingsPath, 'utf8')).theme, 'dark', 'unrelated settings must survive configuration');
   const restorePoint = structuredClone(existingState.hud);
   const restartedExistingState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
   await configureHud(existingHud.context, restartedExistingState);
-  assert.deepEqual(restartedExistingState.hud.config.originalBase64, restorePoint.config.originalBase64, 'a process-restart rerun must load and retain the persisted config restore point');
+  assert.deepEqual(restartedExistingState.hud.config, { userOwned: true }, 'a process-restart rerun must retain the user-owned config marker');
+  assert.deepEqual(readFileSync(existingHud.configPath), originalConfig, 'a process-restart rerun must still preserve the user HUD config');
   assert.deepEqual(restartedExistingState.hud.statusLine.originalValue, restorePoint.statusLine.originalValue, 'a process-restart rerun must load and retain the persisted statusLine restore point');
   Object.assign(existingState, restartedExistingState);
 
@@ -1067,6 +1071,9 @@ try {
   await assertInvalidHudStatePreserved('absent-status-with-value', mutateState(value => { value.hud.statusLine.originalPresent = false; value.hud.statusLine.originalValue = { user: true }; }));
   await assertInvalidHudStatePreserved('invalid-managed-value', mutateState(value => { value.hud.statusLine.managedValue = ['command']; }));
   await assertInvalidHudStatePreserved('mismatched-status-fingerprint', mutateState(value => { value.hud.statusLine.managedValue.command += ' changed'; }));
+  await assertInvalidHudStatePreserved('user-owned-false', mutateState(value => { value.hud.config = { userOwned: false }; }));
+  await assertInvalidHudStatePreserved('user-owned-non-boolean', mutateState(value => { value.hud.config = { userOwned: 'true' }; }));
+  await assertInvalidHudStatePreserved('user-owned-extra-key', mutateState(value => { value.hud.config = { userOwned: true, managedSha256: value.hud.statusLine.managedSha256 }; }));
   await assertInvalidHudStatePreserved('invalid-claude-mem-files', mutateState(value => { value.claudeMem.files = []; }));
 
   const forgedCommandHud = makeHudFixture('invalid-state-self-consistent-command');
@@ -1117,12 +1124,14 @@ try {
   changedSettings.later = true;
   writeFileSync(existingHud.settingsPath, JSON.stringify(changedSettings, null, 2) + '\n');
   await configureHud(existingHud.context, existingState);
-  assert.equal(Buffer.from(existingState.hud.config.originalBase64, 'base64').toString(), changedConfig.toString(), 'a user config edit must become the new restore point');
+  assert.deepEqual(readFileSync(existingHud.configPath), changedConfig, 'a user config edit must survive reconfiguration');
+  assert.deepEqual(existingState.hud.config, { userOwned: true }, 'a user-owned config must remain user-owned after edits');
   assert.deepEqual(existingState.hud.statusLine.originalValue, changedStatusLine, 'a user statusLine edit must become the new restore point');
   assert.equal(JSON.parse(readFileSync(existingHud.settingsPath, 'utf8')).later, true, 'later unrelated settings must survive reconfiguration');
   const restored = await restoreHud(existingHud.context, existingState);
-  assert.deepEqual(restored.conflicts, [], 'owned HUD values must restore without conflicts');
-  assert.deepEqual(readFileSync(existingHud.configPath), changedConfig, 'uninstall must restore the latest user config bytes');
+  assert.deepEqual(restored.conflicts, [], 'a user-owned config must restore without conflicts');
+  assert.deepEqual(restored.restored, ['statusLine'], 'uninstall must restore only the managed statusLine');
+  assert.deepEqual(readFileSync(existingHud.configPath), changedConfig, 'uninstall must leave user-owned config bytes untouched');
   assert.deepEqual(JSON.parse(readFileSync(existingHud.settingsPath, 'utf8')).statusLine, changedStatusLine, 'uninstall must restore only the user statusLine field');
   assert.equal(JSON.parse(readFileSync(existingHud.settingsPath, 'utf8')).later, true, 'uninstall must retain unrelated settings');
 
@@ -1134,7 +1143,7 @@ try {
   await configureHud(sharedRestoreHud.context, emptyManagedState());
   const sharedRestoreResult = await restoreManagedIntegrations(sharedRestoreHud.context);
   assert.deepEqual(sharedRestoreResult.conflicts, [], 'the shared restore entrypoint must restore owned HUD fields without conflicts');
-  assert.deepEqual(sharedRestoreResult.restored.sort(), ['hud config', 'statusLine'].sort(), 'the shared restore entrypoint must report both restored HUD fields');
+  assert.deepEqual(sharedRestoreResult.restored.sort(), ['statusLine'], 'the shared restore entrypoint must leave the user-owned HUD config unrestored');
   assert.deepEqual(readFileSync(sharedRestoreHud.configPath), sharedRestoreConfig);
   assert.deepEqual(JSON.parse(readFileSync(sharedRestoreHud.settingsPath, 'utf8')), { keep: true, statusLine: sharedRestoreStatus });
 
@@ -1151,6 +1160,35 @@ try {
   assert.deepEqual(conflictRestore.conflicts.sort(), ['hud config', 'statusLine'], 'uninstall must report both later user edits');
   assert.deepEqual(snapshotTree(laterEditHud.root), laterEditBefore, 'uninstall must preserve conflicting user edits byte-for-byte');
 
+  const managedEditHud = makeHudFixture('managed-config-user-edit');
+  const managedEditState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+  await configureHud(managedEditHud.context, managedEditState);
+  assert.equal(readFileSync(managedEditHud.configPath, 'utf8'), expectedHudConfig, 'a fresh config must start managed');
+  const managedEditConfig = Buffer.from('{"user":"took-over-managed"}\n');
+  writeFileSync(managedEditHud.configPath, managedEditConfig);
+  const managedEditResult = await configureHud(managedEditHud.context, { schemaVersion: 1, hud: {}, claudeMem: { files: {} } });
+  assert.equal(managedEditResult.ready, true, 'a user edit of the managed config must not block reconfiguration');
+  assert.match(managedEditResult.detail, /kept existing user config/i, 'taking over the managed config must be reported');
+  assert.deepEqual(readFileSync(managedEditHud.configPath), managedEditConfig, 'a user edit of the managed config must never be overwritten');
+  const managedEditPersisted = JSON.parse(readFileSync(managedEditHud.statePath, 'utf8'));
+  assert.deepEqual(managedEditPersisted.hud.config, { userOwned: true }, 'a user-edited managed config must become user-owned');
+  const managedEditRestore = await restoreHud(managedEditHud.context, managedEditState);
+  assert.deepEqual(managedEditRestore.conflicts, [], 'a user-taken-over config must not report a restore conflict');
+  assert.deepEqual(managedEditRestore.restored, ['statusLine'], 'uninstall must restore only the statusLine for a user-taken-over config');
+  assert.deepEqual(readFileSync(managedEditHud.configPath), managedEditConfig, 'uninstall must preserve a user-taken-over config');
+
+  const deletedConfigHud = makeHudFixture('user-owned-config-deleted');
+  const deletedConfigState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
+  writeFileSync(deletedConfigHud.configPath, '{"user":"will-vanish"}\n');
+  await configureHud(deletedConfigHud.context, deletedConfigState);
+  assert.deepEqual(deletedConfigState.hud.config, { userOwned: true }, 'a pre-existing config must be marked user-owned');
+  rmSync(deletedConfigHud.configPath);
+  const deletedConfigResult = await configureHud(deletedConfigHud.context, { schemaVersion: 1, hud: {}, claudeMem: { files: {} } });
+  assert.equal(deletedConfigResult.ready, true, 'a deleted user-owned config must allow managed recreation');
+  assert.equal(readFileSync(deletedConfigHud.configPath, 'utf8'), expectedHudConfig, 'a deleted user-owned config must receive the managed profile');
+  const deletedConfigPersisted = JSON.parse(readFileSync(deletedConfigHud.statePath, 'utf8'));
+  assert.equal(deletedConfigPersisted.hud.config.originalPresent, false, 'a recreated config must have no user restore point');
+
   const unrelatedHud = makeHudFixture('unrelated-on-uninstall');
   const unrelatedState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
   await configureHud(unrelatedHud.context, unrelatedState);
@@ -1164,7 +1202,7 @@ try {
     const fixture = makeHudFixture(`restore-transaction-${failureLabel.replaceAll(' ', '-')}`);
     const originalConfig = Buffer.from(`{"restore":"${failureLabel}"}\n`);
     const originalStatus = { type: 'command', command: `user-${failureLabel}` };
-    writeFileSync(fixture.configPath, originalConfig);
+    if (failureLabel !== 'HUD config') writeFileSync(fixture.configPath, originalConfig);
     writeFileSync(fixture.settingsPath, JSON.stringify({ keep: failureLabel, statusLine: originalStatus }, null, 2) + '\n');
     const state = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
     await configureHud(fixture.context, state);
@@ -1178,12 +1216,12 @@ try {
     delete fixture.context.onHudRestoring;
     const retried = await restoreHud(fixture.context, state);
     assert.deepEqual(retried.failures, [], `${failureLabel} restore must remain retryable`);
-    assert.deepEqual(readFileSync(fixture.configPath), originalConfig, `${failureLabel} retry must restore config bytes`);
+    if (failureLabel === 'HUD config') assert.equal(existsSync(fixture.configPath), false, 'a managed config with no user original must be removed on restore');
+    else assert.deepEqual(readFileSync(fixture.configPath), originalConfig, `${failureLabel} retry must leave user-owned config bytes untouched`);
     assert.deepEqual(JSON.parse(readFileSync(fixture.settingsPath, 'utf8')).statusLine, originalStatus, `${failureLabel} retry must restore statusLine`);
   }
 
   const restoreConflictHud = makeHudFixture('restore-rollback-identity');
-  writeFileSync(restoreConflictHud.configPath, '{"restore":"identity"}\n');
   writeFileSync(restoreConflictHud.settingsPath, JSON.stringify({ statusLine: { type: 'command', command: 'identity-original' } }, null, 2) + '\n');
   const restoreConflictState = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
   await configureHud(restoreConflictHud.context, restoreConflictState);
@@ -1260,13 +1298,12 @@ try {
   const concurrentEditResult = await configureHud(concurrentEditHud.context, { schemaVersion: 1, hud: {}, claudeMem: { files: {} } });
   assert.equal(concurrentEditResult.status, 'warning', 'an in-place settings edit during configuration must fail closed');
   assert.equal(readFileSync(concurrentEditHud.settingsPath, 'utf8'), concurrentEditExpectedSettings, 'an in-place concurrent edit must not be overwritten');
-  assert.equal(readFileSync(concurrentEditHud.configPath, 'utf8'), '{"original":"config"}\n', 'earlier managed writes must roll back after a concurrent edit');
+  assert.equal(readFileSync(concurrentEditHud.configPath, 'utf8'), '{"original":"config"}\n', 'a user-owned config must survive a concurrent settings edit rollback');
   assert.equal(existsSync(concurrentEditHud.statePath), false, 'rolled-back ownership state must not remain');
   assert.equal(existsSync(concurrentEditHud.modulePath), false, 'rolled-back status-line module must not remain');
 
   for (const mutation of ['same-bytes-new-inode', 'chmod', 'hardlink']) {
     const fixture = makeHudFixture(`rollback-identity-${mutation}`);
-    writeFileSync(fixture.configPath, '{"original":"config"}\n');
     let replacementPath = null;
     fixture.context.onHudWritten = ({ label }) => {
       if (label !== 'HUD config') return;

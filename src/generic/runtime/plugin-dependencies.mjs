@@ -364,13 +364,15 @@ function validateManagedHudState(value, allowInitial = false, managedContext = n
   const config = value.hud.config;
   const statusLine = value.hud.statusLine;
   const hashPattern = /^[0-9a-f]{64}$/;
+  const configUserOwned = hasExactKeys(config, ['userOwned']) && config.userOwned === true;
   if (!hasExactKeys(value.hud, ['config', 'statusLine'])
-    || !hasExactKeys(config, ['originalPresent', 'originalBase64', 'managedSha256'])
-    || typeof config.originalPresent !== 'boolean'
-    || !isCanonicalBase64(config.originalBase64)
-    || (!config.originalPresent && config.originalBase64 !== '')
-    || !hashPattern.test(config.managedSha256)
-    || config.managedSha256 !== fileFingerprint(HUD_CONFIG_TEXT)
+    || !isPlainRecord(config)
+    || (!configUserOwned && (!hasExactKeys(config, ['originalPresent', 'originalBase64', 'managedSha256'])
+      || typeof config.originalPresent !== 'boolean'
+      || !isCanonicalBase64(config.originalBase64)
+      || (!config.originalPresent && config.originalBase64 !== '')
+      || !hashPattern.test(config.managedSha256)
+      || config.managedSha256 !== fileFingerprint(HUD_CONFIG_TEXT)))
     || !hasExactKeys(statusLine, ['originalPresent', 'originalValue', 'managedValue', 'managedSha256'])
     || typeof statusLine.originalPresent !== 'boolean'
     || (!statusLine.originalPresent && statusLine.originalValue !== null)
@@ -766,12 +768,20 @@ export async function configureHud(context, state) {
     const stateSnapshot = hudFileSnapshot(context.clawgodDir, statePath, 'ownership state', true);
     const nextState = currentHudState(stateSnapshot.present ? stateSnapshot.value : state, stateSnapshot.present, context, modulePath);
     const configPlan = planHudConfigSnapshot(context.claudeConfigDir, configPath);
-    const preparedConfig = createHudConfigParent(context.claudeConfigDir, configPlan);
-    const configSnapshot = preparedConfig.snapshot;
-    createdParent = preparedConfig.createdParent;
-    const settings = settingsSnapshot.present ? settingsSnapshot.value : {};
     const priorConfig = nextState.hud.config;
-    if (!priorConfig?.managedSha256 || !configSnapshot.present || fileFingerprint(configSnapshot.bytes) !== priorConfig.managedSha256) {
+    const priorManagedSha256 = priorConfig?.userOwned === true ? null : priorConfig?.managedSha256;
+    const configUserOwned = configPlan.snapshot?.present === true
+      && (priorConfig?.userOwned === true || fileFingerprint(configPlan.snapshot.bytes) !== priorManagedSha256);
+    let configSnapshot = configPlan.snapshot;
+    if (!configUserOwned) {
+      const preparedConfig = createHudConfigParent(context.claudeConfigDir, configPlan);
+      configSnapshot = preparedConfig.snapshot;
+      createdParent = preparedConfig.createdParent;
+    }
+    const settings = settingsSnapshot.present ? settingsSnapshot.value : {};
+    if (configUserOwned) {
+      nextState.hud.config = { userOwned: true };
+    } else if (!priorManagedSha256 || !configSnapshot.present || fileFingerprint(configSnapshot.bytes) !== priorManagedSha256) {
       nextState.hud.config = {
         originalPresent: configSnapshot.present,
         originalBase64: configSnapshot.present ? configSnapshot.bytes.toString('base64') : '',
@@ -804,7 +814,7 @@ export async function configureHud(context, state) {
     const writes = [
       { root: context.clawgodDir, snapshot: stateSnapshot, bytes: Buffer.from(stateText), mode: stateSnapshot.present ? stateSnapshot.mode : 0o600, label: 'ownership state' },
       { root: context.clawgodDir, snapshot: moduleSnapshot, bytes: Buffer.from(moduleText), mode: moduleSnapshot.present ? moduleSnapshot.mode : 0o700, label: 'status-line module' },
-      { root: context.claudeConfigDir, snapshot: configSnapshot, bytes: Buffer.from(HUD_CONFIG_TEXT), mode: configSnapshot.present ? configSnapshot.mode : 0o600, label: 'HUD config' },
+      ...(configUserOwned ? [] : [{ root: context.claudeConfigDir, snapshot: configSnapshot, bytes: Buffer.from(HUD_CONFIG_TEXT), mode: configSnapshot.present ? configSnapshot.mode : 0o600, label: 'HUD config' }]),
       { root: context.claudeConfigDir, snapshot: settingsSnapshot, bytes: Buffer.from(JSON.stringify(nextSettings, null, 2) + '\n'), mode: settingsSnapshot.present ? settingsSnapshot.mode : 0o600, label: 'settings' },
     ];
     for (const write of writes) {
@@ -817,7 +827,8 @@ export async function configureHud(context, state) {
       for (const key of Object.keys(state)) delete state[key];
       Object.assign(state, structuredClone(nextState));
     }
-    return pluginResult(spec, 'configured', true, selected.record.version, `configured ${selected.record.version}`);
+    return pluginResult(spec, 'configured', true, selected.record.version,
+      configUserOwned ? `configured ${selected.record.version}; kept existing user config` : `configured ${selected.record.version}`);
   } catch (error) {
     const rollbackErrors = [];
     for (const write of completedWrites.reverse()) {
@@ -848,8 +859,9 @@ export async function restoreHud(context, state) {
     const settingsSnapshot = hudFileSnapshot(context.claudeConfigDir, settingsPath, 'settings', true);
     const restored = [];
     const conflicts = [];
-    const ownsConfig = configSnapshot.present && fileFingerprint(configSnapshot.bytes) === ownership.config.managedSha256;
-    if (!ownsConfig) conflicts.push('hud config');
+    const configUserOwned = ownership.config?.userOwned === true;
+    const ownsConfig = !configUserOwned && configSnapshot.present && fileFingerprint(configSnapshot.bytes) === ownership.config.managedSha256;
+    if (!ownsConfig && !configUserOwned) conflicts.push('hud config');
     const settings = settingsSnapshot.present ? settingsSnapshot.value : {};
     const ownsStatusLine = Object.hasOwn(settings, 'statusLine')
       && jsonFingerprint(settings.statusLine) === ownership.statusLine.managedSha256;
