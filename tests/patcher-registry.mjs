@@ -95,7 +95,6 @@ const expectedRegexOrder = [
   'Message list filter bypass (legacy ternary)',
   'Message list filter bypass (s_8 form)',
   'Shell integration → claude.orig (multitool dispatch fix)',
-  'Fast mode model label reflects provider model',
   'Design canvas enable (skip claude.ai login/subscription gate)',
   'Design canvas payload path → CLAWGOD_DESIGN_PAYLOAD',
 ];
@@ -128,7 +127,7 @@ const ownedDescriptors = patchRegistries.flatMap(registry => [
   ...registry.patches.map(descriptor => ({ descriptor, owner: registry.id })),
   ...registry.customPatches.map(descriptor => ({ descriptor, owner: registry.id })),
 ]);
-assert.equal(ownedDescriptors.length, 66, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(ownedDescriptors.length, 63, 'every regex and custom patch descriptor must retain exactly one owner');
 assert.equal(
   new Set(ownedDescriptors.map(({ descriptor }) => descriptor)).size,
   ownedDescriptors.length,
@@ -150,7 +149,7 @@ const canonicalDescriptors = ownedDescriptors
 assert.deepEqual(
   canonicalDescriptors.map(({ descriptor, type }) => ({ name: descriptor.name, type, order: descriptor.order })),
   task5Snapshot.descriptors.map(({ name, type, order }) => ({ name, type, order })),
-  'all 66 descriptor names, types, and exact global order values must remain at the merged baseline',
+  'all 63 non-Fast descriptor names, types, and exact global order values must remain canonical',
 );
 
 function normalizeMetadataValue(value) {
@@ -195,7 +194,7 @@ assert.throws(
 assert.deepEqual(patches.map(descriptor => descriptor.name), expectedRegexOrder, 'default-all regex order must remain canonical');
 assert.deepEqual(
   customPatches.map(descriptor => descriptor.name),
-  ['Claude in Chrome local socket fallback', 'Context limit configurable', 'Fast Messages protocol', 'Fast mode org check bypass', 'Claude API skill lazy docs'],
+  ['Claude in Chrome local socket fallback', 'Context limit configurable', 'Claude API skill lazy docs'],
   'custom patches must retain their canonical post-regex order',
 );
 
@@ -207,10 +206,7 @@ const expectedCore = [
   'GrowthBook config overrides',
   'Redirect `claude update` to clawgod self-update',
   'Shell integration → claude.orig (multitool dispatch fix)',
-  'Fast mode model label reflects provider model',
   'Context limit configurable',
-  'Fast Messages protocol',
-  'Fast mode org check bypass',
   'Claude API skill lazy docs',
 ];
 const core = patchRegistries.find(registry => registry.id === 'core');

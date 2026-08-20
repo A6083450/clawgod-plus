@@ -1432,29 +1432,6 @@
       }
     },
     {
-      "name": "Fast mode model label reflects provider model",
-      "type": "regex",
-      "order": 58,
-      "metadata": {
-        "patternSource": "function ([\\w$]+)\\(\\)\\{return\"Opus 5\"\\}",
-        "patternFlags": "g",
-        "sentinel": {
-          "$type": "undefined"
-        },
-        "appliedMarker": "/*__clawgod_fast_model_label__*/",
-        "knownShape": {
-          "$type": "undefined"
-        },
-        "optional": true,
-        "unique": {
-          "$type": "undefined"
-        },
-        "selectIndex": {
-          "$type": "undefined"
-        }
-      }
-    },
-    {
       "name": "Claude in Chrome local socket fallback",
       "type": "custom",
       "order": 59,
@@ -1483,56 +1460,6 @@
       "name": "Context limit configurable",
       "type": "custom",
       "order": 61,
-      "metadata": {
-        "sentinel": {
-          "$type": "undefined"
-        },
-        "appliedMarker": {
-          "$type": "undefined"
-        },
-        "knownShape": {
-          "$type": "undefined"
-        },
-        "optional": {
-          "$type": "undefined"
-        },
-        "unique": {
-          "$type": "undefined"
-        },
-        "selectIndex": {
-          "$type": "undefined"
-        }
-      }
-    },
-    {
-      "name": "Fast Messages protocol",
-      "type": "custom",
-      "order": 62,
-      "metadata": {
-        "sentinel": {
-          "$type": "undefined"
-        },
-        "appliedMarker": {
-          "$type": "undefined"
-        },
-        "knownShape": {
-          "$type": "undefined"
-        },
-        "optional": {
-          "$type": "undefined"
-        },
-        "unique": {
-          "$type": "undefined"
-        },
-        "selectIndex": {
-          "$type": "undefined"
-        }
-      }
-    },
-    {
-      "name": "Fast mode org check bypass",
-      "type": "custom",
-      "order": 63,
       "metadata": {
         "sentinel": {
           "$type": "undefined"

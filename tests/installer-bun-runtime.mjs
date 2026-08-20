@@ -1580,29 +1580,21 @@ for (const [name, patcher] of [
   ['install.sh', unixTemplates['patch.mjs']],
   ['install.ps1', windowsTemplates['patch.mjs']],
 ]) {
-  assert.match(patcher, /applyFastMessagesProtocolPatch/, `${name} must embed the Fast Messages patch`);
-  assert.match(patcher, /__clawgod_fast_messages_protocol__/, `${name} must mark the Fast Messages patch`);
-  assert.match(patcher, /fast-mode-2026-02-01/, `${name} must include the Fast beta capability`);
-  assert.match(patcher, /legacyRe/, `${name} must retain the frozen 2.1.215 Fast closure matcher`);
-  assert.match(patcher, /realRe/, `${name} must match the real 2.1.229 Fast closure`);
-  assert.match(patcher, /real229ZeRe/, `${name} must match the real 2.1.229 Ze request builder`);
-  assert.match(patcher, /===\s*["']fast["']/, `${name} must force the Fast beta capability from the speed field`);
+  for (const removedFeature of [
+    'Fast mode model label reflects provider model',
+    'Fast Messages protocol',
+    'Fast mode org check bypass',
+    'applyFastMessagesProtocolPatch',
+    'applyFastModeOrgCheckPatch',
+    '__clawgod_fast_model_label__',
+    '__clawgod_fast_messages_protocol__',
+    '__clawgod_fast_mode_org_check_bypass__',
+    'fast-mode-2026-02-01',
+    'CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK',
+  ]) {
+    assert.doesNotMatch(patcher, new RegExp(removedFeature), `${name} must not embed ${removedFeature}`);
+  }
 }
-
-// install.sh and install.ps1 must embed byte-identical Fast patch logic; only
-// the installer wrapper (heredoc vs here-string) may differ.
-function fastFunctionSlice(patcher) {
-  const start = patcher.indexOf('async function applyFastMessagesProtocolPatch');
-  const end = patcher.indexOf('\nasync function applyFastModeOrgCheckPatch', start);
-  assert.notEqual(start, -1, 'patcher must embed the Fast Messages patch function');
-  assert.notEqual(end, -1, 'patcher must close the Fast Messages patch function before the org check patch');
-  return patcher.slice(start, end);
-}
-assert.equal(
-  fastFunctionSlice(unixTemplates['patch.mjs']),
-  fastFunctionSlice(windowsTemplates['patch.mjs']),
-  'install.sh and install.ps1 must embed byte-identical Fast Messages patch functions',
-);
 
 const lifecyclePositions = {
   unix: {
