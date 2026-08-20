@@ -114,7 +114,21 @@ process.exit(Number(process.env.RUN_EXIT||0));
   }
 
   if (options.localInstaller) {
-    writeFileSync(join(clawgod, options.windows ? 'install.ps1' : 'install.sh'), 'local installer', 'utf8');
+    const installerVersion = options.localInstallerVersion ?? options.localVersion ?? '0.0.0-dev';
+    const installerVersionLine = options.windows
+      ? `$ClawSelfVersion = "${installerVersion}"`
+      : `CLAWGOD_SELF_VERSION="${installerVersion}"`;
+    const installerSource = options.localInstallerVersion === null
+      ? 'local installer without a version declaration\n'
+      : `${installerVersionLine}\n${options.duplicateInstallerDeclaration ? `${installerVersionLine}\n` : ''}local installer\n`;
+    writeFileSync(
+      join(clawgod, options.windows ? 'install.ps1' : 'install.sh'),
+      installerSource,
+      'utf8',
+    );
+    if (options.localVersion !== undefined) {
+      writeFileSync(join(clawgod, '.clawgod-version'), `${options.localVersion}\n`, 'utf8');
+    }
   }
 
   try {
@@ -182,15 +196,52 @@ for (const [label, code] of patchedUpdateBranches) {
     );
     assert.equal(remote.invoked.noninteractive, '1', `${label} ${platform} must mark the spawned installer noninteractive`);
 
-    const local = runUpdateCase(`${label} ${platform} local update`, code, { windows, localInstaller: true });
-    assert.equal(local.run.status, 0, `${label} ${platform} local update must succeed`);
-    assert.equal(local.fetch, null, `${label} ${platform} local update must skip remote fetching`);
-    assert.deepEqual(
-      local.invoked.args,
-      windows ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(local.clawgod, 'install.ps1')] : [join(local.clawgod, 'install.sh')],
-      `${label} ${platform} must retain the managed local-installer path`,
-    );
-    assert.equal(local.invoked.noninteractive, '1', `${label} ${platform} must mark the local installer noninteractive`);
+    for (const stableVersion of [
+      '1.7.7',
+      '2026.8.17-claude.2.1.233',
+      '2026.8.18-claude.2.1.234.2',
+    ]) {
+      const stableLocal = runUpdateCase(`${label} ${platform} ${stableVersion} stable local update`, code, {
+        windows,
+        localInstaller: true,
+        localVersion: stableVersion,
+      });
+      assert.equal(stableLocal.run.status, 0, `${label} ${platform} ${stableVersion} stable local update must succeed`);
+      assert.equal(stableLocal.fetch, null, `${label} ${platform} ${stableVersion} stable local update must skip remote fetching`);
+      assert.deepEqual(
+        stableLocal.invoked.args,
+        windows ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(stableLocal.clawgod, 'install.ps1')] : [join(stableLocal.clawgod, 'install.sh')],
+        `${label} ${platform} ${stableVersion} must retain the trusted managed local-installer path`,
+      );
+      assert.equal(stableLocal.invoked.noninteractive, '1', `${label} ${platform} ${stableVersion} must mark the stable local installer noninteractive`);
+    }
+
+    for (const [versionLabel, localVersion, localInstallerVersion, duplicateInstallerDeclaration] of [
+      ['development', '0.0.0-dev', undefined, false],
+      ['missing-version', undefined, undefined, false],
+      ['malformed-version', '../local', undefined, false],
+      ['stale-development-installer', '2026.8.18-claude.2.1.234.2', '0.0.0-dev', false],
+      ['mismatched-stable-installer', '2026.8.18-claude.2.1.234.2', '2026.8.17-claude.2.1.233.1', false],
+      ['missing-installer-declaration', '2026.8.18-claude.2.1.234.2', null, false],
+      ['duplicate-installer-declaration', '2026.8.18-claude.2.1.234.2', '2026.8.18-claude.2.1.234.2', true],
+    ]) {
+      const untrustedLocal = runUpdateCase(`${label} ${platform} ${versionLabel} local update`, code, {
+        windows,
+        localInstaller: true,
+        localVersion,
+        localInstallerVersion,
+        duplicateInstallerDeclaration,
+      });
+      assert.equal(untrustedLocal.run.status, 0, `${label} ${platform} ${versionLabel} local update must succeed`);
+      assert.ok(untrustedLocal.fetch, `${label} ${platform} ${versionLabel} local update must refresh from the release asset`);
+      assert.match(untrustedLocal.fetch.url, windows ? /install\.ps1$/ : /install\.sh$/, `${label} ${platform} ${versionLabel} update must fetch the platform installer`);
+      assert.deepEqual(
+        untrustedLocal.invoked.args,
+        windows ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', untrustedLocal.fetch.destination] : [untrustedLocal.fetch.destination],
+        `${label} ${platform} ${versionLabel} update must invoke the refreshed installer`,
+      );
+      assert.equal(untrustedLocal.invoked.noninteractive, '1', `${label} ${platform} ${versionLabel} refreshed installer must be noninteractive`);
+    }
 
     const nonzero = runUpdateCase(`${label} ${platform} installer nonzero`, code, { windows, runExit: 23 });
     assert.equal(nonzero.run.status, 23, `${label} ${platform} must propagate installer exit status`);
