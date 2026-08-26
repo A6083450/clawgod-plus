@@ -787,7 +787,13 @@ try {
     console.log(runClaudeMemConsumerSmoke(initialMemoryHooks, initialMemoryMcp, memoryRecord.installPath, isolatedRuntime.bunPath));
     console.log(runHudGoldenFixture(readSettings()));
   }
-  console.log(validateWorkerResolver(readFileSync(join(clawgodDir, 'cli.original.cjs'), 'utf8')));
+  const workerResolverBundle = [
+    readFileSync(join(clawgodDir, 'cli.original.cjs'), 'utf8'),
+    ...(existsSync(join(clawgodDir, 'chunks'))
+      ? readdirSync(join(clawgodDir, 'chunks')).filter(name => name.endsWith('.js')).sort().map(name => readFileSync(join(clawgodDir, 'chunks', name), 'utf8'))
+      : []),
+  ].join('\n');
+  console.log(validateWorkerResolver(workerResolverBundle));
 
   assert.equal(existsSync(ripgrepPath), true, 'initial install must create the private ripgrep binary');
   const rgVersion = run('private ripgrep version smoke', ripgrepPath, ['--version']);
