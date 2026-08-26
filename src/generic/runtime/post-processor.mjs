@@ -38,7 +38,7 @@ function rewrite(code, { chunkPrefix }) {
   );
   // (3) loader=file assets (design-canvas payload, chart/hljs/mermaid) → assets/.
   code = code.replace(
-    new RegExp(`${BUNFS}([A-Za-z0-9_.-]+\\.(?:asset|min\\.js))`, 'g'),
+    new RegExp(`${BUNFS}([A-Za-z0-9_.-]+\\.(?:asset|min\\.js|md|txt))`, 'g'),
     (m, name) => `${clawgodDir}/assets/${name}`,
   );
   // (4) plugin function-hooks worker URL → local worker file.

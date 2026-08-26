@@ -6563,7 +6563,7 @@ function main() {
       writeFileSync(out, m.content);
       console.log(`  chunk    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
       chunkCount++;
-    } else if (m.loader === 'file' || m.name.endsWith('.asset')) {
+    } else if (m.loader === 'file' || m.loader === 'text' || m.name.endsWith('.asset')) {
       // Bun embedded file assets (e.g. the design-canvas editor payload
       // /$bunfs/root/payload.template.html.asset). cli.original.js keeps
       // referencing them through /$bunfs/root/..., which does not exist
@@ -6679,7 +6679,7 @@ function rewrite(code, { chunkPrefix }) {
   );
   // (3) loader=file assets (design-canvas payload, chart/hljs/mermaid) → assets/.
   code = code.replace(
-    new RegExp(`${BUNFS}([A-Za-z0-9_.-]+\\.(?:asset|min\\.js))`, 'g'),
+    new RegExp(`${BUNFS}([A-Za-z0-9_.-]+\\.(?:asset|min\\.js|md|txt))`, 'g'),
     (m, name) => `${clawgodDir}/assets/${name}`,
   );
   // (4) plugin function-hooks worker URL → local worker file.

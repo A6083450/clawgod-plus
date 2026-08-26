@@ -350,7 +350,7 @@ function main() {
       writeFileSync(out, m.content);
       console.log(`  chunk    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
       chunkCount++;
-    } else if (m.loader === 'file' || m.name.endsWith('.asset')) {
+    } else if (m.loader === 'file' || m.loader === 'text' || m.name.endsWith('.asset')) {
       // Bun embedded file assets (e.g. the design-canvas editor payload
       // /$bunfs/root/payload.template.html.asset). cli.original.js keeps
       // referencing them through /$bunfs/root/..., which does not exist
