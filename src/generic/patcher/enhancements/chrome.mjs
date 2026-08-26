@@ -235,8 +235,8 @@ const patches = [
   {
     order: 16,
     name: 'Claude in Chrome agents dispatch args',
-    pattern: /\.\.\.e\.strictMcpConfig\?\["--strict-mcp-config"\]:\[\]\]\}/g,
-    replacer: () => '...e.chrome?["--chrome"/*__ccpp_agents_chrome_dispatch*/]:[],...e.noChrome?["--no-chrome"]:[],...e.strictMcpConfig?["--strict-mcp-config"]:[]]}',
+    pattern: /\.\.\.([\w$]+)\.strictMcpConfig\?\["--strict-mcp-config"\]:\[\]\]\}/g,
+    replacer: (match, config) => `...${config}.chrome?["--chrome"/*__ccpp_agents_chrome_dispatch*/]:[],...${config}.noChrome?["--no-chrome"]:[],...${config}.strictMcpConfig?["--strict-mcp-config"]:[]]}`,
     appliedMarker: '__ccpp_agents_chrome_dispatch',
     validate: (match, code) => !code.includes('__ccpp_agents_chrome_dispatch'),
   },

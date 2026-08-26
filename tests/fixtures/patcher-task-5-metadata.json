@@ -400,7 +400,7 @@
       "type": "regex",
       "order": 16,
       "metadata": {
-        "patternSource": "\\.\\.\\.e\\.strictMcpConfig\\?\\[\"--strict-mcp-config\"\\]:\\[\\]\\]\\}",
+        "patternSource": "\\.\\.\\.([\\w$]+)\\.strictMcpConfig\\?\\[\"--strict-mcp-config\"\\]:\\[\\]\\]\\}",
         "patternFlags": "g",
         "sentinel": {
           "$type": "undefined"
@@ -1067,14 +1067,14 @@
       "type": "regex",
       "order": 43,
       "metadata": {
-        "patternSource": "if\\(([\\w$]+)\\(\\)\\)(try\\{let [\\w$]+=await Promise\\.resolve\\(\\)\\.then\\(\\(\\)\\s*=>\\s*\\([\\w$]+\\(\\),[\\w$]+\\)\\),[\\w$]+=[\\w$]+\\.sharp\\|\\|[\\w$]+\\.default;return [\\w$]+=\\{default:[\\w$]+\\},[\\w$]+\\}catch\\{console\\.warn\\(\"Native image processor not available, falling back to sharp\"\\)\\})",
+        "patternSource": "if\\(([\\w$]+)\\(\\)\\)try\\{let ([\\w$]+)=await import\\(\"\\.\\/chunk-[a-z0-9]+\\.js\"\\),([\\w$]+)=\\2\\.sharp\\|\\|\\2\\.default;return ([\\w$]+)=\\{default:\\3\\},\\3\\}catch\\{console\\.warn\\(\"Native image processor not available, falling back to sharp\"\\)\\}",
         "patternFlags": "g",
         "sentinel": {
           "$type": "undefined"
         },
         "appliedMarker": {
           "$type": "regexp",
-          "source": "return [\\w$]+\\.default;try\\{let [\\w$]+=await Promise\\.resolve\\(\\)\\.then\\(\\(\\)\\s*=>\\s*\\([\\w$]+\\(\\),[\\w$]+\\)\\)",
+          "source": "try\\{let [\\w$]+=await import\\(\"\\.\\/chunk-[a-z0-9]+\\.js\"\\),[\\w$]+=[\\w$]+\\.sharp\\|\\|[\\w$]+\\.default;return [\\w$]+=\\{default:[\\w$]+\\},[\\w$]+\\}catch\\{console\\.warn\\(\"Native image processor not available",
           "flags": ""
         },
         "knownShape": {
@@ -1140,7 +1140,7 @@
       "type": "regex",
       "order": 46,
       "metadata": {
-        "patternSource": "function ([\\w$]+)\\(\\)\\{if\\(!([\\w$]+)\\(\"true\"\\)\\)return!1;if\\([\\w$]+\\(\\)\\)return!1;return process\\.env\\.CLAUDE_CODE_ENTRYPOINT!==\"local-agent\"\\}",
+        "patternSource": "function ([\\w$]+)\\(\\)\\{if\\(!([\\w$]+)\\(\"true\"\\)\\)return!1;if\\([\\w$]+\\(\\)\\)return!1;return (?:process\\.env|[\\w$]+)\\.CLAUDE_CODE_ENTRYPOINT!==\"local-agent\"\\}",
         "patternFlags": "g",
         "sentinel": "ct(\"true\")",
         "appliedMarker": {
@@ -1413,12 +1413,12 @@
       "type": "regex",
       "order": 57,
       "metadata": {
-        "patternSource": "([\\w$]+\\.join\\([\\w$]+\\(\\),[\\w$]+\\?)\"claude\\.exe\":\"claude\"(\\))",
+        "patternSource": "if\\(([\\w$]+)\\(\\)===\"bun\"\\)return\\[([\\w$]+)\\(([\\w$]+),\"claude\"\\)\\];if\\([\\w$]+\\(\\)===\"windows\"\\)return\\[\\2\\(\\3,\"claude\\.cmd\"\\),\\2\\(\\3,\"claude\\.exe\"\\)\\];return\\[\\2\\(\\3,\"bin\",\"claude\"\\)\\]",
         "patternFlags": "g",
-        "sentinel": "?\"claude.exe\":\"claude\")",
-        "appliedMarker": {
+        "sentinel": {
           "$type": "undefined"
         },
+        "appliedMarker": "\"claude.orig.cmd\"",
         "knownShape": {
           "$type": "undefined"
         },

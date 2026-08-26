@@ -11,9 +11,9 @@ const patches = [
   {
     order: 43,
     name: 'Image paste: try native image processor regardless of standalone gate',
-    pattern: /if\(([\w$]+)\(\)\)(try\{let [\w$]+=await Promise\.resolve\(\)\.then\(\(\)\s*=>\s*\([\w$]+\(\),[\w$]+\)\),[\w$]+=[\w$]+\.sharp\|\|[\w$]+\.default;return [\w$]+=\{default:[\w$]+\},[\w$]+\}catch\{console\.warn\("Native image processor not available, falling back to sharp"\)\})/g,
-    replacer: (match, gate, body) => body,
-    appliedMarker: /return [\w$]+\.default;try\{let [\w$]+=await Promise\.resolve\(\)\.then\(\(\)\s*=>\s*\([\w$]+\(\),[\w$]+\)\)/,
+    pattern: /if\(([\w$]+)\(\)\)try\{let ([\w$]+)=await import\("\.\/chunk-[a-z0-9]+\.js"\),([\w$]+)=\2\.sharp\|\|\2\.default;return ([\w$]+)=\{default:\3\},\3\}catch\{console\.warn\("Native image processor not available, falling back to sharp"\)\}/g,
+    replacer: (match, gate) => match.replace(`if(${gate}())`, ''),
+    appliedMarker: /try\{let [\w$]+=await import\("\.\/chunk-[a-z0-9]+\.js"\),[\w$]+=[\w$]+\.sharp\|\|[\w$]+\.default;return [\w$]+=\{default:[\w$]+\},[\w$]+\}catch\{console\.warn\("Native image processor not available/,
   },
   {
     order: 44,

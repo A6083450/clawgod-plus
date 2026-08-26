@@ -55,6 +55,15 @@ function Install-ChromeFixScript {
 }
 
 function Invoke-ChromePostInstallFix {
+    # v2.1.245+ ships a code-split ESM bundle (entry + chunks/). The Chrome
+    # socket/subscription patches are already applied by the universal patcher
+    # against the concatenated bundle, so this legacy single-file helper would
+    # only report NOT_FOUND. Skip it to avoid the misleading error.
+    if (Test-Path (Join-Path $ClawDir "chunks")) {
+        Write-Dim "Chrome fix already covered by patcher (code-split bundle); skipping"
+        return
+    }
+
     $script = Join-Path $ClawDir "apply-claude-code-chrome-fix.ps1"
     if (-not (Test-Path $script)) {
         if (-not (Install-ChromeFixScript)) {
@@ -304,7 +313,7 @@ if ($Uninstall) {
         Write-OK "Removed clawgod alias"
     }
 
-    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","openai-proxy.cjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging","assets",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
+    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","openai-proxy.cjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging","assets","chunks","chunks.bak",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
@@ -416,6 +425,11 @@ if ($RuntimeHadTarget) {
 if ($RuntimeHadSourceVersion) {
     Copy-Item -LiteralPath $RuntimeSourceVersion -Destination (Join-Path $RuntimeRollbackDir ".source-version")
 }
+$RuntimeChunksTarget = Join-Path $ClawDir "chunks"
+$RuntimeHadChunks = Test-Path -LiteralPath $RuntimeChunksTarget -PathType Container
+if ($RuntimeHadChunks) {
+    Move-Item -LiteralPath $RuntimeChunksTarget -Destination (Join-Path $RuntimeRollbackDir "chunks")
+}
 
 try {
 if ($NoUpgrade) {
@@ -432,8 +446,24 @@ if ($NoUpgrade) {
         Copy-Item $existingBak $existingCjs -Force
         Write-OK "Restored clean cli.original.cjs from backup"
     }
+    $chunksTarget = Join-Path $ClawDir "chunks"
+    $chunksBak = Join-Path $ClawDir "chunks.bak"
+    if (Test-Path $chunksBak) {
+        if (Test-Path $chunksTarget) { Remove-Item -Recurse -Force $chunksTarget }
+        Copy-Item -Recurse $chunksBak $chunksTarget
+        Write-OK "Restored clean chunks from backup"
+    }
     Write-OK "Skipping download (-NoUpgrade)"
 } else {
+
+# A full reinstall replaces cli.original.cjs + chunks with a freshly-extracted
+# bundle. Drop any .bak left over from a previous Claude Code version so the
+# patcher backs up this version's clean bundle instead of a stale one
+# (-NoUpgrade restores from .bak and would otherwise mix versions).
+$staleCliBak = Join-Path $ClawDir "cli.original.cjs.bak"
+if (Test-Path $staleCliBak) { Remove-Item -Force $staleCliBak }
+$staleChunksBak = Join-Path $ClawDir "chunks.bak"
+if (Test-Path $staleChunksBak) { Remove-Item -Recurse -Force $staleChunksBak }
 
 # ─── Locate native Bun binary (cli.js source) ──────────────────────────
 # Source: npm registry (@anthropic-ai/claude-code-win32-<arch>).
@@ -547,13 +577,26 @@ $PostProcessorBytes = [Convert]::FromBase64String('@@CLAWGOD_POST_PROCESSOR_MJS_
 [System.IO.File]::WriteAllBytes($postProc, $PostProcessorBytes)
 $candidatePostProc = Join-Path $RuntimeCandidateDir "post-process.mjs"
 Copy-Item -LiteralPath $postProc -Destination $candidatePostProc
-& $BunBin $candidatePostProc 2>&1 | ForEach-Object { Write-Host "  $_" }
+& $BunBin $candidatePostProc $ClawDir 2>&1 | ForEach-Object { Write-Host "  $_" }
 $candidateCli = Join-Path $RuntimeCandidateDir "cli.original.cjs"
 if (-not (Test-Path $candidateCli)) {
     Write-Err "Post-process failed"
     exit 1
 }
 Move-Item -LiteralPath $candidateCli -Destination $RuntimeTarget -Force
+
+# Code-split chunk graph (v2.1.245+): every non-entry js module extracted by
+# extract-natives.mjs into candidate/chunks/. Move it into place alongside
+# cli.original.cjs so the patcher and runtime can resolve the rewritten
+# relative import specifiers.
+$candidateChunks = Join-Path $RuntimeCandidateDir "chunks"
+if (Test-Path $candidateChunks) {
+    $chunksTarget = Join-Path $ClawDir "chunks"
+    if (Test-Path $chunksTarget) {
+        Remove-Item -Recurse -Force $chunksTarget -ErrorAction SilentlyContinue
+    }
+    Move-Item -LiteralPath $candidateChunks -Destination $chunksTarget -Force
+}
 
 # Design canvas editor payload (loader=file asset from the binary) — see
 # wrapper.cjs CLAWGOD_DESIGN_PAYLOAD export.
@@ -647,6 +690,13 @@ $RuntimeTransactionCommitted = $true
                 Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir ".source-version") -Destination $RuntimeSourceVersion -Force
             } else {
                 Remove-Item -LiteralPath $RuntimeSourceVersion -Force -ErrorAction SilentlyContinue
+            }
+            $chunksTarget = Join-Path $ClawDir "chunks"
+            if ($RuntimeHadChunks) {
+                if (Test-Path $chunksTarget) { Remove-Item -Recurse -Force $chunksTarget -ErrorAction SilentlyContinue }
+                Move-Item -LiteralPath (Join-Path $RuntimeRollbackDir "chunks") -Destination $chunksTarget -Force -ErrorAction SilentlyContinue
+            } else {
+                Remove-Item -Recurse -Force $chunksTarget -ErrorAction SilentlyContinue
             }
         } else {
             Write-Err "Vendor rollback conflict; prior CLI was not restored; recovery data retained at $RuntimeRollbackDir"

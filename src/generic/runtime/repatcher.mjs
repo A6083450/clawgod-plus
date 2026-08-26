@@ -3,7 +3,7 @@
 // native Claude binary. Invoked by cli.cjs when it detects that
 // .source-version no longer matches the latest binary in versions/.
 import { spawnSync } from 'child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { publishVendorTransaction } from './vendor-transaction.mjs';
@@ -45,9 +45,13 @@ const postProc = join(here, 'post-process.mjs');
 const patcher = join(here, 'patch.mjs');
 const target = join(here, 'cli.original.cjs');
 const sourceVersion = join(here, '.source-version');
+const chunksDir = join(here, 'chunks');
 const enhancementsFile = join(here, 'enhancements.json');
 const targetSnapshot = snapshotFile(target);
 const sourceVersionSnapshot = snapshotFile(sourceVersion);
+const chunksSnapshot = existsSync(chunksDir)
+  ? Object.fromEntries(readdirSync(chunksDir).map((name) => [name, snapshotFile(join(chunksDir, name))]))
+  : null;
 const transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
 const candidateDir = join(transactionDir, 'candidate');
 const candidateVendor = join(candidateDir, 'vendor');
@@ -61,9 +65,14 @@ try {
   run('extract', [extractor, nativeBin, candidateDir]);
   const candidatePostProc = join(candidateDir, 'post-process.mjs');
   copyFileSync(postProc, candidatePostProc);
-  run('post-process', [candidatePostProc]);
+  run('post-process', [candidatePostProc, here]);
   rmSync(target, { force: true });
   renameSync(join(candidateDir, 'cli.original.cjs'), target);
+  const candidateChunks = join(candidateDir, 'chunks');
+  if (existsSync(candidateChunks)) {
+    rmSync(chunksDir, { recursive: true, force: true });
+    renameSync(candidateChunks, chunksDir);
+  }
   const candidateAssets = join(candidateDir, 'assets');
   const assetsDir = join(here, 'assets');
   if (existsSync(candidateAssets)) {
@@ -82,6 +91,11 @@ try {
   if (vendorRestored) {
     restoreFile(target, targetSnapshot);
     restoreFile(sourceVersion, sourceVersionSnapshot);
+    rmSync(chunksDir, { recursive: true, force: true });
+    if (chunksSnapshot) {
+      mkdirSync(chunksDir, { recursive: true });
+      for (const [name, file] of Object.entries(chunksSnapshot)) restoreFile(join(chunksDir, name), file);
+    }
     if (!vendorPublishAttempted || error?.cleanupSafe !== false) rmSync(transactionDir, { recursive: true, force: true });
     else console.error(`repatch: prior CLI restored; untrusted transaction data retained at ${transactionDir}`);
   } else {

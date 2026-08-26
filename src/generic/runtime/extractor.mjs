@@ -329,13 +329,27 @@ function main() {
   mkdirSync(outputDir, { recursive: true });
   mkdirSync(join(outputDir, 'vendor'));
 
-  let cliCount = 0, napiCount = 0, assetCount = 0, dropped = 0;
+  let cliCount = 0, napiCount = 0, assetCount = 0, chunkCount = 0, dropped = 0;
   for (const m of modules) {
     if (m.entry) {
       const out = join(outputDir, 'cli.original.js');
       writeFileSync(out, m.content);
       console.log(`  cli.js   ${(m.content.length / 1024 / 1024).toFixed(2)} MB → ${out} (${m.name})`);
       cliCount++;
+    } else if (m.loader === 'js') {
+      // v2.1.245+ ships the CLI as an ESM entry point plus a code-split
+      // graph of /$bunfs/root/chunk-*.js modules. Every js module except the
+      // entry is extracted into chunks/ (flat basename) so post-process.mjs
+      // can rewrite their /$bunfs/root/... import specifiers to local files.
+      const flat = m.name.replaceAll('\\', '/');
+      const base = basename(flat);
+      if (!base) { console.warn(`  skip js ${m.name}: empty basename`); dropped++; continue; }
+      const dir = join(outputDir, 'chunks');
+      mkdirSync(dir, { recursive: true });
+      const out = join(dir, base);
+      writeFileSync(out, m.content);
+      console.log(`  chunk    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
+      chunkCount++;
     } else if (m.loader === 'file' || m.name.endsWith('.asset')) {
       // Bun embedded file assets (e.g. the design-canvas editor payload
       // /$bunfs/root/payload.template.html.asset). cli.original.js keeps
@@ -367,7 +381,7 @@ function main() {
       dropped++;
     }
   }
-  console.log(`Extracted: ${cliCount} cli.js + ${napiCount} napi + ${assetCount} asset (${dropped} dropped)`);
+  console.log(`Extracted: ${cliCount} cli.js + ${napiCount} napi + ${assetCount} asset + ${chunkCount} chunk (${dropped} dropped)`);
   if (cliCount !== 1) {
     console.error(`error: expected exactly 1 entry-point, got ${cliCount}`);
     process.exit(2);

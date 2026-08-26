@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -21,7 +21,7 @@ const registrySource = readFileSync(new URL('../src/generic/patcher/registry.mjs
 
 assert.match(unixInstaller, /rm -rf "\$CLAWGOD_DIR\/assets"/, 'unix uninstall must remove the extracted assets directory');
 assert.match(unixInstaller, /mv "\$RUNTIME_CANDIDATE_DIR\/assets" "\$CLAWGOD_DIR\/assets"/, 'unix installer must publish extracted assets into ~/.clawgod');
-assert.match(powerShellInstaller, /"assets","\.source-version"/, 'windows uninstall must remove the extracted assets directory');
+assert.match(powerShellInstaller, /"assets","chunks"/, 'windows uninstall must remove the extracted assets and chunks directories');
 assert.match(powerShellInstaller, /Move-Item -LiteralPath \$candidateAssets -Destination \$assetsTarget -Force/, 'windows installer must publish extracted assets into ~/.clawgod');
 assert.match(wrapper, /CLAWGOD_DESIGN_PAYLOAD/, 'wrapper must export CLAWGOD_DESIGN_PAYLOAD');
 assert.match(wrapper, /payload\.template\.html\.asset/, 'wrapper must point the design payload env at the extracted asset');
@@ -184,7 +184,15 @@ for (const [installerName, patcherSource] of patcherSources) {
 
 const realBundle = join(homedir(), '.clawgod', 'cli.original.cjs');
 if (existsSync(realBundle)) {
-  const content = readFileSync(realBundle, 'utf8');
+  // v2.1.245+ splits the CLI into an ESM entry point plus a chunk-*.js graph;
+  // scan the whole bundle so a patch that lands inside a chunk is recognised.
+  const chunksDir = join(homedir(), '.clawgod', 'chunks');
+  let content = readFileSync(realBundle, 'utf8');
+  if (existsSync(chunksDir)) {
+    for (const name of readdirSync(chunksDir).filter((n) => n.endsWith('.js')).sort()) {
+      content += `\n${readFileSync(join(chunksDir, name), 'utf8')}`;
+    }
+  }
   for (const patch of designCanvasRegistry.patches) {
     if (content.includes(patch.appliedMarker)) {
       assert.equal(
@@ -195,6 +203,13 @@ if (existsSync(realBundle)) {
       continue;
     }
     const matches = [...content.matchAll(patch.pattern)];
+    if (patch.name.includes('payload path') && matches.length === 0) {
+      // In the code-split format post-process.mjs already rewrites the
+      // /$bunfs/root/payload.template.html.asset embed path to the absolute
+      // ~/.clawgod/assets location, so the payload-path patch has nothing
+      // left to match — that is expected, not drift.
+      continue;
+    }
     assert.equal(
       matches.length,
       1,

@@ -192,9 +192,9 @@ const patches = [
   {
     order: 57,
     name: 'Shell integration → claude.orig (multitool dispatch fix)',
-    pattern: /([\w$]+\.join\([\w$]+\(\),[\w$]+\?)"claude\.exe":"claude"(\))/g,
-    replacer: (match, prefix, suffix) => `${prefix}"claude.orig.exe":"claude.orig"${suffix}`,
-    sentinel: '?"claude.exe":"claude")',
+    pattern: /if\(([\w$]+)\(\)==="bun"\)return\[([\w$]+)\(([\w$]+),"claude"\)\];if\([\w$]+\(\)==="windows"\)return\[\2\(\3,"claude\.cmd"\),\2\(\3,"claude\.exe"\)\];return\[\2\(\3,"bin","claude"\)\]/g,
+    replacer: (match) => match.replace(/claude/g, 'claude.orig'),
+    appliedMarker: '"claude.orig.cmd"',
     optional: true,
   },
 ];

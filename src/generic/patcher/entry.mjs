@@ -2,7 +2,7 @@
 /**
  * ClawGod Plus Universal Patcher — 正则模式匹配, 跨版本兼容
  */
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { dirname, isAbsolute, join } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -16,9 +16,69 @@ import { createPatchSelection, enhancementManifest } from './registry.mjs';
 
 const DEFAULT_ROOT = dirname(fileURLToPath(import.meta.url));
 
-export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.slice(2) } = {}) {
+// v2.1.245+ ships the CLI as an ESM entry point plus a code-split graph of
+// chunk-*.js modules under <root>/chunks/. The patcher operates on the whole
+// bundle (entry + chunks) as a single logical source so a patch that targets
+// code inside a chunk still matches. Modules are concatenated with a marker
+// that no patch pattern can accidentally match, then split back on write.
+const CHUNKS_DIRNAME = 'chunks';
+const MODULE_SEPARATOR = '\n/*__CLAWGOD_MODULE_BOUNDARY__*/\n';
+
+function readBundle(rootDir) {
+  const modules = [{ relPath: 'cli.original.cjs', code: readFileSync(join(rootDir, 'cli.original.cjs'), 'utf8') }];
+  const chunksDir = join(rootDir, CHUNKS_DIRNAME);
+  if (existsSync(chunksDir)) {
+    for (const name of readdirSync(chunksDir).filter((n) => n.endsWith('.js')).sort()) {
+      modules.push({ relPath: join(CHUNKS_DIRNAME, name), code: readFileSync(join(chunksDir, name), 'utf8') });
+    }
+  }
+  return modules;
+}
+
+function concatModules(modules) {
+  return modules.map((module) => module.code).join(MODULE_SEPARATOR);
+}
+
+function splitModules(combined) {
+  return combined.split(MODULE_SEPARATOR);
+}
+
+function writeBundle(rootDir, modules) {
+  for (const module of modules) {
+    const target = join(rootDir, module.relPath);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, module.code, 'utf8');
+  }
+}
+
+function backupBundle(rootDir, modules) {
   const target = join(rootDir, 'cli.original.cjs');
   const backup = target + '.bak';
+  if (!existsSync(backup)) copyFileSync(target, backup);
+  const chunksDir = join(rootDir, CHUNKS_DIRNAME);
+  const chunksBackup = join(rootDir, `${CHUNKS_DIRNAME}.bak`);
+  if (existsSync(chunksDir) && !existsSync(chunksBackup)) {
+    cpSync(chunksDir, chunksBackup, { recursive: true });
+  }
+  return { backup, chunksBackup, chunksDir };
+}
+
+function restoreBundle(rootDir) {
+  const target = join(rootDir, 'cli.original.cjs');
+  const backup = target + '.bak';
+  if (!existsSync(backup)) return false;
+  copyFileSync(backup, target);
+  const chunksDir = join(rootDir, CHUNKS_DIRNAME);
+  const chunksBackup = join(rootDir, `${CHUNKS_DIRNAME}.bak`);
+  if (existsSync(chunksBackup)) {
+    rmSync(chunksDir, { recursive: true, force: true });
+    renameSync(chunksBackup, chunksDir);
+  }
+  return true;
+}
+
+export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.slice(2) } = {}) {
+  const target = join(rootDir, 'cli.original.cjs');
   const dryRun = args.includes('--dry-run');
   const verify = args.includes('--verify');
   const revert = args.includes('--revert');
@@ -44,11 +104,10 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   const { patches, customPatches } = createPatchSelection(selection.enabled);
 
   if (revert) {
-    if (!existsSync(backup)) {
+    if (!restoreBundle(rootDir)) {
       console.error('❌ No backup found');
       process.exit(1);
     }
-    copyFileSync(backup, target);
     console.log('✅ Reverted from backup');
     return;
   }
@@ -58,12 +117,15 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
     process.exit(1);
   }
 
-  let code = readFileSync(target, 'utf8');
-  const { size: originalSize, version } = inspectPatcherSource(code);
+  const modules = readBundle(rootDir);
+  const hasChunks = modules.length > 1;
+  let code = concatModules(modules);
+  const originalSize = modules.reduce((sum, module) => sum + module.code.length, 0);
+  const { version } = inspectPatcherSource(code);
 
   console.log(`\n${'═'.repeat(55)}`);
   console.log('  ClawGod Plus (universal)');
-  console.log(`  Target: cli.original.cjs (v${version})`);
+  console.log(`  Target: cli.original.cjs (v${version})${hasChunks ? ` + ${modules.length - 1} chunks` : ''}`);
   console.log(`  Mode: ${dryRun ? 'DRY RUN' : verify ? 'VERIFY' : 'APPLY'}`);
   console.log(`  Enhancements: ${selection.enabled.length} enabled, ${enhancementManifest.length - selection.enabled.length} disabled`);
   console.log(`${'═'.repeat(55)}\n`);
@@ -172,13 +234,16 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed`);
 
   if (failed === 0 && !dryRun && !verify && applied > 0) {
-    if (!existsSync(backup)) {
-      copyFileSync(target, backup);
-      console.log(`  📦 Backup: ${backup}`);
+    backupBundle(rootDir, modules);
+    const resultModules = splitModules(code);
+    if (resultModules.length !== modules.length) {
+      console.error(`  ❌ Bundle split mismatch: ${resultModules.length} vs ${modules.length} modules`);
+      process.exit(1);
     }
-    writeFileSync(target, code, 'utf8');
+    for (let i = 0; i < modules.length; i++) modules[i].code = resultModules[i];
+    writeBundle(rootDir, modules);
     const difference = code.length - originalSize;
-    console.log(`  📝 Written: cli.original.cjs (${difference >= 0 ? '+' : ''}${difference} bytes)`);
+    console.log(`  📝 Written: cli.original.cjs${hasChunks ? ` + ${modules.length - 1} chunks` : ''} (${difference >= 0 ? '+' : ''}${difference} bytes)`);
   }
 
   console.log(`${'═'.repeat(55)}\n`);

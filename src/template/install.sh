@@ -171,7 +171,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -282,6 +282,15 @@ install_chrome_fix_script() {
 }
 
 run_claude_code_chrome_fix() {
+  # v2.1.245+ ships a code-split ESM bundle (entry + chunks/). The Chrome
+  # socket/subscription patches are already applied by the universal patcher
+  # against the concatenated bundle, so this legacy single-file helper would
+  # only report NOT_FOUND. Skip it to avoid the misleading error.
+  if [ -d "$CLAWGOD_DIR/chunks" ]; then
+    info "Chrome fix already covered by patcher (code-split bundle); skipping"
+    return 0
+  fi
+
   local script="$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh"
   if [ ! -x "$script" ]; then
     if ! install_chrome_fix_script; then
@@ -311,6 +320,7 @@ RUNTIME_TRANSACTION_DIR=""
 RUNTIME_TRANSACTION_ACTIVE=0
 RUNTIME_HAD_TARGET=0
 RUNTIME_HAD_SOURCE_VERSION=0
+RUNTIME_HAD_CHUNKS=0
 RUNTIME_HAS_CANDIDATE_VENDOR=0
 RUNTIME_VENDOR_PUBLISH_STARTED=0
 RUNTIME_VENDOR_ROLLBACK_COMPLETE=0
@@ -332,6 +342,12 @@ rollback_runtime_transaction() {
     cp -p "$RUNTIME_TRANSACTION_DIR/.source-version" "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
   else
     rm -f "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
+  fi
+  if [ "$RUNTIME_HAD_CHUNKS" = "1" ]; then
+    rm -rf "$CLAWGOD_DIR/chunks" 2>/dev/null || true
+    mv "$RUNTIME_TRANSACTION_DIR/chunks" "$CLAWGOD_DIR/chunks" 2>/dev/null || true
+  else
+    rm -rf "$CLAWGOD_DIR/chunks" 2>/dev/null || true
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
   if [ "$RUNTIME_TRANSACTION_CLEANUP_SAFE" = "1" ]; then
@@ -369,6 +385,10 @@ if [ -f "$CLAWGOD_DIR/.source-version" ]; then
   cp -p "$CLAWGOD_DIR/.source-version" "$RUNTIME_TRANSACTION_DIR/.source-version"
   RUNTIME_HAD_SOURCE_VERSION=1
 fi
+if [ -d "$CLAWGOD_DIR/chunks" ]; then
+  mv "$CLAWGOD_DIR/chunks" "$RUNTIME_TRANSACTION_DIR/chunks"
+  RUNTIME_HAD_CHUNKS=1
+fi
 RUNTIME_TRANSACTION_ACTIVE=1
 trap 'rollback_runtime_transaction' EXIT
 
@@ -382,8 +402,20 @@ if [ "$NO_UPGRADE" = "1" ]; then
     cp "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.original.cjs"
     info "Restored clean cli.original.cjs from backup"
   fi
+  if [ -d "$CLAWGOD_DIR/chunks.bak" ]; then
+    rm -rf "$CLAWGOD_DIR/chunks"
+    cp -R "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/chunks"
+    info "Restored clean chunks from backup"
+  fi
   info "Skipping download (--no-upgrade)"
 else
+
+# A full reinstall replaces cli.original.cjs + chunks with a freshly-extracted
+# bundle. Drop any .bak left over from a previous Claude Code version so the
+# patcher backs up this version's clean bundle instead of a stale one
+# (--no-upgrade restores from .bak and would otherwise mix versions).
+rm -f "$CLAWGOD_DIR/cli.original.cjs.bak"
+rm -rf "$CLAWGOD_DIR/chunks.bak"
 
 # ─── Locate native Bun binary (cli.js source) ──────────────────────────
 # v2.1.113+ ships a Bun standalone executable as the only canonical form.
@@ -504,6 +536,7 @@ fi
 [ -f "$RUNTIME_CANDIDATE_DIR/cli.original.js" ] || { err "cli.js missing after extraction"; exit 1; }
 
 # ─── Post-process cli.js for Bun runtime ──────────────────────
+# Legacy monolithic CJS bundle:
 # 0. Strip leading @bun pragma comments so Bun recognises the CJS wrapper
 # 1. Rewrite /$bunfs/root/X.node paths to point at extracted vendor modules
 # 2. Rewrite build-time /home/runner/.../*.ts URLs (used by ripgrep,
@@ -511,15 +544,27 @@ fi
 #    relative resolutions land near our cli.original.cjs
 # 3. Wrap the Bun-cjs IIFE with an actual invocation so `require()` runs it
 # 4. Save as .cjs (Bun + CJS module wrapper)
+#
+# v2.1.245+ code-split ESM bundle (chunks/ present): rewrite chunk import
+# specifiers to local relative paths and .node/.asset/worker paths to
+# absolute ~/.clawgod locations (passed as argv[2]).
 
 dim "Rewriting bunfs paths and IIFE invocation ..."
 cat > "$CLAWGOD_DIR/post-process.mjs" << 'POSTPROC_EOF'
 @@CLAWGOD_POST_PROCESSOR_MJS@@
 POSTPROC_EOF
 cp "$CLAWGOD_DIR/post-process.mjs" "$RUNTIME_CANDIDATE_DIR/post-process.mjs"
-"$BUN_BIN" "$RUNTIME_CANDIDATE_DIR/post-process.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
+"$BUN_BIN" "$RUNTIME_CANDIDATE_DIR/post-process.mjs" "$CLAWGOD_DIR" 2>&1 | while IFS= read -r line; do echo "  $line"; done
 [ -f "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" ] || { err "Post-process failed"; exit 1; }
 mv "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs"
+# Code-split chunk graph (v2.1.245+): every non-entry js module extracted by
+# extract-natives.mjs into candidate/chunks/. Move it into place alongside
+# cli.original.cjs so the patcher and runtime can resolve the rewritten
+# relative import specifiers.
+if [ -d "$RUNTIME_CANDIDATE_DIR/chunks" ]; then
+  rm -rf "$CLAWGOD_DIR/chunks"
+  mv "$RUNTIME_CANDIDATE_DIR/chunks" "$CLAWGOD_DIR/chunks"
+fi
 # Design canvas editor payload (loader=file asset from the binary) — see
 # wrapper.cjs CLAWGOD_DESIGN_PAYLOAD export.
 if [ -d "$RUNTIME_CANDIDATE_DIR/assets" ]; then

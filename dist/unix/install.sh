@@ -730,7 +730,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -5775,6 +5775,15 @@ install_chrome_fix_script() {
 }
 
 run_claude_code_chrome_fix() {
+  # v2.1.245+ ships a code-split ESM bundle (entry + chunks/). The Chrome
+  # socket/subscription patches are already applied by the universal patcher
+  # against the concatenated bundle, so this legacy single-file helper would
+  # only report NOT_FOUND. Skip it to avoid the misleading error.
+  if [ -d "$CLAWGOD_DIR/chunks" ]; then
+    info "Chrome fix already covered by patcher (code-split bundle); skipping"
+    return 0
+  fi
+
   local script="$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh"
   if [ ! -x "$script" ]; then
     if ! install_chrome_fix_script; then
@@ -5804,6 +5813,7 @@ RUNTIME_TRANSACTION_DIR=""
 RUNTIME_TRANSACTION_ACTIVE=0
 RUNTIME_HAD_TARGET=0
 RUNTIME_HAD_SOURCE_VERSION=0
+RUNTIME_HAD_CHUNKS=0
 RUNTIME_HAS_CANDIDATE_VENDOR=0
 RUNTIME_VENDOR_PUBLISH_STARTED=0
 RUNTIME_VENDOR_ROLLBACK_COMPLETE=0
@@ -5825,6 +5835,12 @@ rollback_runtime_transaction() {
     cp -p "$RUNTIME_TRANSACTION_DIR/.source-version" "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
   else
     rm -f "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
+  fi
+  if [ "$RUNTIME_HAD_CHUNKS" = "1" ]; then
+    rm -rf "$CLAWGOD_DIR/chunks" 2>/dev/null || true
+    mv "$RUNTIME_TRANSACTION_DIR/chunks" "$CLAWGOD_DIR/chunks" 2>/dev/null || true
+  else
+    rm -rf "$CLAWGOD_DIR/chunks" 2>/dev/null || true
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
   if [ "$RUNTIME_TRANSACTION_CLEANUP_SAFE" = "1" ]; then
@@ -5862,6 +5878,10 @@ if [ -f "$CLAWGOD_DIR/.source-version" ]; then
   cp -p "$CLAWGOD_DIR/.source-version" "$RUNTIME_TRANSACTION_DIR/.source-version"
   RUNTIME_HAD_SOURCE_VERSION=1
 fi
+if [ -d "$CLAWGOD_DIR/chunks" ]; then
+  mv "$CLAWGOD_DIR/chunks" "$RUNTIME_TRANSACTION_DIR/chunks"
+  RUNTIME_HAD_CHUNKS=1
+fi
 RUNTIME_TRANSACTION_ACTIVE=1
 trap 'rollback_runtime_transaction' EXIT
 
@@ -5875,8 +5895,20 @@ if [ "$NO_UPGRADE" = "1" ]; then
     cp "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.original.cjs"
     info "Restored clean cli.original.cjs from backup"
   fi
+  if [ -d "$CLAWGOD_DIR/chunks.bak" ]; then
+    rm -rf "$CLAWGOD_DIR/chunks"
+    cp -R "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/chunks"
+    info "Restored clean chunks from backup"
+  fi
   info "Skipping download (--no-upgrade)"
 else
+
+# A full reinstall replaces cli.original.cjs + chunks with a freshly-extracted
+# bundle. Drop any .bak left over from a previous Claude Code version so the
+# patcher backs up this version's clean bundle instead of a stale one
+# (--no-upgrade restores from .bak and would otherwise mix versions).
+rm -f "$CLAWGOD_DIR/cli.original.cjs.bak"
+rm -rf "$CLAWGOD_DIR/chunks.bak"
 
 # ─── Locate native Bun binary (cli.js source) ──────────────────────────
 # v2.1.113+ ships a Bun standalone executable as the only canonical form.
@@ -6505,13 +6537,27 @@ function main() {
   mkdirSync(outputDir, { recursive: true });
   mkdirSync(join(outputDir, 'vendor'));
 
-  let cliCount = 0, napiCount = 0, assetCount = 0, dropped = 0;
+  let cliCount = 0, napiCount = 0, assetCount = 0, chunkCount = 0, dropped = 0;
   for (const m of modules) {
     if (m.entry) {
       const out = join(outputDir, 'cli.original.js');
       writeFileSync(out, m.content);
       console.log(`  cli.js   ${(m.content.length / 1024 / 1024).toFixed(2)} MB → ${out} (${m.name})`);
       cliCount++;
+    } else if (m.loader === 'js') {
+      // v2.1.245+ ships the CLI as an ESM entry point plus a code-split
+      // graph of /$bunfs/root/chunk-*.js modules. Every js module except the
+      // entry is extracted into chunks/ (flat basename) so post-process.mjs
+      // can rewrite their /$bunfs/root/... import specifiers to local files.
+      const flat = m.name.replaceAll('\\', '/');
+      const base = basename(flat);
+      if (!base) { console.warn(`  skip js ${m.name}: empty basename`); dropped++; continue; }
+      const dir = join(outputDir, 'chunks');
+      mkdirSync(dir, { recursive: true });
+      const out = join(dir, base);
+      writeFileSync(out, m.content);
+      console.log(`  chunk    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
+      chunkCount++;
     } else if (m.loader === 'file' || m.name.endsWith('.asset')) {
       // Bun embedded file assets (e.g. the design-canvas editor payload
       // /$bunfs/root/payload.template.html.asset). cli.original.js keeps
@@ -6543,7 +6589,7 @@ function main() {
       dropped++;
     }
   }
-  console.log(`Extracted: ${cliCount} cli.js + ${napiCount} napi + ${assetCount} asset (${dropped} dropped)`);
+  console.log(`Extracted: ${cliCount} cli.js + ${napiCount} napi + ${assetCount} asset + ${chunkCount} chunk (${dropped} dropped)`);
   if (cliCount !== 1) {
     console.error(`error: expected exactly 1 entry-point, got ${cliCount}`);
     process.exit(2);
@@ -6573,6 +6619,7 @@ fi
 [ -f "$RUNTIME_CANDIDATE_DIR/cli.original.js" ] || { err "cli.js missing after extraction"; exit 1; }
 
 # ─── Post-process cli.js for Bun runtime ──────────────────────
+# Legacy monolithic CJS bundle:
 # 0. Strip leading @bun pragma comments so Bun recognises the CJS wrapper
 # 1. Rewrite /$bunfs/root/X.node paths to point at extracted vendor modules
 # 2. Rewrite build-time /home/runner/.../*.ts URLs (used by ripgrep,
@@ -6580,49 +6627,124 @@ fi
 #    relative resolutions land near our cli.original.cjs
 # 3. Wrap the Bun-cjs IIFE with an actual invocation so `require()` runs it
 # 4. Save as .cjs (Bun + CJS module wrapper)
+#
+# v2.1.245+ code-split ESM bundle (chunks/ present): rewrite chunk import
+# specifiers to local relative paths and .node/.asset/worker paths to
+# absolute ~/.clawgod locations (passed as argv[2]).
 
 dim "Rewriting bunfs paths and IIFE invocation ..."
 cat > "$CLAWGOD_DIR/post-process.mjs" << 'POSTPROC_EOF'
 #!/usr/bin/env bun
-import { readFileSync, writeFileSync, unlinkSync } from 'fs';
-import { dirname } from 'path';
+import { readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync } from 'fs';
+import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = `${here}/cli.original.js`;
 const dst = `${here}/cli.original.cjs`;
 
-let code = readFileSync(src, 'utf8');
+// Final runtime directory (~/.clawgod) — passed in by install.sh so that
+// native-module / asset / worker paths can be baked as absolute paths.
+// Normalise backslashes (Windows argv) to forward slashes: the baked paths
+// are spliced into JS string literals, where a raw `\` would be parsed as an
+// escape sequence, and Windows filesystem APIs accept forward slashes.
+const clawgodDir = (process.argv[2] || here).replace(/\\/g, '/');
 
-// Strip leading @bun pragma comments (e.g. "// @bun @bytecode @bun-cjs\n")
-// Bun requires the file to start directly with "(function" to recognize
-// the CommonJS wrapper; any preceding comment breaks that detection.
-code = code.replace(/^(?:\/\/[^\n]*\n)+/, '');
+const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+const os = process.platform === 'darwin' ? 'darwin' : process.platform === 'linux' ? 'linux' : 'win32';
+const archOs = `${arch}-${os}`;
 
-// (1) bunfs .node module paths → runtime vendor lookup
-code = code.replace(
-  /require\(['"](\/\$bunfs\/root\/([\w-]+)\.node)['"]\)/g,
-  (m, _full, name) =>
-    `require(require('path').join(__dirname,'vendor',${JSON.stringify(name)},\`\${process.arch==='arm64'?'arm64':'x64'}-\${process.platform==='darwin'?'darwin':process.platform==='linux'?'linux':'win32'}\`,${JSON.stringify(name + '.node')}))`,
-);
+// Bun standalone embeds are referenced as /$bunfs/root/... (POSIX) or
+// B:/~BUN/root/... (Windows). Match both prefixes so every reference is
+// rewritten regardless of which build produced the binary.
+const BUNFS = String.raw`(?:[A-Za-z]:)?\/(?:\$bunfs|~BUN)\/root\/`;
 
-// (2) build-time fileURLToPath() leaks → use cli.cjs's own __filename
-code = code.replace(
-  /[\w$]+\.fileURLToPath\("file:\/\/\/home\/runner\/work\/claude-cli-internal\/claude-cli-internal\/[^"]*"\)/g,
-  () => '__filename',
-);
+function rewrite(code, { chunkPrefix }) {
+  // (1) code-split chunk import specifiers → local relative path.
+  code = code.replace(
+    new RegExp(`${BUNFS}chunk-([a-z0-9]+)\\.js`, 'g'),
+    `${chunkPrefix}chunk-$1.js`,
+  );
+  // (2) native .node module path (string arg to import.meta.require) → vendor.
+  code = code.replace(
+    new RegExp(`${BUNFS}([\\w-]+)\\.node`, 'g'),
+    (m, name) => `${clawgodDir}/vendor/${name}/${archOs}/${name}.node`,
+  );
+  // (3) loader=file assets (design-canvas payload, chart/hljs/mermaid) → assets/.
+  code = code.replace(
+    new RegExp(`${BUNFS}([A-Za-z0-9_.-]+\\.(?:asset|min\\.js))`, 'g'),
+    (m, name) => `${clawgodDir}/assets/${name}`,
+  );
+  // (4) plugin function-hooks worker URL → local worker file.
+  code = code.replace(
+    new RegExp(`${BUNFS}src/plugins/functionHooks/hooks-worker/hooks-worker\\.js`, 'g'),
+    `${clawgodDir}/chunks/hooks-worker.js`,
+  );
+  return code;
+}
 
-// (3) make the outer (function(...){...}) actually run
-code = code.replace(/\}\)\s*$/, '})(exports, require, module, __filename, __dirname)');
+const chunksDir = join(here, 'chunks');
 
-writeFileSync(dst, code);
-unlinkSync(src);
-console.log(`cli.original.cjs: ${code.length} bytes`);
+if (existsSync(chunksDir)) {
+  // ── v2.1.245+ code-split format: ESM entry + chunk graph ──────────
+  // The entry point is a thin dispatcher of `import ... from "/$bunfs/root/
+  // chunk-*.js"` statements. Rewrite its specifiers (chunks live one level
+  // down) and rewrite every chunk (sibling specifiers) in place.
+  let entry = readFileSync(src, 'utf8');
+  entry = rewrite(entry, { chunkPrefix: './chunks/' });
+  writeFileSync(dst, entry);
+  unlinkSync(src);
+
+  for (const name of readdirSync(chunksDir)) {
+    if (!name.endsWith('.js')) continue;
+    const path = join(chunksDir, name);
+    let code = readFileSync(path, 'utf8');
+    code = rewrite(code, { chunkPrefix: './' });
+    writeFileSync(path, code);
+  }
+  console.log(`cli.original.cjs: ${entry.length} bytes (code-split, chunks rewritten)`);
+} else {
+  // ── legacy monolithic CJS bundle ──────────────────────────────────
+  let code = readFileSync(src, 'utf8');
+
+  // Strip leading @bun pragma comments (e.g. "// @bun @bytecode @bun-cjs\n")
+  // Bun requires the file to start directly with "(function" to recognize
+  // the CommonJS wrapper; any preceding comment breaks that detection.
+  code = code.replace(/^(?:\/\/[^\n]*\n)+/, '');
+
+  // (1) bunfs .node module paths → runtime vendor lookup
+  code = code.replace(
+    /require\(['"](\/\$bunfs\/root\/([\w-]+)\.node)['"]\)/g,
+    (m, _full, name) =>
+      `require(require('path').join(__dirname,'vendor',${JSON.stringify(name)},\`\${process.arch==='arm64'?'arm64':'x64'}-\${process.platform==='darwin'?'darwin':process.platform==='linux'?'linux':'win32'}\`,${JSON.stringify(name + '.node')}))`,
+  );
+
+  // (2) build-time fileURLToPath() leaks → use cli.cjs's own __filename
+  code = code.replace(
+    /[\w$]+\.fileURLToPath\("file:\/\/\/home\/runner\/work\/claude-cli-internal\/claude-cli-internal\/[^"]*"\)/g,
+    () => '__filename',
+  );
+
+  // (3) make the outer (function(...){...}) actually run
+  code = code.replace(/\}\)\s*$/, '})(exports, require, module, __filename, __dirname)');
+
+  writeFileSync(dst, code);
+  unlinkSync(src);
+  console.log(`cli.original.cjs: ${code.length} bytes (monolithic)`);
+}
 POSTPROC_EOF
 cp "$CLAWGOD_DIR/post-process.mjs" "$RUNTIME_CANDIDATE_DIR/post-process.mjs"
-"$BUN_BIN" "$RUNTIME_CANDIDATE_DIR/post-process.mjs" 2>&1 | while IFS= read -r line; do echo "  $line"; done
+"$BUN_BIN" "$RUNTIME_CANDIDATE_DIR/post-process.mjs" "$CLAWGOD_DIR" 2>&1 | while IFS= read -r line; do echo "  $line"; done
 [ -f "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" ] || { err "Post-process failed"; exit 1; }
 mv "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs"
+# Code-split chunk graph (v2.1.245+): every non-entry js module extracted by
+# extract-natives.mjs into candidate/chunks/. Move it into place alongside
+# cli.original.cjs so the patcher and runtime can resolve the rewritten
+# relative import specifiers.
+if [ -d "$RUNTIME_CANDIDATE_DIR/chunks" ]; then
+  rm -rf "$CLAWGOD_DIR/chunks"
+  mv "$RUNTIME_CANDIDATE_DIR/chunks" "$CLAWGOD_DIR/chunks"
+fi
 # Design canvas editor payload (loader=file asset from the binary) — see
 # wrapper.cjs CLAWGOD_DESIGN_PAYLOAD export.
 if [ -d "$RUNTIME_CANDIDATE_DIR/assets" ]; then
@@ -6652,7 +6774,7 @@ cat > "$CLAWGOD_DIR/repatch.mjs" << 'REPATCH_EOF'
 // native Claude binary. Invoked by cli.cjs when it detects that
 // .source-version no longer matches the latest binary in versions/.
 import { spawnSync } from 'child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { publishVendorTransaction } from './vendor-transaction.mjs';
@@ -6694,9 +6816,13 @@ const postProc = join(here, 'post-process.mjs');
 const patcher = join(here, 'patch.mjs');
 const target = join(here, 'cli.original.cjs');
 const sourceVersion = join(here, '.source-version');
+const chunksDir = join(here, 'chunks');
 const enhancementsFile = join(here, 'enhancements.json');
 const targetSnapshot = snapshotFile(target);
 const sourceVersionSnapshot = snapshotFile(sourceVersion);
+const chunksSnapshot = existsSync(chunksDir)
+  ? Object.fromEntries(readdirSync(chunksDir).map((name) => [name, snapshotFile(join(chunksDir, name))]))
+  : null;
 const transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
 const candidateDir = join(transactionDir, 'candidate');
 const candidateVendor = join(candidateDir, 'vendor');
@@ -6710,9 +6836,14 @@ try {
   run('extract', [extractor, nativeBin, candidateDir]);
   const candidatePostProc = join(candidateDir, 'post-process.mjs');
   copyFileSync(postProc, candidatePostProc);
-  run('post-process', [candidatePostProc]);
+  run('post-process', [candidatePostProc, here]);
   rmSync(target, { force: true });
   renameSync(join(candidateDir, 'cli.original.cjs'), target);
+  const candidateChunks = join(candidateDir, 'chunks');
+  if (existsSync(candidateChunks)) {
+    rmSync(chunksDir, { recursive: true, force: true });
+    renameSync(candidateChunks, chunksDir);
+  }
   const candidateAssets = join(candidateDir, 'assets');
   const assetsDir = join(here, 'assets');
   if (existsSync(candidateAssets)) {
@@ -6731,6 +6862,11 @@ try {
   if (vendorRestored) {
     restoreFile(target, targetSnapshot);
     restoreFile(sourceVersion, sourceVersionSnapshot);
+    rmSync(chunksDir, { recursive: true, force: true });
+    if (chunksSnapshot) {
+      mkdirSync(chunksDir, { recursive: true });
+      for (const [name, file] of Object.entries(chunksSnapshot)) restoreFile(join(chunksDir, name), file);
+    }
     if (!vendorPublishAttempted || error?.cleanupSafe !== false) rmSync(transactionDir, { recursive: true, force: true });
     else console.error(`repatch: prior CLI restored; untrusted transaction data retained at ${transactionDir}`);
   } else {
@@ -7332,7 +7468,7 @@ cat > "$CLAWGOD_DIR/patch.mjs" << 'PATCHER_EOF'
 // @bun
 
 // src/generic/patcher/entry.mjs
-import { copyFileSync, existsSync as existsSync2, readFileSync, writeFileSync as writeFileSync2 } from "fs";
+import { copyFileSync, cpSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, readdirSync, renameSync as renameSync2, rmSync, writeFileSync as writeFileSync2 } from "fs";
 import { dirname as dirname3, isAbsolute as isAbsolute2, join as join3 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 
@@ -8329,9 +8465,9 @@ var patches = [
   {
     order: 57,
     name: "Shell integration \u2192 claude.orig (multitool dispatch fix)",
-    pattern: /([\w$]+\.join\([\w$]+\(\),[\w$]+\?)"claude\.exe":"claude"(\))/g,
-    replacer: (match, prefix, suffix) => `${prefix}"claude.orig.exe":"claude.orig"${suffix}`,
-    sentinel: '?"claude.exe":"claude")',
+    pattern: /if\(([\w$]+)\(\)==="bun"\)return\[([\w$]+)\(([\w$]+),"claude"\)\];if\([\w$]+\(\)==="windows"\)return\[\2\(\3,"claude\.cmd"\),\2\(\3,"claude\.exe"\)\];return\[\2\(\3,"bin","claude"\)\]/g,
+    replacer: (match) => match.replace(/claude/g, "claude.orig"),
+    appliedMarker: '"claude.orig.cmd"',
     optional: true
   }
 ];
@@ -8818,8 +8954,8 @@ var patches4 = [
   {
     order: 16,
     name: "Claude in Chrome agents dispatch args",
-    pattern: /\.\.\.e\.strictMcpConfig\?\["--strict-mcp-config"\]:\[\]\]\}/g,
-    replacer: () => '...e.chrome?["--chrome"/*__ccpp_agents_chrome_dispatch*/]:[],...e.noChrome?["--no-chrome"]:[],...e.strictMcpConfig?["--strict-mcp-config"]:[]]}',
+    pattern: /\.\.\.([\w$]+)\.strictMcpConfig\?\["--strict-mcp-config"\]:\[\]\]\}/g,
+    replacer: (match, config) => `...${config}.chrome?["--chrome"/*__ccpp_agents_chrome_dispatch*/]:[],...${config}.noChrome?["--no-chrome"]:[],...${config}.strictMcpConfig?["--strict-mcp-config"]:[]]}`,
     appliedMarker: "__ccpp_agents_chrome_dispatch",
     validate: (match, code) => !code.includes("__ccpp_agents_chrome_dispatch")
   }
@@ -8914,9 +9050,9 @@ var patches7 = [
   {
     order: 43,
     name: "Image paste: try native image processor regardless of standalone gate",
-    pattern: /if\(([\w$]+)\(\)\)(try\{let [\w$]+=await Promise\.resolve\(\)\.then\(\(\)\s*=>\s*\([\w$]+\(\),[\w$]+\)\),[\w$]+=[\w$]+\.sharp\|\|[\w$]+\.default;return [\w$]+=\{default:[\w$]+\},[\w$]+\}catch\{console\.warn\("Native image processor not available, falling back to sharp"\)\})/g,
-    replacer: (match, gate, body) => body,
-    appliedMarker: /return [\w$]+\.default;try\{let [\w$]+=await Promise\.resolve\(\)\.then\(\(\)\s*=>\s*\([\w$]+\(\),[\w$]+\)\)/
+    pattern: /if\(([\w$]+)\(\)\)try\{let ([\w$]+)=await import\("\.\/chunk-[a-z0-9]+\.js"\),([\w$]+)=\2\.sharp\|\|\2\.default;return ([\w$]+)=\{default:\3\},\3\}catch\{console\.warn\("Native image processor not available, falling back to sharp"\)\}/g,
+    replacer: (match, gate) => match.replace(`if(${gate}())`, ""),
+    appliedMarker: /try\{let [\w$]+=await import\("\.\/chunk-[a-z0-9]+\.js"\),[\w$]+=[\w$]+\.sharp\|\|[\w$]+\.default;return [\w$]+=\{default:[\w$]+\},[\w$]+\}catch\{console\.warn\("Native image processor not available/
   },
   {
     order: 44,
@@ -9031,7 +9167,7 @@ var patches10 = [
   {
     order: 46,
     name: "Restore Glob/Grep tools (un-inline EMBEDDED_SEARCH_TOOLS)",
-    pattern: /function ([\w$]+)\(\)\{if\(!([\w$]+)\("true"\)\)return!1;if\([\w$]+\(\)\)return!1;return process\.env\.CLAUDE_CODE_ENTRYPOINT!=="local-agent"\}/g,
+    pattern: /function ([\w$]+)\(\)\{if\(!([\w$]+)\("true"\)\)return!1;if\([\w$]+\(\)\)return!1;return (?:process\.env|[\w$]+)\.CLAUDE_CODE_ENTRYPOINT!=="local-agent"\}/g,
     replacer: (match, fn, envCheck) => `function ${fn}(){if(!${envCheck}(process.env.EMBEDDED_SEARCH_TOOLS))return!1;if(typeof globalThis.__dpBinOk>"u"){try{var _w=process.platform==="win32"?"where":"which";require("child_process").execFileSync(_w,["bfs"],{timeout:2e3});require("child_process").execFileSync(_w,["ugrep"],{timeout:2e3});globalThis.__dpBinOk=!0}catch{globalThis.__dpBinOk=!1}}if(!globalThis.__dpBinOk)return!1;return process.env.CLAUDE_CODE_ENTRYPOINT!=="local-agent"}`,
     sentinel: 'ct("true")',
     optional: true
@@ -9178,9 +9314,61 @@ function createPatchSelection(enabled) {
 
 // src/generic/patcher/entry.mjs
 var DEFAULT_ROOT = dirname3(fileURLToPath2(import.meta.url));
-async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.slice(2) } = {}) {
+var CHUNKS_DIRNAME = "chunks";
+var MODULE_SEPARATOR = `
+/*__CLAWGOD_MODULE_BOUNDARY__*/
+`;
+function readBundle(rootDir) {
+  const modules = [{ relPath: "cli.original.cjs", code: readFileSync(join3(rootDir, "cli.original.cjs"), "utf8") }];
+  const chunksDir = join3(rootDir, CHUNKS_DIRNAME);
+  if (existsSync2(chunksDir)) {
+    for (const name of readdirSync(chunksDir).filter((n) => n.endsWith(".js")).sort()) {
+      modules.push({ relPath: join3(CHUNKS_DIRNAME, name), code: readFileSync(join3(chunksDir, name), "utf8") });
+    }
+  }
+  return modules;
+}
+function concatModules(modules) {
+  return modules.map((module) => module.code).join(MODULE_SEPARATOR);
+}
+function splitModules(combined) {
+  return combined.split(MODULE_SEPARATOR);
+}
+function writeBundle(rootDir, modules) {
+  for (const module of modules) {
+    const target = join3(rootDir, module.relPath);
+    mkdirSync2(dirname3(target), { recursive: true });
+    writeFileSync2(target, module.code, "utf8");
+  }
+}
+function backupBundle(rootDir, modules) {
   const target = join3(rootDir, "cli.original.cjs");
   const backup = target + ".bak";
+  if (!existsSync2(backup))
+    copyFileSync(target, backup);
+  const chunksDir = join3(rootDir, CHUNKS_DIRNAME);
+  const chunksBackup = join3(rootDir, `${CHUNKS_DIRNAME}.bak`);
+  if (existsSync2(chunksDir) && !existsSync2(chunksBackup)) {
+    cpSync(chunksDir, chunksBackup, { recursive: true });
+  }
+  return { backup, chunksBackup, chunksDir };
+}
+function restoreBundle(rootDir) {
+  const target = join3(rootDir, "cli.original.cjs");
+  const backup = target + ".bak";
+  if (!existsSync2(backup))
+    return false;
+  copyFileSync(backup, target);
+  const chunksDir = join3(rootDir, CHUNKS_DIRNAME);
+  const chunksBackup = join3(rootDir, `${CHUNKS_DIRNAME}.bak`);
+  if (existsSync2(chunksBackup)) {
+    rmSync(chunksDir, { recursive: true, force: true });
+    renameSync2(chunksBackup, chunksDir);
+  }
+  return true;
+}
+async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.slice(2) } = {}) {
+  const target = join3(rootDir, "cli.original.cjs");
   const dryRun = args.includes("--dry-run");
   const verify = args.includes("--verify");
   const revert = args.includes("--revert");
@@ -9205,11 +9393,10 @@ async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.slice(2)
   const selection = resolveEnhancementSelection({ stored }, enhancementManifest);
   const { patches: patches13, customPatches: customPatches4 } = createPatchSelection(selection.enabled);
   if (revert) {
-    if (!existsSync2(backup)) {
+    if (!restoreBundle(rootDir)) {
       console.error("\u274C No backup found");
       process.exit(1);
     }
-    copyFileSync(backup, target);
     console.log("\u2705 Reverted from backup");
     return;
   }
@@ -9217,12 +9404,15 @@ async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.slice(2)
     console.error("\u274C Target not found:", target);
     process.exit(1);
   }
-  let code = readFileSync(target, "utf8");
-  const { size: originalSize, version } = inspectPatcherSource(code);
+  const modules = readBundle(rootDir);
+  const hasChunks = modules.length > 1;
+  let code = concatModules(modules);
+  const originalSize = modules.reduce((sum, module) => sum + module.code.length, 0);
+  const { version } = inspectPatcherSource(code);
   console.log(`
 ${"\u2550".repeat(55)}`);
   console.log("  ClawGod Plus (universal)");
-  console.log(`  Target: cli.original.cjs (v${version})`);
+  console.log(`  Target: cli.original.cjs (v${version})${hasChunks ? ` + ${modules.length - 1} chunks` : ""}`);
   console.log(`  Mode: ${dryRun ? "DRY RUN" : verify ? "VERIFY" : "APPLY"}`);
   console.log(`  Enhancements: ${selection.enabled.length} enabled, ${enhancementManifest.length - selection.enabled.length} disabled`);
   console.log(`${"\u2550".repeat(55)}
@@ -9323,13 +9513,17 @@ ${"\u2550".repeat(55)}`);
 ${"\u2500".repeat(55)}`);
   console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed`);
   if (failed === 0 && !dryRun && !verify && applied > 0) {
-    if (!existsSync2(backup)) {
-      copyFileSync(target, backup);
-      console.log(`  \uD83D\uDCE6 Backup: ${backup}`);
+    backupBundle(rootDir, modules);
+    const resultModules = splitModules(code);
+    if (resultModules.length !== modules.length) {
+      console.error(`  \u274C Bundle split mismatch: ${resultModules.length} vs ${modules.length} modules`);
+      process.exit(1);
     }
-    writeFileSync2(target, code, "utf8");
+    for (let i = 0;i < modules.length; i++)
+      modules[i].code = resultModules[i];
+    writeBundle(rootDir, modules);
     const difference = code.length - originalSize;
-    console.log(`  \uD83D\uDCDD Written: cli.original.cjs (${difference >= 0 ? "+" : ""}${difference} bytes)`);
+    console.log(`  \uD83D\uDCDD Written: cli.original.cjs${hasChunks ? ` + ${modules.length - 1} chunks` : ""} (${difference >= 0 ? "+" : ""}${difference} bytes)`);
   }
   console.log(`${"\u2550".repeat(55)}
 `);

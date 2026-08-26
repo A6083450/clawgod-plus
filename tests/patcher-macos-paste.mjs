@@ -20,7 +20,7 @@ function paste(x){if(isImagePath(x)){let W=[],P=[];if(W.length>0||P.length>0){di
 // through to import("sharp") — not installed — and KAu throws, which makes the
 // paste handler's .catch type the raw temp PNG path as text.
 const imageProcessorFixture = `
-async function N8e(){if(tco)return tco.default;if(WE())try{let r=await Promise.resolve().then(() => (Blo(),Flo)),n=r.sharp||r.default;return tco={default:n},n}catch{console.warn("Native image processor not available, falling back to sharp")}let e=await Promise.resolve().then(() => R(vAu(),1)),t=gGg(e);return tco={default:t},t}
+async function N8e(){if(tco)return tco.default;if(WE())try{let r=await import("./chunk-abc123.js"),n=r.sharp||r.default;return tco={default:n},n}catch{console.warn("Native image processor not available, falling back to sharp")}let e=await Promise.resolve().then(() => R(vAu(),1)),t=gGg(e);return tco={default:t},t}
 `;
 
 // Paste for macOS can emit TIFF paths (for example, Paste.app stores copied
@@ -99,7 +99,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     );
     assert.match(
       patched,
-      /return tco\.default;try\{let r=await Promise\.resolve\(\)\.then\(\(\) => \(Blo\(\),Flo\)\)/,
+      /return tco\.default;try\{let r=await import\("\.\/chunk-abc123\.js"\)/,
       `${name}: native image processor branch must be tried unconditionally`,
     );
     assert.ok(
