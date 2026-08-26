@@ -6661,9 +6661,11 @@ const BUNFS = String.raw`(?:[A-Za-z]:)?\/(?:\$bunfs|~BUN)\/root\/`;
 
 function rewrite(code, { chunkPrefix }) {
   // (1) code-split chunk import specifiers → local relative path.
+  // v2.1.246 renamed many chunks from `chunk-<hash>.js` to `_<n>.js`; both
+  // are flat files under chunks/ and must be rewritten to local paths.
   code = code.replace(
-    new RegExp(`${BUNFS}chunk-([a-z0-9]+)\\.js`, 'g'),
-    `${chunkPrefix}chunk-$1.js`,
+    new RegExp(`${BUNFS}(chunk-[a-z0-9]+|_[0-9]+)\\.js`, 'g'),
+    (match, name) => `${chunkPrefix}${name}.js`,
   );
   // (2) native .node module path (string arg to import.meta.require) → vendor.
   code = code.replace(
