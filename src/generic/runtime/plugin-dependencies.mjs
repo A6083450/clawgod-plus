@@ -2393,10 +2393,15 @@ function runPluginCli(args, spec, context) {
       stdout: 'pipe',
       stderr: 'pipe',
     });
-  } catch {
-    throw new Error(`${spec.key}: plugin command failed`);
+  } catch (error) {
+    throw new Error(`${spec.key}: plugin command failed: ${error?.message || String(error)}`);
   }
-  if (result.exitCode !== 0) throw new Error(`${spec.key}: plugin command failed`);
+  if (result.exitCode !== 0) {
+    const stderr = String(result.stderr || '').trim();
+    const stdout = String(result.stdout || '').trim();
+    const detail = [stderr, stdout].filter(Boolean).join(' | ');
+    throw new Error(`${spec.key}: plugin command failed (exit ${result.exitCode})${detail ? `: ${detail}` : ''}`);
+  }
 }
 
 function verifyPluginInstallation(spec, context, pluginRoot, cacheTransaction) {
