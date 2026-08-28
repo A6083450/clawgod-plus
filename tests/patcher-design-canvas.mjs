@@ -40,16 +40,12 @@ assert.equal(designCanvasRegistry.patches.length, 2, 'design-canvas must ship ex
 // ─── Synthetic fixture (2.1.234 shape) ────────────────────────────────
 
 const fixture = `
-// Version: 2.1.234 design canvas shape
-function yt(){}
-function KJ(){return ez()!==null?iCe():(rQt()&&iCe()&&a7o())}
-function Bla(){return KJ()&&tt("tengu_ethereal_nova",!1)}
-function Xte(){return"capabilities"in tLe().shape}
-var s0g={};yt(s0g,{DESIGN_CANVAS_COMMAND_NAME:()=>o0g,isDesignCanvasSkillEnabled:()=>i0g,registerDesignCanvasSkill:()=>ngE});function i0g(){return Bla()&&Xte()}
-function t_i(){if(!Is("allow_design_sync"))return!1;if(ia())return!1;if(!Sd())return!1;return tt(B5S,!1)}
+// Version: 2.1.250 design canvas shape
+function Pun(){return true}
+function OA(){return true}
+var r="design";function o(){return Pun()&&OA()}
 var Uas="/$bunfs/root/payload.template.html.asset";
-var QEg="payload.template.html",e0g="seed-canvas.mjs";
-globalThis.isDesignCanvasSkillEnabled=i0g;
+globalThis.isDesignCanvasSkillEnabled=o;
 globalThis.payloadPath=()=>Uas;
 `;
 
@@ -80,12 +76,12 @@ for (const [installerName, patcherSource] of patcherSources) {
     );
     assert.match(
       patched,
-      /function i0g\(\)\{return!0\/\*__clawgod_design_canvas__\*\/\}/,
+      /function o\(\)\{return!0\/\*__clawgod_design_canvas__\*\/\}/,
       `${name}: canvas gate must be rewritten to always-on`,
     );
     assert.doesNotMatch(
       patched,
-      /function i0g\(\)\{return Bla\(\)&&Xte\(\)\}/,
+      /function o\(\)\{return Pun\(\)&&OA\(\)\}/,
       `${name}: canvas gate must no longer consult the login/subscription chain`,
     );
 
@@ -122,8 +118,8 @@ for (const [installerName, patcherSource] of patcherSources) {
     writeFileSync(
       join(shiftedDir, 'cli.original.cjs'),
       fixture.replace(
-        'isDesignCanvasSkillEnabled:()=>i0g,registerDesignCanvasSkill:()=>ngE});function i0g(){return Bla()&&Xte()}',
-        'isDesignCanvasSkillEnabled:()=>i0g,registerDesignCanvasSkill:()=>ngE});function i0g(){return Bla()||Xte()}',
+        'var r="design";function o(){return Pun()&&OA()}',
+        'var r="design";function o(){return Pun()||OA()}',
       ),
       'utf8',
     );

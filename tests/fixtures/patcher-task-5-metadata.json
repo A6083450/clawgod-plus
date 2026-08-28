@@ -1511,7 +1511,7 @@
       "type": "regex",
       "order": 65,
       "metadata": {
-        "patternSource": "(isDesignCanvasSkillEnabled:\\(\\)=>)([\\w$]+),registerDesignCanvasSkill:\\(\\)=>([\\w$]+)\\}\\);function \\2\\(\\)\\{return [\\w$]+\\(\\)&&[\\w$]+\\(\\)\\}",
+        "patternSource": "var ([\\w$]+)=\"design\";function ([\\w$]+)\\(\\)\\{return [\\w$]+\\(\\)&&[\\w$]+\\(\\)\\}",
         "patternFlags": "g",
         "sentinel": "isDesignCanvasSkillEnabled",
         "appliedMarker": "/*__clawgod_design_canvas__*/",

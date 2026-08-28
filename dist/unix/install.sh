@@ -9060,8 +9060,8 @@ var patches6 = [
   {
     order: 65,
     name: "Design canvas enable (skip claude.ai login/subscription gate)",
-    pattern: /(isDesignCanvasSkillEnabled:\(\)=>)([\w$]+),registerDesignCanvasSkill:\(\)=>([\w$]+)\}\);function \2\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\}/g,
-    replacer: (match, prefix, fn, regFn) => `${prefix}${fn},registerDesignCanvasSkill:()=>${regFn}});function ${fn}(){return!0/*__clawgod_design_canvas__*/}`,
+    pattern: /var ([\w$]+)="design";function ([\w$]+)\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\}/g,
+    replacer: (match, commandName, fn) => `var ${commandName}="design";function ${fn}(){return!0/*__clawgod_design_canvas__*/}`,
     sentinel: "isDesignCanvasSkillEnabled",
     appliedMarker: "/*__clawgod_design_canvas__*/",
     optional: true
