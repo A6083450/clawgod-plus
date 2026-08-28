@@ -49,8 +49,8 @@ export function inspectPatcherSource(source) {
 
 async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   const ENV_EXPR = '(+process.env.CLAUDE_CODE_CONTEXT_LIMIT||+process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS||200000)';
-  const dualRe = /var\s+([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*32000\s*,\s*([\w$]+)\s*=\s*128000\s*,\s*([\w$]+)\s*=\s*1e6\b/;
-  const alreadyRe = new RegExp('var\\s+([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*[\\w$]+\\s*=\\s*32000\\s*,\\s*[\\w$]+\\s*=\\s*128000\\s*,\\s*[\\w$]+\\s*=\\s*1e6\\b');
+  const dualRe = /var\s+([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*32000\s*,\s*([\w$]+)\s*=\s*128000(?:\s*,\s*([\w$]+)\s*=\s*1e6)?(?=\s*;)/;
+  const alreadyRe = new RegExp('var\\s+([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*[\\w$]+\\s*=\\s*32000\\s*,\\s*[\\w$]+\\s*=\\s*128000(?:\\s*,\\s*[\\w$]+\\s*=\\s*1e6)?(?=\\s*;)');
 
   const dualMatch = dualRe.exec(source);
   const alreadyMatch = alreadyRe.exec(source);
@@ -62,11 +62,16 @@ async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   const match = dualMatch || alreadyMatch;
   const [, varA, varB, varC, varD, varE] = match;
   const replacements = [];
+  const moduleSeparator = '\n/*__CLAWGOD_MODULE_BOUNDARY__*/\n';
+  const codeSplit = source.includes(moduleSeparator);
+  const refreshMarker = 'globalThis.__clawgod_context_limit_refresh_v1__=';
+  const refreshCall = ',globalThis.__clawgod_context_limit_refresh_v1__?.()';
+  const refreshRegistration = `;${refreshMarker}()=>{${varA}=${ENV_EXPR};${varB}=${ENV_EXPR}}`;
   if (dualMatch) {
     replacements.push({
       start: dualMatch.index,
       end: dualMatch.index + dualMatch[0].length,
-      replacement: `var ${varA}=${ENV_EXPR},${varB}=${ENV_EXPR},${varC}=32000,${varD}=128000,${varE}=1e6`,
+      replacement: `var ${varA}=${ENV_EXPR},${varB}=${ENV_EXPR},${varC}=32000,${varD}=128000${varE ? `,${varE}=1e6` : ''}${codeSplit && !source.includes(refreshMarker) ? refreshRegistration : ''}`,
     });
 
     const cmpRe = /\breturn ([\w$]+)\?([\w$]+)\(\1\)>200000:!1/g;
@@ -82,27 +87,56 @@ async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
     }
   }
 
+  if (codeSplit && alreadyMatch && !source.includes(refreshMarker)) {
+    replacements.push({ start: match.index + match[0].length, end: match.index + match[0].length, replacement: refreshRegistration });
+  }
+
   const envReassign = `;${varA}=${ENV_EXPR};${varB}=${ENV_EXPR};`;
+  const isEnvAssign = (node) =>
+    node?.type === 'CallExpression' &&
+    node.callee?.type === 'MemberExpression' &&
+    node.callee.object?.name === 'Object' &&
+    node.callee.property?.name === 'assign' &&
+    node.arguments?.length >= 2 &&
+    node.arguments[0]?.type === 'MemberExpression' &&
+    node.arguments[0].object?.name === 'process' &&
+    node.arguments[0].property?.name === 'env';
   const acorn = await loadAcorn(rootDir);
   if (acorn) {
-    try {
-      const ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'script', allowReturnOutsideFunction: true });
-      const envAssigns = findNodes(ast, (node) =>
-        node.type === 'ExpressionStatement' &&
-        node.expression?.type === 'CallExpression' &&
-        node.expression.callee?.type === 'MemberExpression' &&
-        node.expression.callee.object?.name === 'Object' &&
-        node.expression.callee.property?.name === 'assign' &&
-        node.expression.arguments?.length >= 2 &&
-        node.expression.arguments[0]?.type === 'MemberExpression' &&
-        node.expression.arguments[0].object?.name === 'process' &&
-        node.expression.arguments[0].property?.name === 'env'
-      );
-      for (const statement of envAssigns.slice(0, 6)) {
-        if (source.startsWith(envReassign, statement.end)) continue;
-        replacements.push({ start: statement.end, end: statement.end, replacement: envReassign });
+    const modules = codeSplit ? source.split(moduleSeparator) : [source];
+    let moduleOffset = 0;
+    let envAssignCount = 0;
+    for (const moduleSource of modules) {
+      if (envAssignCount >= 6) break;
+      if (!moduleSource.includes('Object.assign(process.env')) {
+        moduleOffset += moduleSource.length + (codeSplit ? moduleSeparator.length : 0);
+        continue;
       }
-    } catch {}
+      try {
+        const ast = acorn.parse(moduleSource, {
+          ecmaVersion: 'latest',
+          sourceType: codeSplit ? 'module' : 'script',
+          allowReturnOutsideFunction: !codeSplit,
+        });
+        const statements = findNodes(ast, (node) => node.type === 'ExpressionStatement');
+        for (const statement of statements) {
+          const directCalls = statement.expression?.type === 'SequenceExpression'
+            ? statement.expression.expressions.filter(isEnvAssign)
+            : isEnvAssign(statement.expression) ? [statement.expression] : [];
+          for (const call of directCalls) {
+            if (envAssignCount >= 6) break;
+            const insertion = codeSplit ? refreshCall : envReassign;
+            const localEnd = codeSplit ? call.end : statement.end;
+            const end = moduleOffset + localEnd;
+            if (!source.startsWith(insertion, end)) {
+              replacements.push({ start: end, end, replacement: insertion });
+            }
+            envAssignCount++;
+          }
+        }
+      } catch {}
+      moduleOffset += moduleSource.length + (codeSplit ? moduleSeparator.length : 0);
+    }
   }
 
   if (replacements.length === 0) return { status: 'already', detail: 'already applied' };
@@ -183,7 +217,7 @@ const patches = [
       `if(__clawgodUpdateArgs.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";` +
       `process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");` +
       `const _w=process.platform==='win32';` +
-      `const __clawgodUpdateStatus=(()=>{const __fs=require('fs'),__path=require('path'),__os=require('os'),__cp=require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh'),__localVersion='',__installerVersions=[];try{__localVersion=__fs.readFileSync(__path.join(__root,'.clawgod-version'),'utf8').trim();const __installerSource=__fs.readFileSync(__installer,'utf8'),__versionPattern=_w?/^[$]ClawSelfVersion = "([^"\\r\\n]+)"/gm:/^CLAWGOD_SELF_VERSION="([^"\\r\\n]+)"/gm;__installerVersions=[...__installerSource.matchAll(__versionPattern)].map((__match)=>__match[1])}catch{}const __trustedLocal=__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1]&&/^[0-9]+[.][0-9]+[.][0-9]+(?:-claude[.][0-9]+[.][0-9]+[.][0-9]+(?:[.][0-9]+)?)?$/.test(__localVersion)&&__installerVersions.length===1&&__installerVersions[0]===__localVersion;if(!__trustedLocal){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:{...process.env,CLAWGOD_NONINTERACTIVE:'1'}});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();` +
+      `const __clawgodUpdateStatus=(()=>{const __fs=import.meta.require('fs'),__path=import.meta.require('path'),__os=import.meta.require('os'),__cp=import.meta.require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh'),__localVersion='',__installerVersions=[];try{__localVersion=__fs.readFileSync(__path.join(__root,'.clawgod-version'),'utf8').trim();const __installerSource=__fs.readFileSync(__installer,'utf8'),__versionPattern=_w?/^[$]ClawSelfVersion = "([^"\\r\\n]+)"/gm:/^CLAWGOD_SELF_VERSION="([^"\\r\\n]+)"/gm;__installerVersions=[...__installerSource.matchAll(__versionPattern)].map((__match)=>__match[1])}catch{}const __trustedLocal=__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1]&&/^[0-9]+[.][0-9]+[.][0-9]+(?:-claude[.][0-9]+[.][0-9]+[.][0-9]+(?:[.][0-9]+)?)?$/.test(__localVersion)&&__installerVersions.length===1&&__installerVersions[0]===__localVersion;if(!__trustedLocal){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:{...process.env,CLAWGOD_NONINTERACTIVE:'1'}});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();` +
       `process.exit(__clawgodUpdateStatus);`
     ),
     sentinel: '.command("update").alias("upgrade")',

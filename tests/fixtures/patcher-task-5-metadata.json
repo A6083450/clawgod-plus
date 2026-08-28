@@ -588,7 +588,7 @@
       "type": "regex",
       "order": 24,
       "metadata": {
-        "patternSource": "if\\(([\\w$]+)\\(\\)===\"macos\"&&!([\\w$]+)\\(\\)&&([\\w$]+)\\(\\)\\)try\\{let\\{setupComputerUseMCP:",
+        "patternSource": "if\\(([\\w$]+)\\(\\)===\"macos\"&&!([\\w$]+)\\(\\)((?:&&![\\w$]+)?)&&([\\w$]+)\\(\\)\\)try\\{let\\{setupComputerUseMCP:",
         "patternFlags": "g",
         "sentinel": "setupComputerUseMCP",
         "appliedMarker": "/*__clawgod_computer_use_noninteractive__*/",
@@ -1096,7 +1096,7 @@
       "type": "regex",
       "order": 44,
       "metadata": {
-        "patternSource": "([\\w$]+)=\\/\\\\\\.\\(png\\|jpe\\?g\\|gif\\|webp\\)\\$\\/i(?=;[\\w$]+=\\/\\^\\(\\?:\\[A-Za-z\\]:\\\\\\\\\\|\\\\\\\\\\\\\\\\\\)\\/)",
+        "patternSource": "([\\w$]+)=\\/\\\\\\.\\(png\\|jpe\\?g\\|gif\\|webp\\)\\$\\/i(?=;(?:[\\w$]+=\\/\\^\\(\\?:\\[A-Za-z\\]:\\\\\\\\\\|\\\\\\\\\\\\\\\\\\)\\/|function [\\w$]+\\([\\w$]+\\)\\{if\\([\\w$]+\\.startsWith\\('\"'\\)&&[\\w$]+\\.endsWith\\('\"'\\)\\|\\|[\\w$]+\\.startsWith\\(\"'\"\\)&&[\\w$]+\\.endsWith\\(\"'\"\\)\\)return [\\w$]+\\.slice\\(1,-1\\);return [\\w$]+\\}var [\\w$]+=\\/\\^\\(\\?:\\[A-Za-z\\]:\\\\\\\\\\|\\\\\\\\\\\\\\\\\\)\\/))",
         "patternFlags": "g",
         "sentinel": "/\\.(png|jpe?g|gif|webp)$/i;",
         "appliedMarker": "/\\.(png|jpe?g|gif|webp|tiff?)$/i;",

@@ -193,4 +193,145 @@ for (const [name, patcherSource] of await getPatcherSources()) {
   }
 }
 
+const fixture250 = `
+/* Version: 2.1.250 */
+var vGe=200000,UN=200000,l3=32000,c3=128000;
+function uV(n){return n}
+function hasLargeMessage(n){return n?uV(n)>200000:!1}
+function unrelatedGreater(n){return n>200000}
+function unchangedCatalog(){return {context:{window:200000,supports_1m_context:!0}}}
+function loadSettingsEnv(e){Object.assign(process.env,e.env||{});return currentLimit()}
+function nestedAssign(e){return Boolean(Object.assign(process.env,e.env||{}))}
+function currentLimit(){return vGe}
+globalThis.hasLargeMessage=hasLargeMessage;
+globalThis.unrelatedGreater=unrelatedGreater;
+globalThis.unchangedCatalog=unchangedCatalog;
+globalThis.loadSettingsEnv=loadSettingsEnv;
+globalThis.nestedAssign=nestedAssign;
+globalThis.currentLimit=currentLimit;
+`;
+
+for (const [name, patcherSource] of await getPatcherSources()) {
+  const dir = mkdtempSync(join(tmpdir(), 'clawgod-context-limit-250-'));
+  try {
+    seedPatcherAcorn(dir);
+    writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
+    writeFileSync(join(dir, 'cli.original.cjs'), fixture250, 'utf8');
+
+    const first = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    const firstOutput = first.stdout + first.stderr;
+    assert.equal(first.status, 0, `${name} 2.1.250: ${firstOutput}`);
+
+    const patched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    new Function(patched);
+    assert.match(
+      patched,
+      /var vGe=\(\+process\.env\.CLAUDE_CODE_CONTEXT_LIMIT\|\|\+process\.env\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\|\|200000\),UN=\(\+process\.env\.CLAUDE_CODE_CONTEXT_LIMIT\|\|\+process\.env\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\|\|200000\),l3=32000,c3=128000/,
+      `${name} 2.1.250: four-variable defaults must become env-driven`,
+    );
+    assert.match(
+      patched,
+      /uV\(n\)>\(\+process\.env\.CLAUDE_CODE_CONTEXT_LIMIT\|\|\+process\.env\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\|\|200000\)/,
+      `${name} 2.1.250: large-message comparison must use the env-driven limit`,
+    );
+    assert.match(
+      patched,
+      /Object\.assign\(process\.env,e\.env\|\|\{\}\);;vGe=\(\+process\.env\.CLAUDE_CODE_CONTEXT_LIMIT\|\|\+process\.env\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\|\|200000\);UN=\(\+process\.env\.CLAUDE_CODE_CONTEXT_LIMIT\|\|\+process\.env\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\|\|200000\);return currentLimit/,
+      `${name} 2.1.250: settings env loader must reassign four-variable context defaults`,
+    );
+    assert.match(
+      patched,
+      /return Boolean\(Object\.assign\(process\.env,e\.env\|\|\{\}\)\)}/,
+      `${name} 2.1.250: nested Object.assign(process.env, ...) calls must not be injected`,
+    );
+    assert.match(
+      patched,
+      /function unrelatedGreater\(n\)\{return n>200000\}/,
+      `${name} 2.1.250: unrelated comparisons must remain unchanged`,
+    );
+    assert.match(
+      patched,
+      /context:\{window:200000,supports_1m_context:!0\}/,
+      `${name} 2.1.250: model catalog context metadata must not be rewritten`,
+    );
+
+    const patchedContext = evaluate(patched);
+    assert.equal(patchedContext.currentLimit(), 200000, `${name} 2.1.250: default still falls back to 200000`);
+    assert.equal(
+      patchedContext.loadSettingsEnv({ env: { CLAUDE_CODE_CONTEXT_LIMIT: '1000000' } }),
+      1000000,
+      `${name} 2.1.250: settings env must update the effective context limit`,
+    );
+    assert.equal(patchedContext.hasLargeMessage(300000), false, `${name} 2.1.250: raised limit must affect large-message comparison`);
+    assert.equal(patchedContext.unchangedCatalog().context.window, 200000, `${name} 2.1.250: catalog window remains metadata`);
+
+    const second = spawnSync(process.execPath, ['patch.mjs', '--dry-run'], { cwd: dir, encoding: 'utf8' });
+    const secondOutput = second.stdout + second.stderr;
+    assert.equal(second.status, 0, `${name} 2.1.250: ${secondOutput}`);
+    assert.match(secondOutput, /Context limit configurable \(already applied\)/, `${name} 2.1.250: re-run must be idempotent`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const esmEntry250 = `
+/* Version: 2.1.250 */
+import { loadSettingsEnv } from "./chunks/env.js";
+import { currentLimit, hasLargeMessage } from "./chunks/context.js";
+let before=currentLimit(),after=loadSettingsEnv({env:{CLAUDE_CODE_CONTEXT_LIMIT:"1000000"}});
+console.log(JSON.stringify({before,after,large:hasLargeMessage(300000)}));
+`;
+const esmContext250 = `
+var vGe=200000,UN=200000,l3=32000,c3=128000;
+function uV(n){return n}
+function hasLargeMessage(n){return n?uV(n)>200000:!1}
+function currentLimit(){return vGe}
+export{currentLimit,hasLargeMessage};
+`;
+const esmEnv250 = `
+import { currentLimit } from "./context.js";
+function loadSettingsEnv(e){Object.assign(process.env,e.env||{}),globalThis.__fixtureSideEffect__=!0;return currentLimit()}
+function nestedAssign(e){return Boolean(Object.assign(process.env,e.env||{}))}
+export{loadSettingsEnv,nestedAssign};
+`;
+
+for (const [name, patcherSource] of await getPatcherSources()) {
+  const dir = mkdtempSync(join(tmpdir(), 'clawgod-context-limit-esm-250-'));
+  try {
+    seedPatcherAcorn(dir);
+    mkdirSync(join(dir, 'chunks'));
+    writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
+    writeFileSync(join(dir, 'cli.original.cjs'), esmEntry250, 'utf8');
+    writeFileSync(join(dir, 'chunks', 'context.js'), esmContext250, 'utf8');
+    writeFileSync(join(dir, 'chunks', 'env.js'), esmEnv250, 'utf8');
+
+    const patch = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    const patchOutput = patch.stdout + patch.stderr;
+    assert.equal(patch.status, 0, `${name} 2.1.250 ESM: ${patchOutput}`);
+
+    const runtimeEnv = { ...process.env };
+    delete runtimeEnv.CLAUDE_CODE_CONTEXT_LIMIT;
+    delete runtimeEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+    const run = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8', env: runtimeEnv });
+    assert.equal(run.status, 0, `${name} 2.1.250 ESM runtime: ${run.stdout}${run.stderr}`);
+    assert.deepEqual(
+      JSON.parse(run.stdout.trim()),
+      { before: 200000, after: 1000000, large: false },
+      `${name} 2.1.250 ESM: settings env reload must refresh context vars across chunk boundaries`,
+    );
+
+    const envChunk = readFileSync(join(dir, 'chunks', 'env.js'), 'utf8');
+    assert.doesNotMatch(envChunk, /(?:vGe|UN)=\(\+process\.env/, `${name} 2.1.250 ESM: env chunk must not assign unimported context variables`);
+    assert.match(envChunk, /Object\.assign\(process\.env,e\.env\|\|\{\}\),globalThis\.__clawgod_context_limit_refresh_v1__\?\.\(\)/, `${name} 2.1.250 ESM: top-level sequence env assignment must trigger the cross-module refresh callback`);
+    assert.match(readFileSync(join(dir, 'chunks', 'context.js'), 'utf8'), /globalThis\.__clawgod_context_limit_refresh_v1__=/, `${name} 2.1.250 ESM: context chunk must own the refresh callback`);
+
+    const second = spawnSync(process.execPath, ['patch.mjs', '--dry-run'], { cwd: dir, encoding: 'utf8' });
+    const secondOutput = second.stdout + second.stderr;
+    assert.equal(second.status, 0, `${name} 2.1.250 ESM re-run: ${secondOutput}`);
+    assert.match(secondOutput, /Context limit configurable \(already applied\)/, `${name} 2.1.250 ESM: callback patch must be idempotent`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 console.log('patcher context limit checks passed');

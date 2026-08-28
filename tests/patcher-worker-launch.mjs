@@ -10,6 +10,8 @@ import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs'
 const unixLauncher = readFileSync(new URL('../src/unix/launcher.sh', import.meta.url), 'utf8');
 const compatWorkflow = readFileSync(new URL('../.github/workflows/compat-daily.yml', import.meta.url), 'utf8');
 const patcherSources = await getPatcherSources();
+const legacyComputerUseStartup = 'async function computerUseStartup(){if(Lt()==="macos"&&!_n()&&Lbo())try{let{setupComputerUseMCP:jt}=await loadComputerUse(),{mcpConfig:xr,allowedTools:Ar}=jt();return{xr,Ar}}catch(jt){}}';
+const legacyComputerUseGate = /if\(Lt\(\)==="macos"&&Lbo\(\)\)\/\*__clawgod_computer_use_noninteractive__\*\//;
 
 const fixtures = [
   {
@@ -24,10 +26,25 @@ const fixtures = [
     plainBunResult: { cmd: '/runtime/bun', prefixArgs: ['/install/cli.cjs'] },
     standaloneResult: { cmd: '/native/claude', prefixArgs: [] },
   },
+  {
+    version: '2.1.250',
+    workerResolver: 'function W1t(e={}){if(!e.pinToCurrentBinary&&yRo()){let r=Xon();return{cmd:r,prefixArgs:[]}}if(WE())return{cmd:process.execPath,prefixArgs:[]};let t=process.argv[1];if(!t)return{cmd:process.execPath,prefixArgs:[]};return{cmd:process.execPath,prefixArgs:[t]}}',
+    computerUseStartup: 'async function computerUseStartup(){if(U()==="macos"&&!He()&&!Oe&&Pet())try{let{setupComputerUseMCP:we}=await loadComputerUse(),{mcpConfig:Ge,allowedTools:at}=we();return{Ge,at}}catch(we){}}',
+    computerUseGate: /if\(U\(\)==="macos"&&!Oe&&Pet\(\)\)\/\*__clawgod_computer_use_noninteractive__\*\//,
+    plainBunResult: { cmd: '/runtime/bun', prefixArgs: ['/install/cli.cjs'] },
+    standaloneResult: { cmd: '/native/claude', prefixArgs: [] },
+  },
 ];
 
 for (const [installerName, patcherSource] of patcherSources) {
-  for (const { version, workerResolver, plainBunResult, standaloneResult } of fixtures) {
+  for (const {
+    version,
+    workerResolver,
+    computerUseStartup = legacyComputerUseStartup,
+    computerUseGate = legacyComputerUseGate,
+    plainBunResult,
+    standaloneResult,
+  } of fixtures) {
     const name = `${installerName} Claude Code ${version}`;
     const fixture = `
 /* Version: ${version} */
@@ -35,7 +52,7 @@ function WE(){return Bun.isStandaloneExecutable===!0}
 ${workerResolver}
 function chromeMcpCommand(){return WE()?[process.execPath,"--claude-in-chrome-mcp"]:[process.execPath,process.argv[1],"--claude-in-chrome-mcp"]}
 function computerUseMcpCommand(){return WE()?[process.execPath,"--computer-use-mcp"]:[process.execPath,process.argv[1],"--computer-use-mcp"]}
-async function computerUseStartup(){if(Lt()==="macos"&&!_n()&&Lbo())try{let{setupComputerUseMCP:jt}=await loadComputerUse(),{mcpConfig:xr,allowedTools:Ar}=jt();return{xr,Ar}}catch(jt){}}
+${computerUseStartup}
 globalThis.standalone=WE;
 globalThis.resolveWorker=W1t;
 globalThis.chromeMcpCommand=chromeMcpCommand;
@@ -74,8 +91,8 @@ globalThis.computerUseMcpCommand=computerUseMcpCommand;
       );
       assert.match(
         patched,
-        /if\(Lt\(\)==="macos"&&Lbo\(\)\)\/\*__clawgod_computer_use_noninteractive__\*\//,
-        `${name}: Computer Use must be available to stream-json workers`,
+        computerUseGate,
+        `${name}: Computer Use must be available to stream-json workers without removing other upstream conditions`,
       );
 
       const plainBun = {

@@ -95,7 +95,7 @@ jobs:
             echo '::error::installer invoked a forbidden system dependency'
             exit 1
           fi
-          grep -q '^ripgrep 15\.2\.0' "$log" || {
+          grep -q '^private ripgrep version: 15\.2\.0$' "$log" || {
             echo '::error::private ripgrep version smoke was not observed'
             exit 1
           }
