@@ -18,7 +18,7 @@ const patches = [
   {
     order: 44,
     name: 'Image paste: recognize TIFF paths for macOS clipboard fallback',
-    pattern: /([\w$]+)=\/\\\.\(png\|jpe\?g\|gif\|webp\)\$\/i(?=;[\w$]+=\/\^\(\?:\[A-Za-z\]:\\\\\|\\\\\\\\\)\/)/g,
+    pattern: /([\w$]+)=\/\\\.\(png\|jpe\?g\|gif\|webp\)\$\/i(?=;(?:[\w$]+=\/\^\(\?:\[A-Za-z\]:\\\\\|\\\\\\\\\)\/|function [\w$]+\([\w$]+\)\{if\([\w$]+\.startsWith\('"'\)&&[\w$]+\.endsWith\('"'\)\|\|[\w$]+\.startsWith\("'"\)&&[\w$]+\.endsWith\("'"\)\)return [\w$]+\.slice\(1,-1\);return [\w$]+\}var [\w$]+=\/\^\(\?:\[A-Za-z\]:\\\\\|\\\\\\\\\)\/))/g,
     replacer: (match, imagePathPattern) => `${imagePathPattern}=/\\.(png|jpe?g|gif|webp|tiff?)$/i`,
     sentinel: '/\\.(png|jpe?g|gif|webp)$/i;',
     appliedMarker: '/\\.(png|jpe?g|gif|webp|tiff?)$/i;',

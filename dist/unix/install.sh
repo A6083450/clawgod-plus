@@ -8358,8 +8358,8 @@ function inspectPatcherSource(source) {
 }
 async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   const ENV_EXPR = "(+process.env.CLAUDE_CODE_CONTEXT_LIMIT||+process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS||200000)";
-  const dualRe = /var\s+([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*32000\s*,\s*([\w$]+)\s*=\s*128000\s*,\s*([\w$]+)\s*=\s*1e6\b/;
-  const alreadyRe = new RegExp("var\\s+([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*[\\w$]+\\s*=\\s*32000\\s*,\\s*[\\w$]+\\s*=\\s*128000\\s*,\\s*[\\w$]+\\s*=\\s*1e6\\b");
+  const dualRe = /var\s+([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*32000\s*,\s*([\w$]+)\s*=\s*128000(?:\s*,\s*([\w$]+)\s*=\s*1e6)?(?=\s*;)/;
+  const alreadyRe = new RegExp("var\\s+([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*[\\w$]+\\s*=\\s*32000\\s*,\\s*[\\w$]+\\s*=\\s*128000(?:\\s*,\\s*[\\w$]+\\s*=\\s*1e6)?(?=\\s*;)");
   const dualMatch = dualRe.exec(source);
   const alreadyMatch = alreadyRe.exec(source);
   if (!dualMatch && !alreadyMatch) {
@@ -8374,7 +8374,7 @@ async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
     replacements.push({
       start: dualMatch.index,
       end: dualMatch.index + dualMatch[0].length,
-      replacement: `var ${varA}=${ENV_EXPR},${varB}=${ENV_EXPR},${varC}=32000,${varD}=128000,${varE}=1e6`
+      replacement: `var ${varA}=${ENV_EXPR},${varB}=${ENV_EXPR},${varC}=32000,${varD}=128000${varE ? `,${varE}=1e6` : ""}`
     });
     const cmpRe = /\breturn ([\w$]+)\?([\w$]+)\(\1\)>200000:!1/g;
     let cm;
@@ -9005,8 +9005,8 @@ var patches5 = [
   {
     order: 24,
     name: "Computer Use in noninteractive sessions",
-    pattern: /if\(([\w$]+)\(\)==="macos"&&!([\w$]+)\(\)&&([\w$]+)\(\)\)try\{let\{setupComputerUseMCP:/g,
-    replacer: (match, platform, isNonInteractive, gate) => `if(${platform}()==="macos"&&${gate}())/*__clawgod_computer_use_noninteractive__*/try{let{setupComputerUseMCP:`,
+    pattern: /if\(([\w$]+)\(\)==="macos"&&!([\w$]+)\(\)((?:&&![\w$]+)?)&&([\w$]+)\(\)\)try\{let\{setupComputerUseMCP:/g,
+    replacer: (match, platform, isNonInteractive, safetyCondition, gate) => `if(${platform}()==="macos"${safetyCondition}&&${gate}())/*__clawgod_computer_use_noninteractive__*/try{let{setupComputerUseMCP:`,
     sentinel: "setupComputerUseMCP",
     appliedMarker: "/*__clawgod_computer_use_noninteractive__*/"
   }
@@ -9064,7 +9064,7 @@ var patches7 = [
   {
     order: 44,
     name: "Image paste: recognize TIFF paths for macOS clipboard fallback",
-    pattern: /([\w$]+)=\/\\\.\(png\|jpe\?g\|gif\|webp\)\$\/i(?=;[\w$]+=\/\^\(\?:\[A-Za-z\]:\\\\\|\\\\\\\\\)\/)/g,
+    pattern: /([\w$]+)=\/\\\.\(png\|jpe\?g\|gif\|webp\)\$\/i(?=;(?:[\w$]+=\/\^\(\?:\[A-Za-z\]:\\\\\|\\\\\\\\\)\/|function [\w$]+\([\w$]+\)\{if\([\w$]+\.startsWith\('"'\)&&[\w$]+\.endsWith\('"'\)\|\|[\w$]+\.startsWith\("'"\)&&[\w$]+\.endsWith\("'"\)\)return [\w$]+\.slice\(1,-1\);return [\w$]+\}var [\w$]+=\/\^\(\?:\[A-Za-z\]:\\\\\|\\\\\\\\\)\/))/g,
     replacer: (match, imagePathPattern) => `${imagePathPattern}=/\\.(png|jpe?g|gif|webp|tiff?)$/i`,
     sentinel: "/\\.(png|jpe?g|gif|webp)$/i;",
     appliedMarker: "/\\.(png|jpe?g|gif|webp|tiff?)$/i;",

@@ -129,6 +129,10 @@ function validatePluginSummary(output, expected = pluginSummaryExpectation()) {
   return result;
 }
 
+function formatPluginSummary(result) {
+  return `Optional plugins: ${result.ready} ready, ${result.disabled} disabled, ${result.warnings} warnings`;
+}
+
 function validateEnhancementSummary(output) {
   const lines = output.split(/\r?\n/).filter(line => line.includes('Enhancements:'));
   assert.equal(lines.length, 1, `expected exactly one enhancements summary line, found ${lines.length}`);
@@ -569,7 +573,6 @@ function run(label, executable, args) {
     timeout: 600_000,
   });
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-  process.stdout.write(output);
   if (result.error?.code === 'ETIMEDOUT') {
     throw new Error(`${label} timed out after 600s; partial output above may reveal the hung step\n${output}`);
   }
@@ -770,7 +773,7 @@ try {
   const initialInstallOutput = run('initial --lean-on install', '/bin/bash', [join(root, 'dist/unix/install.sh'), '--lean-on', ...selectionArgs()]);
   console.log(validatePatchSummary('unix initial', initialInstallOutput));
   console.log(validateEnhancementSummary(initialInstallOutput));
-  validatePluginSummary(initialInstallOutput);
+  console.log(formatPluginSummary(validatePluginSummary(initialInstallOutput)));
   console.log(assertNoPrompt(initialInstallOutput));
   assertHarborKitePreserved('initial install');
   assertLeanOn();
@@ -812,7 +815,7 @@ try {
   const noUpgradeOutput = run('no-upgrade --lean-off install', '/bin/bash', [join(root, 'dist/unix/install.sh'), '--no-upgrade', '--lean-off']);
   console.log(validatePatchSummary('unix no-upgrade', noUpgradeOutput));
   console.log(validateEnhancementSummary(noUpgradeOutput));
-  validatePluginSummary(noUpgradeOutput);
+  console.log(formatPluginSummary(validatePluginSummary(noUpgradeOutput)));
   console.log(assertNoPrompt(noUpgradeOutput));
   assertHarborKitePreserved('no-upgrade install');
   assertLeanOff();

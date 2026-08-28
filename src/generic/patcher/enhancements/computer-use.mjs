@@ -24,9 +24,9 @@ const patches = [
   {
     order: 24,
     name: 'Computer Use in noninteractive sessions',
-    pattern: /if\(([\w$]+)\(\)==="macos"&&!([\w$]+)\(\)&&([\w$]+)\(\)\)try\{let\{setupComputerUseMCP:/g,
-    replacer: (match, platform, isNonInteractive, gate) =>
-      `if(${platform}()==="macos"&&${gate}())/*__clawgod_computer_use_noninteractive__*/try{let{setupComputerUseMCP:`,
+    pattern: /if\(([\w$]+)\(\)==="macos"&&!([\w$]+)\(\)((?:&&![\w$]+)?)&&([\w$]+)\(\)\)try\{let\{setupComputerUseMCP:/g,
+    replacer: (match, platform, isNonInteractive, safetyCondition, gate) =>
+      `if(${platform}()==="macos"${safetyCondition}&&${gate}())/*__clawgod_computer_use_noninteractive__*/try{let{setupComputerUseMCP:`,
     sentinel: 'setupComputerUseMCP',
     appliedMarker: '/*__clawgod_computer_use_noninteractive__*/',
   },

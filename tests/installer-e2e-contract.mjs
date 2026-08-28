@@ -6,6 +6,13 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const e2e = new URL('./installer-e2e.mjs', import.meta.url);
+const e2eSource = readFileSync(e2e, 'utf8');
+const compatWorkflow = readFileSync(new URL('../.github/workflows/compat-daily.yml', import.meta.url), 'utf8');
+assert.doesNotMatch(e2eSource, /process\.stdout\.write\(output\)/, 'E2E must not asynchronously interleave captured installer output with contract summaries');
+assert.doesNotMatch(e2eSource, /writeFileSync\(1, output\)/, 'E2E must not synchronously write a large captured log to a non-blocking CI stdout pipe');
+assert.match(compatWorkflow, /\^private ripgrep version: 15\\\.2\\\.0\$/, 'compat workflow must consume the validated compact ripgrep marker');
+assert.doesNotMatch(compatWorkflow, /grep -q '\^ripgrep 15\\\.2\\\.0' "\$log"/, 'Unix compat E2E must not depend on suppressed raw subprocess output');
+assert.equal(e2eSource.match(/console\.log\(formatPluginSummary\(validatePluginSummary\(/g)?.length, 2, 'E2E must explicitly print the validated plugin summary after initial and no-upgrade installs');
 
 function runContract(contract, input) {
   const env = {
