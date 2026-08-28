@@ -304,7 +304,9 @@ function napiBasename(name) {
 // ─── Main ────────────────────────────────────────────────────────────
 
 function main() {
-  const [,, binaryPath, outputDir] = process.argv;
+  const verbose = process.argv.includes('--verbose');
+  const [binaryPath, outputDir] = process.argv.slice(2).filter((arg) => arg !== '--verbose');
+  const logVerbose = (...args) => { if (verbose) console.log(...args); };
   if (!binaryPath || !outputDir) {
     console.error('Usage: extract-natives.mjs <binary-path> <output-dir>');
     process.exit(1);
@@ -334,7 +336,7 @@ function main() {
     if (m.entry) {
       const out = join(outputDir, 'cli.original.js');
       writeFileSync(out, m.content);
-      console.log(`  cli.js   ${(m.content.length / 1024 / 1024).toFixed(2)} MB → ${out} (${m.name})`);
+      logVerbose(`  cli.js   ${(m.content.length / 1024 / 1024).toFixed(2)} MB → ${out} (${m.name})`);
       cliCount++;
     } else if (m.loader === 'js') {
       // v2.1.245+ ships the CLI as an ESM entry point plus a code-split
@@ -348,7 +350,7 @@ function main() {
       mkdirSync(dir, { recursive: true });
       const out = join(dir, base);
       writeFileSync(out, m.content);
-      console.log(`  chunk    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
+      logVerbose(`  chunk    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
       chunkCount++;
     } else if (m.loader === 'file' || m.loader === 'text' || m.name.endsWith('.asset')) {
       // Bun embedded file assets (e.g. the design-canvas editor payload
@@ -366,7 +368,7 @@ function main() {
       mkdirSync(dir, { recursive: true });
       const out = join(dir, base);
       writeFileSync(out, m.content);
-      console.log(`  asset    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
+      logVerbose(`  asset    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
       assetCount++;
     } else if (m.loader === 'napi') {
       const base = napiBasename(m.name);
@@ -375,7 +377,7 @@ function main() {
       mkdirSync(dir, { recursive: true });
       const out = join(dir, `${base}.node`);
       writeFileSync(out, m.content);
-      console.log(`  napi     ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
+      logVerbose(`  napi     ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
       napiCount++;
     } else {
       dropped++;

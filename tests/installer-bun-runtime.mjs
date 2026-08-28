@@ -1524,6 +1524,16 @@ try {
   assert.deepEqual(readFileSync(join(output, 'cli.original.js')), cliBytes, 'canonical extractor must emit the entry module bytes');
   assert.deepEqual(readFileSync(join(output, 'vendor', 'image', 'x64-win32', 'image.node')), napiBytes, 'canonical extractor must emit the napi module bytes');
 
+  assert.match(extracted.stdout, /^Modules: \d+/m, 'extractor default must print the Modules summary');
+  assert.match(extracted.stdout, /^Extracted: \d+ cli\.js/m, 'extractor default must print the Extracted summary');
+  assert.doesNotMatch(extracted.stdout, /^  (cli\.js|chunk|asset|napi)\s+\d/m, 'extractor default must not print per-module lines');
+
+  const verboseOutput = join(extractorFixture, 'verbose-output');
+  const verbose = spawnSync(process.execPath, [extractorPath, binary, verboseOutput, '--verbose'], { encoding: 'utf8' });
+  assert.equal(verbose.status, 0, verbose.stderr);
+  assert.match(verbose.stdout, /^  (cli\.js|napi)\s+\d/m, 'extractor --verbose must print per-module lines');
+  assert.deepEqual(readFileSync(join(verboseOutput, 'cli.original.js')), cliBytes, 'extractor --verbose must still emit identical entry bytes');
+
   const noNapiBinary = join(extractorFixture, 'no-napi.exe');
   const noNapiOutput = join(extractorFixture, 'no-napi-output');
   writeFileSync(noNapiBinary, peBunFixture([{ name: 'entry.js', content: cliBytes, loader: 1 }]));
