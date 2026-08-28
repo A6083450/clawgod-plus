@@ -211,9 +211,9 @@ const patches = [
   {
     order: 13,
     name: 'Claude in Chrome agents config state',
-    pattern: /([\w$]+)=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1\}/g,
-    replacer: (match, config) => `${config}={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1,chrome:!1,noChrome:!1}`,
-    appliedMarker: /[\w$]+=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1,chrome:!1,noChrome:!1\}/,
+    pattern: /([\w$]+)=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1/g,
+    replacer: (match, config) => `${config}={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1,chrome:!1,noChrome:!1`,
+    appliedMarker: /strictMcpConfig:!1,chrome:!1,noChrome:!1/,
     validate: (match, code) => !code.includes('strictMcpConfig:!1,chrome:!1,noChrome:!1'),
   },
   {
@@ -227,16 +227,16 @@ const patches = [
   {
     order: 15,
     name: 'Claude in Chrome agents config resolver',
-    pattern: /strictMcpConfig:([\w$]+)\.strictMcpConfig\}\}function ([\w$]+)/g,
-    replacer: (match, config, fn) => `strictMcpConfig:${config}.strictMcpConfig,chrome:${config}.chrome&&!${config}.noChrome,noChrome:${config}.noChrome}}function ${fn}`,
+    pattern: /strictMcpConfig:([\w$]+)\.strictMcpConfig/g,
+    replacer: (match, config) => `strictMcpConfig:${config}.strictMcpConfig,chrome:${config}.chrome&&!${config}.noChrome,noChrome:${config}.noChrome`,
     appliedMarker: /chrome:[\w$]+\.chrome&&![\w$]+\.noChrome,noChrome:[\w$]+\.noChrome/,
     validate: (match, code) => !/chrome:[\w$]+\.chrome&&![\w$]+\.noChrome/.test(code),
   },
   {
     order: 16,
     name: 'Claude in Chrome agents dispatch args',
-    pattern: /\.\.\.([\w$]+)\.strictMcpConfig\?\["--strict-mcp-config"\]:\[\]\]\}/g,
-    replacer: (match, config) => `...${config}.chrome?["--chrome"/*__ccpp_agents_chrome_dispatch*/]:[],...${config}.noChrome?["--no-chrome"]:[],...${config}.strictMcpConfig?["--strict-mcp-config"]:[]]}`,
+    pattern: /\.\.\.([\w$]+)\.strictMcpConfig\?\["--strict-mcp-config"\]:\[\]/g,
+    replacer: (match, config) => `...${config}.chrome?["--chrome"/*__ccpp_agents_chrome_dispatch*/]:[],...${config}.noChrome?["--no-chrome"]:[],...${config}.strictMcpConfig?["--strict-mcp-config"]:[]`,
     appliedMarker: '__ccpp_agents_chrome_dispatch',
     validate: (match, code) => !code.includes('__ccpp_agents_chrome_dispatch'),
   },

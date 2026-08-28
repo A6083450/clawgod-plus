@@ -313,14 +313,14 @@
       "type": "regex",
       "order": 13,
       "metadata": {
-        "patternSource": "([\\w$]+)=\\{addDir:\\[\\],pluginDir:\\[\\],pluginDirNoMcp:\\[\\],settings:void 0,mcpConfig:\\[\\],strictMcpConfig:!1\\}",
+        "patternSource": "([\\w$]+)=\\{addDir:\\[\\],pluginDir:\\[\\],pluginDirNoMcp:\\[\\],settings:void 0,mcpConfig:\\[\\],strictMcpConfig:!1",
         "patternFlags": "g",
         "sentinel": {
           "$type": "undefined"
         },
         "appliedMarker": {
           "$type": "regexp",
-          "source": "[\\w$]+=\\{addDir:\\[\\],pluginDir:\\[\\],pluginDirNoMcp:\\[\\],settings:void 0,mcpConfig:\\[\\],strictMcpConfig:!1,chrome:!1,noChrome:!1\\}",
+          "source": "strictMcpConfig:!1,chrome:!1,noChrome:!1",
           "flags": ""
         },
         "knownShape": {
@@ -371,7 +371,7 @@
       "type": "regex",
       "order": 15,
       "metadata": {
-        "patternSource": "strictMcpConfig:([\\w$]+)\\.strictMcpConfig\\}\\}function ([\\w$]+)",
+        "patternSource": "strictMcpConfig:([\\w$]+)\\.strictMcpConfig",
         "patternFlags": "g",
         "sentinel": {
           "$type": "undefined"
@@ -400,7 +400,7 @@
       "type": "regex",
       "order": 16,
       "metadata": {
-        "patternSource": "\\.\\.\\.([\\w$]+)\\.strictMcpConfig\\?\\[\"--strict-mcp-config\"\\]:\\[\\]\\]\\}",
+        "patternSource": "\\.\\.\\.([\\w$]+)\\.strictMcpConfig\\?\\[\"--strict-mcp-config\"\\]:\\[\\]",
         "patternFlags": "g",
         "sentinel": {
           "$type": "undefined"

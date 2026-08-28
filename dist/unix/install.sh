@@ -6517,7 +6517,9 @@ function napiBasename(name) {
 // ─── Main ────────────────────────────────────────────────────────────
 
 function main() {
-  const [,, binaryPath, outputDir] = process.argv;
+  const verbose = process.argv.includes('--verbose');
+  const [binaryPath, outputDir] = process.argv.slice(2).filter((arg) => arg !== '--verbose');
+  const logVerbose = (...args) => { if (verbose) console.log(...args); };
   if (!binaryPath || !outputDir) {
     console.error('Usage: extract-natives.mjs <binary-path> <output-dir>');
     process.exit(1);
@@ -6547,7 +6549,7 @@ function main() {
     if (m.entry) {
       const out = join(outputDir, 'cli.original.js');
       writeFileSync(out, m.content);
-      console.log(`  cli.js   ${(m.content.length / 1024 / 1024).toFixed(2)} MB → ${out} (${m.name})`);
+      logVerbose(`  cli.js   ${(m.content.length / 1024 / 1024).toFixed(2)} MB → ${out} (${m.name})`);
       cliCount++;
     } else if (m.loader === 'js') {
       // v2.1.245+ ships the CLI as an ESM entry point plus a code-split
@@ -6561,7 +6563,7 @@ function main() {
       mkdirSync(dir, { recursive: true });
       const out = join(dir, base);
       writeFileSync(out, m.content);
-      console.log(`  chunk    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
+      logVerbose(`  chunk    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
       chunkCount++;
     } else if (m.loader === 'file' || m.loader === 'text' || m.name.endsWith('.asset')) {
       // Bun embedded file assets (e.g. the design-canvas editor payload
@@ -6579,7 +6581,7 @@ function main() {
       mkdirSync(dir, { recursive: true });
       const out = join(dir, base);
       writeFileSync(out, m.content);
-      console.log(`  asset    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
+      logVerbose(`  asset    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
       assetCount++;
     } else if (m.loader === 'napi') {
       const base = napiBasename(m.name);
@@ -6588,7 +6590,7 @@ function main() {
       mkdirSync(dir, { recursive: true });
       const out = join(dir, `${base}.node`);
       writeFileSync(out, m.content);
-      console.log(`  napi     ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
+      logVerbose(`  napi     ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
       napiCount++;
     } else {
       dropped++;
@@ -8973,9 +8975,9 @@ var patches4 = [
   {
     order: 13,
     name: "Claude in Chrome agents config state",
-    pattern: /([\w$]+)=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1\}/g,
-    replacer: (match, config) => `${config}={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1,chrome:!1,noChrome:!1}`,
-    appliedMarker: /[\w$]+=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1,chrome:!1,noChrome:!1\}/,
+    pattern: /([\w$]+)=\{addDir:\[\],pluginDir:\[\],pluginDirNoMcp:\[\],settings:void 0,mcpConfig:\[\],strictMcpConfig:!1/g,
+    replacer: (match, config) => `${config}={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1,chrome:!1,noChrome:!1`,
+    appliedMarker: /strictMcpConfig:!1,chrome:!1,noChrome:!1/,
     validate: (match, code) => !code.includes("strictMcpConfig:!1,chrome:!1,noChrome:!1")
   },
   {
@@ -8989,16 +8991,16 @@ var patches4 = [
   {
     order: 15,
     name: "Claude in Chrome agents config resolver",
-    pattern: /strictMcpConfig:([\w$]+)\.strictMcpConfig\}\}function ([\w$]+)/g,
-    replacer: (match, config, fn) => `strictMcpConfig:${config}.strictMcpConfig,chrome:${config}.chrome&&!${config}.noChrome,noChrome:${config}.noChrome}}function ${fn}`,
+    pattern: /strictMcpConfig:([\w$]+)\.strictMcpConfig/g,
+    replacer: (match, config) => `strictMcpConfig:${config}.strictMcpConfig,chrome:${config}.chrome&&!${config}.noChrome,noChrome:${config}.noChrome`,
     appliedMarker: /chrome:[\w$]+\.chrome&&![\w$]+\.noChrome,noChrome:[\w$]+\.noChrome/,
     validate: (match, code) => !/chrome:[\w$]+\.chrome&&![\w$]+\.noChrome/.test(code)
   },
   {
     order: 16,
     name: "Claude in Chrome agents dispatch args",
-    pattern: /\.\.\.([\w$]+)\.strictMcpConfig\?\["--strict-mcp-config"\]:\[\]\]\}/g,
-    replacer: (match, config) => `...${config}.chrome?["--chrome"/*__ccpp_agents_chrome_dispatch*/]:[],...${config}.noChrome?["--no-chrome"]:[],...${config}.strictMcpConfig?["--strict-mcp-config"]:[]]}`,
+    pattern: /\.\.\.([\w$]+)\.strictMcpConfig\?\["--strict-mcp-config"\]:\[\]/g,
+    replacer: (match, config) => `...${config}.chrome?["--chrome"/*__ccpp_agents_chrome_dispatch*/]:[],...${config}.noChrome?["--no-chrome"]:[],...${config}.strictMcpConfig?["--strict-mcp-config"]:[]`,
     appliedMarker: "__ccpp_agents_chrome_dispatch",
     validate: (match, code) => !code.includes("__ccpp_agents_chrome_dispatch")
   }
