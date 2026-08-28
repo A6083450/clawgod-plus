@@ -170,6 +170,19 @@ process.exit(Number(process.env.RUN_EXIT||0));
 const patchedUpdateBranches = (await getPatcherSources())
   .map(([label, patcherSource]) => [label, patchUpdateBranch(label, patcherSource)]);
 
+for (const [label, code] of patchedUpdateBranches) {
+  assert.equal(
+    code.match(/import\.meta\.require\('(fs|path|os|child_process)'\)/g)?.length,
+    4,
+    `${label} updater must load Node builtins through ESM-safe import.meta.require`,
+  );
+  assert.doesNotMatch(
+    code,
+    /(?<!import\.meta\.)require\('(fs|path|os|child_process)'\)/,
+    `${label} updater must not use bare require inside a code-split ESM chunk`,
+  );
+}
+
 function windowsUpdateCommandSource(code) {
   const match = code.match(/const __command=_w\?\[([^\]]+)\]:\['bash',__installer\]/);
   assert.ok(match, 'generated update branch must retain the Windows and Unix argument-array command selection');

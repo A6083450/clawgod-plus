@@ -33,6 +33,14 @@ var unrelatedFlags=/\\.(png|jpe?g|gif|webp)$/ig;
 var unr=/\\.(png|jpe?g|gif|webp)$/i;VAu=/^(?:[A-Za-z]:\\\\|\\\\\\\\)/;
 `;
 
+// Claude Code 2.1.250 moved the Windows path regex after the unquote helper,
+// so the TIFF recognizer can no longer rely on the two regexes being adjacent.
+const imageExtension250Fixture = `
+var unrelatedI=/\\.(png|jpe?g|gif|webp)$/i;
+var unrelatedFlags=/\\.(png|jpe?g|gif|webp)$/ig;
+var ePe=/\\.(png|jpe?g|gif|webp)$/i;function G(e){if(e.startsWith('"')&&e.endsWith('"')||e.startsWith("'")&&e.endsWith("'"))return e.slice(1,-1);return e}var q=/^(?:[A-Za-z]:\\\\|\\\\\\\\)/;function V(e){return e}function g9n(e){let t=G(e.trim()),r=V(t);return ePe.test(r)}
+`;
+
 // Exercise the combined behavior rather than only checking replacement text:
 // a shell-escaped TIFF path is classified as an image, direct decoding returns
 // null, and the patched macOS branch reads the clipboard instead of typing the
@@ -126,6 +134,27 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     assert.ok(
       patched.includes('var unrelatedFlags=/\\.(png|jpe?g|gif|webp)$/ig'),
       `${name}: TIFF patch must not partially rewrite regexes with extra flags`,
+    );
+
+    // 2.1.250 puts the Windows path regex after helper code, rather than
+    // directly after the image extension regex.
+    writeFileSync(join(dir, 'cli.original.cjs'), imageExtension250Fixture, 'utf8');
+    run = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    output = run.stdout + run.stderr;
+    assert.equal(run.status, 0, `${name}: ${output}`);
+    patched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    assert.match(
+      patched,
+      /var ePe=\/\\\.\(png\|jpe\?g\|gif\|webp\|tiff\?\)\$\/i/,
+      `${name}: 2.1.250 image path detection must include TIFF despite the moved path regex`,
+    );
+    assert.ok(
+      patched.includes('var unrelatedI=/\\.(png|jpe?g|gif|webp)$/i'),
+      `${name}: 2.1.250 TIFF patch must not rewrite an unrelated regex with the same flags`,
+    );
+    assert.ok(
+      patched.includes('var unrelatedFlags=/\\.(png|jpe?g|gif|webp)$/ig'),
+      `${name}: 2.1.250 TIFF patch must not partially rewrite regexes with extra flags`,
     );
 
     writeFileSync(join(dir, 'cli.original.cjs'), tiffFallbackFixture, 'utf8');
