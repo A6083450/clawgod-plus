@@ -19,6 +19,9 @@ try {
   assert.equal(typeof fetchWithProxy, 'function', 'fetch-package.mjs must export fetchWithProxy');
   assert.equal(typeof resolvePackage, 'function', 'fetch-package.mjs must export resolvePackage');
   assert.equal(typeof installPackage, 'function', 'fetch-package.mjs must export installPackage');
+  const proxyFetchSource = readFileSync(new URL('../src/generic/runtime/proxy-fetch.mjs', import.meta.url), 'utf8');
+  assert.match(proxyFetchSource, /stdin:\s*Buffer\.from\(/, 'direct workers must use one-shot stdin bytes on Windows');
+  assert.doesNotMatch(proxyFetchSource, /child\.stdin\.(?:write|end)\(/, 'direct workers must not use the Windows Bun 1.3.14 FileSink path');
 
   const packageName = '@anthropic-ai/claude-code-darwin-arm64';
   const version = '2.1.999';

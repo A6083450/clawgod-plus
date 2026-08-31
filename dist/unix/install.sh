@@ -2325,7 +2325,11 @@ function fetchDirect(url, init, fetchImpl) {
     let metadata;
     let settled = false;
     const child = Bun.spawn([process.execPath, fileURLToPath(import.meta.url), DIRECT_WORKER_FLAG], {
-      stdin: 'pipe',
+      stdin: Buffer.from(JSON.stringify({
+        url: String(url),
+        method: init.method || 'GET',
+        headers: [...new Headers(init.headers).entries()],
+      })),
       stdout: 'pipe',
       stderr: 'pipe',
       env: directWorkerEnv(),
@@ -2341,12 +2345,6 @@ function fetchDirect(url, init, fetchImpl) {
         }
       },
     });
-    child.stdin.write(JSON.stringify({
-      url: String(url),
-      method: init.method || 'GET',
-      headers: [...new Headers(init.headers).entries()],
-    }));
-    child.stdin.end();
     child.exited.then(async status => {
       if (settled) return;
       settled = true;
