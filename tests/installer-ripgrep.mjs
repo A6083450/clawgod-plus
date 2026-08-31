@@ -106,12 +106,14 @@ try {
     ensureRipgrep,
     extractRipgrep,
     fetchWithProxy,
+    parseMacOSProxySettings,
     proxyFor,
     replaceManagedBinary,
     selectRipgrepAsset,
     validateRipgrepVersion,
   } = ripgrep;
 
+  assert.equal(typeof parseMacOSProxySettings, 'function', 'managed ripgrep must share macOS system proxy discovery');
   assert.equal(RIPGREP_VERSION, '15.2.0', 'managed ripgrep must remain pinned to 15.2.0');
   assert.deepEqual(RIPGREP_ASSETS, expectedAssets, 'managed ripgrep must expose exactly the verified six-asset matrix');
   for (const [key, [name, sha256]] of Object.entries(expectedAssets)) {
@@ -204,6 +206,7 @@ try {
   let malformedReuseFetched = false;
   await assert.rejects(
     ensureRipgrep(malformedReuseRoot, {
+      env: {},
       fetchImpl: async () => {
         malformedReuseFetched = true;
         throw new Error('malformed reuse correctly reached offline fetch sentinel');

@@ -730,7 +730,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -2109,12 +2109,56 @@ ENHANCEMENT_MANIFEST_EOF
 chmod 600 "$CLAWGOD_DIR/enhancement-manifest.json"
 configure_enhancement_selection
 
-cat > "$CLAWGOD_DIR/fetch-file.mjs" << 'FETCH_FILE_EOF'
+cat > "$CLAWGOD_DIR/proxy-fetch.mjs" << 'PROXY_FETCH_EOF'
 #!/usr/bin/env bun
-import { existsSync, renameSync, rmSync } from 'node:fs';
+import { BlockList, isIP } from 'node:net';
+import { fileURLToPath } from 'node:url';
 
-const [url, destination] = process.argv.slice(2);
-if (!url || !destination) throw new Error('usage: fetch-file.mjs <url> <destination>');
+function emptyProxySettings() {
+  return {
+    httpProxy: undefined,
+    httpsProxy: undefined,
+    exceptions: [],
+    excludeSimpleHostnames: false,
+  };
+}
+
+function settingValue(source, name) {
+  const match = new RegExp(`^\\s*${name}\\s*:\\s*(.*?)\\s*$`, 'm').exec(source);
+  return match?.[1];
+}
+
+function proxyUrl(source, prefix) {
+  if (settingValue(source, `${prefix}Enable`) !== '1') return undefined;
+  const host = settingValue(source, `${prefix}Proxy`)?.trim().replace(/^\[|\]$/g, '');
+  const port = Number(settingValue(source, `${prefix}Port`));
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+  try {
+    const url = new URL(`http://${isIP(host) === 6 ? `[${host}]` : host}:${port}`);
+    return url.href.replace(/\/$/, '');
+  } catch {
+    return undefined;
+  }
+}
+
+function validMacOSProxyOutput(source) {
+  return typeof source === 'string' && /^\s*<dictionary>\s*\{[\s\S]*\}\s*$/.test(source);
+}
+
+export function parseMacOSProxySettings(source) {
+  if (!validMacOSProxyOutput(source)) return emptyProxySettings();
+  const array = /ExceptionsList\s*:\s*<array>\s*\{([\s\S]*?)^\s*\}/m.exec(source)?.[1] || '';
+  const exceptions = [...array.matchAll(/^\s*\d+\s*:\s*(.*?)\s*$/gm)]
+    .flatMap(match => match[1].split(','))
+    .map(value => value.trim())
+    .filter(Boolean);
+  return {
+    httpProxy: proxyUrl(source, 'HTTP'),
+    httpsProxy: proxyUrl(source, 'HTTPS'),
+    exceptions,
+    excludeSimpleHostnames: settingValue(source, 'ExcludeSimpleHostnames') === '1',
+  };
+}
 
 function noProxyRule(value) {
   let entry = value.trim().toLowerCase();
@@ -2136,46 +2180,266 @@ function noProxyRule(value) {
       port = entry.slice(colon + 1);
     }
   }
-  return { host: host.replace(/^\*\./, '.'), port };
+  return { host: host.replace(/^\*\.?/, '.'), port };
 }
 
-function bypassesProxy(urlValue) {
-  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
-  const entries = (process.env.NO_PROXY || process.env.no_proxy || '').split(',').filter(value => value.trim());
+function cidrMatches(host, rule) {
+  const slash = rule.lastIndexOf('/');
+  if (slash <= 0) return false;
+  let network = rule.slice(0, slash).replace(/^\[|\]$/g, '');
+  if (/^(?:\d{1,3}\.){0,2}\d{1,3}$/.test(network)) network = `${network}${'.0'.repeat(4 - network.split('.').length)}`;
+  const family = isIP(network);
+  const prefix = Number(rule.slice(slash + 1));
+  const width = family === 4 ? 32 : family === 6 ? 128 : 0;
+  if (!width || isIP(host) !== family || !Number.isInteger(prefix) || prefix < 0 || prefix > width) return false;
+  try {
+    const blockList = new BlockList();
+    const type = family === 4 ? 'ipv4' : 'ipv6';
+    blockList.addSubnet(network, prefix, type);
+    return blockList.check(host, type);
+  } catch {
+    return false;
+  }
+}
+
+function matchesRule(parsed, value) {
+  const rule = noProxyRule(value);
+  if (rule.all) return true;
   const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const baseHost = rule.host.replace(/^\./, '');
+  const matchesHost = cidrMatches(host, rule.host) || host === baseHost || host.endsWith(`.${baseHost}`);
   const port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
-  return entries.some(entry => {
-    const rule = noProxyRule(entry);
-    if (rule.all) return true;
-    const baseHost = rule.host.replace(/^\./, '');
-    const matchesHost = host === baseHost || host.endsWith(`.${baseHost}`);
-    return matchesHost && (!rule.port || rule.port === port);
+  return matchesHost && (!rule.port || rule.port === port);
+}
+
+function environmentProxy(parsed, env) {
+  return parsed.protocol === 'https:'
+    ? env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy
+    : env.HTTP_PROXY || env.http_proxy;
+}
+
+function bypassesEnvironment(parsed, env) {
+  const entries = (env.NO_PROXY || env.no_proxy || '').split(',').filter(value => value.trim());
+  return entries.some(entry => matchesRule(parsed, entry));
+}
+
+function bypassesSystem(parsed, settings) {
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  if (settings.excludeSimpleHostnames && !host.includes('.') && !isIP(host)) return true;
+  return settings.exceptions.some(entry => matchesRule(parsed, entry));
+}
+
+let cachedSystemProxy;
+
+export function readMacOSSystemProxy({
+  platform = process.platform,
+  spawnSync = (command, options) => Bun.spawnSync(command, options),
+  warn = message => console.error(`[clawgod] ${message}`),
+} = {}) {
+  if (platform !== 'darwin') return emptyProxySettings();
+  try {
+    const result = spawnSync(['/usr/sbin/scutil', '--proxy'], { stdout: 'pipe', stderr: 'pipe' });
+    if (result.exitCode !== 0) throw new Error('scutil failed');
+    const source = Buffer.from(result.stdout || []).toString('utf8');
+    if (!validMacOSProxyOutput(source)) throw new Error('malformed scutil output');
+    const settings = parseMacOSProxySettings(source);
+    const automatic = ['ProxyAutoConfigEnable', 'ProxyAutoDiscoveryEnable']
+      .some(name => settingValue(source, name) === '1');
+    if (automatic) {
+      warn('macOS PAC and auto-discovery proxy settings are not supported; continuing without a proxy.');
+      return emptyProxySettings();
+    }
+    if (!settings.httpProxy && !settings.httpsProxy && settingValue(source, 'SOCKSEnable') === '1') {
+      warn('macOS SOCKS-only proxy settings are not supported; continuing without a proxy.');
+    }
+    return settings;
+  } catch {
+    warn('Unable to read macOS system proxy settings; continuing without a proxy.');
+    return emptyProxySettings();
+  }
+}
+
+function defaultSystemProxy(env) {
+  if (env !== process.env) return emptyProxySettings();
+  cachedSystemProxy ||= readMacOSSystemProxy();
+  return cachedSystemProxy;
+}
+
+function proxyRoute(urlValue, env, systemProxy) {
+  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
+  if (bypassesEnvironment(parsed, env)) return { bypass: true, proxy: undefined };
+  const explicit = environmentProxy(parsed, env);
+  if (explicit) return { bypass: false, proxy: explicit };
+  const settings = systemProxy || defaultSystemProxy(env);
+  if (bypassesSystem(parsed, settings)) return { bypass: true, proxy: undefined };
+  const proxy = parsed.protocol === 'https:' ? settings.httpsProxy : settings.httpProxy;
+  return { bypass: !proxy, proxy };
+}
+
+export function proxyFor(urlValue, env = process.env, systemProxy) {
+  return proxyRoute(urlValue, env, systemProxy).proxy;
+}
+
+const DIRECT_WORKER_FLAG = '--clawgod-direct-fetch-worker';
+
+function directWorkerEnv() {
+  const env = { ...process.env, NO_PROXY: '*', no_proxy: '*' };
+  for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete env[name];
+  return env;
+}
+
+function directWorkerBody(child) {
+  const reader = child.stdout.getReader();
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (!done) {
+          controller.enqueue(value);
+          return;
+        }
+        const status = await child.exited;
+        if (status === 0) controller.close();
+        else {
+          const stderr = await new Response(child.stderr).text();
+          controller.error(new Error(stderr.trim() || `Direct fetch worker exited with status ${status}`));
+        }
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      reader.cancel(reason);
+      child.kill();
+    },
   });
 }
 
-function proxyFor(urlValue) {
-  const parsed = new URL(urlValue);
-  if (bypassesProxy(parsed)) return undefined;
-  return parsed.protocol === 'https:'
-    ? process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy
-    : process.env.HTTP_PROXY || process.env.http_proxy;
+function fetchDirect(url, init, fetchImpl) {
+  const method = String(init.method || 'GET').toUpperCase();
+  if ((method !== 'GET' && method !== 'HEAD') || init.body != null) {
+    throw new Error('Direct downloads support only GET or HEAD requests without a body');
+  }
+  if (fetchImpl !== fetch) return fetchImpl(url, init);
+  return new Promise((resolve, reject) => {
+    let metadata;
+    let settled = false;
+    const child = Bun.spawn([process.execPath, fileURLToPath(import.meta.url), DIRECT_WORKER_FLAG], {
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: directWorkerEnv(),
+      ipc(message) {
+        metadata = message;
+        if (!settled && message?.ok) {
+          settled = true;
+          resolve(new Response(directWorkerBody(child), {
+            status: message.status,
+            statusText: message.statusText,
+            headers: message.headers,
+          }));
+        }
+      },
+    });
+    child.stdin.write(JSON.stringify({
+      url: String(url),
+      method: init.method || 'GET',
+      headers: [...new Headers(init.headers).entries()],
+    }));
+    child.stdin.end();
+    child.exited.then(async status => {
+      if (settled) return;
+      settled = true;
+      const stderr = await new Response(child.stderr).text();
+      reject(new Error(stderr.trim() || `Direct fetch worker exited with status ${status}`));
+    });
+    if (init.signal) {
+      const abort = () => child.kill();
+      if (init.signal.aborted) abort();
+      else init.signal.addEventListener('abort', abort, { once: true });
+    }
+  });
 }
 
-async function fetchWithProxy(initialUrl) {
+async function runDirectFetchWorker() {
+  try {
+    const { url, method, headers } = await Bun.stdin.json();
+    const response = await fetch(url, {
+      method,
+      headers,
+      redirect: 'manual',
+    });
+    process.send({
+      ok: true,
+      status: response.status,
+      statusText: response.statusText,
+      headers: [...response.headers.entries()],
+    });
+    if (response.body) {
+      for await (const chunk of response.body) {
+        await new Promise((resolve, reject) => {
+          process.stdout.write(chunk, error => error ? reject(error) : resolve());
+        });
+      }
+    }
+    process.exit(0);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+
+if (import.meta.main && process.argv[2] === DIRECT_WORKER_FLAG) await runDirectFetchWorker();
+
+export async function fetchWithProxy(initialUrl, init = {}, env = process.env, fetchImpl = fetch, systemProxy) {
   let nextUrl = initialUrl;
+  const { proxy: _callerProxy, ...baseInit } = init;
   for (let redirects = 0; redirects <= 5; redirects++) {
-    const proxy = proxyFor(nextUrl);
-    const response = await fetch(nextUrl, { redirect: 'manual', signal: AbortSignal.timeout(300000), ...(proxy ? { proxy } : {}) });
+    const route = proxyRoute(nextUrl, env, systemProxy);
+    const timeoutSignal = AbortSignal.timeout(300000);
+    const signal = baseInit.signal ? AbortSignal.any([baseInit.signal, timeoutSignal]) : timeoutSignal;
+    let response;
+    try {
+      const requestInit = {
+        ...baseInit,
+        redirect: 'manual',
+        signal,
+        ...(route.proxy ? { proxy: route.proxy } : {}),
+      };
+      signal.throwIfAborted();
+      response = route.bypass
+        ? await fetchDirect(nextUrl, requestInit, fetchImpl)
+        : await fetchImpl(nextUrl, requestInit);
+    } catch (error) {
+      if (signal.aborted) throw signal.reason || error;
+      if (route.proxy) throw new Error('Request failed through configured proxy');
+      throw error;
+    }
     if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
-      if (redirects === 5) throw new Error('too many redirects');
+      if (response.body) await response.body.cancel();
+      if (redirects === 5) throw new Error('Too many redirects');
       nextUrl = new URL(response.headers.get('location'), nextUrl).href;
       continue;
     }
-    if (response.status !== 200) throw new Error(`download failed with HTTP ${response.status}`);
+    if (response.status !== 200) {
+      if (response.body) await response.body.cancel();
+      throw new Error(`Request failed with HTTP ${response.status}`);
+    }
     return response;
   }
-  throw new Error('too many redirects');
+  throw new Error('Too many redirects');
 }
+PROXY_FETCH_EOF
+chmod 700 "$CLAWGOD_DIR/proxy-fetch.mjs"
+
+cat > "$CLAWGOD_DIR/fetch-file.mjs" << 'FETCH_FILE_EOF'
+#!/usr/bin/env bun
+import { existsSync, renameSync, rmSync } from 'node:fs';
+
+import { fetchWithProxy } from './proxy-fetch.mjs';
+
+const [url, destination] = process.argv.slice(2);
+if (!url || !destination) throw new Error('usage: fetch-file.mjs <url> <destination>');
 
 const temporary = `${destination}.${process.pid}.tmp`;
 try {
@@ -4969,6 +5233,9 @@ cat > "$CLAWGOD_DIR/install-ripgrep.mjs" << 'INSTALL_RIPGREP_EOF'
 import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
+export { fetchWithProxy, parseMacOSProxySettings, proxyFor } from './proxy-fetch.mjs';
+import { fetchWithProxy } from './proxy-fetch.mjs';
+
 export const RIPGREP_VERSION = '15.2.0';
 export const RIPGREP_ASSETS = {
   'darwin-arm64': ['ripgrep-15.2.0-aarch64-apple-darwin.tar.gz', '3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4'],
@@ -4980,96 +5247,6 @@ export const RIPGREP_ASSETS = {
 };
 
 const MAX_BINARY_BYTES = 100 * 1024 * 1024;
-
-function noProxyRule(value) {
-  let entry = value.trim().toLowerCase();
-  if (entry === '*') return { all: true };
-  let host = entry;
-  let port = '';
-  if (entry.startsWith('[')) {
-    const close = entry.indexOf(']');
-    if (close === -1) return { host: entry, port };
-    host = entry.slice(1, close);
-    const suffix = entry.slice(close + 1);
-    if (/^:\d+$/.test(suffix)) port = suffix.slice(1);
-    else if (suffix) return { host: entry, port };
-  } else {
-    const colon = entry.lastIndexOf(':');
-    if (colon > 0 && colon === entry.indexOf(':') && /^\d+$/.test(entry.slice(colon + 1))) {
-      host = entry.slice(0, colon);
-      port = entry.slice(colon + 1);
-    }
-  }
-  return { host: host.replace(/^\*\./, '.'), port };
-}
-
-function bypassesProxy(urlValue, env) {
-  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
-  const entries = (env.NO_PROXY || env.no_proxy || '').split(',').filter(value => value.trim());
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
-  return entries.some(entry => {
-    const rule = noProxyRule(entry);
-    if (rule.all) return true;
-    const baseHost = rule.host.replace(/^\./, '');
-    return (host === baseHost || host.endsWith(`.${baseHost}`)) && (!rule.port || rule.port === port);
-  });
-}
-
-export function proxyFor(urlValue, env = process.env) {
-  const parsed = new URL(urlValue);
-  if (bypassesProxy(parsed, env)) return undefined;
-  return parsed.protocol === 'https:'
-    ? env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy
-    : env.HTTP_PROXY || env.http_proxy;
-}
-
-async function fetchDirect(url, init, fetchImpl) {
-  const upper = Object.hasOwn(process.env, 'NO_PROXY') ? process.env.NO_PROXY : undefined;
-  const lower = Object.hasOwn(process.env, 'no_proxy') ? process.env.no_proxy : undefined;
-  try {
-    process.env.NO_PROXY = '*';
-    process.env.no_proxy = '*';
-    return await fetchImpl(url, init);
-  } finally {
-    if (upper === undefined) delete process.env.NO_PROXY;
-    else process.env.NO_PROXY = upper;
-    if (lower === undefined) delete process.env.no_proxy;
-    else process.env.no_proxy = lower;
-  }
-}
-
-export async function fetchWithProxy(initialUrl, init = {}, env = process.env, fetchImpl = fetch) {
-  let nextUrl = initialUrl;
-  const { proxy: _callerProxy, ...baseInit } = init;
-  for (let redirects = 0; redirects <= 5; redirects++) {
-    const bypass = bypassesProxy(nextUrl, env);
-    const proxy = proxyFor(nextUrl, env);
-    let response;
-    try {
-      const requestInit = {
-        ...baseInit,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(300000),
-        ...(proxy ? { proxy } : {}),
-      };
-      response = bypass
-        ? await fetchDirect(nextUrl, requestInit, fetchImpl)
-        : await fetchImpl(nextUrl, requestInit);
-    } catch (error) {
-      if (proxy) throw new Error('Request failed through configured proxy');
-      throw error;
-    }
-    if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
-      if (redirects === 5) throw new Error('Too many redirects');
-      nextUrl = new URL(response.headers.get('location'), nextUrl).href;
-      continue;
-    }
-    if (response.status !== 200) throw new Error(`Request failed with HTTP ${response.status}`);
-    return response;
-  }
-  throw new Error('Too many redirects');
-}
 
 function safeArchivePath(name) {
   if (!name || name.startsWith('/') || name.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(name)) return false;
@@ -5979,99 +6156,10 @@ if [ -z "$NATIVE_BIN" ]; then
 import { chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+export { fetchWithProxy, parseMacOSProxySettings, proxyFor, readMacOSSystemProxy } from './proxy-fetch.mjs';
+import { fetchWithProxy } from './proxy-fetch.mjs';
+
 const MIN_BINARY_BYTES = 10 * 1024 * 1024;
-
-function noProxyRule(value) {
-  let entry = value.trim().toLowerCase();
-  if (entry === '*') return { all: true };
-
-  let host = entry;
-  let port = '';
-  if (entry.startsWith('[')) {
-    const close = entry.indexOf(']');
-    if (close === -1) return { host: entry, port };
-    host = entry.slice(1, close);
-    const suffix = entry.slice(close + 1);
-    if (/^:\d+$/.test(suffix)) port = suffix.slice(1);
-    else if (suffix) return { host: entry, port };
-  } else {
-    const colon = entry.lastIndexOf(':');
-    if (colon > 0 && colon === entry.indexOf(':') && /^\d+$/.test(entry.slice(colon + 1))) {
-      host = entry.slice(0, colon);
-      port = entry.slice(colon + 1);
-    }
-  }
-  return { host: host.replace(/^\*\./, '.'), port };
-}
-
-function bypassesProxy(urlValue, env) {
-  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
-  const entries = (env.NO_PROXY || env.no_proxy || '').split(',').filter(value => value.trim());
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
-  return entries.some(entry => {
-    const rule = noProxyRule(entry);
-    if (rule.all) return true;
-    const baseHost = rule.host.replace(/^\./, '');
-    const matchesHost = host === baseHost || host.endsWith(`.${baseHost}`);
-    return matchesHost && (!rule.port || rule.port === port);
-  });
-}
-
-export function proxyFor(urlValue, env = process.env) {
-  const parsed = new URL(urlValue);
-  if (bypassesProxy(parsed, env)) return undefined;
-  return parsed.protocol === 'https:'
-    ? env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy
-    : env.HTTP_PROXY || env.http_proxy;
-}
-
-async function fetchDirect(url, init, fetchImpl) {
-  const upper = Object.hasOwn(process.env, 'NO_PROXY') ? process.env.NO_PROXY : undefined;
-  const lower = Object.hasOwn(process.env, 'no_proxy') ? process.env.no_proxy : undefined;
-  try {
-    process.env.NO_PROXY = '*';
-    process.env.no_proxy = '*';
-    return await fetchImpl(url, init);
-  } finally {
-    if (upper === undefined) delete process.env.NO_PROXY;
-    else process.env.NO_PROXY = upper;
-    if (lower === undefined) delete process.env.no_proxy;
-    else process.env.no_proxy = lower;
-  }
-}
-
-export async function fetchWithProxy(initialUrl, init = {}, env = process.env, fetchImpl = fetch) {
-  let nextUrl = initialUrl;
-  const { proxy: _callerProxy, ...baseInit } = init;
-  for (let redirects = 0; redirects <= 5; redirects++) {
-    const bypass = bypassesProxy(nextUrl, env);
-    const proxy = proxyFor(nextUrl, env);
-    let response;
-    try {
-      const requestInit = {
-        ...baseInit,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(300000),
-        ...(proxy ? { proxy } : {}),
-      };
-      response = bypass
-        ? await fetchDirect(nextUrl, requestInit, fetchImpl)
-        : await fetchImpl(nextUrl, requestInit);
-    } catch (error) {
-      if (proxy) throw new Error('Request failed through configured proxy');
-      throw error;
-    }
-    if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
-      if (redirects === 5) throw new Error('Too many redirects');
-      nextUrl = new URL(response.headers.get('location'), nextUrl).href;
-      continue;
-    }
-    if (response.status !== 200) throw new Error(`Request failed with HTTP ${response.status}`);
-    return response;
-  }
-  throw new Error('Too many redirects');
-}
 
 async function checkedJson(response) {
   try {
@@ -6177,7 +6265,8 @@ if (import.meta.main) {
   console.log(`VERSION=${result.version}`);
 }
 FETCH_PACKAGE_EOF
-  chmod 700 "$FETCH_SCRIPT"
+  cp "$CLAWGOD_DIR/proxy-fetch.mjs" "$NATIVE_BIN_TMPDIR/proxy-fetch.mjs"
+  chmod 700 "$FETCH_SCRIPT" "$NATIVE_BIN_TMPDIR/proxy-fetch.mjs"
 
   if FETCH_OUTPUT=$("$BUN_BIN" "$FETCH_SCRIPT" "$NPM_PKG@$VERSION" "$NATIVE_BIN_TMPDIR" 2>&1); then
     printf '%s\n' "$FETCH_OUTPUT" | while IFS= read -r line; do dim "$line"; done
@@ -8503,7 +8592,7 @@ var patches = [
     order: 29,
     name: "Redirect `claude update` to clawgod self-update",
     pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\((?:[\w$]+\()?async\([^)]*\)=>\{)/g,
-    replacer: (match, chain, action) => chain + ".allowUnknownOption()" + action + `const __clawgodUpdateIndex=process.argv.findIndex(a=>a==="update"||a==="upgrade");const __clawgodUpdateArgs=__clawgodUpdateIndex>=0?process.argv.slice(__clawgodUpdateIndex+1):[];const __clawgodVersionIndex=__clawgodUpdateArgs.indexOf("--version");if(__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1])process.env.CLAWGOD_VERSION=__clawgodUpdateArgs[__clawgodVersionIndex+1];else process.env.CLAWGOD_VERSION="latest";if(__clawgodUpdateArgs.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";if(__clawgodUpdateArgs.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";if(__clawgodUpdateArgs.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";if(__clawgodUpdateArgs.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");const _w=process.platform==='win32';const __clawgodUpdateStatus=(()=>{const __fs=import.meta.require('fs'),__path=import.meta.require('path'),__os=import.meta.require('os'),__cp=import.meta.require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh'),__localVersion='',__installerVersions=[];try{__localVersion=__fs.readFileSync(__path.join(__root,'.clawgod-version'),'utf8').trim();const __installerSource=__fs.readFileSync(__installer,'utf8'),__versionPattern=_w?/^[$]ClawSelfVersion = "([^"\\r\\n]+)"/gm:/^CLAWGOD_SELF_VERSION="([^"\\r\\n]+)"/gm;__installerVersions=[...__installerSource.matchAll(__versionPattern)].map((__match)=>__match[1])}catch{}const __trustedLocal=__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1]&&/^[0-9]+[.][0-9]+[.][0-9]+(?:-claude[.][0-9]+[.][0-9]+[.][0-9]+(?:[.][0-9]+)?)?$/.test(__localVersion)&&__installerVersions.length===1&&__installerVersions[0]===__localVersion;if(!__trustedLocal){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:{...process.env,CLAWGOD_NONINTERACTIVE:'1'}});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();process.exit(__clawgodUpdateStatus);`,
+    replacer: (match, chain, action) => chain + ".allowUnknownOption()" + action + `const __clawgodUpdateIndex=process.argv.findIndex(a=>a==="update"||a==="upgrade");const __clawgodUpdateArgs=__clawgodUpdateIndex>=0?process.argv.slice(__clawgodUpdateIndex+1):[];const __clawgodVersionIndex=__clawgodUpdateArgs.indexOf("--version");if(__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1])process.env.CLAWGOD_VERSION=__clawgodUpdateArgs[__clawgodVersionIndex+1];else process.env.CLAWGOD_VERSION="latest";if(__clawgodUpdateArgs.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";if(__clawgodUpdateArgs.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";if(__clawgodUpdateArgs.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";if(__clawgodUpdateArgs.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");const _w=process.platform==='win32';const __clawgodUpdateStatus=(()=>{const __fs=import.meta.require('fs'),__path=import.meta.require('path'),__os=import.meta.require('os'),__cp=import.meta.require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__proxyFetch=__path.join(__root,'proxy-fetch.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh'),__localVersion='',__installerVersions=[];try{__localVersion=__fs.readFileSync(__path.join(__root,'.clawgod-version'),'utf8').trim();const __installerSource=__fs.readFileSync(__installer,'utf8'),__versionPattern=_w?/^[$]ClawSelfVersion = "([^"\\r\\n]+)"/gm:/^CLAWGOD_SELF_VERSION="([^"\\r\\n]+)"/gm;__installerVersions=[...__installerSource.matchAll(__versionPattern)].map((__match)=>__match[1])}catch{}const __trustedLocal=__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1]&&/^[0-9]+[.][0-9]+[.][0-9]+(?:-claude[.][0-9]+[.][0-9]+[.][0-9]+(?:[.][0-9]+)?)?$/.test(__localVersion)&&__installerVersions.length===1&&__installerVersions[0]===__localVersion;if(!__trustedLocal){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');if(!__fs.existsSync(__proxyFetch))throw new Error('managed proxy-fetch.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:{...process.env,CLAWGOD_NONINTERACTIVE:'1'}});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();process.exit(__clawgodUpdateStatus);`,
     sentinel: '.command("update").alias("upgrade")',
     appliedMarker: "[clawgod] 'claude update' is handled by clawgod self-update."
   },

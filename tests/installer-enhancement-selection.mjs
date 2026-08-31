@@ -39,7 +39,7 @@ const generatedWindows = generated.find(pair => pair.output === 'dist/win/instal
 const manifest = JSON.parse(readFileSync(join(root, 'src/generic/enhancements.json'), 'utf8'));
 const generatedConfigWriteStart = generatedUnix.indexOf('cat > "$CLAWGOD_DIR/enhancement-config.mjs"');
 const generatedBootstrapStart = generatedUnix.lastIndexOf('\n', generatedConfigWriteStart - 2) + 1;
-const generatedBootstrapEnd = generatedUnix.indexOf('\n\ncat > "$CLAWGOD_DIR/fetch-file.mjs"', generatedBootstrapStart);
+const generatedBootstrapEnd = generatedUnix.indexOf('\n\ncat > "$CLAWGOD_DIR/proxy-fetch.mjs"', generatedBootstrapStart);
 assert.ok(
   generatedConfigWriteStart >= 0 && generatedBootstrapStart >= 0 && generatedBootstrapEnd > generatedBootstrapStart,
   'install.sh must retain the generated selection bootstrap',

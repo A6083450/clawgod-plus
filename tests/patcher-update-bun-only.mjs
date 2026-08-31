@@ -96,6 +96,7 @@ await Bun.write(process.env.FETCH_CAPTURE,JSON.stringify({url,destination}));
 if(process.env.FETCH_EXIT)process.exit(Number(process.env.FETCH_EXIT));
 copyFileSync(process.env.INSTALLER_FIXTURE,destination);
 `);
+  if (!options.missingProxyFetch) writeFileSync(join(clawgod, 'proxy-fetch.mjs'), '// proxy companion fixture\n', 'utf8');
 
   const runnerName = options.windows ? 'powershell' : 'bash';
   if (!options.spawnFailure) {
@@ -264,6 +265,11 @@ for (const [label, code] of patchedUpdateBranches) {
 
     const fetchFailure = runUpdateCase(`${label} ${platform} fetch nonzero`, code, { windows, fetchExit: 29 });
     assert.equal(fetchFailure.run.status, 29, `${label} ${platform} must propagate managed fetch failure`);
+
+    const missingProxyFetch = runUpdateCase(`${label} ${platform} missing proxy companion`, code, { windows, missingProxyFetch: true });
+    assert.equal(missingProxyFetch.run.status, 1, `${label} ${platform} must fail before invoking a fetch helper whose proxy companion is missing`);
+    assert.equal(missingProxyFetch.fetch, null, `${label} ${platform} must not invoke fetch-file.mjs without its proxy companion`);
+    assert.match(missingProxyFetch.run.stderr, /managed proxy-fetch\.mjs is missing; reinstall ClawGod Plus/, `${label} ${platform} must explain how to recover a missing proxy companion`);
   }
 
   const wrongPolicyCode = code.replace("'Bypass'", "'RemoteSigned'");

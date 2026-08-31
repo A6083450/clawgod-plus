@@ -23,10 +23,12 @@ function Install-ClaudeMemCompatHelper {
     [System.IO.File]::WriteAllBytes($helper, $ClaudeMemCompatBytes)
 }
 
+$ProxyFetchBytes = [Convert]::FromBase64String('@@CLAWGOD_PROXY_FETCH_MJS_BASE64@@')
 $FetchFileBytes = [Convert]::FromBase64String('@@CLAWGOD_FETCH_FILE_MJS_BASE64@@')
 
 function Install-FetchFileHelper {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "proxy-fetch.mjs"), $ProxyFetchBytes)
     $helper = Join-Path $ClawDir "fetch-file.mjs"
     [System.IO.File]::WriteAllBytes($helper, $FetchFileBytes)
 }
@@ -313,7 +315,7 @@ if ($Uninstall) {
         Write-OK "Removed clawgod alias"
     }
 
-    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","openai-proxy.cjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging","assets","chunks","chunks.bak",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
+    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","openai-proxy.cjs","proxy-fetch.mjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging","assets","chunks","chunks.bak",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
@@ -511,6 +513,7 @@ if (-not $NativeBin) {
     $fetchScript = Join-Path $NativeBinTmpDir "fetch-package.mjs"
     $FetchPackageBytes = [Convert]::FromBase64String('@@CLAWGOD_FETCH_PACKAGE_MJS_BASE64@@')
     [System.IO.File]::WriteAllBytes($fetchScript, $FetchPackageBytes)
+    [System.IO.File]::WriteAllBytes((Join-Path $NativeBinTmpDir "proxy-fetch.mjs"), $ProxyFetchBytes)
 
     $output = & $BunBin $fetchScript "$npmPkg@$Version" $NativeBinTmpDir 2>&1
     $exitCode = $LASTEXITCODE

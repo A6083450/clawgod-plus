@@ -161,6 +161,7 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
   loadEnhancementManifest(enhancementsJson, { filename: 'enhancements.json' });
   const patcherBundle = await buildPatcherBundle({ rootDir });
   const runtimeSourceFiles = {
+    PROXY_FETCH_MJS: 'src/generic/runtime/proxy-fetch.mjs',
     FETCH_FILE_MJS: 'src/generic/runtime/fetch-file.mjs',
     FETCH_PACKAGE_MJS: 'src/generic/runtime/fetch-package.mjs',
     INSTALL_RIPGREP_MJS: 'src/generic/runtime/install-ripgrep.mjs',

@@ -19,7 +19,7 @@ const canonicalPlatform = Object.fromEntries(
   ]),
 );
 const canonicalRuntime = Object.fromEntries(
-  ['fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'vendor-transaction.mjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
+  ['proxy-fetch.mjs', 'fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'vendor-transaction.mjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
     name,
     readFileSync(new URL(`../src/generic/runtime/${name}`, import.meta.url), 'utf8'),
   ]),
@@ -1395,6 +1395,7 @@ const unixTemplates = {
   'repatch.mjs': unixTemplate('repatch.mjs', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''),
   'vendor-transaction.mjs': unixTemplate('vendor-transaction.mjs', 'cat > "$CLAWGOD_DIR/vendor-transaction.mjs" << \'VENDOR_TRANSACTION_EOF\''),
   'patch.mjs': unixTemplate('patch.mjs', 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\''),
+  'proxy-fetch.mjs': unixTemplate('proxy-fetch.mjs', 'cat > "$CLAWGOD_DIR/proxy-fetch.mjs" << \'PROXY_FETCH_EOF\''),
   'fetch-file.mjs': unixTemplate('fetch-file.mjs', 'cat > "$CLAWGOD_DIR/fetch-file.mjs" << \'FETCH_FILE_EOF\''),
 };
 const windowsTemplates = {
@@ -1403,10 +1404,12 @@ const windowsTemplates = {
   'repatch.mjs': powerShellRuntimePayload('RepatcherBytes').toString('utf8').trimEnd(),
   'vendor-transaction.mjs': powerShellRuntimePayload('VendorTransactionBytes').toString('utf8').trimEnd(),
   'patch.mjs': powerShellRuntimePayload('PatcherBytes').toString('utf8').trimEnd(),
+  'proxy-fetch.mjs': powerShellRuntimePayload('ProxyFetchBytes').toString('utf8').trimEnd(),
   'fetch-file.mjs': powerShellRuntimePayload('FetchFileBytes').toString('utf8').trimEnd(),
 };
 
 const runtimeDefinitions = [
+  ['proxy-fetch.mjs', 'proxy-fetch.mjs', 'ProxyFetchBytes', 'cat > "$CLAWGOD_DIR/proxy-fetch.mjs" << \'PROXY_FETCH_EOF\''],
   ['fetch-file.mjs', 'fetch-file.mjs', 'FetchFileBytes', 'cat > "$CLAWGOD_DIR/fetch-file.mjs" << \'FETCH_FILE_EOF\''],
   ['fetch-package.mjs', 'fetch-package.mjs', 'FetchPackageBytes', 'cat > "$FETCH_SCRIPT" << \'FETCH_PACKAGE_EOF\''],
   ['install-ripgrep.mjs', 'install-ripgrep.mjs', 'InstallRipgrepBytes', 'cat > "$CLAWGOD_DIR/install-ripgrep.mjs" << \'INSTALL_RIPGREP_EOF\''],
@@ -1420,6 +1423,11 @@ const runtimeDefinitions = [
   ['claude-mem-compat.cjs', 'claude-mem-compat.cjs', 'ClaudeMemCompatBytes', 'cat > "$CLAWGOD_DIR/claude-mem-compat.cjs" << \'CLAUDE_MEM_COMPAT_EOF\''],
   ['plugin-dependencies.mjs', 'plugin-dependencies.mjs', 'PluginDependenciesBytes', 'cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << \'PLUGIN_DEPENDENCIES_EOF\''],
 ];
+
+assert.match(unix, /cp "\$CLAWGOD_DIR\/proxy-fetch\.mjs" "\$NATIVE_BIN_TMPDIR\/proxy-fetch\.mjs"/, 'install.sh must place the shared proxy module beside temporary fetch-package.mjs');
+assert.match(windows, /WriteAllBytes\(\(Join-Path \$NativeBinTmpDir "proxy-fetch\.mjs"\), \$ProxyFetchBytes\)/, 'install.ps1 must place the shared proxy module beside temporary fetch-package.mjs');
+assert.match(unix, /rm -rf[^\n]+"\$CLAWGOD_DIR\/proxy-fetch\.mjs"/, 'install.sh uninstall must remove the shared proxy module');
+assert.match(windows, /foreach \(\$f in @\([^\r\n]+"proxy-fetch\.mjs"/, 'install.ps1 uninstall must remove the shared proxy module');
 
 for (const [generatedName, canonicalName, powerShellVariable, unixMarker] of runtimeDefinitions) {
   const canonical = Buffer.from(canonicalRuntime[canonicalName]);
@@ -2079,66 +2087,34 @@ try {
   rmSync(repatchRoot, { recursive: true, force: true });
 }
 
+const canonicalProxyFetch = canonicalRuntime['proxy-fetch.mjs'];
 const canonicalFetchFile = canonicalRuntime['fetch-file.mjs'];
-assert.match(canonicalFetchFile, /HTTPS_PROXY \|\| process\.env\.https_proxy/, 'fetch-file must prefer HTTPS proxies');
-assert.match(canonicalFetchFile, /HTTP_PROXY \|\| process\.env\.http_proxy/, 'fetch-file must support HTTP proxies');
-assert.match(canonicalFetchFile, /NO_PROXY \|\| process\.env\.no_proxy/, 'fetch-file must honor NO_PROXY');
-assert.match(canonicalFetchFile, /AbortSignal\.timeout\(300000\)/, 'fetch-file must use the five-minute timeout');
-assert.match(canonicalFetchFile, /redirects <= 5/, 'fetch-file must cap redirects');
-assert.match(canonicalFetchFile, /response\.status !== 200/, 'fetch-file must reject non-200 responses');
+assert.match(canonicalProxyFetch, /env\.HTTPS_PROXY \|\| env\.https_proxy/, 'shared downloader must prefer HTTPS proxies');
+assert.match(canonicalProxyFetch, /env\.HTTP_PROXY \|\| env\.http_proxy/, 'shared downloader must support HTTP proxies');
+assert.match(canonicalProxyFetch, /env\.NO_PROXY \|\| env\.no_proxy/, 'shared downloader must honor NO_PROXY');
+assert.match(canonicalProxyFetch, /\/usr\/sbin\/scutil.*--proxy/, 'shared downloader must discover the macOS system proxy');
+assert.match(canonicalProxyFetch, /AbortSignal\.timeout\(300000\)/, 'shared downloader must use the five-minute timeout');
+assert.match(canonicalProxyFetch, /redirects <= 5/, 'shared downloader must cap redirects');
+assert.match(canonicalProxyFetch, /response\.status !== 200/, 'shared downloader must reject non-200 responses');
+assert.match(canonicalFetchFile, /from '\.\/proxy-fetch\.mjs'/, 'fetch-file must use the shared proxy implementation');
 assert.match(canonicalFetchFile, /renameSync\(temporary, destination\)/, 'fetch-file must atomically replace completed downloads');
 
-const proxyProbeDirectory = mkdtempSync(join(tmpdir(), 'clawgod-fetch-proxy-'));
-try {
-  async function proxyFor(fetchFile, url, noProxy) {
-    const probe = join(proxyProbeDirectory, `${Math.random().toString(16).slice(2)}.mjs`);
-    const probeSource = fetchFile.replace(
-      'const temporary = `${destination}.${process.pid}.tmp`;',
-      `if (process.env.CLAWGOD_FETCH_FILE_PROBE === '1') {
-  console.log(JSON.stringify({ proxy: proxyFor(url) || null }));
-  process.exit(0);
-}
-
-const temporary = \`${'${destination}'}.${'${process.pid}'}.tmp\`;`,
-    );
-    assert.notEqual(probeSource, fetchFile, 'proxy probe must be injected into fetch-file.mjs');
-    await Bun.write(probe, probeSource);
-    const child = Bun.spawn([process.execPath, probe, url, join(proxyProbeDirectory, 'unused')], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: {
-        ...process.env,
-        CLAWGOD_FETCH_FILE_PROBE: '1',
-        HTTP_PROXY: 'http://proxy.test:3128',
-        HTTPS_PROXY: 'http://proxy.test:3128',
-        http_proxy: '',
-        https_proxy: '',
-        NO_PROXY: noProxy,
-        no_proxy: '',
-      },
-    });
-    const [status, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    assert.equal(status, 0, stderr);
-    return JSON.parse(stdout).proxy;
-  }
-
-  const proxyCases = [
-    ['https://example.com/archive', '.example.com', null],
-    ['https://api.example.com/archive', '.example.com', null],
-    ['https://example.com:8443/archive', 'example.com:8443', null],
-    ['https://example.com/archive', 'example.com:8443', 'http://proxy.test:3128'],
-    ['http://[::1]:8080/archive', '::1', null],
-    ['http://[::1]:8080/archive', '[::1]:8081', 'http://proxy.test:3128'],
-  ];
-  for (const [url, noProxy, expected] of proxyCases) {
-    assert.equal(await proxyFor(canonicalFetchFile, url, noProxy), expected, `NO_PROXY=${noProxy} must select the expected proxy for ${url}`);
-  }
-} finally {
-  rmSync(proxyProbeDirectory, { recursive: true, force: true });
+const proxyModuleUrl = new URL(`../src/generic/runtime/proxy-fetch.mjs?test=${Date.now()}`, import.meta.url);
+const { proxyFor: selectProxy } = await import(proxyModuleUrl.href);
+const proxyCases = [
+  ['https://example.com/archive', '.example.com', undefined],
+  ['https://api.example.com/archive', '.example.com', undefined],
+  ['https://example.com:8443/archive', 'example.com:8443', undefined],
+  ['https://example.com/archive', 'example.com:8443', 'http://proxy.test:3128'],
+  ['http://[::1]:8080/archive', '::1', undefined],
+  ['http://[::1]:8080/archive', '[::1]:8081', 'http://proxy.test:3128'],
+];
+for (const [url, noProxy, expected] of proxyCases) {
+  assert.equal(selectProxy(url, {
+    HTTP_PROXY: 'http://proxy.test:3128',
+    HTTPS_PROXY: 'http://proxy.test:3128',
+    NO_PROXY: noProxy,
+  }), expected, `NO_PROXY=${noProxy} must select the expected proxy for ${url}`);
 }
 
 for (const [name, source] of [['install.sh', unix], ['install.ps1', windows]]) {
@@ -2192,8 +2168,11 @@ try {
 const dir = mkdtempSync(join(tmpdir(), 'clawgod-fetch-file-'));
 try {
   const fetchFile = join(dir, 'fetch-file.mjs');
+  const proxyFetch = join(dir, 'proxy-fetch.mjs');
   await Bun.write(fetchFile, canonicalFetchFile);
+  await Bun.write(proxyFetch, canonicalProxyFetch);
   chmodSync(fetchFile, 0o700);
+  chmodSync(proxyFetch, 0o700);
   const server = Bun.serve({
     port: 0,
     fetch(request) {

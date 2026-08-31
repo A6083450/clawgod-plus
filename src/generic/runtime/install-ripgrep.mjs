@@ -2,6 +2,9 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
+export { fetchWithProxy, parseMacOSProxySettings, proxyFor } from './proxy-fetch.mjs';
+import { fetchWithProxy } from './proxy-fetch.mjs';
+
 export const RIPGREP_VERSION = '15.2.0';
 export const RIPGREP_ASSETS = {
   'darwin-arm64': ['ripgrep-15.2.0-aarch64-apple-darwin.tar.gz', '3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4'],
@@ -13,96 +16,6 @@ export const RIPGREP_ASSETS = {
 };
 
 const MAX_BINARY_BYTES = 100 * 1024 * 1024;
-
-function noProxyRule(value) {
-  let entry = value.trim().toLowerCase();
-  if (entry === '*') return { all: true };
-  let host = entry;
-  let port = '';
-  if (entry.startsWith('[')) {
-    const close = entry.indexOf(']');
-    if (close === -1) return { host: entry, port };
-    host = entry.slice(1, close);
-    const suffix = entry.slice(close + 1);
-    if (/^:\d+$/.test(suffix)) port = suffix.slice(1);
-    else if (suffix) return { host: entry, port };
-  } else {
-    const colon = entry.lastIndexOf(':');
-    if (colon > 0 && colon === entry.indexOf(':') && /^\d+$/.test(entry.slice(colon + 1))) {
-      host = entry.slice(0, colon);
-      port = entry.slice(colon + 1);
-    }
-  }
-  return { host: host.replace(/^\*\./, '.'), port };
-}
-
-function bypassesProxy(urlValue, env) {
-  const parsed = typeof urlValue === 'string' ? new URL(urlValue) : urlValue;
-  const entries = (env.NO_PROXY || env.no_proxy || '').split(',').filter(value => value.trim());
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
-  return entries.some(entry => {
-    const rule = noProxyRule(entry);
-    if (rule.all) return true;
-    const baseHost = rule.host.replace(/^\./, '');
-    return (host === baseHost || host.endsWith(`.${baseHost}`)) && (!rule.port || rule.port === port);
-  });
-}
-
-export function proxyFor(urlValue, env = process.env) {
-  const parsed = new URL(urlValue);
-  if (bypassesProxy(parsed, env)) return undefined;
-  return parsed.protocol === 'https:'
-    ? env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy
-    : env.HTTP_PROXY || env.http_proxy;
-}
-
-async function fetchDirect(url, init, fetchImpl) {
-  const upper = Object.hasOwn(process.env, 'NO_PROXY') ? process.env.NO_PROXY : undefined;
-  const lower = Object.hasOwn(process.env, 'no_proxy') ? process.env.no_proxy : undefined;
-  try {
-    process.env.NO_PROXY = '*';
-    process.env.no_proxy = '*';
-    return await fetchImpl(url, init);
-  } finally {
-    if (upper === undefined) delete process.env.NO_PROXY;
-    else process.env.NO_PROXY = upper;
-    if (lower === undefined) delete process.env.no_proxy;
-    else process.env.no_proxy = lower;
-  }
-}
-
-export async function fetchWithProxy(initialUrl, init = {}, env = process.env, fetchImpl = fetch) {
-  let nextUrl = initialUrl;
-  const { proxy: _callerProxy, ...baseInit } = init;
-  for (let redirects = 0; redirects <= 5; redirects++) {
-    const bypass = bypassesProxy(nextUrl, env);
-    const proxy = proxyFor(nextUrl, env);
-    let response;
-    try {
-      const requestInit = {
-        ...baseInit,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(300000),
-        ...(proxy ? { proxy } : {}),
-      };
-      response = bypass
-        ? await fetchDirect(nextUrl, requestInit, fetchImpl)
-        : await fetchImpl(nextUrl, requestInit);
-    } catch (error) {
-      if (proxy) throw new Error('Request failed through configured proxy');
-      throw error;
-    }
-    if (response.status >= 300 && response.status < 400 && response.headers.has('location')) {
-      if (redirects === 5) throw new Error('Too many redirects');
-      nextUrl = new URL(response.headers.get('location'), nextUrl).href;
-      continue;
-    }
-    if (response.status !== 200) throw new Error(`Request failed with HTTP ${response.status}`);
-    return response;
-  }
-  throw new Error('Too many redirects');
-}
 
 function safeArchivePath(name) {
   if (!name || name.startsWith('/') || name.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(name)) return false;
