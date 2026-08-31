@@ -547,6 +547,7 @@ assert.match(agents, /-Enhancements/, 'AGENTS.md must document the PowerShell en
 assert.match(agents, /claude update/, 'AGENTS.md must document that claude update reuses the selection');
 
 const workflow = read('.github/workflows/compat-daily.yml');
+assert.doesNotThrow(() => Bun.YAML.parse(workflow), 'compat-daily must remain valid YAML');
 const installerE2E = read('tests/installer-e2e.mjs');
 assert.match(installerE2E, /\['node', 'npm', 'rg', 'tar', 'unzip', 'git'\]/, 'Unix installer E2E must trap system Git with the other forbidden dependencies');
 assert.match(installerE2E, /claude-hud-current-style\.json/, 'Unix installer E2E must execute the committed HUD golden fixture');

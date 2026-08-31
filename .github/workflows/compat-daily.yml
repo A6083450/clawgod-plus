@@ -590,10 +590,10 @@ jobs:
           }
           $iexFixture = Join-Path $sandbox 'invoke-installer-expression.ps1'
           $iexFixtureSource = @'
-$ErrorActionPreference = 'Stop'
-$installerSource = [System.IO.File]::ReadAllText($env:CLAWGOD_IEX_INSTALLER, [System.Text.Encoding]::ASCII)
-Invoke-Expression $installerSource
-'@
+          $ErrorActionPreference = 'Stop'
+          $installerSource = [System.IO.File]::ReadAllText($env:CLAWGOD_IEX_INSTALLER, [System.Text.Encoding]::ASCII)
+          Invoke-Expression $installerSource
+          '@
           [System.IO.File]::WriteAllText($iexFixture, $iexFixtureSource, [System.Text.Encoding]::ASCII)
           $env:CLAWGOD_LEAN_ON = '1'
           $env:CLAWGOD_IEX_INSTALLER = $installer
