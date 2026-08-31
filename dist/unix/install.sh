@@ -2288,11 +2288,17 @@ function directWorkerEnv() {
   return env;
 }
 
-function directWorkerBody(child) {
-  const reader = child.stdout.getReader();
+function directWorkerBody(child, reader, initialChunk) {
+  let pending = initialChunk?.length ? initialChunk : undefined;
   return new ReadableStream({
     async pull(controller) {
       try {
+        if (pending) {
+          const value = pending;
+          pending = undefined;
+          controller.enqueue(value);
+          return;
+        }
         const { done, value } = await reader.read();
         if (!done) {
           controller.enqueue(value);
@@ -2315,48 +2321,61 @@ function directWorkerBody(child) {
   });
 }
 
-function fetchDirect(url, init, fetchImpl) {
+async function directWorkerResponse(child) {
+  const reader = child.stdout.getReader();
+  let prefix = new Uint8Array();
+  const maxMetadataBytes = 1048576;
+  while (prefix.length <= maxMetadataBytes) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const newline = value.indexOf(10);
+    const metadataLength = prefix.length + (newline === -1 ? value.length : newline);
+    if (metadataLength > maxMetadataBytes) break;
+    const metadataBytes = new Uint8Array(metadataLength);
+    metadataBytes.set(prefix);
+    metadataBytes.set(newline === -1 ? value : value.subarray(0, newline), prefix.length);
+    if (newline === -1) {
+      prefix = metadataBytes;
+      continue;
+    }
+    const metadata = JSON.parse(new TextDecoder().decode(metadataBytes));
+    if (!metadata?.ok || !Number.isInteger(metadata.status) || !Array.isArray(metadata.headers)) {
+      throw new Error('Direct fetch worker returned invalid metadata');
+    }
+    return new Response(directWorkerBody(child, reader, value.subarray(newline + 1)), {
+      status: metadata.status,
+      statusText: metadata.statusText,
+      headers: metadata.headers,
+    });
+  }
+  child.kill();
+  const status = await child.exited;
+  const stderr = await new Response(child.stderr).text();
+  throw new Error(stderr.trim() || `Direct fetch worker exited with status ${status} before returning metadata`);
+}
+
+async function fetchDirect(url, init, fetchImpl) {
   const method = String(init.method || 'GET').toUpperCase();
   if ((method !== 'GET' && method !== 'HEAD') || init.body != null) {
     throw new Error('Direct downloads support only GET or HEAD requests without a body');
   }
   if (fetchImpl !== fetch) return fetchImpl(url, init);
-  return new Promise((resolve, reject) => {
-    let metadata;
-    let settled = false;
-    const child = Bun.spawn([process.execPath, fileURLToPath(import.meta.url), DIRECT_WORKER_FLAG], {
-      stdin: Buffer.from(JSON.stringify({
-        url: String(url),
-        method: init.method || 'GET',
-        headers: [...new Headers(init.headers).entries()],
-      })),
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: directWorkerEnv(),
-      ipc(message) {
-        metadata = message;
-        if (!settled && message?.ok) {
-          settled = true;
-          resolve(new Response(directWorkerBody(child), {
-            status: message.status,
-            statusText: message.statusText,
-            headers: message.headers,
-          }));
-        }
-      },
-    });
-    child.exited.then(async status => {
-      if (settled) return;
-      settled = true;
-      const stderr = await new Response(child.stderr).text();
-      reject(new Error(stderr.trim() || `Direct fetch worker exited with status ${status}`));
-    });
-    if (init.signal) {
-      const abort = () => child.kill();
-      if (init.signal.aborted) abort();
-      else init.signal.addEventListener('abort', abort, { once: true });
-    }
+  const child = Bun.spawn([process.execPath, fileURLToPath(import.meta.url), DIRECT_WORKER_FLAG], {
+    stdin: Buffer.from(JSON.stringify({
+      url: String(url),
+      method: init.method || 'GET',
+      headers: [...new Headers(init.headers).entries()],
+    })),
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: directWorkerEnv(),
   });
+  if (init.signal) {
+    const abort = () => child.kill();
+    if (init.signal.aborted) abort();
+    else init.signal.addEventListener('abort', abort, { once: true });
+  }
+  return directWorkerResponse(child);
 }
 
 async function runDirectFetchWorker() {
@@ -2367,12 +2386,12 @@ async function runDirectFetchWorker() {
       headers,
       redirect: 'manual',
     });
-    process.send({
+    console.log(JSON.stringify({
       ok: true,
       status: response.status,
       statusText: response.statusText,
       headers: [...response.headers.entries()],
-    });
+    }));
     if (response.body) {
       for await (const chunk of response.body) {
         await new Promise((resolve, reject) => {
