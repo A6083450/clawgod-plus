@@ -575,6 +575,8 @@ assert.match(workflow, /CLAWGOD_E2E_ENHANCEMENTS='none'/, 'Linux smoke must run 
 assert.match(workflow, /-Enhancements/, 'Windows smoke must pass the -Enhancements selection flag');
 assert.match(workflow, /['"]chrome,computer-use,claude-hud['"]/, 'Windows smoke must run an explicit representative enhancement subset');
 assert.match(workflow, /enhancements\.json/, 'Windows smoke must assert the persisted enhancement config');
+assert.match(workflow, /Invoke-Checked\s+['"]initial -LeanOn irm-pipe install['"]\s+\$windowsPowerShell/, 'Windows smoke must execute the initial irm | iex fixture with Windows PowerShell 5.1');
+assert.match(workflow, /Invoke-Expression\s+\$installerSource/, 'Windows PowerShell 5.1 fixture must execute the installer as a decoded string');
 
 assert.deepEqual(findForbiddenDependencies(workflow, { allowBadgePublishGit: true }), [], 'compat-daily must not require an external Node, npm, system Git, or system ripgrep executable outside badge publishing');
 assert.equal(workflow.match(/FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/g)?.length, 1, 'compat-daily must retain exactly one GitHub Actions runtime setting');

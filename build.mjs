@@ -136,7 +136,8 @@ export function renderTemplate(template, replacements) {
 
 function addGeneratedHeader(output, content) {
   const header = `# ${GENERATED_HEADER}\n`;
-  if (output.endsWith('.sh') && content.startsWith('#!')) {
+  if ((output.endsWith('.sh') && content.startsWith('#!'))
+    || (output.endsWith('.ps1') && content.startsWith('#Requires'))) {
     const lineEnd = content.indexOf('\n');
     return `${content.slice(0, lineEnd + 1)}${header}${content.slice(lineEnd + 1)}`;
   }
@@ -217,8 +218,15 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
           powerShell ? Buffer.from(source, 'utf8').toString('base64') : source,
         ])),
     };
-    const content = renderTemplate(template, replacements);
-    return { ...entry, content: addGeneratedHeader(entry.output, content) };
+    const content = addGeneratedHeader(entry.output, renderTemplate(template, replacements));
+    if (powerShell) {
+      const nonAsciiIndex = content.search(/[^\x00-\x7F]/);
+      if (nonAsciiIndex !== -1) {
+        const codePoint = content.codePointAt(nonAsciiIndex).toString(16).toUpperCase();
+        throw new Error(`${entry.template}: non-ASCII U+${codePoint} at character ${nonAsciiIndex}`);
+      }
+    }
+    return { ...entry, content };
   }));
 }
 

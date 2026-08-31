@@ -686,7 +686,7 @@ assert.match(windowsLifecycle, /\[ConsoleKey\]::Spacebar/, 'PowerShell menu must
 assert.match(windowsLifecycle, /\[ConsoleKey\]::Escape/, 'PowerShell menu must handle Escape');
 assert.match(windowsLifecycle, /SetCursorPosition/, 'PowerShell menu must redraw via SetCursorPosition');
 assert.match(windowsLifecycle, /IsInputRedirected/, 'PowerShell interaction must reject redirected input');
-assert.match(windowsLifecycle, /ClawGod Plus 增强选择/, 'PowerShell lifecycle must embed the quick enhancement prompt');
+assert.match(windowsLifecycle, /ICBDbGF3R29kIFBsdXMg5aKe5by66YCJ5oup/, 'PowerShell lifecycle must embed the UTF-8 quick enhancement prompt');
 const windowsExplicitBranch = windowsLifecycle.indexOf('if ($EnhancementsSpecified)');
 const windowsChooseBranch = windowsLifecycle.indexOf('if ($ChooseEnhancements)', windowsExplicitBranch);
 const windowsExplicitWrite = windowsLifecycle.indexOf('Write-EnhancementSelection -Explicit $Enhancements', windowsExplicitBranch);

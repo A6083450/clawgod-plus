@@ -544,7 +544,7 @@ function powerShellFunction(name) {
 
 function powerShellApplyBlock(source, label) {
   const start = source.indexOf('Write-Dim "Applying patches ..."');
-  const end = source.indexOf('\n# ─── Create default configs', start);
+  const end = source.indexOf('\n# --- Create default configs', start);
   assert.ok(start >= 0 && end > start, `${label} must retain the patch application gate`);
   return source.slice(start, end);
 }
@@ -624,7 +624,7 @@ const unixUninstall = unix.slice(
 );
 const windowsUninstall = windows.slice(
   windows.indexOf('if ($Uninstall) {'),
-  windows.indexOf('# ─── Bun prerequisite'),
+  windows.indexOf('# --- Bun prerequisite'),
 );
 
 const unixLauncherStart = unix.indexOf('LAUNCHER_CONTENT="');
@@ -1626,10 +1626,10 @@ const lifecyclePositions = {
   },
   windows: {
     bun: windows.indexOf('Write-OK "Bun: $(& $BunBin --version)"'),
-    fetch: windows.indexOf('Install-FetchFileHelper', windows.indexOf('# ─── Bun prerequisite')),
+    fetch: windows.indexOf('Install-FetchFileHelper', windows.indexOf('# --- Bun prerequisite')),
     module: windows.indexOf('# --- Optional Claude plugin dependencies'),
     smoke: windows.indexOf('Write-OK "Bun loads cli.original.cjs"'),
-    launcher: windows.indexOf('Write-OK "Commands \'claude\' + \'clawgod\' → patched"'),
+    launcher: windows.indexOf('Write-OK "Commands \'claude\' + \'clawgod\' -> patched"'),
     ensure: windows.indexOf('(Join-Path $ClawDir "plugin-dependencies.mjs") ensure'),
     memory: windows.indexOf('(Join-Path $ClawDir "claude-mem-compat.cjs") install'),
   },

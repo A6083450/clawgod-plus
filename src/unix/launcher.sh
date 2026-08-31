@@ -29,6 +29,7 @@ if [ ! -x \"\$BUN_BIN\" ]; then
   exit 127
 fi
 export CLAUDE_CODE_EXECPATH=\"$CLAUDE_BIN.orig\"
+export HERDR_AGENT=\"\${HERDR_AGENT-claude}\"
 if [ \"\${1:-}\" = \"agents\" ] && [ \"\${CLAWGOD_NO_AUTO_CHROME:-}\" != \"1\" ]; then
   exec \"\$BUN_BIN\" \"\$CLAWGOD_CLI\" --chrome \"\$@\"
 fi

@@ -923,11 +923,17 @@ assert.deepEqual(JSON.parse(featuresJson), {
 }, 'canonical features.json must preserve the existing feature payload');
 
 for (const entry of OUTPUTS) {
-  const output = readFileSync(join(root, entry.output), 'utf8');
+  const outputPath = join(root, entry.output);
+  const outputBytes = readFileSync(outputPath);
+  const output = outputBytes.toString('utf8');
   assert.equal(output.includes(placeholder('FEATURES_JSON')), false, `${entry.output} must not retain the features placeholder`);
   assert.equal(output.split(featuresJson.trimEnd()).length - 1, 1, `${entry.output} must embed canonical features.json exactly once`);
   assert.equal(output.split(GENERATED_HEADER).length - 1, 1, `${entry.output} must contain one generated-file header`);
-  const actualMode = statSync(join(root, entry.output)).mode;
+  if (entry.output.endsWith('.ps1')) {
+    assert.equal(outputBytes.subarray(0, 9).toString('ascii'), '#Requires', 'install.ps1 must start with #Requires for irm | iex');
+    assert.equal(outputBytes.some(byte => byte > 0x7f), false, 'install.ps1 must be BOM-free ASCII for Windows PowerShell 5.1');
+  }
+  const actualMode = statSync(outputPath).mode;
   if (process.platform === 'win32') {
     assert.equal(actualMode & 0o200, entry.mode & 0o200, `${entry.output} must preserve its writable attribute`);
   } else {

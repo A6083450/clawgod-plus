@@ -87,7 +87,7 @@ printf 'mutated\\n' > "$LAUNCHER_SENTINEL"
 }
 
 const windowsSmokeStart = windows.indexOf('Write-Dim "Verifying Bun can load patched cli.original.cjs ..."');
-const windowsSmokeEnd = windows.indexOf('\n# ─── Replace claude command', windowsSmokeStart);
+const windowsSmokeEnd = windows.indexOf('\n# --- Replace claude command', windowsSmokeStart);
 assert.ok(windowsSmokeStart >= 0 && windowsSmokeEnd > windowsSmokeStart, 'install.ps1 must retain its post-install smoke block');
 const windowsSmoke = windows.slice(windowsSmokeStart, windowsSmokeEnd);
 assert.match(windowsSmoke, /\$sanityStatus\s*=\s*\$LASTEXITCODE/, 'install.ps1 must capture the native smoke exit status');

@@ -577,7 +577,32 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Split-Path -Parent $claudeMemSentinelPath) | Out-Null
           [System.IO.File]::WriteAllBytes($claudeMemSentinelPath, $claudeMemSentinel)
 
-          $initialOutput = Invoke-Checked 'initial -LeanOn install' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-LeanOn')
+          $installerBytes = [System.IO.File]::ReadAllBytes($installer)
+          if ($installerBytes | Where-Object { $_ -gt 0x7F } | Select-Object -First 1) {
+            throw 'install.ps1 must be BOM-free ASCII'
+          }
+          if (-not [System.Text.Encoding]::ASCII.GetString($installerBytes).StartsWith('#Requires')) {
+            throw 'install.ps1 must start with #Requires'
+          }
+          $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          if (-not (Test-Path -LiteralPath $windowsPowerShell -PathType Leaf)) {
+            throw 'Windows PowerShell 5.1 is unavailable'
+          }
+          $iexFixture = Join-Path $sandbox 'invoke-installer-expression.ps1'
+          $iexFixtureSource = @'
+$ErrorActionPreference = 'Stop'
+$installerSource = [System.IO.File]::ReadAllText($env:CLAWGOD_IEX_INSTALLER, [System.Text.Encoding]::ASCII)
+Invoke-Expression $installerSource
+'@
+          [System.IO.File]::WriteAllText($iexFixture, $iexFixtureSource, [System.Text.Encoding]::ASCII)
+          $env:CLAWGOD_LEAN_ON = '1'
+          $env:CLAWGOD_IEX_INSTALLER = $installer
+          try {
+            $initialOutput = Invoke-Checked 'initial -LeanOn irm-pipe install' $windowsPowerShell @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $iexFixture)
+          } finally {
+            Remove-Item Env:CLAWGOD_LEAN_ON -ErrorAction SilentlyContinue
+            Remove-Item Env:CLAWGOD_IEX_INSTALLER -ErrorAction SilentlyContinue
+          }
           $initialSummary = Assert-PatchSummary 'initial' $initialOutput
           Write-Host "patch summary windows initial: $($initialSummary.Groups[1].Value) applied, $($initialSummary.Groups[2].Value) skipped, 0 failed"
           Assert-PluginSummary 'initial' $initialOutput

@@ -2444,7 +2444,14 @@ if (!url || !destination) throw new Error('usage: fetch-file.mjs <url> <destinat
 const temporary = `${destination}.${process.pid}.tmp`;
 try {
   const response = await fetchWithProxy(url);
-  await Bun.write(temporary, response);
+  const writer = Bun.file(temporary).writer();
+  try {
+    if (response.body) {
+      for await (const chunk of response.body) await writer.write(chunk);
+    }
+  } finally {
+    await writer.end();
+  }
   renameSync(temporary, destination);
 } finally {
   if (existsSync(temporary)) rmSync(temporary, { force: true });
@@ -9900,6 +9907,7 @@ if [ ! -x \"\$BUN_BIN\" ]; then
   exit 127
 fi
 export CLAUDE_CODE_EXECPATH=\"$CLAUDE_BIN.orig\"
+export HERDR_AGENT=\"\${HERDR_AGENT-claude}\"
 if [ \"\${1:-}\" = \"agents\" ] && [ \"\${CLAWGOD_NO_AUTO_CHROME:-}\" != \"1\" ]; then
   exec \"\$BUN_BIN\" \"\$CLAWGOD_CLI\" --chrome \"\$@\"
 fi

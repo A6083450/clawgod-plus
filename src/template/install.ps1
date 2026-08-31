@@ -88,10 +88,10 @@ function Invoke-ChromePostInstallFix {
     }
 }
 
-# ─── Colors ───────────────────────────────────────────
+# --- Colors -----------------------------------------------------------
 
-function Write-OK($msg)   { Write-Host "  ✓ $msg" -ForegroundColor Green }
-function Write-Err($msg)  { Write-Host "  ✗ $msg" -ForegroundColor Red }
+function Write-OK($msg)   { Write-Host "  $([char]0x2713) $msg" -ForegroundColor Green }
+function Write-Err($msg)  { Write-Host "  $([char]0x2717) $msg" -ForegroundColor Red }
 function Write-Warn($msg) { Write-Host "  ! $msg" -ForegroundColor Yellow }
 function Write-Dim($msg)  { Write-Host "  $msg" -ForegroundColor DarkGray }
 
@@ -226,7 +226,7 @@ Write-Host "  ClawGod Plus Installer" -ForegroundColor White -NoNewline
 Write-Host " (Windows)" -ForegroundColor DarkGray
 Write-Host ""
 
-# ─── Uninstall ────────────────────────────────────────
+# --- Uninstall ----------------------------------------
 
 if ($Uninstall) {
     $BunBin = Resolve-Bun
@@ -328,17 +328,17 @@ if ($Uninstall) {
     exit 0
 }
 
-# ─── Bun prerequisite ──────────────────────────────────
+# --- Bun prerequisite ----------------------------------
 
 $BunBin = Resolve-Bun
 if (-not $BunBin) { exit 1 }
 Write-OK "Bun: $(& $BunBin --version)"
 
-# ─── Bun version pre-flight ───────────────────────────────────────────
+# --- Bun version pre-flight -------------------------------------------
 # Anthropic builds the native binary with Bun's canary channel; stable
 # bun.sh trails by one version. Bun < 1.3.14 panics on cli.original.cjs
 # with "Expected CommonJS module to have a function wrapper". Refuse
-# early — no npm download / no patch / no late sanity surprise where
+# early -- no npm download / no patch / no late sanity surprise where
 # PowerShell's NativeCommandError display buries the friendly message.
 # Bump $MinBunVersion when Anthropic moves the embedded Bun forward
 # again.
@@ -406,7 +406,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 $ripgrepOutput | ForEach-Object { Write-OK "$_" }
 
-# ─── Handle -NoUpgrade (skip download, re-patch only) ────────────────
+# --- Handle -NoUpgrade (skip download, re-patch only) ----------------
 New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
 $RuntimeTarget = Join-Path $ClawDir "cli.original.cjs"
 $RuntimeSourceVersion = Join-Path $ClawDir ".source-version"
@@ -467,9 +467,9 @@ if (Test-Path $staleCliBak) { Remove-Item -Force $staleCliBak }
 $staleChunksBak = Join-Path $ClawDir "chunks.bak"
 if (Test-Path $staleChunksBak) { Remove-Item -Recurse -Force $staleChunksBak }
 
-# ─── Locate native Bun binary (cli.js source) ──────────────────────────
+# --- Locate native Bun binary (cli.js source) --------------------------
 # Source: npm registry (@anthropic-ai/claude-code-win32-<arch>).
-# Local binary detection is intentionally skipped — see policy note below.
+# Local binary detection is intentionally skipped -- see policy note below.
 
 New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BinDir  | Out-Null
@@ -499,12 +499,12 @@ $platformSuffix = "win32-$arch"
 # out `claude update`, so users never re-run the underlying installers,
 # and those directories freeze at whatever version was on disk the day
 # clawgod was first installed. `claude update` (which is now redirected
-# here) would re-detect the frozen binary forever — never reaching the
+# here) would re-detect the frozen binary forever -- never reaching the
 # registry. See INCIDENT_LOG 2026-04-29 entry. The fix is to skip local
 # detection entirely; the npm tarball is ~60-90 MB compressed, fetched
 # once per upgrade.
 
-# npm registry — pull the platform tarball directly via Bun.
+# npm registry -- pull the platform tarball directly via Bun.
 if (-not $NativeBin) {
     $npmPkg = "@anthropic-ai/claude-code-$platformSuffix"
     Write-Dim "Fetching $npmPkg@$Version from npm registry ..."
@@ -554,7 +554,7 @@ $extractorPath = Join-Path $ClawDir "extract-natives.mjs"
 $ExtractorBytes = [Convert]::FromBase64String('@@CLAWGOD_EXTRACTOR_MJS_BASE64@@')
 [System.IO.File]::WriteAllBytes($extractorPath, $ExtractorBytes)
 
-# ─── Extract cli.js + native modules from Bun binary ──────────
+# --- Extract cli.js + native modules from Bun binary ----------
 
 # Single extractor pass: stages cli.original.js and native modules in the
 # same-filesystem runtime transaction until mandatory patches pass.
@@ -570,9 +570,9 @@ if (-not (Test-Path $dstCli)) {
     exit 1
 }
 
-# Note: keep extractorPath around — repatch.mjs uses it on version drift
+# Note: keep extractorPath around -- repatch.mjs uses it on version drift
 
-# ─── Post-process cli.js for Bun runtime ──────────────────────
+# --- Post-process cli.js for Bun runtime ----------------------
 
 Write-Dim "Rewriting bunfs paths and IIFE invocation ..."
 $postProc = Join-Path $ClawDir "post-process.mjs"
@@ -601,7 +601,7 @@ if (Test-Path $candidateChunks) {
     Move-Item -LiteralPath $candidateChunks -Destination $chunksTarget -Force
 }
 
-# Design canvas editor payload (loader=file asset from the binary) — see
+# Design canvas editor payload (loader=file asset from the binary) -- see
 # wrapper.cjs CLAWGOD_DESIGN_PAYLOAD export.
 $candidateAssets = Join-Path $RuntimeCandidateDir "assets"
 if (Test-Path $candidateAssets) {
@@ -615,7 +615,7 @@ if (Test-Path $candidateAssets) {
 # Stamp source version so wrapper can detect drift on next launch
 Set-Content -Path (Join-Path $ClawDir ".source-version") -Value $NativeBinLabel -Encoding ASCII
 
-# If we pulled the binary from npm into a tmpdir, clean up — extraction
+# If we pulled the binary from npm into a tmpdir, clean up -- extraction
 # is done; drift detection only consults %USERPROFILE%\.local\share\claude\versions\.
 if ($NativeBinTmpDir -and (Test-Path $NativeBinTmpDir)) {
     Remove-Item -Recurse -Force $NativeBinTmpDir -ErrorAction SilentlyContinue
@@ -625,33 +625,33 @@ Write-OK "cli.original.cjs ready ($NativeBinLabel)"
 
 }  # end -NoUpgrade skip
 
-# ─── Write re-patch helper (used by wrapper on version drift) ─────────
+# --- Write re-patch helper (used by wrapper on version drift) ---------
 
 $RepatcherBytes = [Convert]::FromBase64String('@@CLAWGOD_REPATCHER_MJS_BASE64@@')
 [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "repatch.mjs"), $RepatcherBytes)
 Write-OK "Re-patch helper installed (repatch.mjs)"
 
-# ─── Write OpenAI-compatible proxy ────────────────────────────
+# --- Write OpenAI-compatible proxy ----------------------------
 
 $OpenAIProxyBytes = [Convert]::FromBase64String('@@CLAWGOD_OPENAI_PROXY_CJS_BASE64@@')
 [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "openai-proxy.cjs"), $OpenAIProxyBytes)
 Write-OK "OpenAI-compatible proxy created (openai-proxy.cjs)"
 
-# ─── Write wrapper (cli.cjs, runs under Bun) ──────────────────
+# --- Write wrapper (cli.cjs, runs under Bun) ------------------
 
 $WrapperBytes = [Convert]::FromBase64String('@@CLAWGOD_WRAPPER_CJS_BASE64@@')
 [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "cli.cjs"), $WrapperBytes)
 Set-Content (Join-Path $ClawDir ".clawgod-version") $ClawSelfVersion
 Write-OK "Wrapper created (cli.cjs)"
 
-# ─── Write universal patcher ──────────────────────────
-# (Same Bun patcher as bash version — inline to avoid extra download)
+# --- Write universal patcher --------------------------
+# (Same Bun patcher as bash version -- inline to avoid extra download)
 
 $PatcherBytes = [Convert]::FromBase64String('@@CLAWGOD_PATCHER_MJS_BASE64@@')
 [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "patch.mjs"), $PatcherBytes)
 Write-OK "Patcher created (patch.mjs)"
 
-# ─── Apply patches ────────────────────────────────────
+# --- Apply patches ------------------------------------
 
 Write-Dim "Applying patches ..."
 $patchOutput = & $BunBin (Join-Path $ClawDir "patch.mjs") --enhancements-file (Join-Path $ClawDir "enhancements.json") 2>&1
@@ -713,7 +713,7 @@ $RuntimeTransactionCommitted = $true
 }
 Invoke-ChromePostInstallFix
 
-# ─── Create default configs ───────────────────────────
+# --- Create default configs ---------------------------
 
 $featuresFile = Join-Path $ClawDir "features.json"
 if (-not (Test-Path $featuresFile)) {
@@ -724,7 +724,7 @@ if (-not (Test-Path $featuresFile)) {
     Write-OK "Default features.json created"
 }
 
-# ─── Lean mode: optimize ~/.claude/settings.json ─────
+# --- Lean mode: optimize ~/.claude/settings.json -----
 $leanOffFlag = Join-Path $ClawDir ".lean-disabled"
 $leanMaxFlag = Join-Path $ClawDir ".lean-max"
 $claudeSettingsDir = Join-Path $env:USERPROFILE ".claude"
@@ -751,7 +751,7 @@ fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");
 '@
     if (Test-Path $claudeSettings) {
         try {
-            # bun -e 在 Windows 下会丢失多行脚本中的双引号，落盘后传文件路径执行
+            # Windows CreateProcess can strip quotes from multiline bun -e source; execute a file instead.
             $leanRemoveScriptFile = Join-Path $ClawDir 'lean-remove.mjs'
             Set-Content -Path $leanRemoveScriptFile -Value $leanRemoveScript -Encoding ASCII
             & $BunBin $leanRemoveScriptFile "$claudeSettings" 2>$null
@@ -789,7 +789,7 @@ for (const t of deny) { if (!ex.has(t)) { s.permissions.deny.push(t); changed = 
 if (changed) fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + "\n");
 '@
     try {
-        # bun -e 在 Windows 下会丢失多行脚本中的双引号，落盘后传文件路径执行
+        # Windows CreateProcess can strip quotes from multiline bun -e source; execute a file instead.
         $leanApplyScriptFile = Join-Path $ClawDir 'lean-apply.mjs'
         Set-Content -Path $leanApplyScriptFile -Value $leanApplyScript -Encoding ASCII
         & $BunBin $leanApplyScriptFile "$claudeSettings" "$leanIsMax" 2>$null
@@ -800,11 +800,11 @@ if (changed) fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + "\n");
     Write-Host "  $([char]0x2022) Lean mode disabled (claude --lean-on to re-enable)" -ForegroundColor DarkGray
 }
 
-# ─── Sanity check: ensure user's Bun can actually load cli.original.cjs ──
+# --- Sanity check: ensure user's Bun can actually load cli.original.cjs --
 # Anthropic builds the native binary with a bleeding-edge Bun build (e.g.
 # 1.3.14 while stable still ships 1.3.13). Older Bun crashes loading the
 # extracted cli.original.cjs with "Expected CommonJS module to have a
-# function wrapper". Detect this BEFORE we install the launcher — better
+# function wrapper". Detect this BEFORE we install the launcher -- better
 # to fail loudly than to leave the user with a launcher that panics on
 # first invocation.
 
@@ -815,7 +815,7 @@ $sanityCli = Join-Path $ClawDir "cli.cjs"
 # this script is piped through `iex`) that terminates BEFORE we even
 # read $sanityOut. Localize ErrorActionPreference + try/catch so the
 # panic message reliably lands in $sanityOut and our friendly Write-Err
-# block runs. Defense-in-depth — pre-flight already blocks Bun < $MinBunVersion;
+# block runs. Defense-in-depth -- pre-flight already blocks Bun < $MinBunVersion;
 # this remains for the day Anthropic bumps embedded Bun past our constant.
 $sanityOut = $null
 $sanityStatus = 1
@@ -836,7 +836,7 @@ if ($sanityOut -match "Expected CommonJS module to have a function wrapper") {
     Write-Err ""
     Write-Err "  Anthropic builds with Bun's canary channel (currently ~1.3.14), while"
     Write-Err "  bun.sh's main download is on stable (currently 1.3.13). The canary build"
-    Write-Err "  is NOT visible on bun.sh's download page — it lives on GitHub Releases"
+    Write-Err "  is NOT visible on bun.sh's download page -- it lives on GitHub Releases"
     Write-Err "  and is reachable only via 'bun upgrade --canary'."
     Write-Err ""
     Write-Err "  If your bun is from bun.sh:"
@@ -849,7 +849,7 @@ if ($sanityOut -match "Expected CommonJS module to have a function wrapper") {
     Write-Err "    irm https://bun.sh/install.ps1 | iex"
     Write-Err "    bun upgrade --canary"
     Write-Err ""
-    Write-Err "  Then re-run .\install.ps1 — this sanity check will pass."
+    Write-Err "  Then re-run .\install.ps1 -- this sanity check will pass."
     if ($sanityStatus -eq 0) { $sanityStatus = 1 }
     exit $sanityStatus
 }
@@ -860,7 +860,7 @@ if ($sanityStatus -ne 0) {
 }
 Write-OK "Bun loads cli.original.cjs"
 
-# ─── Replace claude command ───────────────────────────
+# --- Replace claude command ---------------------------
 
 # Build launcher content using %USERPROFILE% env var where possible to avoid
 # encoding issues when the profile path contains non-ASCII characters (e.g.
@@ -875,7 +875,7 @@ if ($normalizedBunBin.Equals($normalizedUserProfile, [StringComparison]::Ordinal
     $bunRelative = $normalizedBunBin.Substring($normalizedUserProfile.Length).TrimStart('\', '/')
     $bunPathInCmd = "%USERPROFILE%\$bunRelative"
 } else {
-    # Bun outside USERPROFILE (e.g. system-wide install) — fall back to
+    # Bun outside USERPROFILE (e.g. system-wide install) -- fall back to
     # absolute path since %USERPROFILE%-relative expansion doesn't apply.
     $bunPathInCmd = $BunBin
 }
@@ -925,19 +925,19 @@ foreach ($loc in @(
     # Back up .exe if exists and not already backed up
     if ($loc -like "*.exe" -and -not (Test-ClaudePathPresent $claudeOrigExe)) {
         Copy-Item $loc $claudeOrigExe -Force
-        Write-OK "Original claude.exe backed up → claude.orig.exe"
+        Write-OK "Original claude.exe backed up -> claude.orig.exe"
     }
     # Back up .cmd if exists and not already backed up
     if ($loc -like "*.cmd" -and -not (Test-ClaudePathPresent $claudeOrigCmd)) {
         Copy-Item $loc $claudeOrigCmd -Force
-        Write-OK "Original claude.cmd backed up → claude.orig.cmd"
+        Write-OK "Original claude.cmd backed up -> claude.orig.cmd"
     }
     # If it's a versions directory, find the latest exe
     if (Test-Path $loc -PathType Container) {
         $latestExe = Get-ChildItem $loc -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
         if ($latestExe -and -not (Test-ClaudePathPresent $claudeOrigExe)) {
             Copy-Item $latestExe.FullName $claudeOrigExe -Force
-            Write-OK "Original claude backed up → claude.orig.exe ($($latestExe.Name))"
+            Write-OK "Original claude backed up -> claude.orig.exe ($($latestExe.Name))"
         }
     }
 }
@@ -950,7 +950,7 @@ if (Test-ClaudePathPresent $claudeExe) {
         Write-OK "Removed owned claude.exe launcher (.cmd now takes priority)"
     } elseif (-not (Test-ClaudePathPresent $claudeOrigExe)) {
         Rename-Item $claudeExe $claudeOrigExe -Force
-        Write-OK "Renamed claude.exe → claude.orig.exe"
+        Write-OK "Renamed claude.exe -> claude.orig.exe"
     } else {
         # Conflict preflight plus backup search proved this exact current path is preserved.
         try {
@@ -973,7 +973,7 @@ if (Test-ClaudePathPresent $claudeExe) {
 foreach ($cmd in @("claude", "clawgod")) {
     $launcherContent | Set-Content (Join-Path $BinDir "$cmd.cmd") -Encoding Default
 }
-Write-OK "Commands 'claude' + 'clawgod' → patched"
+Write-OK "Commands 'claude' + 'clawgod' -> patched"
 
 # --- Ensure optional Claude plugins ---------------------------------
 
@@ -1010,7 +1010,7 @@ try {
     Remove-Item Env:CLAWGOD_CLAUDE_BIN -ErrorAction SilentlyContinue
 }
 
-# ─── Ensure BinDir is in PATH ─────────────────────────
+# --- Ensure BinDir is in PATH -------------------------
 
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($userPath -notlike "*$BinDir*") {
@@ -1020,16 +1020,16 @@ if ($userPath -notlike "*$BinDir*") {
     Write-Dim "(restart terminal for PATH to take effect)"
 }
 
-# ─── Done ─────────────────────────────────────────────
+# --- Done ---------------------------------------------
 
 Write-Host ""
 Write-Host "  ClawGod Plus installed!" -ForegroundColor Green
 Write-Host ""
-Write-Dim "  claude            — Start patched Claude Code (green logo)"
-Write-Dim "  claude.orig       — Run original unpatched Claude Code"
+Write-Dim "  claude            -- Start patched Claude Code (green logo)"
+Write-Dim "  claude.orig       -- Run original unpatched Claude Code"
 Write-Host ""
 Write-Dim "  Updates: 'claude update' is patched to route through this installer."
-Write-Dim "  Just run it as usual — pulls latest Anthropic release + re-patches"
+Write-Dim "  Just run it as usual -- pulls latest Anthropic release + re-patches"
 Write-Dim "  in one step. Extra options:"
 Write-Dim "    claude update --version 2.1.180   (install a specific version)"
 Write-Dim "    claude update --no-upgrade        (re-patch without downloading)"
@@ -1044,6 +1044,6 @@ Write-Host ""
 Write-Dim "  If 'claude' panics with 'Expected CommonJS module to have a function wrapper',"
 Write-Dim "  your Bun lags Anthropic's embedded Bun. Upgrade with one of:"
 Write-Dim "    bun upgrade --canary           (if installed from bun.sh)"
-Write-Dim "    scoop update bun               (scoop — may lag stable)"
+Write-Dim "    scoop update bun               (scoop -- may lag stable)"
 Write-Dim "    irm https://bun.sh/install.ps1 | iex   (re-install latest)"
 Write-Host ""

@@ -587,7 +587,7 @@ for (const [name, source] of [['install.sh', unix], ['install.ps1', windows]]) {
   assert.doesNotMatch(source, name === 'install.sh' ? /command -v rg/ : /Get-Command rg/, `${name} must not require a system ripgrep`);
   assert.match(source, /install-ripgrep\.mjs/, `${name} cleanup and lifecycle must reference the generated module`);
   const modulePosition = source.indexOf('install-ripgrep.mjs');
-  const noUpgradePosition = source.indexOf(name === 'install.sh' ? '# ─── Handle --no-upgrade' : '# ─── Handle -NoUpgrade');
+  const noUpgradePosition = source.indexOf(name === 'install.sh' ? '# ─── Handle --no-upgrade' : '# --- Handle -NoUpgrade');
   const ensurePosition = source.indexOf(name === 'install.sh' ? '"$BUN_BIN" "$CLAWGOD_DIR/install-ripgrep.mjs"' : '& $BunBin (Join-Path $ClawDir "install-ripgrep.mjs")');
   assert.ok(modulePosition >= 0 && ensurePosition > modulePosition && ensurePosition < noUpgradePosition, `${name} must install managed ripgrep before both normal and no-upgrade branches`);
 }
