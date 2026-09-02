@@ -39,11 +39,17 @@ const canonicalSpan = transactionSpan(canonical, 'src/template/install.ps1');
 const generatedSpan = transactionSpan(generated, 'dist/win/install.ps1');
 assert.match(generatedSpan, /\$RuntimeTransactionCommitted = \$true/, 'generated Windows transaction span must retain production commit assignment');
 assert.match(generatedSpan, /\} finally \{[\s\S]*?\$RuntimeHadPatchFallback/, 'generated Windows transaction span must retain production rollback finalizer');
-const fixtureSpan = canonicalSpan.replace(
-  'exit $patchStatus',
-  'throw "Mandatory patching failed with status $patchStatus"',
-);
-assert.notEqual(fixtureSpan, canonicalSpan, 'fixture must convert only the process exit boundary so the production finalizer can be observed');
+// The canonical span is extracted from the source template, whose byte-runtime
+// variables are still `@@CLAWGOD_*_BASE64@@` placeholders. Drop those assignment
+// lines so the harness's injected fake fetch/extract/post-process/patcher bytes
+// (set above) survive into the native run instead of throwing on invalid base64.
+const fixtureSpan = canonicalSpan
+  .replace(/^[ \t]*\$[A-Za-z]+Bytes = \[Convert\]::FromBase64String\('@@CLAWGOD_[A-Z0-9_]+@@'\)\n/gm, '')
+  .replace(
+    'exit $patchStatus',
+    'throw "Mandatory patching failed with status $patchStatus"',
+  );
+assert.notEqual(fixtureSpan, canonicalSpan, 'fixture must diverge from the canonical span (stripped placeholders + throw conversion)');
 assert.match(fixtureSpan, /\$RuntimeTransactionCommitted = \$true/, 'fixture span must execute production commit assignment');
 assert.match(fixtureSpan, /\} finally \{/, 'fixture span must execute production rollback finalizer');
 const dedicatedTestSource = readFileSync(new URL(import.meta.url), 'utf8');
@@ -111,6 +117,7 @@ $NativeBinLabel = $null
 $NativeBin = $null
 $NativeBinTmpDir = $null
 $Version = 'latest'
+$ClawSelfVersion = '2026.9.2-claude.2.1.258'
 $NoUpgrade = [System.Convert]::ToBoolean($env:CLAWGOD_TEST_NO_UPGRADE)
 $RuntimeTarget = Join-Path $ClawDir 'cli.original.cjs'
 $RuntimeSourceVersion = Join-Path $ClawDir '.source-version'
@@ -275,6 +282,8 @@ ${fixtureSpan}
         ...process.env,
         HOME: paths.clawDir,
         USERPROFILE: paths.clawDir,
+        TEMP: root,
+        TMP: root,
         CLAWGOD_TEST_BUN: process.execPath,
         CLAWGOD_TEST_DIR: paths.clawDir,
         CLAWGOD_TEST_CANDIDATE_VENDOR: paths.candidateVendor,
