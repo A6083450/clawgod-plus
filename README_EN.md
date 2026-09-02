@@ -320,7 +320,7 @@ Use the normal command:
 claude update
 ```
 
-The enhanced patch routes updates through the installed local ClawGod Plus installer when available. Plain `claude update` selects the latest Claude Code release, re-extracts it, reapplies the complete patch set, and rewrites the launchers. Plugin baselines are managed separately: the update does not pin Claude Code to plugin versions.
+`claude update` is handed directly to the ClawGod updater by the wrapper and no longer depends on the upstream bundle's update action shape. If a new release only drifts on a mandatory bundle recognizer, the update commits a clean post-processed Claude Code runtime and shows a fallback warning; download, extract, vendor-publication, or Bun-load failures still roll back. Running the installer directly, first install, and `--no-upgrade` do not enable that degradation. Plugin baselines are managed separately: the update does not pin Claude Code to plugin versions.
 
 ```bash
 claude update --version 2.1.220  # pin a known Claude Code version

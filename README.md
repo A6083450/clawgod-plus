@@ -320,7 +320,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 claude update
 ```
 
-增强补丁会在本地 ClawGod Plus 安装器存在时把更新请求路由给它。普通的 `claude update` 会选择最新 Claude Code Release，重新提取、应用完整补丁集并重写 Launcher。插件基线独立管理：更新不会把 Claude Code 固定到插件版本。
+`claude update` 由 wrapper 直接交给 ClawGod updater，不再依赖上游 bundle 的 update action 形状。若新版只有 mandatory bundle recognizer 兼容性漂移，更新会提交 clean post-processed Claude Code runtime，并显示 fallback warning；下载、提取、vendor 发布或 Bun load 失败仍回滚。直接运行 installer、首次安装和 `--no-upgrade` 不启用该降级。插件基线独立管理：更新不会把 Claude Code 固定到插件版本。
 
 ```bash
 claude update --version 2.1.220  # 锁定已知 Claude Code 版本

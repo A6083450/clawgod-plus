@@ -107,6 +107,14 @@ jobs:
             echo '::error::clean no-upgrade patch summary was not observed'
             exit 1
           }
+          grep -q '^clean fallback state unix initial: patch-fallback=absent self-update=present patch-fallback-cjs=present$' "$log" || {
+            echo '::error::clean initial install must not record patch fallback state'
+            exit 1
+          }
+          grep -q '^clean fallback state unix no-upgrade: patch-fallback=absent self-update=present patch-fallback-cjs=present$' "$log" || {
+            echo '::error::clean no-upgrade install must not record patch fallback state'
+            exit 1
+          }
           grep -q '^worker resolver: marker-count=1 context=cli.cjs-return$' "$log" || {
             echo '::error::plain Bun worker resolver invariant was not observed'
             exit 1
@@ -620,6 +628,10 @@ jobs:
           Write-Host "patch summary windows initial: $($initialSummary.Groups[1].Value) applied, $($initialSummary.Groups[2].Value) skipped, 0 failed"
           Assert-PluginSummary 'initial' $initialOutput
           Assert-EnhancementConfig 'initial' 'all' 0
+          if (Test-Path (Join-Path $env:USERPROFILE '.clawgod\patch-fallback.json')) { throw 'clean initial install must not record patch fallback state' }
+          if (-not (Test-Path (Join-Path $env:USERPROFILE '.clawgod\self-update.cjs'))) { throw 'clean initial install must provide self-update.cjs' }
+          if (-not (Test-Path (Join-Path $env:USERPROFILE '.clawgod\patch-fallback.cjs'))) { throw 'clean initial install must provide patch-fallback.cjs' }
+          Write-Host 'clean fallback state windows initial: patch-fallback=absent self-update=present patch-fallback-cjs=present'
 
           $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
           if ($settings.disableWorkflows -ne $true) { throw '-LeanOn did not apply lean settings' }
@@ -704,6 +716,9 @@ jobs:
             (Join-Path $managedRoot 'staging\claude-plugins')
           )) {
             if (Test-Path $path) { throw "Uninstall retained ClawGod plugin artifact: $path" }
+          }
+          foreach ($fallbackFile in @('self-update.cjs', 'patch-fallback.cjs', 'patch-fallback.json')) {
+            if (Test-Path (Join-Path $managedRoot $fallbackFile)) { throw "Uninstall retained fallback runtime file: $fallbackFile" }
           }
           Write-Host 'uninstall cleanup windows: managed-runtime=absent settings=restored external-launchers=absent'
           Assert-NoForbiddenDependency @()

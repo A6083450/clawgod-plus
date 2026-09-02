@@ -320,7 +320,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 claude update
 ```
 
-ローカル ClawGod Plus インストーラが存在する場合、拡張パッチは更新をそこへルーティングします。通常の `claude update` は最新の Claude Code Release を選択し、再抽出、全パッチの再適用、Launcher の再作成を行います。プラグインのベースラインは独立して管理され、Claude Code をプラグインのバージョンに固定しません。
+`claude update` は wrapper から ClawGod updater に直接渡され、上流 bundle の update action 形状には依存しません。新バージョンが mandatory bundle recognizer の互換性ドリフトだけなら、更新は clean な post-process 済み Claude Code runtime をコミットして fallback warning を表示します。ダウンロード、抽出、vendor 公開、Bun load の失敗は引き続きロールバックされます。インストーラを直接実行、初回インストール、`--no-upgrade` ではこのフォールバックは有効になりません。プラグインのベースラインは独立して管理され、Claude Code をプラグインのバージョンに固定しません。
 
 ```bash
 claude update --version 2.1.220  # 既知の Claude Code バージョンに固定

@@ -464,6 +464,13 @@ function validateUninstallCleanup({ managedRoot, settingsPath, expectedSettingsB
   return `uninstall cleanup: managed-runtime=absent settings=${settingsState} external-launchers=absent`;
 }
 
+function validateCleanFallbackState(label) {
+  assert.equal(existsSync(join(clawgodDir, 'patch-fallback.json')), false, `${label}: a clean install must not be in compatibility fallback`);
+  assert.equal(existsSync(join(clawgodDir, 'self-update.cjs')), true, `${label}: a clean install must provide the self-update runtime`);
+  assert.equal(existsSync(join(clawgodDir, 'patch-fallback.cjs')), true, `${label}: a clean install must provide the patch-fallback runtime`);
+  return `clean fallback state ${label}: patch-fallback=absent self-update=present patch-fallback-cjs=present`;
+}
+
 if (process.env.CLAWGOD_E2E_CONTRACT) {
   try {
     const input = process.env.CLAWGOD_E2E_CONTRACT_INPUT ?? '';
@@ -778,6 +785,7 @@ try {
   assertHarborKitePreserved('initial install');
   assertLeanOn();
   console.log(assertEnhancementConfig('initial'));
+  console.log(validateCleanFallbackState('unix initial'));
   let managedHudModulePath = join(clawgodDir, 'claude-hud-statusline.mjs');
   let initialPlugins;
   if (fullPluginValidation) {
@@ -820,6 +828,7 @@ try {
   assertHarborKitePreserved('no-upgrade install');
   assertLeanOff();
   console.log(assertEnhancementConfig('no-upgrade'));
+  console.log(validateCleanFallbackState('unix no-upgrade'));
   if (fullPluginValidation) {
     const noUpgradePlugins = validateInstalledPluginState('no-upgrade install');
     console.log(validateHudStatusLine(readSettings(), isolatedRuntime.bunPath, managedHudModulePath));
@@ -857,6 +866,9 @@ try {
     join(clawgodDir, 'cache', 'claude-plugins'),
     join(clawgodDir, 'staging', 'claude-plugins'),
   ]) assert.equal(existsSync(path), false, `uninstall must remove ClawGod plugin artifact: ${path}`);
+  for (const fallbackFile of ['self-update.cjs', 'patch-fallback.cjs', 'patch-fallback.json']) {
+    assert.equal(existsSync(join(clawgodDir, fallbackFile)), false, `uninstall must remove the update/fallback runtime file: ${fallbackFile}`);
+  }
   assertHarborKitePreserved('uninstall');
   assert.equal(readSettings().unrelatedInstallerE2EValue, 'preserve-me', 'uninstall must retain unrelated settings values');
   assertNoForbiddenDependency();
