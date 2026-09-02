@@ -22,6 +22,7 @@ function findPwsh() {
 }
 
 function transactionSpan(source, label) {
+  source = source.replace(/\r\n/g, '\n');
   const marker = '$RuntimeTransactionCleanupSafe = $true\ntry {';
   const start = source.indexOf(marker);
   const end = source.indexOf('\n# --- Create default configs', start);
