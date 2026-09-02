@@ -9151,10 +9151,10 @@ var independentPatches = [
   collapsedRowsPatch
 ];
 function createAgentsRegistry({ chromeEnabled }) {
-  const patches2 = chromeEnabled ? [...independentPatches, defaultAgentsViewPatch].sort((left, right) => left.order - right.order) : [...independentPatches];
+  const patches13 = chromeEnabled ? [...independentPatches, defaultAgentsViewPatch].sort((left, right) => left.order - right.order) : [...independentPatches];
   return Object.freeze({
     id: "agents",
-    patches: Object.freeze(patches2),
+    patches: Object.freeze(patches13),
     customPatches: Object.freeze([])
   });
 }
