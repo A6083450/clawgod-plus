@@ -8,6 +8,8 @@ import { renderGeneratedPair } from '../build.mjs';
 
 const generated = await renderGeneratedPair();
 const installer = generated.find(pair => pair.output === 'dist/unix/install.sh').content;
+const windowsInstaller = generated.find(pair => pair.output === 'dist/win/install.ps1').content;
+const windowsTemplate = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
 const branchMarker = 'if [ "$NO_UPGRADE" = "1" ]; then';
 const branchStart = installer.indexOf(branchMarker);
 assert.notEqual(branchStart, -1, 'install.sh must retain the --no-upgrade branch');
@@ -64,6 +66,37 @@ const lifecycleSpan = installer.slice(0, optionalEnd).replace(
   `CLAWGOD_SELF_VERSION="${fixtureSelfVersion}"  # fixture release-format version`,
 );
 assert.doesNotMatch(lifecycleSpan, /CLAWGOD_SELF_VERSION="0\.0\.0-dev"/, 'lifecycle fixture must use a release-format ClawGod version for fallback state validation');
+
+function assertWindowsFallbackParity(source, label) {
+  const authorization = "$PatchFallbackAuthorized = ($env:CLAWGOD_UPDATE_PATCH_FAIL_OPEN -ceq '1') -and (-not $NoUpgrade) -and $RuntimeHadTarget";
+  const argument = "if ($PatchFallbackAuthorized) { $patchArgs += '--allow-compatibility-fallback' }";
+  const patch = "$patchOutput = & $BunBin (Join-Path $ClawDir 'patch.mjs') @patchArgs 2>&1";
+  const strict42 = 'elseif (($patchStatus -eq 42) -and $PatchFallbackAuthorized) {';
+  const write = "& $BunBin (Join-Path $ClawDir 'patch-fallback.cjs') write $ClawDir $NativeBinLabel $ClawSelfVersion";
+  const clear = "& $BunBin (Join-Path $ClawDir 'patch-fallback.cjs') clear $ClawDir";
+  const chromeSkip = 'if (-not $PatchFallbackActive) {';
+  const checkedPublish = "& $BunBin (Join-Path $ClawDir 'vendor-transaction.mjs') publish-checked $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir $BunBin (Join-Path $ClawDir 'cli.cjs')";
+  for (const needle of [authorization, argument, patch, strict42, write, clear, chromeSkip, checkedPublish]) {
+    assert.ok(source.includes(needle), `${label} must include ${needle}`);
+  }
+  assert.ok(source.indexOf("Copy-Item -LiteralPath $RuntimePatchFallback -Destination (Join-Path $RuntimeRollbackDir \"patch-fallback.json\")") < source.indexOf('Move-Item -LiteralPath $RuntimeChunksTarget -Destination (Join-Path $RuntimeRollbackDir "chunks")'), `${label} must snapshot fallback state before chunks move`);
+  assert.ok(source.indexOf(chromeSkip) < source.indexOf(checkedPublish), `${label} must complete fallback Chrome skip before checked publication`);
+  assert.equal((source.match(/publish-checked/g) || []).length, 1, `${label} must invoke publish-checked exactly once`);
+  assert.match(source, /\$VendorRollbackComplete\s*=\s*\$vendorStatus\s*-eq\s*20\s*-or\s*\$vendorStatus\s*-eq\s*22/, `${label} must retain statuses 20/22 rollback mapping`);
+  assert.match(source, /if \(\$vendorStatus -eq 22\) \{ \$RuntimeTransactionCleanupSafe = \$false \}/, `${label} must retain status 22 recovery-data mapping`);
+  assert.match(source, /if \(\$RuntimeHadPatchFallback\) \{[\s\S]*?Copy-Item -LiteralPath \(Join-Path \$RuntimeRollbackDir "patch-fallback\.json"\) -Destination \$RuntimePatchFallback -Force[\s\S]*?\} else \{[\s\S]*?Remove-Item -LiteralPath \$RuntimePatchFallback -Force -ErrorAction SilentlyContinue/, `${label} must restore or remove fallback state during rollback`);
+}
+
+assertWindowsFallbackParity(windowsTemplate, 'src/template/install.ps1');
+assertWindowsFallbackParity(windowsInstaller, 'generated dist/win/install.ps1');
+for (const [label, mutation, replacement] of [
+  ['missing RuntimeHadTarget authorization', "-and (-not $NoUpgrade) -and $RuntimeHadTarget", "-and (-not $NoUpgrade)"],
+  ['missing NoUpgrade authorization', "-and (-not $NoUpgrade) -and $RuntimeHadTarget", "-and $RuntimeHadTarget"],
+]) {
+  const mutated = windowsTemplate.replace(mutation, replacement);
+  assert.notEqual(mutated, windowsTemplate, `${label}: mutation must alter source`);
+  assert.throws(() => assertWindowsFallbackParity(mutated, `mutated ${label}`), /PatchFallbackAuthorized/, `${label} must fail static parity`);
+}
 
 function assertTemporaryPath(path, parent, label) {
   const resolvedParent = realpathSync(parent);

@@ -659,26 +659,31 @@ $RuntimeRollbackDir = Join-Path $ClawDir (".runtime-rollback." + [Guid]::NewGuid
 $RuntimeCandidateDir = Join-Path $RuntimeRollbackDir "candidate"
 $RuntimeCandidateVendor = Join-Path $RuntimeCandidateDir "vendor"
 $RuntimeVendorDir = Join-Path $ClawDir "vendor"
+$RuntimeHasCandidateVendor = $false
+$RuntimePatchFallback = Join-Path $ClawDir "patch-fallback.json"
 $RuntimeHadTarget = Test-Path -LiteralPath $RuntimeTarget -PathType Leaf
 $RuntimeHadSourceVersion = Test-Path -LiteralPath $RuntimeSourceVersion -PathType Leaf
+$RuntimeHadPatchFallback = Test-Path -LiteralPath $RuntimePatchFallback -PathType Leaf
 $RuntimeTransactionCommitted = $false
 $RuntimeVendorPublishStarted = $false
 $VendorRollbackComplete = $false
 $RuntimeTransactionCleanupSafe = $true
-New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
-if ($RuntimeHadTarget) {
-    Copy-Item -LiteralPath $RuntimeTarget -Destination (Join-Path $RuntimeRollbackDir "cli.original.cjs")
-}
-if ($RuntimeHadSourceVersion) {
-    Copy-Item -LiteralPath $RuntimeSourceVersion -Destination (Join-Path $RuntimeRollbackDir ".source-version")
-}
-$RuntimeChunksTarget = Join-Path $ClawDir "chunks"
-$RuntimeHadChunks = Test-Path -LiteralPath $RuntimeChunksTarget -PathType Container
-if ($RuntimeHadChunks) {
-    Move-Item -LiteralPath $RuntimeChunksTarget -Destination (Join-Path $RuntimeRollbackDir "chunks")
-}
-
 try {
+    New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
+    if ($RuntimeHadTarget) {
+        Copy-Item -LiteralPath $RuntimeTarget -Destination (Join-Path $RuntimeRollbackDir "cli.original.cjs")
+    }
+    if ($RuntimeHadSourceVersion) {
+        Copy-Item -LiteralPath $RuntimeSourceVersion -Destination (Join-Path $RuntimeRollbackDir ".source-version")
+    }
+    if ($RuntimeHadPatchFallback) {
+        Copy-Item -LiteralPath $RuntimePatchFallback -Destination (Join-Path $RuntimeRollbackDir "patch-fallback.json")
+    }
+    $RuntimeChunksTarget = Join-Path $ClawDir "chunks"
+    $RuntimeHadChunks = Test-Path -LiteralPath $RuntimeChunksTarget -PathType Container
+    if ($RuntimeHadChunks) {
+        Move-Item -LiteralPath $RuntimeChunksTarget -Destination (Join-Path $RuntimeRollbackDir "chunks")
+    }
 if ($NoUpgrade) {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
     New-Item -ItemType Directory -Force -Path $BinDir  | Out-Null
@@ -856,6 +861,7 @@ if (Test-Path $candidateAssets) {
     }
     Move-Item -LiteralPath $candidateAssets -Destination $assetsTarget -Force
 }
+$RuntimeHasCandidateVendor = $true
 
 # Stamp source version so wrapper can detect drift on next launch
 Set-Content -Path (Join-Path $ClawDir ".source-version") -Value $NativeBinLabel -Encoding ASCII
@@ -901,32 +907,80 @@ Write-OK "Patcher created (patch.mjs)"
 # --- Apply patches ------------------------------------
 
 Write-Dim "Applying patches ..."
-$patchOutput = & $BunBin (Join-Path $ClawDir "patch.mjs") --enhancements-file (Join-Path $ClawDir "enhancements.json") 2>&1
+$patchArgs = @('--enhancements-file', (Join-Path $ClawDir 'enhancements.json'))
+$PatchFallbackAuthorized = ($env:CLAWGOD_UPDATE_PATCH_FAIL_OPEN -ceq '1') -and (-not $NoUpgrade) -and $RuntimeHadTarget
+if ($PatchFallbackAuthorized) { $patchArgs += '--allow-compatibility-fallback' }
+$patchOutput = & $BunBin (Join-Path $ClawDir 'patch.mjs') @patchArgs 2>&1
 $patchStatus = $LASTEXITCODE
 $patchOutput | ForEach-Object { Write-Host "  $_" }
-if ($patchStatus -ne 0) {
+$PatchFallbackActive = $false
+if ($patchStatus -eq 0) {
+    & $BunBin (Join-Path $ClawDir 'patch-fallback.cjs') clear $ClawDir
+    if ($LASTEXITCODE -ne 0) { throw "Failed to clear patch compatibility fallback state." }
+} elseif (($patchStatus -eq 42) -and $PatchFallbackAuthorized) {
+    & $BunBin (Join-Path $ClawDir 'patch-fallback.cjs') write $ClawDir $NativeBinLabel $ClawSelfVersion
+    if ($LASTEXITCODE -ne 0) { throw "Failed to write patch compatibility fallback state." }
+    Write-Warn "PATCH COMPATIBILITY FALLBACK: Claude Code will run without bundle enhancements."
+    Write-Warn "Run 'claude update' after ClawGod supports this Claude Code release."
+    $PatchFallbackActive = $true
+} else {
     Write-Err "Mandatory patching failed; installation stopped before launcher replacement."
     exit $patchStatus
 }
-if (-not $NoUpgrade) {
+if (-not $PatchFallbackActive) {
+    Invoke-ChromePostInstallFix
+}
+if ($RuntimeHasCandidateVendor) {
     $RuntimeVendorPublishStarted = $true
     $VendorNativePreferenceWasDefined = Test-Path Variable:PSNativeCommandUseErrorActionPreference
     if ($VendorNativePreferenceWasDefined) { $VendorNativePreferenceValue = $PSNativeCommandUseErrorActionPreference }
     try {
         if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $false }
-        & $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir
+        $vendorOutput = & $BunBin (Join-Path $ClawDir 'vendor-transaction.mjs') publish-checked $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir $BunBin (Join-Path $ClawDir 'cli.cjs') 2>&1
         $vendorStatus = $LASTEXITCODE
     } finally {
         if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $VendorNativePreferenceValue }
         else { Remove-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue }
     }
     if ($vendorStatus -ne 0) {
+        $vendorOutput | ForEach-Object { Write-Err "$_" }
+        if ("$vendorOutput" -match "Expected CommonJS module to have a function wrapper") {
+            Write-Warn "Bun cannot load Anthropic's cli.original.cjs; run 'bun upgrade --canary' and retry."
+        }
         $VendorRollbackComplete = $vendorStatus -eq 20 -or $vendorStatus -eq 22
         if ($vendorStatus -eq 22) { $RuntimeTransactionCleanupSafe = $false }
         throw "Native vendor publication failed."
     }
+} else {
+    Write-Dim "Verifying Bun can load patched cli.original.cjs ..."
+    $sanityCli = Join-Path $ClawDir "cli.cjs"
+    $sanityOut = $null
+    $sanityStatus = 1
+    try {
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $sanityOut = (& $BunBin $sanityCli --version 2>&1 | Out-String)
+        $sanityStatus = $LASTEXITCODE
+    } catch {
+        $sanityOut = "$_"
+        $sanityStatus = 1
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($sanityOut -match "Expected CommonJS module to have a function wrapper") {
+        Write-Warn "Bun cannot load Anthropic's cli.original.cjs; run 'bun upgrade --canary' and retry."
+        if ($sanityStatus -eq 0) { $sanityStatus = 1 }
+    }
+    if ($sanityStatus -ne 0) {
+        if ($sanityOut) { Write-Host $sanityOut.TrimEnd() }
+        throw "Bun failed to load patched cli.original.cjs (exit $sanityStatus)."
+    }
+    Write-OK "Bun loads cli.original.cjs"
 }
 $RuntimeTransactionCommitted = $true
+if (Test-Path -LiteralPath $RuntimeRollbackDir) {
+    Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
+}
 } finally {
     if (-not $RuntimeTransactionCommitted) {
         if (-not $RuntimeVendorPublishStarted) { $VendorRollbackComplete = $true }
@@ -940,6 +994,11 @@ $RuntimeTransactionCommitted = $true
                 Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir ".source-version") -Destination $RuntimeSourceVersion -Force
             } else {
                 Remove-Item -LiteralPath $RuntimeSourceVersion -Force -ErrorAction SilentlyContinue
+            }
+            if ($RuntimeHadPatchFallback) {
+                Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir "patch-fallback.json") -Destination $RuntimePatchFallback -Force
+            } else {
+                Remove-Item -LiteralPath $RuntimePatchFallback -Force -ErrorAction SilentlyContinue
             }
             $chunksTarget = Join-Path $ClawDir "chunks"
             if ($RuntimeHadChunks) {
@@ -958,7 +1017,6 @@ $RuntimeTransactionCommitted = $true
         Write-Err "Prior CLI restored; untrusted transaction data retained at $RuntimeRollbackDir"
     }
 }
-Invoke-ChromePostInstallFix
 
 # --- Create default configs ---------------------------
 
@@ -1061,66 +1119,6 @@ if (changed) fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + "\n");
 } else {
     Write-Host "  $([char]0x2022) Lean mode disabled (claude --lean-on to re-enable)" -ForegroundColor DarkGray
 }
-
-# --- Sanity check: ensure user's Bun can actually load cli.original.cjs --
-# Anthropic builds the native binary with a bleeding-edge Bun build (e.g.
-# 1.3.14 while stable still ships 1.3.13). Older Bun crashes loading the
-# extracted cli.original.cjs with "Expected CommonJS module to have a
-# function wrapper". Detect this BEFORE we install the launcher -- better
-# to fail loudly than to leave the user with a launcher that panics on
-# first invocation.
-
-Write-Dim "Verifying Bun can load patched cli.original.cjs ..."
-$sanityCli = Join-Path $ClawDir "cli.cjs"
-# PowerShell folds native-command stderr into the error stream as
-# ErrorRecord objects; with $ErrorActionPreference='Stop' (common when
-# this script is piped through `iex`) that terminates BEFORE we even
-# read $sanityOut. Localize ErrorActionPreference + try/catch so the
-# panic message reliably lands in $sanityOut and our friendly Write-Err
-# block runs. Defense-in-depth -- pre-flight already blocks Bun < $MinBunVersion;
-# this remains for the day Anthropic bumps embedded Bun past our constant.
-$sanityOut = $null
-$sanityStatus = 1
-try {
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $sanityOut = (& $BunBin $sanityCli --version 2>&1 | Out-String)
-    $sanityStatus = $LASTEXITCODE
-} catch {
-    $sanityOut = "$_"
-    $sanityStatus = 1
-} finally {
-    $ErrorActionPreference = $prevEAP
-}
-if ($sanityOut -match "Expected CommonJS module to have a function wrapper") {
-    Write-Host ""
-    Write-Err "Bun $(& $BunBin --version) cannot load Anthropic's cli.original.cjs."
-    Write-Err ""
-    Write-Err "  Anthropic builds with Bun's canary channel (currently ~1.3.14), while"
-    Write-Err "  bun.sh's main download is on stable (currently 1.3.13). The canary build"
-    Write-Err "  is NOT visible on bun.sh's download page -- it lives on GitHub Releases"
-    Write-Err "  and is reachable only via 'bun upgrade --canary'."
-    Write-Err ""
-    Write-Err "  If your bun is from bun.sh:"
-    Write-Err "    bun upgrade --canary"
-    Write-Err "    or: powershell -c ""iex & {`$(irm https://bun.sh/install.ps1)} -Version canary"""
-    Write-Err ""
-    Write-Err "  If your bun is from scoop (the binary is behind a shim and refuses to"
-    Write-Err "  self-replace, so 'bun upgrade' silently hangs):"
-    Write-Err "    scoop uninstall bun"
-    Write-Err "    irm https://bun.sh/install.ps1 | iex"
-    Write-Err "    bun upgrade --canary"
-    Write-Err ""
-    Write-Err "  Then re-run .\install.ps1 -- this sanity check will pass."
-    if ($sanityStatus -eq 0) { $sanityStatus = 1 }
-    exit $sanityStatus
-}
-if ($sanityStatus -ne 0) {
-    if ($sanityOut) { Write-Host $sanityOut.TrimEnd() }
-    Write-Err "Bun failed to load patched cli.original.cjs (exit $sanityStatus)."
-    exit $sanityStatus
-}
-Write-OK "Bun loads cli.original.cjs"
 
 # --- Replace claude command ---------------------------
 

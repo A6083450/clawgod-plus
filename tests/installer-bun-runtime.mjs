@@ -744,7 +744,7 @@ function assertPowerShellVendorStatusScope(source, label) {
   const probe = '$VendorNativePreferenceWasDefined = Test-Path Variable:PSNativeCommandUseErrorActionPreference';
   const save = 'if ($VendorNativePreferenceWasDefined) { $VendorNativePreferenceValue = $PSNativeCommandUseErrorActionPreference }';
   const disable = 'if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $false }';
-  const call = '& $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir';
+  const call = "$vendorOutput = & $BunBin (Join-Path $ClawDir 'vendor-transaction.mjs') publish-checked $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir $BunBin (Join-Path $ClawDir 'cli.cjs') 2>&1";
   const capture = '$vendorStatus = $LASTEXITCODE';
   const restore = 'if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $VendorNativePreferenceValue }';
   const remove = 'else { Remove-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue }';
@@ -764,6 +764,33 @@ function assertPowerShellVendorStatusScope(source, label) {
   const preferenceScope = block.slice(positions[2], positions[8] + remove.length);
   assert.equal((preferenceScope.match(/\$PSNativeCommandUseErrorActionPreference\s*=/g) || []).length, 2, `${label} must only disable and restore the native-command error preference`);
   assert.doesNotMatch(preferenceScope, /\$ErrorActionPreference\s*=/, `${label} must not weaken ErrorActionPreference around vendor publication`);
+  return block;
+}
+
+function assertPowerShellFallbackTransaction(source, label) {
+  const block = powerShellApplyBlock(source, label);
+  const authorization = "$PatchFallbackAuthorized = ($env:CLAWGOD_UPDATE_PATCH_FAIL_OPEN -ceq '1') -and (-not $NoUpgrade) -and $RuntimeHadTarget";
+  const authorizeArgument = "if ($PatchFallbackAuthorized) { $patchArgs += '--allow-compatibility-fallback' }";
+  const strictFallback = 'elseif (($patchStatus -eq 42) -and $PatchFallbackAuthorized) {';
+  const fallbackWrite = "& $BunBin (Join-Path $ClawDir 'patch-fallback.cjs') write $ClawDir $NativeBinLabel $ClawSelfVersion";
+  const fallbackClear = "& $BunBin (Join-Path $ClawDir 'patch-fallback.cjs') clear $ClawDir";
+  const chromeSkip = 'if (-not $PatchFallbackActive) {';
+  const checkedPublish = "& $BunBin (Join-Path $ClawDir 'vendor-transaction.mjs') publish-checked $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir $BunBin (Join-Path $ClawDir 'cli.cjs')";
+  const directSanity = 'if ($RuntimeHasCandidateVendor) {';
+  const fallbackActive = '$PatchFallbackActive = $false';
+  const required = [authorization, authorizeArgument, strictFallback, fallbackWrite, fallbackClear, fallbackActive, chromeSkip, checkedPublish, directSanity];
+  for (const needle of required) assert.ok(block.includes(needle), `${label} must retain ${needle}`);
+  assert.equal(block.indexOf(checkedPublish, block.indexOf(checkedPublish) + checkedPublish.length), -1, `${label} must publish checked vendor exactly once`);
+  const chromeCall = '    Invoke-ChromePostInstallFix';
+  assert.ok(block.includes(chromeCall), `${label} must retain the Chrome post-install call`);
+  assert.ok(block.indexOf(chromeCall) > block.indexOf(chromeSkip), `${label} must skip Chrome during compatibility fallback`);
+  assert.ok(block.indexOf(chromeCall) < block.indexOf(checkedPublish), `${label} must run Chrome before checked vendor sanity on full patches`);
+  assert.match(source, /\$RuntimeHadPatchFallback\s*=\s*Test-Path\s+-LiteralPath\s+\$RuntimePatchFallback\s+-PathType\s+Leaf/, `${label} must snapshot whether fallback state existed`);
+  const transactionTry = source.indexOf('try {', source.indexOf('$RuntimeTransactionCleanupSafe = $true'));
+  const fallbackSnapshot = source.indexOf('Copy-Item -LiteralPath $RuntimePatchFallback -Destination (Join-Path $RuntimeRollbackDir "patch-fallback.json")');
+  const chunksMove = source.indexOf('Move-Item -LiteralPath $RuntimeChunksTarget -Destination (Join-Path $RuntimeRollbackDir "chunks")');
+  assert.ok(transactionTry >= 0 && transactionTry < fallbackSnapshot && fallbackSnapshot < chunksMove, `${label} must activate rollback before snapshots and destructive chunk movement`);
+  assert.match(source, /if \(\$RuntimeHadPatchFallback\) \{[\s\S]*?Copy-Item -LiteralPath \(Join-Path \$RuntimeRollbackDir "patch-fallback\.json"\) -Destination \$RuntimePatchFallback -Force[\s\S]*?\} else \{[\s\S]*?Remove-Item -LiteralPath \$RuntimePatchFallback -Force -ErrorAction SilentlyContinue/, `${label} must roll back fallback state`);
   return block;
 }
 
@@ -2023,6 +2050,29 @@ ${unixApplyBlock}
 const canonicalWindowsApplyBlock = assertPowerShellVendorStatusScope(windowsTemplate, 'src/template/install.ps1');
 const windowsApplyBlock = assertPowerShellVendorStatusScope(windows, 'install.ps1');
 assert.equal(windowsApplyBlock, canonicalWindowsApplyBlock, 'generated install.ps1 must preserve the canonical vendor status scope exactly');
+const canonicalWindowsFallbackBlock = assertPowerShellFallbackTransaction(windowsTemplate, 'src/template/install.ps1');
+const windowsFallbackBlock = assertPowerShellFallbackTransaction(windows, 'install.ps1');
+assert.equal(windowsFallbackBlock, canonicalWindowsFallbackBlock, 'generated install.ps1 must preserve the canonical fallback transaction exactly');
+const fallbackTargetAuthorizationMutation = windowsTemplate.replace(
+  "-and (-not $NoUpgrade) -and $RuntimeHadTarget",
+  "-and (-not $NoUpgrade)",
+);
+assert.notEqual(fallbackTargetAuthorizationMutation, windowsTemplate, 'fallback target authorization mutation must remove the prior-target condition');
+assert.throws(
+  () => assertPowerShellFallbackTransaction(fallbackTargetAuthorizationMutation, 'mutated missing target authorization'),
+  /PatchFallbackAuthorized/,
+  'removing RuntimeHadTarget must fail the fallback authorization contract',
+);
+const fallbackNoUpgradeAuthorizationMutation = windowsTemplate.replace(
+  "-and (-not $NoUpgrade) -and $RuntimeHadTarget",
+  "-and $RuntimeHadTarget",
+);
+assert.notEqual(fallbackNoUpgradeAuthorizationMutation, windowsTemplate, 'fallback no-upgrade authorization mutation must remove the no-upgrade condition');
+assert.throws(
+  () => assertPowerShellFallbackTransaction(fallbackNoUpgradeAuthorizationMutation, 'mutated missing no-upgrade authorization'),
+  /PatchFallbackAuthorized/,
+  'removing NoUpgrade must fail the fallback authorization contract',
+);
 const preferenceMutation = windowsTemplate.replace(
   'if ($VendorNativePreferenceWasDefined) { $PSNativeCommandUseErrorActionPreference = $false }',
   '',
@@ -2044,8 +2094,8 @@ assert.throws(
   'removing the PowerShell 5.1 missing-variable cleanup path must fail the semantic contract',
 );
 const statusGapMutation = windowsTemplate.replace(
-  '& $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir\n        $vendorStatus = $LASTEXITCODE',
-  '& $BunBin (Join-Path $ClawDir "vendor-transaction.mjs") publish $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir\n        & $BunBin --version\n        $vendorStatus = $LASTEXITCODE',
+  "$vendorOutput = & $BunBin (Join-Path $ClawDir 'vendor-transaction.mjs') publish-checked $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir $BunBin (Join-Path $ClawDir 'cli.cjs') 2>&1\n        $vendorStatus = $LASTEXITCODE",
+  "$vendorOutput = & $BunBin (Join-Path $ClawDir 'vendor-transaction.mjs') publish-checked $RuntimeVendorDir $RuntimeCandidateVendor $RuntimeRollbackDir $BunBin (Join-Path $ClawDir 'cli.cjs') 2>&1\n        & $BunBin --version\n        $vendorStatus = $LASTEXITCODE",
 );
 assert.notEqual(statusGapMutation, windowsTemplate, 'native-status gap mutation must insert a clobbering command');
 assert.throws(
@@ -2086,19 +2136,150 @@ assert.throws(
 assert.match(windowsApplyBlock, /\$patchOutput\s*=\s*&\s*\$BunBin/, 'install.ps1 must capture patch output');
 assert.match(
   windowsApplyBlock,
-  /\(Join-Path \$ClawDir "patch\.mjs"\)\s+--enhancements-file\s+\(Join-Path \$ClawDir "enhancements\.json"\)/,
-  'install.ps1 must pass the exact saved enhancement config path to patch.mjs',
+  /\$patchArgs\s*=\s*@\('--enhancements-file',\s*\(Join-Path \$ClawDir 'enhancements\.json'\)\)/,
+  'install.ps1 must construct the exact saved enhancement config path in a PowerShell argument array',
+);
+assert.match(
+  windowsApplyBlock,
+  /\(Join-Path \$ClawDir 'patch\.mjs'\)\s+@patchArgs/,
+  'install.ps1 must invoke patch.mjs with its argument array',
 );
 assert.match(windowsApplyBlock, /\$patchStatus\s*=\s*\$LASTEXITCODE/, 'install.ps1 must preserve patch.mjs native exit status');
-assert.match(windowsApplyBlock, /if\s*\(\$patchStatus\s*-ne\s*0\)/, 'install.ps1 must stop on patch.mjs failure');
-assert.ok(windowsApplyBlock.indexOf('$patchStatus -ne 0') < windowsApplyBlock.indexOf('Invoke-ChromePostInstallFix'), 'install.ps1 must check patch status before Chrome/post-processing continuation');
+assert.match(windowsApplyBlock, /\} elseif \(\(\$patchStatus -eq 42\) -and \$PatchFallbackAuthorized\) \{[\s\S]*?\} else \{[\s\S]*?exit \$patchStatus/, 'install.ps1 must fail closed for every patch.mjs status except zero and authorized 42');
+assert.ok(windowsApplyBlock.indexOf('} else {\n    Write-Err "Mandatory patching failed;') < windowsApplyBlock.indexOf('Invoke-ChromePostInstallFix'), 'install.ps1 must check patch status before Chrome/post-processing continuation');
 assert.match(windows, /\$RuntimeCandidateDir\s*=\s*Join-Path\s+\$RuntimeRollbackDir\s+"candidate"/, 'install.ps1 must stage candidate runtime files in its same-filesystem transaction');
 assert.match(windows, /&\s+\$BunBin\s+\$extractorPath\s+\$NativeBin\s+\$RuntimeCandidateDir/, 'install.ps1 must extract candidate native modules outside the live vendor');
-assert.match(windowsApplyBlock, /vendor-transaction\.mjs"\) publish \$RuntimeVendorDir \$RuntimeCandidateVendor \$RuntimeRollbackDir/, 'install.ps1 must publish candidate native modules through the shared transaction helper only after mandatory patches pass');
+assert.match(windowsApplyBlock, /vendor-transaction\.mjs'\) publish-checked \$RuntimeVendorDir \$RuntimeCandidateVendor \$RuntimeRollbackDir \$BunBin \(Join-Path \$ClawDir 'cli\.cjs'\)/, 'install.ps1 must publish candidate native modules through the checked shared transaction helper after patching');
 assert.match(windowsApplyBlock, /\$VendorRollbackComplete\s*=\s*\$vendorStatus\s*-eq\s*20\s*-or\s*\$vendorStatus\s*-eq\s*22/, 'install.ps1 must restore the prior CLI only after the shared helper reports verified rollback');
 assert.doesNotMatch(windowsApplyBlock, /Move-Item[\s\S]*\$RuntimeCandidateVendor/, 'install.ps1 must not maintain a second native publication implementation');
 
 const pwsh = findPwsh();
+const runPowerShellFallbackMatrix = process.env.CLAWGOD_INSTALLER_FOCUS !== 'windows-vendor-status';
+if (pwsh && runPowerShellFallbackMatrix) {
+  const fallbackMatrixRoot = mkdtempSync(join(tmpdir(), 'clawgod-powershell-patch-fallback-'));
+  assertTemporaryPath(fallbackMatrixRoot, 'PowerShell patch fallback matrix fixture');
+  try {
+    const fallbackScript = join(fallbackMatrixRoot, 'patch-fallback.ps1');
+    const patchFallbackSource = canonicalRuntime['patch-fallback.cjs'];
+    const fallbackBlockStart = windowsApplyBlock.indexOf('Write-Dim "Applying patches ..."');
+    const fallbackBlockEnd = windowsApplyBlock.indexOf('\n$RuntimeTransactionCommitted = $true', fallbackBlockStart);
+    assert.ok(fallbackBlockStart >= 0 && fallbackBlockEnd > fallbackBlockStart, 'PowerShell fallback matrix must extract patch transaction block');
+    const fallbackBlock = windowsApplyBlock.slice(fallbackBlockStart, fallbackBlockEnd);
+    writeFileSync(fallbackScript, `$ErrorActionPreference = 'Stop'
+$BunBin = $env:CLAWGOD_TEST_BUN
+$ClawDir = $env:CLAWGOD_TEST_DIR
+$NativeBinLabel = '2.1.999'
+$ClawSelfVersion = '2026.9.2-claude.2.1.258'
+$NoUpgrade = [System.Convert]::ToBoolean($env:CLAWGOD_TEST_NO_UPGRADE)
+$RuntimeHadTarget = [System.Convert]::ToBoolean($env:CLAWGOD_TEST_HAD_TARGET)
+$RuntimeHasCandidateVendor = [System.Convert]::ToBoolean($env:CLAWGOD_TEST_HAS_CANDIDATE_VENDOR)
+$RuntimeTarget = Join-Path $ClawDir 'cli.original.cjs'
+$RuntimeSourceVersion = Join-Path $ClawDir '.source-version'
+$RuntimePatchFallback = Join-Path $ClawDir 'patch-fallback.json'
+$RuntimeRollbackDir = Join-Path $ClawDir '.runtime-rollback'
+$RuntimeCandidateVendor = Join-Path $RuntimeRollbackDir 'candidate\\vendor'
+$RuntimeVendorDir = Join-Path $ClawDir 'vendor'
+$RuntimeHadSourceVersion = Test-Path -LiteralPath $RuntimeSourceVersion -PathType Leaf
+$RuntimeHadPatchFallback = Test-Path -LiteralPath $RuntimePatchFallback -PathType Leaf
+$RuntimeHadChunks = $false
+$RuntimeVendorPublishStarted = $false
+$VendorRollbackComplete = $false
+$RuntimeTransactionCleanupSafe = $true
+$RuntimeTransactionCommitted = $false
+function Write-Dim { param([string]$Message) }
+function Write-OK { param([string]$Message) }
+function Write-Warn { param([string]$Message); [Console]::Error.WriteLine($Message) }
+function Write-Err { param([string]$Message); [Console]::Error.WriteLine($Message) }
+function Invoke-ChromePostInstallFix { [System.IO.File]::WriteAllText((Join-Path $ClawDir 'chrome-ran'), 'yes') }
+try {
+${fallbackBlock}
+} catch {
+    if (-not $RuntimeVendorPublishStarted) { $VendorRollbackComplete = $true }
+    if ($VendorRollbackComplete) {
+        if ($RuntimeHadTarget) {
+            Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir 'cli.original.cjs') -Destination $RuntimeTarget -Force
+        } else {
+            Remove-Item -LiteralPath $RuntimeTarget -Force -ErrorAction SilentlyContinue
+        }
+        if ($RuntimeHadSourceVersion) {
+            Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir '.source-version') -Destination $RuntimeSourceVersion -Force
+        } else {
+            Remove-Item -LiteralPath $RuntimeSourceVersion -Force -ErrorAction SilentlyContinue
+        }
+        if ($RuntimeHadPatchFallback) {
+            Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir 'patch-fallback.json') -Destination $RuntimePatchFallback -Force
+        } else {
+            Remove-Item -LiteralPath $RuntimePatchFallback -Force -ErrorAction SilentlyContinue
+        }
+    }
+    throw
+}
+[ordered]@{
+  patchArgs = [System.IO.File]::ReadAllText((Join-Path $ClawDir 'patch-args.json'))
+  fallbackExists = Test-Path -LiteralPath $RuntimePatchFallback
+  fallback = if (Test-Path -LiteralPath $RuntimePatchFallback) { [System.IO.File]::ReadAllText($RuntimePatchFallback) } else { $null }
+  chromeRan = Test-Path -LiteralPath (Join-Path $ClawDir 'chrome-ran')
+  committed = $RuntimeTransactionCommitted
+} | ConvertTo-Json -Compress
+`, 'utf8');
+
+    for (const fixture of [
+      { label: 'authorized-update', env: '1', hadTarget: true, noUpgrade: false, patchExit: 42, expectStatus: 0, fallback: true, chrome: false, allow: true },
+      { label: 'direct-existing', env: '', hadTarget: true, noUpgrade: false, patchExit: 42, expectStatus: 1, fallback: false, chrome: false, allow: false },
+      { label: 'first-install', env: '1', hadTarget: false, noUpgrade: false, patchExit: 42, expectStatus: 1, fallback: false, chrome: false, allow: false },
+      { label: 'no-upgrade', env: '1', hadTarget: true, noUpgrade: true, patchExit: 42, expectStatus: 1, fallback: false, chrome: false, allow: false },
+      { label: 'full-patch', env: '1', hadTarget: true, noUpgrade: false, patchExit: 0, expectStatus: 0, fallback: false, chrome: true, allow: true },
+    ]) {
+      const caseRoot = join(fallbackMatrixRoot, fixture.label);
+      const clawDir = join(caseRoot, 'clawgod');
+      const rollback = join(clawDir, '.runtime-rollback');
+      mkdirSync(join(rollback, 'candidate', 'vendor'), { recursive: true });
+      mkdirSync(join(clawDir, 'vendor'), { recursive: true });
+      writeFileSync(join(clawDir, 'patch-fallback.cjs'), patchFallbackSource, 'utf8');
+      writeFileSync(join(clawDir, 'enhancements.json'), '{}\n', 'utf8');
+      writeFileSync(join(clawDir, 'cli.cjs'), 'process.exit(0);\n', 'utf8');
+      writeFileSync(join(clawDir, 'patch.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.CLAWGOD_PATCH_ARGS, JSON.stringify(process.argv.slice(2)));\nprocess.exit(Number(process.env.CLAWGOD_PATCH_EXIT));\n`, 'utf8');
+      if (fixture.hadTarget) {
+        writeFileSync(join(clawDir, 'cli.original.cjs'), 'candidate runtime\n', 'utf8');
+        writeFileSync(join(rollback, 'cli.original.cjs'), 'prior runtime\n', 'utf8');
+      }
+      const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fallbackScript], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          USERPROFILE: caseRoot,
+          HOME: caseRoot,
+          CLAWGOD_TEST_BUN: process.execPath,
+          CLAWGOD_TEST_DIR: clawDir,
+          CLAWGOD_TEST_HAD_TARGET: String(fixture.hadTarget),
+          CLAWGOD_TEST_NO_UPGRADE: String(fixture.noUpgrade),
+          CLAWGOD_TEST_HAS_CANDIDATE_VENDOR: 'false',
+          CLAWGOD_UPDATE_PATCH_FAIL_OPEN: fixture.env,
+          CLAWGOD_PATCH_EXIT: String(fixture.patchExit),
+          CLAWGOD_PATCH_ARGS: join(clawDir, 'patch-args.json'),
+        },
+      });
+      assert.equal(run.status, fixture.expectStatus, `${fixture.label}: PowerShell fallback lifecycle result:\n${run.stdout}${run.stderr}`);
+      const args = JSON.parse(readFileSync(join(clawDir, 'patch-args.json'), 'utf8'));
+      assert.equal(args.includes('--allow-compatibility-fallback'), fixture.allow, `${fixture.label}: fallback flag authorization must match the three-condition gate`);
+      if (fixture.expectStatus === 0) {
+        const resultLine = run.stdout.trim().split(/\r?\n/).findLast(line => line.startsWith('{'));
+        assert.ok(resultLine, `${fixture.label}: PowerShell fallback matrix must emit JSON`);
+        const result = JSON.parse(resultLine);
+        assert.equal(result.committed, true, `${fixture.label}: successful fallback matrix case must commit`);
+        assert.equal(result.fallbackExists, fixture.fallback, `${fixture.label}: fallback state existence must match patch result`);
+        assert.equal(result.chromeRan, fixture.chrome, `${fixture.label}: Chrome execution must respect fallback state`);
+        if (fixture.fallback) assert.match(result.fallback, /"reason": "bundle-patch-compatibility"/, `${fixture.label}: fallback state must be canonical`);
+      } else if (fixture.hadTarget) {
+        assert.equal(readFileSync(join(clawDir, 'cli.original.cjs'), 'utf8'), 'prior runtime\n', `${fixture.label}: failed fallback must restore previous runtime`);
+      }
+    }
+  } finally {
+    rmSync(fallbackMatrixRoot, { recursive: true, force: true });
+  }
+} else if (!pwsh) {
+  console.log('PowerShell native patch fallback checks skipped: pwsh unavailable');
+}
 if (pwsh) {
   const nativeStatusRoot = mkdtempSync(join(tmpdir(), 'clawgod-powershell-vendor-status-'));
   assertTemporaryPath(nativeStatusRoot, 'PowerShell vendor status fixture');
