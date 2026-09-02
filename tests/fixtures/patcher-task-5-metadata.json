@@ -565,7 +565,7 @@
       "type": "regex",
       "order": 23,
       "metadata": {
-        "patternSource": "function ([\\w$]+)\\(\\)\\{if\\([\\w$]+\\(\"hipaa\"\\)\\)return\\s*!1;return [\\w$]+\\(\\)&&[\\w$]+\\(\\)\\.enabled\\}",
+        "patternSource": "function ([\\w$]+)\\(\\)\\{if\\([\\w$]+\\(\"hipaa\"\\)\\)return\\s*!1;[^{}]*\\}",
         "patternFlags": "g",
         "sentinel": "\"hipaa\"",
         "appliedMarker": "/*__clawgod_computer_use_gate__*/",

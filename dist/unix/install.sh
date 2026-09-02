@@ -9523,7 +9523,7 @@ var patches5 = [
   {
     order: 23,
     name: "Computer Use gate bypass",
-    pattern: /function ([\w$]+)\(\)\{if\([\w$]+\("hipaa"\)\)return\s*!1;return [\w$]+\(\)&&[\w$]+\(\)\.enabled\}/g,
+    pattern: /function ([\w$]+)\(\)\{if\([\w$]+\("hipaa"\)\)return\s*!1;[^{}]*\}/g,
     replacer: (match, fn) => `function ${fn}(){/*__clawgod_computer_use_gate__*/return!0}`,
     sentinel: '"hipaa"',
     appliedMarker: "/*__clawgod_computer_use_gate__*/"
