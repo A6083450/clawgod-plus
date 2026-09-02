@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -93,6 +95,14 @@ try {
   clearPatchFallback(clawgodDir);
   assert.equal(existsSync(statePath), false, 'clear must be idempotent when state is already absent');
 
+  if (process.platform !== 'win32') {
+    const danglingStatePath = join(clawgodDir, PATCH_FALLBACK_FILENAME);
+    symlinkSync(join(clawgodDir, 'missing-fallback-target'), danglingStatePath);
+    clearPatchFallback(clawgodDir);
+    assert.equal(existsSync(danglingStatePath), false, 'clear must remove a dangling fallback-state symlink');
+    assert.throws(() => lstatSync(danglingStatePath), /ENOENT/, 'clearing must unlink rather than leave the dangling state symlink');
+  }
+
   writeFileSync(statePath, '{ this is not JSON }\n');
   assert.equal(readPatchFallback(clawgodDir), null, 'corrupt JSON must read as null rather than throwing');
   writeFileSync(statePath, JSON.stringify({ ...valid, unknown: true }) + '\n');
@@ -124,9 +134,15 @@ try {
   writeFileSync(notDirectory, 'fixture');
   const blockingDirectory = join(fixtureRoot, 'blocking-directory');
   mkdirSync(join(blockingDirectory, PATCH_FALLBACK_FILENAME), { recursive: true });
+  assert.throws(
+    () => clearPatchFallback(notDirectory),
+    /ENOTDIR/,
+    'clearing through a non-directory clawgod path must surface the filesystem error',
+  );
   for (const [label, args] of [
     ['write failure', ['write', notDirectory, valid.sourceVersion, valid.clawgodVersion]],
-    ['clear failure', ['clear', blockingDirectory]],
+    ['clear directory failure', ['clear', blockingDirectory]],
+    ['clear non-directory failure', ['clear', notDirectory]],
   ]) {
     const result = spawnSync(process.execPath, [modulePath, ...args], { encoding: 'utf8' });
     assert.notEqual(result.status, 0, `${label} must return a nonzero status`);

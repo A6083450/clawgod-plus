@@ -1,6 +1,5 @@
 const {
   chmodSync,
-  existsSync,
   mkdirSync,
   openSync,
   closeSync,
@@ -73,8 +72,11 @@ function writePatchFallback(clawgodDir, { sourceVersion, clawgodVersion }) {
 }
 
 function clearPatchFallback(clawgodDir) {
-  const path = statePath(clawgodDir);
-  if (existsSync(path)) unlinkSync(path);
+  try {
+    unlinkSync(statePath(clawgodDir));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
 }
 
 module.exports = {

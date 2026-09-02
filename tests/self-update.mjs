@@ -228,6 +228,59 @@ for (const version of [
   });
 }
 
+const windowsTrustedVersion = '2026.8.18-claude.2.1.234.2';
+withUpdateFixture('Windows trusted local installer', {
+  windows: true,
+  localInstaller: true,
+  localVersion: windowsTrustedVersion,
+}, fixture => {
+  const outcome = runSelfUpdate(['upgrade', '--version', windowsTrustedVersion], fixture.options);
+  assert.deepEqual(outcome, { status: 0, signal: null }, 'a matching Windows managed installer must succeed locally');
+  assert.equal(fixture.fetch(), null, 'a matching Windows managed installer must skip remote fetching');
+  assert.deepEqual(
+    fixture.invoked(),
+    {
+      invokedAs: 'powershell',
+      args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(fixture.clawgod, 'install.ps1')],
+      updateEnv: {
+        ...updateEnvSnapshot(),
+        CLAWGOD_NONINTERACTIVE: '1',
+        CLAWGOD_UPDATE_PATCH_FAIL_OPEN: '1',
+        CLAWGOD_VERSION: windowsTrustedVersion,
+      },
+    },
+    'a matching Windows managed installer must retain the exact local PowerShell command',
+  );
+  assert.deepEqual(fixture.temporaryEntries(), [], 'a matching Windows managed installer must not create a download directory');
+});
+
+for (const [label, localInstallerVersion, duplicateInstallerDeclaration] of [
+  ['malformed declaration', '../local', false],
+  ['missing declaration', null, false],
+  ['mismatched declaration', '2026.8.17-claude.2.1.233.1', false],
+  ['duplicate declaration', windowsTrustedVersion, true],
+]) {
+  withUpdateFixture(`Windows ${label}`, {
+    windows: true,
+    localInstaller: true,
+    localVersion: windowsTrustedVersion,
+    localInstallerVersion,
+    duplicateInstallerDeclaration,
+  }, fixture => {
+    const outcome = runSelfUpdate(['upgrade', '--version', windowsTrustedVersion], fixture.options);
+    assert.deepEqual(outcome, { status: 0, signal: null }, `Windows ${label} must refresh successfully`);
+    const fetch = fixture.fetch();
+    assert.ok(fetch, `Windows ${label} must not be trusted as a managed local installer`);
+    assert.equal(fetch.url, 'https://github.com/A6083450/clawgod-plus/releases/latest/download/install.ps1');
+    assert.deepEqual(
+      fixture.invoked()?.args,
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fetch.destination],
+      `Windows ${label} must invoke the managed remote PowerShell installer`,
+    );
+    assert.deepEqual(fixture.temporaryEntries(), [], `Windows ${label} must clean its download directory`);
+  });
+}
+
 withUpdateFixture('unversioned forced refresh', {
   localInstaller: true,
   localVersion: '2026.8.18-claude.2.1.234.2',
