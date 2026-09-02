@@ -34,6 +34,14 @@ const fixtures = [
     plainBunResult: { cmd: '/runtime/bun', prefixArgs: ['/install/cli.cjs'] },
     standaloneResult: { cmd: '/native/claude', prefixArgs: [] },
   },
+  {
+    version: '2.1.258',
+    workerResolver: 'function W1t(e={}){if(!e.pinToCurrentBinary&&yRo()){let r=Xon();return{cmd:r,prefixArgs:[]}}if(WE())return{cmd:process.execPath,prefixArgs:[]};let t=process.argv[1];if(!t)return{cmd:process.execPath,prefixArgs:[]};return{cmd:process.execPath,prefixArgs:[t]}}',
+    computerUseStartup: 'async function computerUseStartup(){if(!Oe()&&!je&&Elt())try{let{setupComputerUseMCP:Ie}=await loadComputerUse(),{mcpConfig:We,allowedTools:dt}=Ie();return{We,dt}}catch(Ie){}}',
+    computerUseGate: /if\(!je&&Elt\(\)\)\/\*__clawgod_computer_use_noninteractive__\*\//,
+    plainBunResult: { cmd: '/runtime/bun', prefixArgs: ['/install/cli.cjs'] },
+    standaloneResult: { cmd: '/native/claude', prefixArgs: [] },
+  },
 ];
 
 for (const [installerName, patcherSource] of patcherSources) {
