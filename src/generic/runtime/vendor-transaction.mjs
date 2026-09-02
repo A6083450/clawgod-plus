@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { spawnSync } from 'node:child_process';
 import { lstatSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
@@ -339,7 +340,7 @@ function rollback({ roots, published, oldEntries, cause }) {
   return rollbackComplete;
 }
 
-export function publishVendorTransaction({ liveVendor, candidateVendor, transactionDir, afterPublish }) {
+export function publishVendorTransaction({ liveVendor, candidateVendor, transactionDir, afterPublish, validatePublished }) {
   const oldVendor = join(transactionDir, 'old-vendor');
   const oldEntries = [];
   const published = [];
@@ -386,6 +387,8 @@ export function publishVendorTransaction({ liveVendor, candidateVendor, transact
       verifyRoots(roots);
     }
     verifyRoots(roots);
+    validatePublished?.();
+    verifyRoots(roots);
   } catch (cause) {
     let rollbackComplete = false;
     let cleanupAllowed = true;
@@ -410,14 +413,48 @@ export function publishVendorTransaction({ liveVendor, candidateVendor, transact
   }
 }
 
+function boundedDiagnostic(stdout, stderr) {
+  const output = `${stdout || ''}${stderr || ''}`;
+  let bytes = 0;
+  let chars = 0;
+  for (const char of output) {
+    const next = bytes + Buffer.byteLength(char);
+    if (next > 64 * 1024) break;
+    bytes = next;
+    chars += char.length;
+  }
+  return output.slice(0, chars);
+}
+
+function validateRuntime(bun, cli) {
+  const result = spawnSync(bun, [cli, '--version'], { encoding: 'utf8', env: process.env });
+  const diagnostic = boundedDiagnostic(result.stdout, result.stderr);
+  let reason;
+  if (result.error) reason = result.error.message;
+  else if (result.signal) reason = `terminated by signal ${result.signal}`;
+  else if (result.status === null) reason = 'returned no exit status';
+  else if (result.status !== 0) reason = `exited ${result.status}`;
+  if (!reason) return;
+  throw new Error(`vendor transaction: runtime sanity check failed (${reason})${diagnostic ? `:
+${diagnostic}` : ''}`);
+}
+
 if (import.meta.main) {
-  const [command, liveVendor, candidateVendor, transactionDir] = process.argv.slice(2);
-  if (command !== 'publish' || !liveVendor || !candidateVendor || !transactionDir) {
-    console.error(`usage: ${basename(process.argv[1])} publish <live-vendor> <candidate-vendor> <transaction-dir>`);
+  const [command, liveVendor, candidateVendor, transactionDir, bun, cli] = process.argv.slice(2);
+  const checked = command === 'publish-checked';
+  if ((command !== 'publish' && !checked)
+    || !liveVendor || !candidateVendor || !transactionDir || (checked && (!bun || !cli))) {
+    console.error(`usage: ${basename(process.argv[1])} publish <live-vendor> <candidate-vendor> <transaction-dir>
+       ${basename(process.argv[1])} publish-checked <live-vendor> <candidate-vendor> <transaction-dir> <bun> <cli>`);
     process.exit(2);
   }
   try {
-    publishVendorTransaction({ liveVendor, candidateVendor, transactionDir });
+    publishVendorTransaction({
+      liveVendor,
+      candidateVendor,
+      transactionDir,
+      validatePublished: checked ? () => validateRuntime(bun, cli) : undefined,
+    });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(error?.rollbackComplete

@@ -158,6 +158,196 @@ function runVendorRootRace({ root, boundary, replacementTarget = 'live', candida
 
 const vendorTransactionRoot = mkdtempSync(join(tmpdir(), 'clawgod-vendor-transaction-'));
 try {
+  const checkedPublicationCase = join(vendorTransactionRoot, 'checked-publication');
+  const checkedPublicationTransaction = join(checkedPublicationCase, 'transaction');
+  const checkedPublicationCandidate = join(checkedPublicationTransaction, 'candidate', 'vendor');
+  const checkedPublicationLive = join(checkedPublicationCase, 'runtime', 'vendor');
+  const checkedPublicationPrior = join(checkedPublicationLive, 'prior-native.node');
+  const checkedPublicationCandidateEntry = join(checkedPublicationCandidate, 'candidate-native.node');
+  mkdirSync(checkedPublicationCandidate, { recursive: true });
+  mkdirSync(checkedPublicationLive, { recursive: true });
+  writeFileSync(checkedPublicationPrior, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(join(checkedPublicationLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(checkedPublicationCandidateEntry, Buffer.from([0xca, 0xfe]), { mode: 0o600 });
+  let checkedPublicationValidated = false;
+  publishVendorTransaction({
+    liveVendor: checkedPublicationLive,
+    candidateVendor: checkedPublicationCandidate,
+    transactionDir: checkedPublicationTransaction,
+    validatePublished: () => {
+      checkedPublicationValidated = true;
+      assert.deepEqual(readFileSync(join(checkedPublicationLive, 'candidate-native.node')), Buffer.from([0xca, 0xfe]), 'validator must run after all candidate entries are live');
+      assert.equal(existsSync(join(checkedPublicationTransaction, 'old-vendor', 'prior-native.node')), true, 'validator must run after prior vendor has moved into recovery storage');
+    },
+  });
+  assert.equal(checkedPublicationValidated, true, 'successful checked publication must invoke the validator');
+  assert.deepEqual(readFileSync(join(checkedPublicationLive, 'candidate-native.node')), Buffer.from([0xca, 0xfe]), 'successful checked publication must retain candidate bytes');
+  assert.deepEqual(readFileSync(join(checkedPublicationTransaction, 'old-vendor', 'prior-native.node')), Buffer.from([0x00, 0x11, 0x80, 0xff]), 'successful checked publication must retain prior bytes for commit cleanup');
+
+  const checkedRollbackCase = join(vendorTransactionRoot, 'checked-rollback');
+  const checkedRollbackTransaction = join(checkedRollbackCase, 'transaction');
+  const checkedRollbackCandidate = join(checkedRollbackTransaction, 'candidate', 'vendor');
+  const checkedRollbackLive = join(checkedRollbackCase, 'runtime', 'vendor');
+  const checkedRollbackPrior = join(checkedRollbackLive, 'prior-native.node');
+  mkdirSync(checkedRollbackCandidate, { recursive: true });
+  mkdirSync(checkedRollbackLive, { recursive: true });
+  writeFileSync(checkedRollbackPrior, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(join(checkedRollbackLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(join(checkedRollbackCandidate, 'candidate-native.node'), Buffer.from([0xca, 0xfe]), { mode: 0o600 });
+  const checkedRollbackPriorBefore = lstatSync(checkedRollbackPrior);
+  let checkedRollbackError;
+  try {
+    publishVendorTransaction({
+      liveVendor: checkedRollbackLive,
+      candidateVendor: checkedRollbackCandidate,
+      transactionDir: checkedRollbackTransaction,
+      validatePublished: () => { throw new Error('runtime checker exited 37'); },
+    });
+  } catch (error) {
+    checkedRollbackError = error;
+  }
+  assert.equal(checkedRollbackError?.rollbackComplete, true, 'validator status 37 must complete the existing rollback');
+  assert.equal(checkedRollbackError?.cleanupSafe, true, 'validator status 37 must permit cleanup after a verified rollback');
+  assert.deepEqual(readdirSync(checkedRollbackLive).toSorted(), ['prior-native.node', 'ripgrep'], 'validator status 37 must isolate every candidate entry from live');
+  assert.deepEqual(readFileSync(checkedRollbackPrior), Buffer.from([0x00, 0x11, 0x80, 0xff]), 'validator status 37 must restore prior bytes');
+  assert.equal(lstatSync(checkedRollbackPrior).ino, checkedRollbackPriorBefore.ino, 'validator status 37 must restore the prior inode');
+  assert.equal(lstatSync(checkedRollbackPrior).mode & 0o7777, checkedRollbackPriorBefore.mode & 0o7777, 'validator status 37 must restore the prior mode');
+
+  const checkedCliRoot = join(vendorTransactionRoot, 'checked-cli');
+  const checkedCliTransaction = join(checkedCliRoot, 'transaction');
+  const checkedCliCandidate = join(checkedCliTransaction, 'candidate', 'vendor');
+  const checkedCliLive = join(checkedCliRoot, 'runtime', 'vendor');
+  const checkedCliPrior = join(checkedCliLive, 'prior-native.node');
+  const checkedCliRuntime = join(checkedCliRoot, 'fake-runtime.mjs');
+  const checkedCliBun = join(checkedCliRoot, 'fake-bun');
+  mkdirSync(checkedCliCandidate, { recursive: true });
+  mkdirSync(checkedCliLive, { recursive: true });
+  writeFileSync(checkedCliPrior, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(join(checkedCliLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(join(checkedCliCandidate, 'candidate-native.node'), Buffer.from([0xca, 0xfe]), { mode: 0o600 });
+  writeFileSync(checkedCliRuntime, 'console.log("runtime version 1.2.3");\n', 'utf8');
+  writeFileSync(checkedCliBun, `#!${process.execPath}\nimport { spawnSync } from 'node:child_process';\nconst child = spawnSync(process.execPath, process.argv.slice(2), { stdio: 'inherit' });\nif (child.error) throw child.error;\nprocess.exit(child.status ?? 1);\n`, 'utf8');
+  chmodSync(checkedCliBun, 0o700);
+  const checkedCliSuccess = spawnSync(process.execPath, [
+    vendorTransactionPath, 'publish-checked', checkedCliLive, checkedCliCandidate, checkedCliTransaction, checkedCliBun, checkedCliRuntime,
+  ], { encoding: 'utf8' });
+  assert.equal(checkedCliSuccess.status, 0, checkedCliSuccess.stderr);
+  assert.equal(checkedCliSuccess.stdout, '', 'successful checked publication must suppress runtime version output');
+  assert.equal(checkedCliSuccess.stderr, '', 'successful checked publication must not emit diagnostics');
+  assert.deepEqual(readFileSync(join(checkedCliLive, 'candidate-native.node')), Buffer.from([0xca, 0xfe]), 'checked CLI success must publish candidate bytes');
+  assert.deepEqual(readFileSync(join(checkedCliTransaction, 'old-vendor', 'prior-native.node')), Buffer.from([0x00, 0x11, 0x80, 0xff]), 'checked CLI success must preserve prior bytes in transaction storage');
+
+  const checkedCliFailureRoot = join(vendorTransactionRoot, 'checked-cli-failure');
+  const checkedCliFailureTransaction = join(checkedCliFailureRoot, 'transaction');
+  const checkedCliFailureCandidate = join(checkedCliFailureTransaction, 'candidate', 'vendor');
+  const checkedCliFailureLive = join(checkedCliFailureRoot, 'runtime', 'vendor');
+  const checkedCliFailurePrior = join(checkedCliFailureLive, 'prior-native.node');
+  const checkedCliFailureRuntime = join(checkedCliFailureRoot, 'fake-runtime.mjs');
+  mkdirSync(checkedCliFailureCandidate, { recursive: true });
+  mkdirSync(checkedCliFailureLive, { recursive: true });
+  writeFileSync(checkedCliFailurePrior, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(join(checkedCliFailureLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(join(checkedCliFailureCandidate, 'candidate-native.node'), Buffer.from([0xca, 0xfe]), { mode: 0o600 });
+  writeFileSync(checkedCliFailureRuntime, 'process.stderr.write("Expected CommonJS module to have a function wrapper\\n"); process.exit(37);\n', 'utf8');
+  const checkedCliFailure = spawnSync(process.execPath, [
+    vendorTransactionPath, 'publish-checked', checkedCliFailureLive, checkedCliFailureCandidate, checkedCliFailureTransaction, checkedCliBun, checkedCliFailureRuntime,
+  ], { encoding: 'utf8' });
+  assert.equal(checkedCliFailure.status, 20, checkedCliFailure.stderr);
+  assert.match(checkedCliFailure.stderr, /Expected CommonJS module to have a function wrapper/, 'checked CLI failure must retain bounded runtime diagnostic text');
+  assert.deepEqual(readdirSync(checkedCliFailureLive).toSorted(), ['prior-native.node', 'ripgrep'], 'checked CLI status 37 must restore the exact prior live entry set');
+
+  const checkedCliBoundedRoot = join(vendorTransactionRoot, 'checked-cli-bounded');
+  const checkedCliBoundedTransaction = join(checkedCliBoundedRoot, 'transaction');
+  const checkedCliBoundedCandidate = join(checkedCliBoundedTransaction, 'candidate', 'vendor');
+  const checkedCliBoundedLive = join(checkedCliBoundedRoot, 'runtime', 'vendor');
+  const checkedCliBoundedRuntime = join(checkedCliBoundedRoot, 'fake-runtime.mjs');
+  mkdirSync(checkedCliBoundedCandidate, { recursive: true });
+  mkdirSync(checkedCliBoundedLive, { recursive: true });
+  writeFileSync(join(checkedCliBoundedLive, 'prior-native.node'), Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(join(checkedCliBoundedLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(join(checkedCliBoundedCandidate, 'candidate-native.node'), Buffer.from([0xca, 0xfe]), { mode: 0o600 });
+  writeFileSync(checkedCliBoundedRuntime, 'process.stderr.write("x".repeat(65535) + "é"); process.exit(37);\n', 'utf8');
+  const checkedCliBounded = spawnSync(process.execPath, [
+    vendorTransactionPath, 'publish-checked', checkedCliBoundedLive, checkedCliBoundedCandidate, checkedCliBoundedTransaction, checkedCliBun, checkedCliBoundedRuntime,
+  ], { encoding: 'utf8', maxBuffer: 256 * 1024 });
+  assert.equal(checkedCliBounded.status, 20, checkedCliBounded.stderr);
+  const checkedCliDiagnostic = checkedCliBounded.stderr.slice(checkedCliBounded.stderr.indexOf('runtime sanity check failed (exited 37):\n') + 'runtime sanity check failed (exited 37):\n'.length, -1);
+  assert.ok(Buffer.byteLength(checkedCliDiagnostic) <= 64 * 1024, 'checked CLI diagnostic must retain at most 64 KiB of runtime bytes');
+  assert.equal(checkedCliDiagnostic, 'x'.repeat(65535), 'checked CLI diagnostic must not split UTF-8 or leak beyond its byte bound');
+  assert.deepEqual(readdirSync(checkedCliBoundedLive).toSorted(), ['prior-native.node', 'ripgrep'], 'bounded runtime failure must restore the exact prior live entry set');
+
+  const checkedCliSignalRoot = join(vendorTransactionRoot, 'checked-cli-signal');
+  const checkedCliSignalTransaction = join(checkedCliSignalRoot, 'transaction');
+  const checkedCliSignalCandidate = join(checkedCliSignalTransaction, 'candidate', 'vendor');
+  const checkedCliSignalLive = join(checkedCliSignalRoot, 'runtime', 'vendor');
+  const checkedCliSignalRuntime = join(checkedCliSignalRoot, 'fake-runtime.mjs');
+  const checkedCliSignalBun = join(checkedCliSignalRoot, 'fake-bun');
+  mkdirSync(checkedCliSignalCandidate, { recursive: true });
+  mkdirSync(checkedCliSignalLive, { recursive: true });
+  writeFileSync(join(checkedCliSignalLive, 'prior-native.node'), Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(join(checkedCliSignalLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(join(checkedCliSignalCandidate, 'candidate-native.node'), Buffer.from([0xca, 0xfe]), { mode: 0o600 });
+  writeFileSync(checkedCliSignalRuntime, 'console.log("unreachable");\n', 'utf8');
+  writeFileSync(checkedCliSignalBun, '#!/bin/sh\nkill -TERM $$\n', 'utf8');
+  chmodSync(checkedCliSignalBun, 0o700);
+  const checkedCliSignal = spawnSync(process.execPath, [
+    vendorTransactionPath, 'publish-checked', checkedCliSignalLive, checkedCliSignalCandidate, checkedCliSignalTransaction, checkedCliSignalBun, checkedCliSignalRuntime,
+  ], { encoding: 'utf8' });
+  assert.equal(checkedCliSignal.status, 20, checkedCliSignal.stderr);
+  assert.doesNotMatch(checkedCliSignal.stderr, /\b42\b/, 'runtime signal must remain an ordinary publication failure, never patch compatibility');
+  assert.match(checkedCliSignal.stderr, /terminated by signal/, 'runtime signal must identify the checker failure reason');
+  assert.deepEqual(readdirSync(checkedCliSignalLive).toSorted(), ['prior-native.node', 'ripgrep'], 'runtime signal must restore the exact prior live entry set');
+
+  const checkedCliSpawnRoot = join(vendorTransactionRoot, 'checked-cli-spawn');
+  const checkedCliSpawnTransaction = join(checkedCliSpawnRoot, 'transaction');
+  const checkedCliSpawnCandidate = join(checkedCliSpawnTransaction, 'candidate', 'vendor');
+  const checkedCliSpawnLive = join(checkedCliSpawnRoot, 'runtime', 'vendor');
+  mkdirSync(checkedCliSpawnCandidate, { recursive: true });
+  mkdirSync(checkedCliSpawnLive, { recursive: true });
+  writeFileSync(join(checkedCliSpawnLive, 'prior-native.node'), Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(join(checkedCliSpawnLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(join(checkedCliSpawnCandidate, 'candidate-native.node'), Buffer.from([0xca, 0xfe]), { mode: 0o600 });
+  const checkedCliSpawn = spawnSync(process.execPath, [
+    vendorTransactionPath, 'publish-checked', checkedCliSpawnLive, checkedCliSpawnCandidate, checkedCliSpawnTransaction, join(checkedCliSpawnRoot, 'missing-bun'), join(checkedCliSpawnRoot, 'fake-runtime.mjs'),
+  ], { encoding: 'utf8' });
+  assert.equal(checkedCliSpawn.status, 20, checkedCliSpawn.stderr);
+  assert.doesNotMatch(checkedCliSpawn.stderr, /\b42\b/, 'runtime spawn error must remain an ordinary publication failure, never patch compatibility');
+  assert.match(checkedCliSpawn.stderr, /runtime sanity check failed/, 'runtime spawn error must identify the checker failure');
+  assert.deepEqual(readdirSync(checkedCliSpawnLive).toSorted(), ['prior-native.node', 'ripgrep'], 'runtime spawn error must restore the exact prior live entry set');
+
+  const checkedConflictCase = join(vendorTransactionRoot, 'checked-identity-conflict');
+  const checkedConflictTransaction = join(checkedConflictCase, 'transaction');
+  const checkedConflictCandidate = join(checkedConflictTransaction, 'candidate', 'vendor');
+  const checkedConflictLive = join(checkedConflictCase, 'runtime', 'vendor');
+  const checkedConflictDisplaced = join(checkedConflictCase, 'displaced-live');
+  const checkedConflictReplacement = join(checkedConflictCase, 'replacement-live');
+  mkdirSync(checkedConflictCandidate, { recursive: true });
+  mkdirSync(checkedConflictLive, { recursive: true });
+  mkdirSync(checkedConflictReplacement);
+  writeFileSync(join(checkedConflictLive, 'prior-native.node'), Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
+  writeFileSync(join(checkedConflictLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
+  writeFileSync(join(checkedConflictCandidate, 'candidate-native.node'), Buffer.from([0xca, 0xfe]), { mode: 0o600 });
+  writeFileSync(join(checkedConflictReplacement, 'sentinel.bin'), Buffer.from([0x5a, 0x00, 0xa5]), { mode: 0o604 });
+  let checkedConflictError;
+  try {
+    publishVendorTransaction({
+      liveVendor: checkedConflictLive,
+      candidateVendor: checkedConflictCandidate,
+      transactionDir: checkedConflictTransaction,
+      validatePublished: () => {
+        renameSync(checkedConflictLive, checkedConflictDisplaced);
+        renameSync(checkedConflictReplacement, checkedConflictLive);
+        throw new Error('runtime checker identity-conflict fixture');
+      },
+    });
+  } catch (error) {
+    checkedConflictError = error;
+  }
+  assert.equal(checkedConflictError?.rollbackComplete, false, 'validator root identity conflict must preserve the existing conflict boundary');
+  assert.equal(checkedConflictError?.cleanupSafe, false, 'validator root identity conflict must retain recovery data');
+  assert.deepEqual(readdirSync(checkedConflictLive), ['sentinel.bin'], 'validator root identity conflict must not mutate the replacement live vendor');
+  assert.equal(existsSync(join(checkedConflictTransaction, 'vendor-rollback-conflict.json')), true, 'validator root identity conflict must retain recovery evidence');
+
   const missingLiveCase = join(vendorTransactionRoot, 'missing-live');
   const missingLiveTransaction = join(missingLiveCase, 'transaction');
   const missingLiveCandidate = join(missingLiveTransaction, 'candidate', 'vendor');
