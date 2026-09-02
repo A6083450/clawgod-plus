@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -86,8 +86,8 @@ try {
     ['basename', '/usr/bin/basename'],
     ['cat', '/bin/cat'],
     ['chmod', '/bin/chmod'],
-    ['cp', '/bin/cp'],
     ['dirname', '/usr/bin/dirname'],
+    ['grep', '/usr/bin/grep'],
     ['head', '/usr/bin/head'],
     ['mkdir', '/bin/mkdir'],
     ['mktemp', '/usr/bin/mktemp'],
@@ -98,6 +98,20 @@ try {
     ['touch', '/usr/bin/touch'],
     ['tr', '/usr/bin/tr'],
   ]) symlinkSync(target, join(fakeBin, name));
+  const fakeCp = join(fakeBin, 'cp');
+  writeFileSync(fakeCp, `#!${process.execPath}
+import { basename } from 'node:path';
+import { spawnSync } from 'node:child_process';
+const operands = process.argv.slice(2).filter(value => value !== '--' && !value.startsWith('-'));
+if (process.env.PATCH_FALLBACK_SNAPSHOT_FAULT === '1'
+  && operands.at(-2)?.endsWith('/patch-fallback.json')
+  && operands.at(-1)?.includes('/.runtime-rollback.')) {
+  process.exit(74);
+}
+const child = spawnSync('/bin/cp', process.argv.slice(2), { stdio: 'inherit' });
+process.exit(child.status ?? 1);
+`, 'utf8');
+  chmodSync(fakeCp, 0o755);
   const fakeMv = join(fakeBin, 'mv');
   writeFileSync(fakeMv, `#!${process.execPath}
 import { basename, join } from 'node:path';
@@ -123,7 +137,7 @@ process.exit(child.status ?? 1);
   writeFileSync(fakeBun, `#!${process.execPath}
 import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 const [target, ...args] = process.argv.slice(2);
 if (target === '--version') {
@@ -171,6 +185,7 @@ if (name === 'install-ripgrep.mjs') {
   const child = spawnSync(process.execPath, [target, ...args], { env: process.env, stdio: 'inherit' });
   process.exit(child.status ?? 1);
 } else if (name === 'vendor-transaction.mjs') {
+  appendFileSync(process.env.VENDOR_PUBLISH_CALLS, 'publish-checked\\n');
   if (process.env.VENDOR_PREFLIGHT_FAULT === '1') {
     writeFileSync(join(args[3], 'old-vendor'), 'preflight blocker\\n');
     const child = spawnSync(process.execPath, [target, ...args], { env: process.env, stdio: 'inherit' });
@@ -222,7 +237,9 @@ if (name === 'install-ripgrep.mjs') {
   }
   process.exit(Number(process.env.PATCH_EXIT || 0));
 } else if (name === 'cli.cjs' && args[0] === '--version') {
-  console.log('2.1.999');
+  appendFileSync(process.env.RUNTIME_CHECK_CALLS, 'check\\n');
+  if (process.env.SANITY_PANIC === '1') process.stderr.write('Expected CommonJS module to have a function wrapper\\n');
+  else console.log('2.1.999');
   process.exit(Number(process.env.SANITY_EXIT || 0));
 } else if (name === 'plugin-dependencies.mjs' && args[0] === 'ensure') {
   writeFileSync(process.env.PLUGIN_HEALTH_MARKER, JSON.stringify({ args, clawgodVersion: process.env.CLAWGOD_VERSION || null }) + '\\n');
@@ -242,8 +259,12 @@ if (name === 'install-ripgrep.mjs') {
     const claudeResolver = join(root, 'claude-resolver.txt');
     const patchArgs = join(root, 'patch-args.json');
     const chromeMarker = join(root, 'chrome-ran.txt');
+    const vendorPublishCalls = join(root, 'vendor-publish-calls.txt');
+    const runtimeCheckCalls = join(root, 'runtime-check-calls.txt');
     const configPath = join(home, '.clawgod', 'enhancements.json');
     const target = join(home, '.clawgod', 'cli.original.cjs');
+    const chunks = join(home, '.clawgod', 'chunks');
+    const priorChunk = join(chunks, 'prior-chunk.mjs');
     const fallbackState = join(home, '.clawgod', 'patch-fallback.json');
     const sourceVersion = join(home, '.clawgod', '.source-version');
     const vendor = join(home, '.clawgod', 'vendor');
@@ -290,6 +311,10 @@ if (name === 'install-ripgrep.mjs') {
       writeFileSync(target, options.priorRuntime, 'utf8');
       writeFileSync(sourceVersion, '2.1.225\n', 'utf8');
     }
+    if (options.priorChunks) {
+      mkdirSync(chunks, { recursive: true });
+      writeFileSync(priorChunk, 'prior chunk fixture\n', 'utf8');
+    }
     if (options.priorFallback) {
       writeFileSync(fallbackState, JSON.stringify({
         schemaVersion: 1,
@@ -312,8 +337,12 @@ if (name === 'install-ripgrep.mjs') {
         PATCH_ARGS_MARKER: patchArgs,
         PATCH_EXIT: String(options.patchExit || 0),
         SANITY_EXIT: String(options.sanityExit || 0),
+        SANITY_PANIC: options.sanityPanic ? '1' : '0',
         CLAWGOD_UPDATE_PATCH_FAIL_OPEN: options.updateFailOpen ? '1' : '',
         CHROME_MARKER: chromeMarker,
+        VENDOR_PUBLISH_CALLS: vendorPublishCalls,
+        RUNTIME_CHECK_CALLS: runtimeCheckCalls,
+        PATCH_FALLBACK_SNAPSHOT_FAULT: options.fallbackSnapshotFault ? '1' : '0',
         EXTERNAL_REPLACEMENT: externalReplacement,
         VENDOR_PUBLISH_FAULT: options.publishFault || options.rootReplacementFault ? '1' : '0',
         VENDOR_PREFLIGHT_FAULT: options.preflightFault ? '1' : '0',
@@ -341,6 +370,9 @@ if (name === 'install-ripgrep.mjs') {
       claudeResolver,
       patchArgs: existsSync(patchArgs) ? JSON.parse(readFileSync(patchArgs, 'utf8')) : null,
       chromeMarker: existsSync(chromeMarker) ? readFileSync(chromeMarker, 'utf8') : null,
+      vendorPublishCalls: existsSync(vendorPublishCalls) ? readFileSync(vendorPublishCalls, 'utf8').trimEnd().split('\n') : [],
+      runtimeCheckCalls: existsSync(runtimeCheckCalls) ? readFileSync(runtimeCheckCalls, 'utf8').trimEnd().split('\n') : [],
+      chunks: existsSync(priorChunk) ? readFileSync(priorChunk, 'utf8') : null,
       fallbackState: existsSync(fallbackState) ? JSON.parse(readFileSync(fallbackState, 'utf8')) : null,
       configPath,
       configBytes: readFileSync(configPath, 'utf8'),
@@ -421,6 +453,17 @@ if (name === 'install-ripgrep.mjs') {
     clawgodVersion: fixtureSelfVersion,
     reason: 'bundle-patch-compatibility',
   };
+
+  const fallbackSnapshotFailure = runLifecycleCase('fallback-snapshot-failure', [], {
+    priorRuntime: 'prior installed runtime\n',
+    priorChunks: true,
+    priorFallback: true,
+    fallbackSnapshotFault: true,
+  });
+  assert.notEqual(fallbackSnapshotFailure.run.status, 0, 'fallback-state snapshot failure must abort before mutation');
+  assert.equal(fallbackSnapshotFailure.runtime, 'prior installed runtime\n', 'fallback-state snapshot failure must preserve the prior runtime');
+  assert.equal(fallbackSnapshotFailure.chunks, 'prior chunk fixture\n', 'fallback-state snapshot failure must preserve live chunks before transaction activation');
+  assert.deepEqual(fallbackSnapshotFailure.fallbackState, priorFallbackState, 'fallback-state snapshot failure must preserve the prior fallback state');
 
   const directCompatibilityFailure = runLifecycleCase('direct-compatibility-failure', [], {
     patchExit: 42,
@@ -515,6 +558,18 @@ if (name === 'install-ripgrep.mjs') {
   });
   assert.notEqual(fullPatchSanityFailure.run.status, 0, 'full patch runtime sanity failure must fail the update');
   assertPriorRuntimeRestored(fullPatchSanityFailure, 'full patch sanity failure', { fallback: priorFallbackState });
+
+  const candidateCanaryFailure = runLifecycleCase('candidate-canary-failure', [], {
+    sanityExit: 37,
+    sanityPanic: true,
+    priorRuntime: 'prior installed runtime\n',
+    priorFallback: true,
+  });
+  assert.notEqual(candidateCanaryFailure.run.status, 0, 'candidate runtime panic must fail checked publication');
+  assertPriorRuntimeRestored(candidateCanaryFailure, 'candidate canary failure', { fallback: priorFallbackState });
+  assert.equal(candidateCanaryFailure.vendorPublishCalls.length, 1, 'candidate runtime panic must invoke publish-checked exactly once');
+  assert.equal(candidateCanaryFailure.runtimeCheckCalls.length, 1, 'candidate runtime panic must run exactly one checked runtime verification');
+  assert.match(`${candidateCanaryFailure.run.stdout}${candidateCanaryFailure.run.stderr}`, /bun upgrade --canary/, 'candidate runtime panic must display shared Bun canary guidance');
 
   const fallbackVendorRollback = runLifecycleCase('fallback-vendor-rollback', [], {
     updateFailOpen: true,

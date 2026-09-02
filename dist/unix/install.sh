@@ -6371,6 +6371,28 @@ rollback_runtime_transaction() {
   fi
 }
 
+warn_bun_canary_guidance() {
+  echo ""
+  warn "Bun $("$BUN_BIN" --version) cannot load Anthropic's cli.original.cjs."
+  warn ""
+  warn "  Anthropic builds with Bun's canary channel (currently ~1.3.14), while"
+  warn "  bun.sh's main download is on stable (currently 1.3.13). The canary build"
+  warn "  is NOT visible on bun.sh's download page — it lives on GitHub Releases"
+  warn "  and is reachable only via 'bun upgrade --canary'."
+  warn ""
+  warn "  If your bun is from bun.sh:"
+  warn "    bun upgrade --canary"
+  warn ""
+  warn "  If your bun is from a package manager (brew/apt/scoop) where the binary"
+  warn "  is behind a shim and refuses to self-replace ('bun upgrade' silently"
+  warn "  hangs or no-ops):"
+  warn "    <pkg-manager> uninstall bun"
+  warn "    curl -fsSL https://bun.sh/install | bash"
+  warn "    bun upgrade --canary"
+  warn ""
+  warn "  Then re-run install.sh — this sanity check will pass."
+}
+
 verify_runtime() {
   dim "Verifying Bun can load patched cli.original.cjs ..."
   sanity_status=0
@@ -6379,25 +6401,7 @@ verify_runtime() {
   sanity_status=$?
   set -e
   if echo "$sanity_out" | grep -q "Expected CommonJS module to have a function wrapper"; then
-    echo ""
-    warn "Bun $("$BUN_BIN" --version) cannot load Anthropic's cli.original.cjs."
-    warn ""
-    warn "  Anthropic builds with Bun's canary channel (currently ~1.3.14), while"
-    warn "  bun.sh's main download is on stable (currently 1.3.13). The canary build"
-    warn "  is NOT visible on bun.sh's download page — it lives on GitHub Releases"
-    warn "  and is reachable only via 'bun upgrade --canary'."
-    warn ""
-    warn "  If your bun is from bun.sh:"
-    warn "    bun upgrade --canary"
-    warn ""
-    warn "  If your bun is from a package manager (brew/apt/scoop) where the binary"
-    warn "  is behind a shim and refuses to self-replace ('bun upgrade' silently"
-    warn "  hangs or no-ops):"
-    warn "    <pkg-manager> uninstall bun"
-    warn "    curl -fsSL https://bun.sh/install | bash"
-    warn "    bun upgrade --canary"
-    warn ""
-    warn "  Then re-run install.sh — this sanity check will pass."
+    warn_bun_canary_guidance
     if [ "$sanity_status" -eq 0 ]; then sanity_status=1; fi
     return "$sanity_status"
   fi
@@ -6413,8 +6417,12 @@ commit_runtime_transaction() {
   if [ "$RUNTIME_HAS_CANDIDATE_VENDOR" = "1" ]; then
     RUNTIME_VENDOR_PUBLISH_STARTED=1
     vendor_status=0
-    "$BUN_BIN" "$CLAWGOD_DIR/vendor-transaction.mjs" publish-checked "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$RUNTIME_TRANSACTION_DIR" "$BUN_BIN" "$CLAWGOD_DIR/cli.cjs" || vendor_status=$?
+    vendor_output=$("$BUN_BIN" "$CLAWGOD_DIR/vendor-transaction.mjs" publish-checked "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$RUNTIME_TRANSACTION_DIR" "$BUN_BIN" "$CLAWGOD_DIR/cli.cjs" 2>&1) || vendor_status=$?
+    [ -n "$vendor_output" ] && printf '%s\n' "$vendor_output" >&2
     if [ "$vendor_status" -ne 0 ]; then
+      if echo "$vendor_output" | grep -q "Expected CommonJS module to have a function wrapper"; then
+        warn_bun_canary_guidance
+      fi
       if [ "$vendor_status" -eq 20 ] || [ "$vendor_status" -eq 22 ]; then
         RUNTIME_VENDOR_ROLLBACK_COMPLETE=1
         [ "$vendor_status" -eq 22 ] && RUNTIME_TRANSACTION_CLEANUP_SAFE=0
@@ -6439,16 +6447,16 @@ if [ -f "$CLAWGOD_DIR/.source-version" ]; then
   cp -p "$CLAWGOD_DIR/.source-version" "$RUNTIME_TRANSACTION_DIR/.source-version"
   RUNTIME_HAD_SOURCE_VERSION=1
 fi
-if [ -d "$CLAWGOD_DIR/chunks" ]; then
-  mv "$CLAWGOD_DIR/chunks" "$RUNTIME_TRANSACTION_DIR/chunks"
-  RUNTIME_HAD_CHUNKS=1
-fi
 if [ -f "$CLAWGOD_DIR/patch-fallback.json" ]; then
   cp -p "$CLAWGOD_DIR/patch-fallback.json" "$RUNTIME_TRANSACTION_DIR/patch-fallback.json"
   RUNTIME_HAD_PATCH_FALLBACK=1
 fi
 RUNTIME_TRANSACTION_ACTIVE=1
 trap 'rollback_runtime_transaction' EXIT
+if [ -d "$CLAWGOD_DIR/chunks" ]; then
+  mv "$CLAWGOD_DIR/chunks" "$RUNTIME_TRANSACTION_DIR/chunks"
+  RUNTIME_HAD_CHUNKS=1
+fi
 
 if [ "$NO_UPGRADE" = "1" ]; then
   if [ ! -f "$CLAWGOD_DIR/cli.original.cjs" ]; then
