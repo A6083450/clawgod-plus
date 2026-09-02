@@ -242,6 +242,19 @@ jobs:
         with:
           bun-version: 1.3.14
 
+      - name: Run PowerShell patch fallback contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:RUNNER_TEMP 'installer-bun-runtime-windows.log'
+          $output = & bun "$env:GITHUB_WORKSPACE\tests\installer-windows-patch-fallback.mjs" 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | Tee-Object -FilePath $log | Out-Host
+          if ($exitCode -ne 0) { throw "installer-windows-patch-fallback.mjs exited $exitCode" }
+          if (($output | Out-String) -match 'PowerShell native patch fallback checks skipped: pwsh unavailable') {
+            throw 'PowerShell native patch fallback contract skipped despite Windows pwsh availability'
+          }
+
       - name: Run isolated Bun-only Windows install lifecycle
         shell: pwsh
         run: |

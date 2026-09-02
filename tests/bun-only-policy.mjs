@@ -23,6 +23,7 @@ const GENERATED_INSTALLER_CONTRACT_TESTS = new Set([
   'installer-bun-runtime.mjs',
   'installer-e2e.mjs',
   'installer-e2e-contract.mjs',
+  'installer-windows-patch-fallback.mjs',
 ]);
 
 function collectCanonicalSources() {

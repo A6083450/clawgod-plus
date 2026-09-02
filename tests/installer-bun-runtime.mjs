@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildPatcherBundle, renderTemplate } from '../build.mjs';
 import { publishVendorTransaction } from '../src/generic/runtime/vendor-transaction.mjs';
@@ -12,6 +12,7 @@ const vendorTransactionPath = fileURLToPath(new URL('../src/generic/runtime/vend
 const unix = readFileSync(new URL('../dist/unix/install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../dist/win/install.ps1', import.meta.url), 'utf8');
 const windowsTemplate = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
+const compatDailyWorkflow = readFileSync(new URL('../.github/workflows/compat-daily.yml', import.meta.url), 'utf8');
 const canonicalPlatform = Object.fromEntries(
   ['unix/lifecycle.sh', 'unix/launcher.sh', 'windows/lifecycle.ps1', 'windows/launcher.cmd'].map(name => [
     name,
@@ -792,17 +793,6 @@ function assertPowerShellFallbackTransaction(source, label) {
   assert.ok(transactionTry >= 0 && transactionTry < fallbackSnapshot && fallbackSnapshot < chunksMove, `${label} must activate rollback before snapshots and destructive chunk movement`);
   assert.match(source, /if \(\$RuntimeHadPatchFallback\) \{[\s\S]*?Copy-Item -LiteralPath \(Join-Path \$RuntimeRollbackDir "patch-fallback\.json"\) -Destination \$RuntimePatchFallback -Force[\s\S]*?\} else \{[\s\S]*?Remove-Item -LiteralPath \$RuntimePatchFallback -Force -ErrorAction SilentlyContinue/, `${label} must roll back fallback state`);
   return block;
-}
-
-function findPwsh() {
-  const pathValue = process.env.PATH || process.env.Path || '';
-  for (const directory of pathValue.split(delimiter)) {
-    for (const name of process.platform === 'win32' ? ['pwsh.exe', 'pwsh'] : ['pwsh']) {
-      const candidate = join(directory, name);
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  return null;
 }
 
 const executableNode = /(?:^|[;\r\n])\s*(?:&\s*)?(?:node(?:\.exe)?|\$NodeBin)\b(?:\s|$)|\bStart-Process\s+(?:-FilePath\s+)?(?:node(?:\.exe)?)\b/i;
@@ -2153,231 +2143,14 @@ assert.match(windowsApplyBlock, /vendor-transaction\.mjs'\) publish-checked \$Ru
 assert.match(windowsApplyBlock, /\$VendorRollbackComplete\s*=\s*\$vendorStatus\s*-eq\s*20\s*-or\s*\$vendorStatus\s*-eq\s*22/, 'install.ps1 must restore the prior CLI only after the shared helper reports verified rollback');
 assert.doesNotMatch(windowsApplyBlock, /Move-Item[\s\S]*\$RuntimeCandidateVendor/, 'install.ps1 must not maintain a second native publication implementation');
 
-const pwsh = findPwsh();
-const runPowerShellFallbackMatrix = process.env.CLAWGOD_INSTALLER_FOCUS !== 'windows-vendor-status';
-if (pwsh && runPowerShellFallbackMatrix) {
-  const fallbackMatrixRoot = mkdtempSync(join(tmpdir(), 'clawgod-powershell-patch-fallback-'));
-  assertTemporaryPath(fallbackMatrixRoot, 'PowerShell patch fallback matrix fixture');
-  try {
-    const fallbackScript = join(fallbackMatrixRoot, 'patch-fallback.ps1');
-    const patchFallbackSource = canonicalRuntime['patch-fallback.cjs'];
-    const fallbackBlockStart = windowsApplyBlock.indexOf('Write-Dim "Applying patches ..."');
-    const fallbackBlockEnd = windowsApplyBlock.indexOf('\n$RuntimeTransactionCommitted = $true', fallbackBlockStart);
-    assert.ok(fallbackBlockStart >= 0 && fallbackBlockEnd > fallbackBlockStart, 'PowerShell fallback matrix must extract patch transaction block');
-    const fallbackBlock = windowsApplyBlock.slice(fallbackBlockStart, fallbackBlockEnd).replace(
-      'exit $patchStatus',
-      'throw "Mandatory patching failed with status $patchStatus"',
-    );
-    writeFileSync(fallbackScript, `$ErrorActionPreference = 'Stop'
-$BunBin = $env:CLAWGOD_TEST_BUN
-$ClawDir = $env:CLAWGOD_TEST_DIR
-$NativeBinLabel = '2.1.999'
-$ClawSelfVersion = '2026.9.2-claude.2.1.258'
-$NoUpgrade = [System.Convert]::ToBoolean($env:CLAWGOD_TEST_NO_UPGRADE)
-$RuntimeHadTarget = [System.Convert]::ToBoolean($env:CLAWGOD_TEST_HAD_TARGET)
-$RuntimeHasCandidateVendor = [System.Convert]::ToBoolean($env:CLAWGOD_TEST_HAS_CANDIDATE_VENDOR)
-$RuntimeTarget = Join-Path $ClawDir 'cli.original.cjs'
-$RuntimeSourceVersion = Join-Path $ClawDir '.source-version'
-$RuntimePatchFallback = Join-Path $ClawDir 'patch-fallback.json'
-$RuntimeRollbackDir = Join-Path $ClawDir '.runtime-rollback'
-$RuntimeCandidateVendor = Join-Path $RuntimeRollbackDir 'candidate\\vendor'
-$RuntimeVendorDir = Join-Path $ClawDir 'vendor'
-$RuntimeHadSourceVersion = Test-Path -LiteralPath $RuntimeSourceVersion -PathType Leaf
-$RuntimeHadPatchFallback = Test-Path -LiteralPath $RuntimePatchFallback -PathType Leaf
-$RuntimeHadChunks = $false
-$RuntimeVendorPublishStarted = $false
-$VendorRollbackComplete = $false
-$RuntimeTransactionCleanupSafe = $true
-$RuntimeTransactionCommitted = $false
-function Write-Dim { param([string]$Message) }
-function Write-OK { param([string]$Message) }
-function Write-Warn { param([string]$Message); [Console]::Error.WriteLine($Message) }
-function Write-Err { param([string]$Message); [Console]::Error.WriteLine($Message) }
-function Invoke-ChromePostInstallFix { [System.IO.File]::WriteAllText((Join-Path $ClawDir 'chrome-ran'), 'yes') }
-try {
-${fallbackBlock}
-} catch {
-    if (-not $RuntimeVendorPublishStarted) { $VendorRollbackComplete = $true }
-    if ($VendorRollbackComplete) {
-        if ($RuntimeHadTarget) {
-            Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir 'cli.original.cjs') -Destination $RuntimeTarget -Force
-        } else {
-            Remove-Item -LiteralPath $RuntimeTarget -Force -ErrorAction SilentlyContinue
-        }
-        if ($RuntimeHadSourceVersion) {
-            Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir '.source-version') -Destination $RuntimeSourceVersion -Force
-        } else {
-            Remove-Item -LiteralPath $RuntimeSourceVersion -Force -ErrorAction SilentlyContinue
-        }
-        if ($RuntimeHadPatchFallback) {
-            Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir 'patch-fallback.json') -Destination $RuntimePatchFallback -Force
-        } else {
-            Remove-Item -LiteralPath $RuntimePatchFallback -Force -ErrorAction SilentlyContinue
-        }
-    }
-    throw
-}
-[ordered]@{
-  patchArgs = [System.IO.File]::ReadAllText((Join-Path $ClawDir 'patch-args.json'))
-  fallbackExists = Test-Path -LiteralPath $RuntimePatchFallback
-  fallback = if (Test-Path -LiteralPath $RuntimePatchFallback) { [System.IO.File]::ReadAllText($RuntimePatchFallback) } else { $null }
-  chromeRan = Test-Path -LiteralPath (Join-Path $ClawDir 'chrome-ran')
-  committed = $RuntimeTransactionCommitted
-} | ConvertTo-Json -Compress
-`, 'utf8');
+const windowsFallbackWorkflowStart = compatDailyWorkflow.indexOf('      - name: Run PowerShell patch fallback contract');
+const windowsFallbackWorkflowEnd = compatDailyWorkflow.indexOf('\n      - name: Run isolated Bun-only Windows install lifecycle', windowsFallbackWorkflowStart);
+assert.ok(windowsFallbackWorkflowStart >= 0 && windowsFallbackWorkflowEnd > windowsFallbackWorkflowStart, 'Windows CI must run the PowerShell patch fallback contract before PATH narrowing');
+const windowsFallbackWorkflow = compatDailyWorkflow.slice(windowsFallbackWorkflowStart, windowsFallbackWorkflowEnd);
+assert.match(windowsFallbackWorkflow, /installer-windows-patch-fallback\.mjs/, 'Windows CI fallback contract must invoke its dedicated Windows-only suite');
+assert.match(windowsFallbackWorkflow, /PowerShell native patch fallback checks skipped: pwsh unavailable/, 'Windows CI fallback contract must reject an unavailable pwsh skip');
+assert.match(windowsFallbackWorkflow, /if \(\$exitCode -ne 0\)/, 'Windows CI fallback contract must fail on test nonzero status');
 
-    for (const fixture of [
-      { label: 'authorized-update', env: '1', hadTarget: true, noUpgrade: false, patchExit: 42, expectStatus: 0, fallback: true, chrome: false, allow: true },
-      { label: 'direct-existing', env: '', hadTarget: true, noUpgrade: false, patchExit: 42, expectStatus: 1, fallback: false, chrome: false, allow: false },
-      { label: 'first-install', env: '1', hadTarget: false, noUpgrade: false, patchExit: 42, expectStatus: 1, fallback: false, chrome: false, allow: false },
-      { label: 'no-upgrade', env: '1', hadTarget: true, noUpgrade: true, patchExit: 42, expectStatus: 1, fallback: false, chrome: false, allow: false },
-      { label: 'full-patch', env: '1', hadTarget: true, noUpgrade: false, patchExit: 0, expectStatus: 0, fallback: false, chrome: true, allow: true },
-    ]) {
-      const caseRoot = join(fallbackMatrixRoot, fixture.label);
-      const clawDir = join(caseRoot, 'clawgod');
-      const rollback = join(clawDir, '.runtime-rollback');
-      mkdirSync(join(rollback, 'candidate', 'vendor'), { recursive: true });
-      mkdirSync(join(clawDir, 'vendor'), { recursive: true });
-      writeFileSync(join(clawDir, 'patch-fallback.cjs'), patchFallbackSource, 'utf8');
-      writeFileSync(join(clawDir, 'enhancements.json'), '{}\n', 'utf8');
-      writeFileSync(join(clawDir, 'cli.cjs'), 'process.exit(0);\n', 'utf8');
-      writeFileSync(join(clawDir, 'patch.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.CLAWGOD_PATCH_ARGS, JSON.stringify(process.argv.slice(2)));\nprocess.exit(Number(process.env.CLAWGOD_PATCH_EXIT));\n`, 'utf8');
-      if (fixture.hadTarget) {
-        writeFileSync(join(clawDir, 'cli.original.cjs'), 'candidate runtime\n', 'utf8');
-        writeFileSync(join(rollback, 'cli.original.cjs'), 'prior runtime\n', 'utf8');
-      }
-      const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fallbackScript], {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          USERPROFILE: caseRoot,
-          HOME: caseRoot,
-          CLAWGOD_TEST_BUN: process.execPath,
-          CLAWGOD_TEST_DIR: clawDir,
-          CLAWGOD_TEST_HAD_TARGET: String(fixture.hadTarget),
-          CLAWGOD_TEST_NO_UPGRADE: String(fixture.noUpgrade),
-          CLAWGOD_TEST_HAS_CANDIDATE_VENDOR: 'false',
-          CLAWGOD_UPDATE_PATCH_FAIL_OPEN: fixture.env,
-          CLAWGOD_PATCH_EXIT: String(fixture.patchExit),
-          CLAWGOD_PATCH_ARGS: join(clawDir, 'patch-args.json'),
-        },
-      });
-      assert.equal(run.status, fixture.expectStatus, `${fixture.label}: PowerShell fallback lifecycle result:\n${run.stdout}${run.stderr}`);
-      const args = JSON.parse(readFileSync(join(clawDir, 'patch-args.json'), 'utf8'));
-      assert.equal(args.includes('--allow-compatibility-fallback'), fixture.allow, `${fixture.label}: fallback flag authorization must match the three-condition gate`);
-      if (fixture.expectStatus === 0) {
-        const resultLine = run.stdout.trim().split(/\r?\n/).findLast(line => line.startsWith('{'));
-        assert.ok(resultLine, `${fixture.label}: PowerShell fallback matrix must emit JSON`);
-        const result = JSON.parse(resultLine);
-        assert.equal(result.committed, true, `${fixture.label}: successful fallback matrix case must commit`);
-        assert.equal(result.fallbackExists, fixture.fallback, `${fixture.label}: fallback state existence must match patch result`);
-        assert.equal(result.chromeRan, fixture.chrome, `${fixture.label}: Chrome execution must respect fallback state`);
-        if (fixture.fallback) assert.match(result.fallback, /"reason": "bundle-patch-compatibility"/, `${fixture.label}: fallback state must be canonical`);
-      } else if (fixture.hadTarget) {
-        assert.equal(readFileSync(join(clawDir, 'cli.original.cjs'), 'utf8'), 'prior runtime\n', `${fixture.label}: failed fallback must restore previous runtime`);
-      }
-    }
-  } finally {
-    rmSync(fallbackMatrixRoot, { recursive: true, force: true });
-  }
-} else if (!pwsh) {
-  console.log('PowerShell native patch fallback checks skipped: pwsh unavailable');
-}
-if (pwsh) {
-  const nativeStatusRoot = mkdtempSync(join(tmpdir(), 'clawgod-powershell-vendor-status-'));
-  assertTemporaryPath(nativeStatusRoot, 'PowerShell vendor status fixture');
-  try {
-    for (const expectedStatus of [20, 22]) {
-      const caseRoot = join(nativeStatusRoot, `status-${expectedStatus}`);
-      const clawDir = join(caseRoot, 'clawgod');
-      const transaction = join(clawDir, '.runtime-rollback');
-      const liveVendor = join(clawDir, 'vendor');
-      const candidateVendor = expectedStatus === 20
-        ? join(transaction, 'candidate', 'vendor')
-        : join(caseRoot, 'outside-candidate');
-      const target = join(clawDir, 'cli.original.cjs');
-      const script = join(caseRoot, 'vendor-status.ps1');
-      mkdirSync(transaction, { recursive: true });
-      mkdirSync(candidateVendor, { recursive: true });
-      mkdirSync(liveVendor, { recursive: true });
-      writeFileSync(join(liveVendor, 'ripgrep'), Buffer.from([0x72, 0x67]));
-      if (expectedStatus === 20) writeFileSync(join(candidateVendor, 'ripgrep'), Buffer.from([0x63, 0x61, 0x6e, 0x64]));
-      writeFileSync(join(clawDir, 'vendor-transaction.mjs'), canonicalRuntime['vendor-transaction.mjs'], 'utf8');
-      writeFileSync(join(clawDir, 'patch.mjs'), 'process.exit(0);\n', 'utf8');
-      writeFileSync(join(clawDir, 'enhancements.json'), '{}\n', 'utf8');
-      writeFileSync(target, 'candidate runtime\n', 'utf8');
-      writeFileSync(join(transaction, 'cli.original.cjs'), 'prior runtime\n', 'utf8');
-      writeFileSync(script, `$ErrorActionPreference = 'Stop'
-$PSNativeCommandUseErrorActionPreference = $true
-$BunBin = $env:CLAWGOD_TEST_BUN
-$ClawDir = $env:CLAWGOD_TEST_DIR
-$RuntimeTarget = Join-Path $ClawDir 'cli.original.cjs'
-$RuntimeSourceVersion = Join-Path $ClawDir '.source-version'
-$RuntimeRollbackDir = $env:CLAWGOD_TEST_TRANSACTION
-$RuntimeCandidateVendor = $env:CLAWGOD_TEST_CANDIDATE
-$RuntimeVendorDir = Join-Path $ClawDir 'vendor'
-$RuntimeHadTarget = $true
-$RuntimeHadSourceVersion = $false
-$RuntimeTransactionCommitted = $false
-$RuntimeVendorPublishStarted = $false
-$VendorRollbackComplete = $false
-$RuntimeTransactionCleanupSafe = $true
-$NoUpgrade = $false
-function Write-Dim { param([string]$Message) }
-function Write-Err { param([string]$Message); [Console]::Error.WriteLine($Message) }
-function Invoke-ChromePostInstallFix {}
-$Caught = $false
-try {
-    try {
-${windowsApplyBlock}
-} catch {
-    $Caught = $true
-}
-[ordered]@{
-    status = $vendorStatus
-    nativePreference = $PSNativeCommandUseErrorActionPreference
-    nativePreferenceDefined = Test-Path Variable:PSNativeCommandUseErrorActionPreference
-    errorActionPreference = [string]$ErrorActionPreference
-    rollbackComplete = $VendorRollbackComplete
-    cleanupSafe = $RuntimeTransactionCleanupSafe
-    caught = $Caught
-    target = [System.IO.File]::ReadAllText($RuntimeTarget)
-    transactionExists = Test-Path -LiteralPath $RuntimeRollbackDir
-} | ConvertTo-Json -Compress
-`, 'utf8');
-
-      const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          HOME: caseRoot,
-          USERPROFILE: caseRoot,
-          CLAWGOD_TEST_BUN: process.execPath,
-          CLAWGOD_TEST_DIR: clawDir,
-          CLAWGOD_TEST_TRANSACTION: transaction,
-          CLAWGOD_TEST_CANDIDATE: candidateVendor,
-        },
-      });
-      assert.equal(run.status, 0, `PowerShell helper status ${expectedStatus} fixture must complete:\n${run.stdout}${run.stderr}`);
-      const resultLine = run.stdout.trim().split(/\r?\n/).findLast(line => line.startsWith('{'));
-      assert.ok(resultLine, `PowerShell helper status ${expectedStatus} fixture must emit JSON:\n${run.stdout}${run.stderr}`);
-      const result = JSON.parse(resultLine);
-      assert.equal(result.status, expectedStatus, `PowerShell must capture helper exit ${expectedStatus}`);
-      assert.equal(result.nativePreference, true, `PowerShell must restore native-command preference after helper exit ${expectedStatus}`);
-      assert.equal(result.nativePreferenceDefined, true, `PowerShell must restore native-command preference existence after helper exit ${expectedStatus}`);
-      assert.equal(result.errorActionPreference, 'Stop', `PowerShell must not weaken ErrorActionPreference around helper exit ${expectedStatus}`);
-      assert.equal(result.rollbackComplete, true, `PowerShell helper exit ${expectedStatus} must restore the prior CLI`);
-      assert.equal(result.cleanupSafe, expectedStatus === 20, `PowerShell helper exit ${expectedStatus} must preserve cleanup semantics`);
-      assert.equal(result.caught, true, `PowerShell helper exit ${expectedStatus} must reach caller failure handling`);
-      assert.equal(result.target, 'prior runtime\n', `PowerShell helper exit ${expectedStatus} must restore prior CLI bytes`);
-      assert.equal(result.transactionExists, expectedStatus === 22, `PowerShell helper exit ${expectedStatus} must ${expectedStatus === 22 ? 'retain' : 'clean'} transaction data`);
-    }
-  } finally {
-    rmSync(nativeStatusRoot, { recursive: true, force: true });
-  }
-} else {
-  console.log('PowerShell native vendor status checks skipped: pwsh unavailable');
-}
 
 const repatchRoot = mkdtempSync(join(tmpdir(), `clawgod repatch "quoted" 'gate' `));
 assert.equal(realpathSync(dirname(repatchRoot)), realpathSync(tmpdir()), 'repatch fixture must be created directly under the system temporary directory');
