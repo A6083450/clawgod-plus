@@ -14,6 +14,8 @@ import {
 import { inspectPatcherSource } from './core.mjs';
 import { createPatchSelection, enhancementManifest } from './registry.mjs';
 
+export const PATCH_COMPATIBILITY_EXIT_CODE = 42;
+
 const DEFAULT_ROOT = dirname(fileURLToPath(import.meta.url));
 
 // v2.1.245+ ships the CLI as an ESM entry point plus a code-split graph of
@@ -82,6 +84,10 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   const dryRun = args.includes('--dry-run');
   const verify = args.includes('--verify');
   const revert = args.includes('--revert');
+  const allowCompatibilityFallback = args.includes('--allow-compatibility-fallback')
+    && !dryRun
+    && !verify
+    && !revert;
   const enhancementFlagIndexes = args
     .map((argument, index) => argument === '--enhancements-file' ? index : -1)
     .filter(index => index >= 0);
@@ -247,7 +253,9 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   }
 
   console.log(`${'═'.repeat(55)}\n`);
-  if (failed > 0) process.exit(1);
+  if (failed > 0) process.exit(
+    allowCompatibilityFallback ? PATCH_COMPATIBILITY_EXIT_CODE : 1,
+  );
 }
 
 await runPatcher({
