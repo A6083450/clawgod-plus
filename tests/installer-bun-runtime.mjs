@@ -2164,7 +2164,10 @@ if (pwsh && runPowerShellFallbackMatrix) {
     const fallbackBlockStart = windowsApplyBlock.indexOf('Write-Dim "Applying patches ..."');
     const fallbackBlockEnd = windowsApplyBlock.indexOf('\n$RuntimeTransactionCommitted = $true', fallbackBlockStart);
     assert.ok(fallbackBlockStart >= 0 && fallbackBlockEnd > fallbackBlockStart, 'PowerShell fallback matrix must extract patch transaction block');
-    const fallbackBlock = windowsApplyBlock.slice(fallbackBlockStart, fallbackBlockEnd);
+    const fallbackBlock = windowsApplyBlock.slice(fallbackBlockStart, fallbackBlockEnd).replace(
+      'exit $patchStatus',
+      'throw "Mandatory patching failed with status $patchStatus"',
+    );
     writeFileSync(fallbackScript, `$ErrorActionPreference = 'Stop'
 $BunBin = $env:CLAWGOD_TEST_BUN
 $ClawDir = $env:CLAWGOD_TEST_DIR
