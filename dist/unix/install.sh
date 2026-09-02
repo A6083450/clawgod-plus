@@ -6239,8 +6239,8 @@ if (import.meta.main) {
   const checked = command === 'publish-checked';
   if ((command !== 'publish' && !checked)
     || !liveVendor || !candidateVendor || !transactionDir || (checked && (!bun || !cli))) {
-    console.error(`usage: ${basename(process.argv[1])} publish <live-vendor> <candidate-vendor> <transaction-dir>
-       ${basename(process.argv[1])} publish-checked <live-vendor> <candidate-vendor> <transaction-dir> <bun> <cli>`);
+    process.stderr.write(`usage: ${basename(process.argv[1])} publish <live-vendor> <candidate-vendor> <transaction-dir>
+       ${basename(process.argv[1])} publish-checked <live-vendor> <candidate-vendor> <transaction-dir> <bun> <cli>` + '\n');
     process.exit(2);
   }
   try {
@@ -6251,7 +6251,7 @@ if (import.meta.main) {
       validatePublished: checked ? () => validateRuntime(bun, cli) : undefined,
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n');
     process.exit(error?.rollbackComplete
       ? error.cleanupSafe ? VENDOR_PUBLISH_ROLLED_BACK : VENDOR_PUBLISH_ROLLED_BACK_RETAINED
       : VENDOR_PUBLISH_CONFLICT);
