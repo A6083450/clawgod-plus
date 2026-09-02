@@ -26,7 +26,6 @@ program.command("update").alias("upgrade").description("Check for updates and in
     assert.match(patched, /if\(a==="--chrome"\)\{n\.chrome=!0;continue\}if\(a==="--no-chrome"\)\{n\.noChrome=!0;continue\}if\(a==="--strict-mcp-config"\)/);
     assert.match(patched, /strictMcpConfig:e\.strictMcpConfig,chrome:e\.chrome&&!e\.noChrome,noChrome:e\.noChrome\}\}function Vet/);
     assert.match(patched, /__ccpp_agents_chrome_dispatch/);
-    assert.match(patched, /\[clawgod\] 'claude update' is handled by clawgod self-update/);
 
     const second = spawnSync(process.execPath, ['patch.mjs', '--dry-run'], { cwd: dir, encoding: 'utf8' });
     const secondOutput = second.stdout + second.stderr;
@@ -34,7 +33,6 @@ program.command("update").alias("upgrade").description("Check for updates and in
     assert.doesNotMatch(secondOutput, /Claude in Chrome agents config state \(0 matches/);
     assert.doesNotMatch(secondOutput, /Claude in Chrome agents flag parser \(0 matches/);
     assert.doesNotMatch(secondOutput, /Claude in Chrome agents config resolver \(0 matches/);
-    assert.doesNotMatch(secondOutput, /Redirect `claude update` to clawgod self-update .*regex stale/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

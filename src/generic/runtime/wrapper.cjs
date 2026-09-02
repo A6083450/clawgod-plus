@@ -27,6 +27,19 @@ if (!ripgrepPathWasReady) {
   process.exit(reexec.status ?? 1);
 }
 
+const topLevelCommand = process.argv[2];
+if (topLevelCommand === 'update' || topLevelCommand === 'upgrade') {
+  const { exitWithOutcome, runSelfUpdate } = require('./self-update.cjs');
+  exitWithOutcome(runSelfUpdate(process.argv.slice(2)));
+}
+
+const { readPatchFallback } = require('./patch-fallback.cjs');
+const patchFallback = readPatchFallback(clawgodDir);
+if (patchFallback) {
+  process.stderr.write(`[clawgod] Running Claude Code ${patchFallback.sourceVersion} without bundle enhancements because patch compatibility failed.\n`);
+  process.stderr.write("[clawgod] Run 'claude update' to retry after a ClawGod update.\n");
+}
+
 // Note: there used to be a "drift detection" block here that scanned
 // ~/.local/share/claude/versions/ for a newer binary and silently re-patched.
 // Removed because:

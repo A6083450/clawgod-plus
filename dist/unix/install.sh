@@ -592,6 +592,276 @@ CLAUDE_MEM_COMPAT_EOF
   chmod 700 "$CLAWGOD_DIR/claude-mem-compat.cjs"
 }
 
+install_update_runtime_helpers() {
+  cat > "$CLAWGOD_DIR/self-update.cjs" << 'SELF_UPDATE_EOF'
+const {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const { homedir, tmpdir } = require('node:os');
+const { join } = require('node:path');
+
+const STABLE_SELF_VERSION = /^[0-9]+[.][0-9]+[.][0-9]+(?:-claude[.][0-9]+[.][0-9]+[.][0-9]+(?:[.][0-9]+)?)?$/;
+const UPDATE_FLAGS = [
+  ['CLAWGOD_NO_UPGRADE', 'noUpgrade'],
+  ['CLAWGOD_LEAN_OFF', 'leanOff'],
+  ['CLAWGOD_LEAN_ON', 'leanOn'],
+  ['CLAWGOD_LEAN_MAX', 'leanMax'],
+];
+
+function parseUpdateArgs(argv) {
+  const [command, ...args] = argv;
+  if (command !== 'update' && command !== 'upgrade') {
+    throw new Error('self-update requires update or upgrade as the first argument');
+  }
+  const versionIndex = args.indexOf('--version');
+  if (versionIndex >= 0 && (typeof args[versionIndex + 1] !== 'string' || args[versionIndex + 1] === '')) {
+    throw new Error('self-update --version requires a non-empty value');
+  }
+  const explicitVersion = versionIndex >= 0;
+  return {
+    command,
+    explicitVersion,
+    version: explicitVersion ? args[versionIndex + 1] : 'latest',
+    noUpgrade: args.includes('--no-upgrade'),
+    leanOff: args.includes('--lean-off'),
+    leanOn: args.includes('--lean-on'),
+    leanMax: args.includes('--lean-max'),
+  };
+}
+
+function installerVersionDeclarations(source, platform) {
+  const pattern = platform === 'win32'
+    ? /^[$]ClawSelfVersion = "([^"\r\n]+)"/gm
+    : /^CLAWGOD_SELF_VERSION="([^"\r\n]+)"/gm;
+  return [...source.matchAll(pattern)].map(match => match[1]);
+}
+
+function isTrustedLocalInstaller({ clawgodDir, installer, platform, explicitVersion }) {
+  if (!explicitVersion) return false;
+  try {
+    const localVersion = readFileSync(join(clawgodDir, '.clawgod-version'), 'utf8').trim();
+    const declarations = installerVersionDeclarations(readFileSync(installer, 'utf8'), platform);
+    return STABLE_SELF_VERSION.test(localVersion)
+      && declarations.length === 1
+      && declarations[0] === localVersion;
+  } catch {
+    return false;
+  }
+}
+
+function childEnvironment(env, parsed) {
+  const childEnv = {
+    ...env,
+    CLAWGOD_NONINTERACTIVE: '1',
+    CLAWGOD_UPDATE_PATCH_FAIL_OPEN: '1',
+    CLAWGOD_VERSION: parsed.version,
+  };
+  for (const [environmentKey, argumentKey] of UPDATE_FLAGS) {
+    if (parsed[argumentKey]) childEnv[environmentKey] = '1';
+    else delete childEnv[environmentKey];
+  }
+  return childEnv;
+}
+
+function outcomeFromResult(result, missingStatusMessage) {
+  if (result.error) throw result.error;
+  const signal = typeof result.signal === 'string' ? result.signal : null;
+  if (signal) return { status: 1, signal };
+  if (typeof result.status !== 'number') throw new Error(missingStatusMessage);
+  return { status: result.status, signal: null };
+}
+
+function runSelfUpdate(argv, options = {}) {
+  const {
+    platform = process.platform,
+    homeDir = homedir(),
+    temporaryRoot = tmpdir(),
+    execPath = process.execPath,
+    env = process.env,
+    stderr = process.stderr,
+    spawn = spawnSync,
+  } = options;
+  let temporaryDirectory = '';
+
+  try {
+    const parsed = parseUpdateArgs(argv);
+    const windows = platform === 'win32';
+    const clawgodDir = join(homeDir, '.clawgod');
+    const fetchFile = join(clawgodDir, 'fetch-file.mjs');
+    const proxyFetch = join(clawgodDir, 'proxy-fetch.mjs');
+    let installer = join(clawgodDir, windows ? 'install.ps1' : 'install.sh');
+    const childEnv = childEnvironment(env, parsed);
+
+    if (!isTrustedLocalInstaller({ clawgodDir, installer, platform, explicitVersion: parsed.explicitVersion })) {
+      if (!existsSync(fetchFile)) throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');
+      if (!existsSync(proxyFetch)) throw new Error('managed proxy-fetch.mjs is missing; reinstall ClawGod Plus');
+      temporaryDirectory = mkdtempSync(join(temporaryRoot, 'clawgod-update-'));
+      if (!windows) chmodSync(temporaryDirectory, 0o700);
+      installer = join(temporaryDirectory, windows ? 'install.ps1' : 'install.sh');
+      const remoteUrl = windows
+        ? 'https://github.com/A6083450/clawgod-plus/releases/latest/download/install.ps1'
+        : 'https://github.com/A6083450/clawgod-plus/releases/latest/download/install.sh';
+      const download = outcomeFromResult(
+        spawn(execPath, [fetchFile, remoteUrl, installer], { stdio: 'inherit', env: childEnv }),
+        'managed installer download did not return an exit status',
+      );
+      if (download.status !== 0 || download.signal) return download;
+    } else {
+      stderr.write(`[clawgod] using local installer (remote skipped): ${installer}\n`);
+    }
+
+    const command = windows
+      ? ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer]
+      : ['bash', installer];
+    return outcomeFromResult(
+      spawn(command[0], command.slice(1), { stdio: 'inherit', env: childEnv }),
+      'installer process did not return an exit status',
+    );
+  } catch (error) {
+    stderr.write(`[clawgod] update failed: ${error && error.message ? error.message : String(error)}\n`);
+    return { status: 1, signal: null };
+  } finally {
+    if (temporaryDirectory) rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+function exitWithOutcome(outcome, processObject = process) {
+  if (outcome.signal) {
+    try {
+      processObject.kill(processObject.pid, outcome.signal);
+      return;
+    } catch {
+      processObject.exit(1);
+      return;
+    }
+  }
+  processObject.exit(outcome.status);
+}
+
+module.exports = {
+  parseUpdateArgs,
+  runSelfUpdate,
+  exitWithOutcome,
+};
+
+if (require.main === module) {
+  exitWithOutcome(runSelfUpdate(process.argv.slice(2)));
+}
+SELF_UPDATE_EOF
+  chmod 700 "$CLAWGOD_DIR/self-update.cjs"
+  cat > "$CLAWGOD_DIR/patch-fallback.cjs" << 'PATCH_FALLBACK_EOF'
+const {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} = require('node:fs');
+const { join } = require('node:path');
+
+const PATCH_FALLBACK_FILENAME = 'patch-fallback.json';
+const SOURCE_VERSION = /^\d+\.\d+\.\d+(?:\.\d+)?$/;
+const CLAWGOD_VERSION = /^\d+\.\d+\.\d+(?:-claude\.\d+\.\d+\.\d+(?:\.\d+)?)?$/;
+const REASON = 'bundle-patch-compatibility';
+
+function validatePatchFallback(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const keys = Object.keys(value).sort();
+  if (keys.length !== 4 || keys.join(',') !== 'clawgodVersion,reason,schemaVersion,sourceVersion') return false;
+  return value.schemaVersion === 1
+    && typeof value.sourceVersion === 'string'
+    && SOURCE_VERSION.test(value.sourceVersion)
+    && typeof value.clawgodVersion === 'string'
+    && CLAWGOD_VERSION.test(value.clawgodVersion)
+    && value.reason === REASON;
+}
+
+function statePath(clawgodDir) {
+  return join(clawgodDir, PATCH_FALLBACK_FILENAME);
+}
+
+function readPatchFallback(clawgodDir) {
+  try {
+    const value = JSON.parse(readFileSync(statePath(clawgodDir), 'utf8'));
+    return validatePatchFallback(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePatchFallback(clawgodDir, { sourceVersion, clawgodVersion }) {
+  const value = {
+    schemaVersion: 1,
+    sourceVersion,
+    clawgodVersion,
+    reason: REASON,
+  };
+  if (!validatePatchFallback(value)) throw new Error('invalid patch fallback state');
+
+  mkdirSync(clawgodDir, { recursive: true });
+  const temporaryPath = join(clawgodDir, `.patch-fallback.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
+  let temporaryCreated = false;
+  try {
+    const descriptor = openSync(temporaryPath, 'wx', 0o600);
+    temporaryCreated = true;
+    try {
+      writeFileSync(descriptor, JSON.stringify(value, null, 2) + '\n', 'utf8');
+    } finally {
+      try { closeSync(descriptor); } catch {}
+    }
+    chmodSync(temporaryPath, 0o600);
+    renameSync(temporaryPath, statePath(clawgodDir));
+    temporaryCreated = false;
+    return value;
+  } finally {
+    if (temporaryCreated) {
+      try { unlinkSync(temporaryPath); } catch {}
+    }
+  }
+}
+
+function clearPatchFallback(clawgodDir) {
+  const path = statePath(clawgodDir);
+  if (existsSync(path)) unlinkSync(path);
+}
+
+module.exports = {
+  PATCH_FALLBACK_FILENAME,
+  validatePatchFallback,
+  readPatchFallback,
+  writePatchFallback,
+  clearPatchFallback,
+};
+
+if (require.main === module) {
+  const [action, clawgodDir, sourceVersion, clawgodVersion, ...extra] = process.argv.slice(2);
+  if ((!action || !clawgodDir)
+    || (action === 'write' && (!sourceVersion || !clawgodVersion || extra.length))
+    || (action === 'clear' && (sourceVersion || clawgodVersion || extra.length))
+    || (action !== 'write' && action !== 'clear')) {
+    process.exit(2);
+  }
+  try {
+    if (action === 'write') writePatchFallback(clawgodDir, { sourceVersion, clawgodVersion });
+    else clearPatchFallback(clawgodDir);
+  } catch (error) {
+    process.stderr.write(`${error && error.message ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
+}
+PATCH_FALLBACK_EOF
+  chmod 700 "$CLAWGOD_DIR/patch-fallback.cjs"
+}
+
 resolve_bun() {
   if command -v bun >/dev/null 2>&1; then
     BUN_BIN=$(command -v bun)
@@ -730,7 +1000,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -7272,6 +7542,8 @@ info "OpenAI-compatible proxy created (openai-proxy.cjs)"
 
 # ─── Write wrapper (cli.cjs, runs under Bun) ──────────────────
 
+install_update_runtime_helpers
+
 cat > "$CLAWGOD_DIR/cli.cjs" << 'WRAPPER_EOF'
 #!/usr/bin/env bun
 const { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync, renameSync } = require('fs');
@@ -7300,6 +7572,19 @@ if (!ripgrepPathWasReady) {
     process.exit(1);
   }
   process.exit(reexec.status ?? 1);
+}
+
+const topLevelCommand = process.argv[2];
+if (topLevelCommand === 'update' || topLevelCommand === 'upgrade') {
+  const { exitWithOutcome, runSelfUpdate } = require('./self-update.cjs');
+  exitWithOutcome(runSelfUpdate(process.argv.slice(2)));
+}
+
+const { readPatchFallback } = require('./patch-fallback.cjs');
+const patchFallback = readPatchFallback(clawgodDir);
+if (patchFallback) {
+  process.stderr.write(`[clawgod] Running Claude Code ${patchFallback.sourceVersion} without bundle enhancements because patch compatibility failed.\n`);
+  process.stderr.write("[clawgod] Run 'claude update' to retry after a ClawGod update.\n");
 }
 
 // Note: there used to be a "drift detection" block here that scanned
@@ -8613,14 +8898,6 @@ var patches = [
     }
   },
   {
-    order: 29,
-    name: "Redirect `claude update` to clawgod self-update",
-    pattern: /(\.command\("update"\)\.alias\("upgrade"\)\.description\("[^"]+"\))(\.action\((?:[\w$]+\()?async\([^)]*\)=>\{)/g,
-    replacer: (match, chain, action) => chain + ".allowUnknownOption()" + action + `const __clawgodUpdateIndex=process.argv.findIndex(a=>a==="update"||a==="upgrade");const __clawgodUpdateArgs=__clawgodUpdateIndex>=0?process.argv.slice(__clawgodUpdateIndex+1):[];const __clawgodVersionIndex=__clawgodUpdateArgs.indexOf("--version");if(__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1])process.env.CLAWGOD_VERSION=__clawgodUpdateArgs[__clawgodVersionIndex+1];else process.env.CLAWGOD_VERSION="latest";if(__clawgodUpdateArgs.includes("--no-upgrade"))process.env.CLAWGOD_NO_UPGRADE="1";if(__clawgodUpdateArgs.includes("--lean-off"))process.env.CLAWGOD_LEAN_OFF="1";if(__clawgodUpdateArgs.includes("--lean-on"))process.env.CLAWGOD_LEAN_ON="1";if(__clawgodUpdateArgs.includes("--lean-max"))process.env.CLAWGOD_LEAN_MAX="1";process.stderr.write("[clawgod] 'claude update' is handled by clawgod self-update.\\n[clawgod] To leave clawgod and use vanilla update: bash ~/.clawgod/install.sh --uninstall\\n[clawgod] Continuing now\\u2026\\n");const _w=process.platform==='win32';const __clawgodUpdateStatus=(()=>{const __fs=import.meta.require('fs'),__path=import.meta.require('path'),__os=import.meta.require('os'),__cp=import.meta.require('child_process');const __root=__path.join(__os.homedir(),'.clawgod'),__fetch=__path.join(__root,'fetch-file.mjs'),__proxyFetch=__path.join(__root,'proxy-fetch.mjs'),__bun=process.env.CLAWGOD_BUN_BIN||process.execPath;let __temporary='';try{let __installer=__path.join(__root,_w?'install.ps1':'install.sh'),__localVersion='',__installerVersions=[];try{__localVersion=__fs.readFileSync(__path.join(__root,'.clawgod-version'),'utf8').trim();const __installerSource=__fs.readFileSync(__installer,'utf8'),__versionPattern=_w?/^[$]ClawSelfVersion = "([^"\\r\\n]+)"/gm:/^CLAWGOD_SELF_VERSION="([^"\\r\\n]+)"/gm;__installerVersions=[...__installerSource.matchAll(__versionPattern)].map((__match)=>__match[1])}catch{}const __trustedLocal=__clawgodVersionIndex>=0&&__clawgodUpdateArgs[__clawgodVersionIndex+1]&&/^[0-9]+[.][0-9]+[.][0-9]+(?:-claude[.][0-9]+[.][0-9]+[.][0-9]+(?:[.][0-9]+)?)?$/.test(__localVersion)&&__installerVersions.length===1&&__installerVersions[0]===__localVersion;if(!__trustedLocal){if(!__fs.existsSync(__fetch))throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');if(!__fs.existsSync(__proxyFetch))throw new Error('managed proxy-fetch.mjs is missing; reinstall ClawGod Plus');__temporary=__fs.mkdtempSync(__path.join(__os.tmpdir(),'clawgod-update-'));if(!_w)__fs.chmodSync(__temporary,0o700);__installer=__path.join(__temporary,_w?'install.ps1':'install.sh');const __url='https://github.com/A6083450/clawgod-plus/releases/latest/download/'+(_w?'install.ps1':'install.sh');const __download=__cp.spawnSync(__bun,[__fetch,__url,__installer],{stdio:'inherit',env:process.env});if(__download.error)throw __download.error;if(__download.status===null)throw new Error('managed installer download did not return an exit status');if(__download.status!==0)return __download.status;}else process.stderr.write('[clawgod] using local installer (remote skipped): '+__installer+'\\n');const __command=_w?['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',__installer]:['bash',__installer];const __result=__cp.spawnSync(__command[0],__command.slice(1),{stdio:'inherit',env:{...process.env,CLAWGOD_NONINTERACTIVE:'1'}});if(__result.error)throw __result.error;if(__result.status===null)throw new Error('installer process did not return an exit status');return __result.status;}catch(__error){process.stderr.write('[clawgod] update failed: '+(__error&&__error.message?__error.message:String(__error))+'\\n');return 1;}finally{if(__temporary)__fs.rmSync(__temporary,{recursive:true,force:true});}})();process.exit(__clawgodUpdateStatus);`,
-    sentinel: '.command("update").alias("upgrade")',
-    appliedMarker: "[clawgod] 'claude update' is handled by clawgod self-update."
-  },
-  {
     order: 57,
     name: "Shell integration \u2192 claude.orig (multitool dispatch fix)",
     pattern: /if\(([\w$]+)\(\)==="bun"\)return\[([\w$]+)\(([\w$]+),"claude"\)\];if\([\w$]+\(\)==="windows"\)return\[\2\(\3,"claude\.cmd"\),\2\(\3,"claude\.exe"\)\];return\[\2\(\3,"bin","claude"\)\]/g,
@@ -9156,8 +9433,15 @@ var patches5 = [
   {
     order: 24,
     name: "Computer Use in noninteractive sessions",
-    pattern: /if\(([\w$]+)\(\)==="macos"&&!([\w$]+)\(\)((?:&&![\w$]+)?)&&([\w$]+)\(\)\)try\{let\{setupComputerUseMCP:/g,
-    replacer: (match, platform, isNonInteractive, safetyCondition, gate) => `if(${platform}()==="macos"${safetyCondition}&&${gate}())/*__clawgod_computer_use_noninteractive__*/try{let{setupComputerUseMCP:`,
+    pattern: /if\((?:([\w$]+)\(\)==="macos"&&)?!([\w$]+)\(\)((?:&&![\w$]+)?)&&([\w$]+)\(\)\)try\{let\{setupComputerUseMCP:/g,
+    replacer: (match, platform, isNonInteractive, safetyCondition, gate) => {
+      const retainedConditions = [
+        platform ? `${platform}()==="macos"` : "",
+        safetyCondition.replace(/^&&/, ""),
+        `${gate}()`
+      ].filter(Boolean).join("&&");
+      return `if(${retainedConditions})/*__clawgod_computer_use_noninteractive__*/try{let{setupComputerUseMCP:`;
+    },
     sentinel: "setupComputerUseMCP",
     appliedMarker: "/*__clawgod_computer_use_noninteractive__*/"
   }
@@ -9471,6 +9755,7 @@ function createPatchSelection(enabled) {
 }
 
 // src/generic/patcher/entry.mjs
+var PATCH_COMPATIBILITY_EXIT_CODE = 42;
 var DEFAULT_ROOT = dirname3(fileURLToPath2(import.meta.url));
 var CHUNKS_DIRNAME = "chunks";
 var MODULE_SEPARATOR = `
@@ -9530,6 +9815,7 @@ async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.slice(2)
   const dryRun = args.includes("--dry-run");
   const verify = args.includes("--verify");
   const revert = args.includes("--revert");
+  const allowCompatibilityFallback = args.includes("--allow-compatibility-fallback") && !dryRun && !verify && !revert;
   const enhancementFlagIndexes = args.map((argument, index) => argument === "--enhancements-file" ? index : -1).filter((index) => index >= 0);
   if (enhancementFlagIndexes.length > 1)
     throw new Error("--enhancements-file may only be provided once");
@@ -9686,12 +9972,13 @@ ${"\u2500".repeat(55)}`);
   console.log(`${"\u2550".repeat(55)}
 `);
   if (failed > 0)
-    process.exit(1);
+    process.exit(allowCompatibilityFallback ? PATCH_COMPATIBILITY_EXIT_CODE : 1);
 }
 await runPatcher({
   rootDir: import.meta.main ? DEFAULT_ROOT : dirname3(process.argv[1] || fileURLToPath2(import.meta.url))
 });
 export {
+  PATCH_COMPATIBILITY_EXIT_CODE,
   runPatcher
 };
 PATCHER_EOF

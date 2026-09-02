@@ -66,7 +66,6 @@ const expectedRegexOrder = [
   'Auto-mode unlock for third-party API (provider helper gate)',
   'Auto-mode unlock for third-party API (inline gate)',
   'Auto-mode unlock for third-party API (provider opt-in helper)',
-  'Redirect `claude update` to clawgod self-update',
   'Logo + brand color → green (RGB dark)',
   'Logo + brand color → green (ANSI)',
   'Theme claude color → green (dark)',
@@ -127,7 +126,7 @@ const ownedDescriptors = patchRegistries.flatMap(registry => [
   ...registry.patches.map(descriptor => ({ descriptor, owner: registry.id })),
   ...registry.customPatches.map(descriptor => ({ descriptor, owner: registry.id })),
 ]);
-assert.equal(ownedDescriptors.length, 63, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(ownedDescriptors.length, 62, 'every regex and custom patch descriptor must retain exactly one owner');
 assert.equal(
   new Set(ownedDescriptors.map(({ descriptor }) => descriptor)).size,
   ownedDescriptors.length,
@@ -149,7 +148,7 @@ const canonicalDescriptors = ownedDescriptors
 assert.deepEqual(
   canonicalDescriptors.map(({ descriptor, type }) => ({ name: descriptor.name, type, order: descriptor.order })),
   task5Snapshot.descriptors.map(({ name, type, order }) => ({ name, type, order })),
-  'all 63 non-Fast descriptor names, types, and exact global order values must remain canonical',
+  'all 62 non-Fast descriptor names, types, and exact global order values must remain canonical',
 );
 
 function normalizeMetadataValue(value) {
@@ -204,7 +203,6 @@ const expectedCore = [
   'Worker resolver for plain Bun cli.cjs (legacy shape)',
   'GrowthBook env overrides',
   'GrowthBook config overrides',
-  'Redirect `claude update` to clawgod self-update',
   'Shell integration → claude.orig (multitool dispatch fix)',
   'Context limit configurable',
   'Claude API skill lazy docs',
@@ -213,7 +211,7 @@ const core = patchRegistries.find(registry => registry.id === 'core');
 assert.deepEqual(
   [...core.patches, ...core.customPatches].map(descriptor => descriptor.name),
   expectedCore,
-  'core must own identity, worker, GrowthBook, update, shell, and context patches',
+  'core must own identity, worker, GrowthBook, shell, and context patches',
 );
 assert.deepEqual(
   inspectPatcherSource('/* Version: 2.1.226 */\nsource'),

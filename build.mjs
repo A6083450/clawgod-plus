@@ -170,6 +170,8 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     POST_PROCESSOR_MJS: 'src/generic/runtime/post-processor.mjs',
     REPATCHER_MJS: 'src/generic/runtime/repatcher.mjs',
     VENDOR_TRANSACTION_MJS: 'src/generic/runtime/vendor-transaction.mjs',
+    SELF_UPDATE_CJS: 'src/generic/runtime/self-update.cjs',
+    PATCH_FALLBACK_CJS: 'src/generic/runtime/patch-fallback.cjs',
     WRAPPER_CJS: 'src/generic/runtime/wrapper.cjs',
     OPENAI_PROXY_CJS: 'src/generic/runtime/openai-proxy.cjs',
     CLAUDE_MEM_COMPAT_CJS: 'src/generic/runtime/claude-mem-compat.cjs',

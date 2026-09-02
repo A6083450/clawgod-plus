@@ -19,7 +19,7 @@ const canonicalPlatform = Object.fromEntries(
   ]),
 );
 const canonicalRuntime = Object.fromEntries(
-  ['proxy-fetch.mjs', 'fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'vendor-transaction.mjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
+  ['proxy-fetch.mjs', 'fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'vendor-transaction.mjs', 'self-update.cjs', 'patch-fallback.cjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
     name,
     readFileSync(new URL(`../src/generic/runtime/${name}`, import.meta.url), 'utf8'),
   ]),
@@ -1417,6 +1417,8 @@ const runtimeDefinitions = [
   ['post-process.mjs', 'post-processor.mjs', 'PostProcessorBytes', 'cat > "$CLAWGOD_DIR/post-process.mjs" << \'POSTPROC_EOF\''],
   ['repatch.mjs', 'repatcher.mjs', 'RepatcherBytes', 'cat > "$CLAWGOD_DIR/repatch.mjs" << \'REPATCH_EOF\''],
   ['vendor-transaction.mjs', 'vendor-transaction.mjs', 'VendorTransactionBytes', 'cat > "$CLAWGOD_DIR/vendor-transaction.mjs" << \'VENDOR_TRANSACTION_EOF\''],
+  ['self-update.cjs', 'self-update.cjs', 'SelfUpdateBytes', 'cat > "$CLAWGOD_DIR/self-update.cjs" << \'SELF_UPDATE_EOF\''],
+  ['patch-fallback.cjs', 'patch-fallback.cjs', 'PatchFallbackBytes', 'cat > "$CLAWGOD_DIR/patch-fallback.cjs" << \'PATCH_FALLBACK_EOF\''],
   ['patch.mjs', 'patcher.mjs', 'PatcherBytes', 'cat > "$CLAWGOD_DIR/patch.mjs" << \'PATCHER_EOF\''],
   ['cli.cjs', 'wrapper.cjs', 'WrapperBytes', 'cat > "$CLAWGOD_DIR/cli.cjs" << \'WRAPPER_EOF\''],
   ['openai-proxy.cjs', 'openai-proxy.cjs', 'OpenAIProxyBytes', 'cat > "$CLAWGOD_DIR/openai-proxy.cjs" << \'PROXY_EOF\''],

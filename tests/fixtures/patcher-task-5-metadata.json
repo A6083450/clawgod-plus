@@ -588,7 +588,7 @@
       "type": "regex",
       "order": 24,
       "metadata": {
-        "patternSource": "if\\(([\\w$]+)\\(\\)===\"macos\"&&!([\\w$]+)\\(\\)((?:&&![\\w$]+)?)&&([\\w$]+)\\(\\)\\)try\\{let\\{setupComputerUseMCP:",
+        "patternSource": "if\\((?:([\\w$]+)\\(\\)===\"macos\"&&)?!([\\w$]+)\\(\\)((?:&&![\\w$]+)?)&&([\\w$]+)\\(\\)\\)try\\{let\\{setupComputerUseMCP:",
         "patternFlags": "g",
         "sentinel": "setupComputerUseMCP",
         "appliedMarker": "/*__clawgod_computer_use_noninteractive__*/",
@@ -692,29 +692,6 @@
         "appliedMarker": {
           "$type": "undefined"
         },
-        "knownShape": {
-          "$type": "undefined"
-        },
-        "optional": {
-          "$type": "undefined"
-        },
-        "unique": {
-          "$type": "undefined"
-        },
-        "selectIndex": {
-          "$type": "undefined"
-        }
-      }
-    },
-    {
-      "name": "Redirect `claude update` to clawgod self-update",
-      "type": "regex",
-      "order": 29,
-      "metadata": {
-        "patternSource": "(\\.command\\(\"update\"\\)\\.alias\\(\"upgrade\"\\)\\.description\\(\"[^\"]+\"\\))(\\.action\\((?:[\\w$]+\\()?async\\([^)]*\\)=>\\{)",
-        "patternFlags": "g",
-        "sentinel": ".command(\"update\").alias(\"upgrade\")",
-        "appliedMarker": "[clawgod] 'claude update' is handled by clawgod self-update.",
         "knownShape": {
           "$type": "undefined"
         },

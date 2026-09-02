@@ -16,11 +16,19 @@
 @@CLAWGOD_WINDOWS_LIFECYCLE@@
 
 $ClaudeMemCompatBytes = [Convert]::FromBase64String('@@CLAWGOD_CLAUDE_MEM_COMPAT_CJS_BASE64@@')
+$SelfUpdateBytes = [Convert]::FromBase64String('@@CLAWGOD_SELF_UPDATE_CJS_BASE64@@')
+$PatchFallbackBytes = [Convert]::FromBase64String('@@CLAWGOD_PATCH_FALLBACK_CJS_BASE64@@')
 
 function Install-ClaudeMemCompatHelper {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
     $helper = Join-Path $ClawDir "claude-mem-compat.cjs"
     [System.IO.File]::WriteAllBytes($helper, $ClaudeMemCompatBytes)
+}
+
+function Install-UpdateRuntimeHelpers {
+    New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "self-update.cjs"), $SelfUpdateBytes)
+    [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "patch-fallback.cjs"), $PatchFallbackBytes)
 }
 
 $ProxyFetchBytes = [Convert]::FromBase64String('@@CLAWGOD_PROXY_FETCH_MJS_BASE64@@')
@@ -315,10 +323,11 @@ if ($Uninstall) {
         Write-OK "Removed clawgod alias"
     }
 
-    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","openai-proxy.cjs","proxy-fetch.mjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging","assets","chunks","chunks.bak",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
+    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","self-update.cjs","patch-fallback.cjs","patch-fallback.json","openai-proxy.cjs","proxy-fetch.mjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging","assets","chunks","chunks.bak",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
+    Get-ChildItem -LiteralPath $ClawDir -Filter ".patch-fallback.*.tmp" -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
     Get-ChildItem -Path $ClawDir -Filter 'cli.original.js.backup-*' -ErrorAction SilentlyContinue | Remove-Item -Force
     Get-ChildItem -Path $ClawDir -Filter 'cli.original.cjs.backup-*' -ErrorAction SilentlyContinue | Remove-Item -Force
     Write-OK "ClawGod Plus uninstalled"
@@ -638,6 +647,8 @@ $OpenAIProxyBytes = [Convert]::FromBase64String('@@CLAWGOD_OPENAI_PROXY_CJS_BASE
 Write-OK "OpenAI-compatible proxy created (openai-proxy.cjs)"
 
 # --- Write wrapper (cli.cjs, runs under Bun) ------------------
+
+Install-UpdateRuntimeHelpers
 
 $WrapperBytes = [Convert]::FromBase64String('@@CLAWGOD_WRAPPER_CJS_BASE64@@')
 [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "cli.cjs"), $WrapperBytes)
