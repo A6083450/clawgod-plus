@@ -6329,6 +6329,7 @@ RUNTIME_TRANSACTION_ACTIVE=0
 RUNTIME_HAD_TARGET=0
 RUNTIME_HAD_SOURCE_VERSION=0
 RUNTIME_HAD_CHUNKS=0
+RUNTIME_HAD_PATCH_FALLBACK=0
 RUNTIME_HAS_CANDIDATE_VENDOR=0
 RUNTIME_VENDOR_PUBLISH_STARTED=0
 RUNTIME_VENDOR_ROLLBACK_COMPLETE=0
@@ -6357,6 +6358,11 @@ rollback_runtime_transaction() {
   else
     rm -rf "$CLAWGOD_DIR/chunks" 2>/dev/null || true
   fi
+  if [ "$RUNTIME_HAD_PATCH_FALLBACK" = "1" ]; then
+    cp -p "$RUNTIME_TRANSACTION_DIR/patch-fallback.json" "$CLAWGOD_DIR/patch-fallback.json" 2>/dev/null || true
+  else
+    rm -f "$CLAWGOD_DIR/patch-fallback.json" 2>/dev/null || true
+  fi
   RUNTIME_TRANSACTION_ACTIVE=0
   if [ "$RUNTIME_TRANSACTION_CLEANUP_SAFE" = "1" ]; then
     rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
@@ -6365,11 +6371,49 @@ rollback_runtime_transaction() {
   fi
 }
 
+verify_runtime() {
+  dim "Verifying Bun can load patched cli.original.cjs ..."
+  sanity_status=0
+  set +e
+  sanity_out=$("$BUN_BIN" "$CLAWGOD_DIR/cli.cjs" --version 2>&1)
+  sanity_status=$?
+  set -e
+  if echo "$sanity_out" | grep -q "Expected CommonJS module to have a function wrapper"; then
+    echo ""
+    warn "Bun $("$BUN_BIN" --version) cannot load Anthropic's cli.original.cjs."
+    warn ""
+    warn "  Anthropic builds with Bun's canary channel (currently ~1.3.14), while"
+    warn "  bun.sh's main download is on stable (currently 1.3.13). The canary build"
+    warn "  is NOT visible on bun.sh's download page — it lives on GitHub Releases"
+    warn "  and is reachable only via 'bun upgrade --canary'."
+    warn ""
+    warn "  If your bun is from bun.sh:"
+    warn "    bun upgrade --canary"
+    warn ""
+    warn "  If your bun is from a package manager (brew/apt/scoop) where the binary"
+    warn "  is behind a shim and refuses to self-replace ('bun upgrade' silently"
+    warn "  hangs or no-ops):"
+    warn "    <pkg-manager> uninstall bun"
+    warn "    curl -fsSL https://bun.sh/install | bash"
+    warn "    bun upgrade --canary"
+    warn ""
+    warn "  Then re-run install.sh — this sanity check will pass."
+    if [ "$sanity_status" -eq 0 ]; then sanity_status=1; fi
+    return "$sanity_status"
+  fi
+  if [ "$sanity_status" -ne 0 ]; then
+    [ -n "$sanity_out" ] && printf '%s\n' "$sanity_out" >&2
+    err "Bun failed to load patched cli.original.cjs (exit $sanity_status)."
+    return "$sanity_status"
+  fi
+  info "Bun loads cli.original.cjs"
+}
+
 commit_runtime_transaction() {
   if [ "$RUNTIME_HAS_CANDIDATE_VENDOR" = "1" ]; then
     RUNTIME_VENDOR_PUBLISH_STARTED=1
     vendor_status=0
-    "$BUN_BIN" "$CLAWGOD_DIR/vendor-transaction.mjs" publish "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$RUNTIME_TRANSACTION_DIR" || vendor_status=$?
+    "$BUN_BIN" "$CLAWGOD_DIR/vendor-transaction.mjs" publish-checked "$CLAWGOD_DIR/vendor" "$RUNTIME_TRANSACTION_DIR/candidate/vendor" "$RUNTIME_TRANSACTION_DIR" "$BUN_BIN" "$CLAWGOD_DIR/cli.cjs" || vendor_status=$?
     if [ "$vendor_status" -ne 0 ]; then
       if [ "$vendor_status" -eq 20 ] || [ "$vendor_status" -eq 22 ]; then
         RUNTIME_VENDOR_ROLLBACK_COMPLETE=1
@@ -6377,6 +6421,8 @@ commit_runtime_transaction() {
       fi
       return "$vendor_status"
     fi
+  else
+    verify_runtime || return $?
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
   rm -rf "$RUNTIME_TRANSACTION_DIR"
@@ -6396,6 +6442,10 @@ fi
 if [ -d "$CLAWGOD_DIR/chunks" ]; then
   mv "$CLAWGOD_DIR/chunks" "$RUNTIME_TRANSACTION_DIR/chunks"
   RUNTIME_HAD_CHUNKS=1
+fi
+if [ -f "$CLAWGOD_DIR/patch-fallback.json" ]; then
+  cp -p "$CLAWGOD_DIR/patch-fallback.json" "$RUNTIME_TRANSACTION_DIR/patch-fallback.json"
+  RUNTIME_HAD_PATCH_FALLBACK=1
 fi
 RUNTIME_TRANSACTION_ACTIVE=1
 trap 'rollback_runtime_transaction' EXIT
@@ -10026,15 +10076,33 @@ info "Patcher created (patch.mjs)"
 # ─── Apply patches ─────────────────────────────────────
 
 dim "Applying patches ..."
+patch_args=(--enhancements-file "$CLAWGOD_DIR/enhancements.json")
+patch_fallback_authorized=0
+if [ "${CLAWGOD_UPDATE_PATCH_FAIL_OPEN:-}" = "1" ] \
+  && [ "$NO_UPGRADE" != "1" ] \
+  && [ "$RUNTIME_HAD_TARGET" = "1" ]; then
+  patch_args+=(--allow-compatibility-fallback)
+  patch_fallback_authorized=1
+fi
 patch_status=0
-patch_output=$("$BUN_BIN" "$CLAWGOD_DIR/patch.mjs" --enhancements-file "$CLAWGOD_DIR/enhancements.json" 2>&1) || patch_status=$?
+patch_output=$("$BUN_BIN" "$CLAWGOD_DIR/patch.mjs" "${patch_args[@]}" 2>&1) || patch_status=$?
 while IFS= read -r line; do echo "  $line"; done <<< "$patch_output"
-if [ "$patch_status" -ne 0 ]; then
+patch_fallback_active=0
+if [ "$patch_status" -eq 0 ]; then
+  "$BUN_BIN" "$CLAWGOD_DIR/patch-fallback.cjs" clear "$CLAWGOD_DIR"
+elif [ "$patch_status" -eq 42 ] && [ "$patch_fallback_authorized" = "1" ]; then
+  "$BUN_BIN" "$CLAWGOD_DIR/patch-fallback.cjs" write "$CLAWGOD_DIR" "$NATIVE_BIN_LABEL" "$CLAWGOD_SELF_VERSION"
+  warn "PATCH COMPATIBILITY FALLBACK: Claude Code will run without bundle enhancements."
+  warn "Run 'claude update' after ClawGod supports this Claude Code release."
+  patch_fallback_active=1
+else
   err "Mandatory patching failed; installation stopped before launcher replacement."
   exit "$patch_status"
 fi
+if [ "$patch_fallback_active" != "1" ]; then
+  run_claude_code_chrome_fix
+fi
 commit_runtime_transaction
-run_claude_code_chrome_fix
 
 # ─── Create default configs ───────────────────────────
 
@@ -10132,50 +10200,6 @@ if (changed) fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + "\n");
 else
   dim "Lean mode disabled (claude --lean-on to re-enable)"
 fi
-
-# ─── Sanity check: ensure user's Bun can actually load cli.original.cjs ──
-# Anthropic builds the native binary with a bleeding-edge Bun build (e.g.
-# 1.3.14 while stable still ships 1.3.13). Older Bun crashes loading the
-# extracted cli.original.cjs with "Expected CommonJS module to have a
-# function wrapper". Detect this BEFORE we install the launcher — better
-# to fail loudly than to leave the user with a launcher that panics on
-# first invocation.
-
-dim "Verifying Bun can load patched cli.original.cjs ..."
-sanity_status=0
-set +e
-sanity_out=$("$BUN_BIN" "$CLAWGOD_DIR/cli.cjs" --version 2>&1)
-sanity_status=$?
-set -e
-if echo "$sanity_out" | grep -q "Expected CommonJS module to have a function wrapper"; then
-  echo ""
-  warn "Bun $("$BUN_BIN" --version) cannot load Anthropic's cli.original.cjs."
-  warn ""
-  warn "  Anthropic builds with Bun's canary channel (currently ~1.3.14), while"
-  warn "  bun.sh's main download is on stable (currently 1.3.13). The canary build"
-  warn "  is NOT visible on bun.sh's download page — it lives on GitHub Releases"
-  warn "  and is reachable only via 'bun upgrade --canary'."
-  warn ""
-  warn "  If your bun is from bun.sh:"
-  warn "    bun upgrade --canary"
-  warn ""
-  warn "  If your bun is from a package manager (brew/apt/scoop) where the binary"
-  warn "  is behind a shim and refuses to self-replace ('bun upgrade' silently"
-  warn "  hangs or no-ops):"
-  warn "    <pkg-manager> uninstall bun"
-  warn "    curl -fsSL https://bun.sh/install | bash"
-  warn "    bun upgrade --canary"
-  warn ""
-  warn "  Then re-run install.sh — this sanity check will pass."
-  if [ "$sanity_status" -eq 0 ]; then sanity_status=1; fi
-  exit "$sanity_status"
-fi
-if [ "$sanity_status" -ne 0 ]; then
-  [ -n "$sanity_out" ] && printf '%s\n' "$sanity_out" >&2
-  err "Bun failed to load patched cli.original.cjs (exit $sanity_status)."
-  exit "$sanity_status"
-fi
-info "Bun loads cli.original.cjs"
 
 # ─── Replace claude command ───────────────────────────
 

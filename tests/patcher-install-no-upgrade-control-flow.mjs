@@ -58,7 +58,12 @@ assert.doesNotMatch(pluginModule, /CLAWGOD_VERSION|--version\s+2\.|version\s*=\s
 const optionalStart = installer.indexOf('# --- Ensure optional Claude plugins');
 const optionalEnd = installer.indexOf('\ninstall_claude_mem_compat_helper', optionalStart);
 assert.ok(optionalStart >= 0 && optionalEnd > optionalStart, 'install.sh must retain an extractable plugin health-check stage');
-const lifecycleSpan = installer.slice(0, optionalEnd);
+const fixtureSelfVersion = '2026.9.2-claude.2.1.258';
+const lifecycleSpan = installer.slice(0, optionalEnd).replace(
+  'CLAWGOD_SELF_VERSION="0.0.0-dev"  # injected by release workflow from git tag',
+  `CLAWGOD_SELF_VERSION="${fixtureSelfVersion}"  # fixture release-format version`,
+);
+assert.doesNotMatch(lifecycleSpan, /CLAWGOD_SELF_VERSION="0\.0\.0-dev"/, 'lifecycle fixture must use a release-format ClawGod version for fallback state validation');
 
 function assertTemporaryPath(path, parent, label) {
   const resolvedParent = realpathSync(parent);
@@ -135,7 +140,9 @@ if (name === 'install-ripgrep.mjs') {
 } else if (name === 'fetch-file.mjs') {
   const destination = args[1];
   mkdirSync(dirname(destination), { recursive: true });
-  writeFileSync(destination, destination.endsWith('.sh') ? '#!/bin/sh\\nexit 0\\n' : 'fixture binary\\n');
+  writeFileSync(destination, destination.endsWith('.sh')
+    ? '#!/bin/sh\\nprintf "%s\\\\n" invoked > "$CHROME_MARKER"\\nexit 0\\n'
+    : 'fixture binary\\n');
   chmodSync(destination, 0o700);
 } else if (name === 'fetch-package.mjs') {
   const [spec, output] = args;
@@ -160,6 +167,9 @@ if (name === 'install-ripgrep.mjs') {
     mkdirSync(dirname(blocked), { recursive: true });
     writeFileSync(blocked, Buffer.from([0xba, 0xdd, 0xca, 0xfe]));
   }
+} else if (name === 'patch-fallback.cjs') {
+  const child = spawnSync(process.execPath, [target, ...args], { env: process.env, stdio: 'inherit' });
+  process.exit(child.status ?? 1);
 } else if (name === 'vendor-transaction.mjs') {
   if (process.env.VENDOR_PREFLIGHT_FAULT === '1') {
     writeFileSync(join(args[3], 'old-vendor'), 'preflight blocker\\n');
@@ -213,6 +223,7 @@ if (name === 'install-ripgrep.mjs') {
   process.exit(Number(process.env.PATCH_EXIT || 0));
 } else if (name === 'cli.cjs' && args[0] === '--version') {
   console.log('2.1.999');
+  process.exit(Number(process.env.SANITY_EXIT || 0));
 } else if (name === 'plugin-dependencies.mjs' && args[0] === 'ensure') {
   writeFileSync(process.env.PLUGIN_HEALTH_MARKER, JSON.stringify({ args, clawgodVersion: process.env.CLAWGOD_VERSION || null }) + '\\n');
 } else {
@@ -230,8 +241,10 @@ if (name === 'install-ripgrep.mjs') {
     const pluginHealth = join(root, 'plugin-health.json');
     const claudeResolver = join(root, 'claude-resolver.txt');
     const patchArgs = join(root, 'patch-args.json');
+    const chromeMarker = join(root, 'chrome-ran.txt');
     const configPath = join(home, '.clawgod', 'enhancements.json');
     const target = join(home, '.clawgod', 'cli.original.cjs');
+    const fallbackState = join(home, '.clawgod', 'patch-fallback.json');
     const sourceVersion = join(home, '.clawgod', '.source-version');
     const vendor = join(home, '.clawgod', 'vendor');
     const oldNative = join(vendor, 'native-addon', 'arm64-darwin', 'native-addon.node');
@@ -271,10 +284,19 @@ if (name === 'install-ripgrep.mjs') {
     const externalSentinelBefore = existsSync(externalSentinel) ? lstatSync(externalSentinel) : null;
     const externalEntriesBefore = existsSync(externalVendorRoot) ? readdirSync(externalVendorRoot).sort() : null;
     if (args.includes('--no-upgrade')) {
-      writeFileSync(target, 'existing clean CLI fixture\n');
+      writeFileSync(target, options.priorRuntime || 'existing clean CLI fixture\n');
+      writeFileSync(sourceVersion, '2.1.225\n', 'utf8');
     } else if (options.priorRuntime) {
       writeFileSync(target, options.priorRuntime, 'utf8');
       writeFileSync(sourceVersion, '2.1.225\n', 'utf8');
+    }
+    if (options.priorFallback) {
+      writeFileSync(fallbackState, JSON.stringify({
+        schemaVersion: 1,
+        sourceVersion: '2.1.225',
+        clawgodVersion: fixtureSelfVersion,
+        reason: 'bundle-patch-compatibility',
+      }, null, 2) + '\n', { mode: 0o600 });
     }
     writeFileSync(script, lifecycleSpan, 'utf8');
     chmodSync(script, 0o700);
@@ -289,6 +311,9 @@ if (name === 'install-ripgrep.mjs') {
         CLAUDE_RESOLVER_MARKER: claudeResolver,
         PATCH_ARGS_MARKER: patchArgs,
         PATCH_EXIT: String(options.patchExit || 0),
+        SANITY_EXIT: String(options.sanityExit || 0),
+        CLAWGOD_UPDATE_PATCH_FAIL_OPEN: options.updateFailOpen ? '1' : '',
+        CHROME_MARKER: chromeMarker,
         EXTERNAL_REPLACEMENT: externalReplacement,
         VENDOR_PUBLISH_FAULT: options.publishFault || options.rootReplacementFault ? '1' : '0',
         VENDOR_PREFLIGHT_FAULT: options.preflightFault ? '1' : '0',
@@ -315,6 +340,8 @@ if (name === 'install-ripgrep.mjs') {
       pluginHealth,
       claudeResolver,
       patchArgs: existsSync(patchArgs) ? JSON.parse(readFileSync(patchArgs, 'utf8')) : null,
+      chromeMarker: existsSync(chromeMarker) ? readFileSync(chromeMarker, 'utf8') : null,
+      fallbackState: existsSync(fallbackState) ? JSON.parse(readFileSync(fallbackState, 'utf8')) : null,
       configPath,
       configBytes: readFileSync(configPath, 'utf8'),
       configBefore,
@@ -379,6 +406,137 @@ if (name === 'install-ripgrep.mjs') {
     assert.deepEqual(result.vendor.ripgrep.bytes, Buffer.from([0x72, 0x67, 0x00, 0xff]), `${fixture.label}: managed ripgrep bytes must remain unchanged`);
     assert.equal(result.vendor.ripgrep.ino, result.vendor.ripgrepBefore.ino, `${fixture.label}: managed ripgrep identity must remain unchanged`);
   }
+
+  const assertPriorRuntimeRestored = (result, label, { fallback = null } = {}) => {
+    assert.equal(result.runtime, 'prior installed runtime\n', `${label}: failed transaction must restore the prior runtime`);
+    assert.equal(result.sourceVersion, '2.1.225\n', `${label}: failed transaction must restore the prior source marker`);
+    assert.deepEqual(result.vendor.oldNative?.bytes, Buffer.from([0x00, 0x11, 0x80, 0xff]), `${label}: failed transaction must restore prior native bytes`);
+    assert.deepEqual(result.vendor.oldOnly?.bytes, Buffer.from([0xde, 0xad, 0xbe, 0xef]), `${label}: failed transaction must restore old-only vendor bytes`);
+    assert.equal(result.vendor.candidate, null, `${label}: failed transaction must not leave candidate native modules live`);
+    assert.deepEqual(result.fallbackState, fallback, `${label}: failed transaction must restore the prior fallback state`);
+  };
+  const priorFallbackState = {
+    schemaVersion: 1,
+    sourceVersion: '2.1.225',
+    clawgodVersion: fixtureSelfVersion,
+    reason: 'bundle-patch-compatibility',
+  };
+
+  const directCompatibilityFailure = runLifecycleCase('direct-compatibility-failure', [], {
+    patchExit: 42,
+    priorRuntime: 'prior installed runtime\n',
+  });
+  assert.notEqual(directCompatibilityFailure.run.status, 0, 'direct install must fail closed for an unauthorized compatibility fallback');
+  assert.deepEqual(directCompatibilityFailure.patchArgs, ['--enhancements-file', directCompatibilityFailure.configPath], 'direct install must not authorize the compatibility fallback patch argument');
+  assertPriorRuntimeRestored(directCompatibilityFailure, 'direct compatibility failure');
+
+  const updateCompatibilityFallback = runLifecycleCase('update-compatibility-fallback', [], {
+    updateFailOpen: true,
+    patchExit: 42,
+    priorRuntime: 'prior installed runtime\n',
+  });
+  assert.equal(updateCompatibilityFallback.run.status, 0, `authorized updater fallback must finish successfully: ${updateCompatibilityFallback.run.stdout}${updateCompatibilityFallback.run.stderr}`);
+  assert.deepEqual(updateCompatibilityFallback.patchArgs, ['--enhancements-file', updateCompatibilityFallback.configPath, '--allow-compatibility-fallback'], 'authorized updater fallback must opt in through the exact patcher argv');
+  assert.equal(updateCompatibilityFallback.runtime, '(function(exports,require,module,__filename,__dirname){})', 'authorized updater fallback must commit the candidate runtime');
+  assert.equal(updateCompatibilityFallback.sourceVersion, '2.1.225\n', 'authorized updater fallback must commit the candidate source marker');
+  assert.deepEqual(updateCompatibilityFallback.vendor.candidate?.bytes, Buffer.from([0xca, 0xfe, 0xba, 0xbe]), 'authorized updater fallback must commit candidate native modules');
+  assert.equal(updateCompatibilityFallback.vendor.oldNative, null, 'authorized updater fallback must retire prior native modules');
+  assert.deepEqual(updateCompatibilityFallback.fallbackState, {
+    schemaVersion: 1,
+    sourceVersion: '2.1.225',
+    clawgodVersion: fixtureSelfVersion,
+    reason: 'bundle-patch-compatibility',
+  }, 'authorized updater fallback must persist valid release-format compatibility state');
+  assert.equal(updateCompatibilityFallback.chromeMarker, null, 'authorized updater fallback must skip the Chrome helper');
+  assert.match(`${updateCompatibilityFallback.run.stdout}${updateCompatibilityFallback.run.stderr}`, /compatibility fallback/i, 'authorized updater fallback must emit a prominent compatibility warning');
+
+  const firstInstallCompatibilityFailure = runLifecycleCase('first-install-compatibility-failure', [], {
+    updateFailOpen: true,
+    patchExit: 42,
+  });
+  assert.notEqual(firstInstallCompatibilityFailure.run.status, 0, 'first install must fail closed even when the compatibility environment is spoofed');
+  assert.deepEqual(firstInstallCompatibilityFailure.patchArgs, ['--enhancements-file', firstInstallCompatibilityFailure.configPath], 'first install must not authorize the compatibility fallback patch argument');
+  assert.equal(firstInstallCompatibilityFailure.runtime, null, 'first install compatibility failure must not retain a launcher-ready runtime');
+  assert.equal(firstInstallCompatibilityFailure.fallbackState, null, 'first install compatibility failure must not write fallback state');
+
+  const noUpgradeCompatibilityFailure = runLifecycleCase('no-upgrade-compatibility-failure', ['--no-upgrade'], {
+    updateFailOpen: true,
+    patchExit: 42,
+    priorRuntime: 'prior installed runtime\n',
+  });
+  assert.notEqual(noUpgradeCompatibilityFailure.run.status, 0, '--no-upgrade must fail closed for a compatibility fallback');
+  assert.deepEqual(noUpgradeCompatibilityFailure.patchArgs, ['--enhancements-file', noUpgradeCompatibilityFailure.configPath], '--no-upgrade must never pass the fallback authorization flag');
+  assertPriorRuntimeRestored(noUpgradeCompatibilityFailure, '--no-upgrade compatibility failure');
+
+  const noUpgradeSanityFailure = runLifecycleCase('no-upgrade-sanity-failure', ['--no-upgrade'], {
+    sanityExit: 37,
+    priorRuntime: 'prior installed runtime\n',
+    priorFallback: true,
+  });
+  assert.notEqual(noUpgradeSanityFailure.run.status, 0, '--no-upgrade must fail when its directly verified runtime cannot load');
+  assertPriorRuntimeRestored(noUpgradeSanityFailure, '--no-upgrade sanity failure', { fallback: priorFallbackState });
+  assert.deepEqual(noUpgradeSanityFailure.transactionDirectories, [], '--no-upgrade sanity rollback must clean a verified transaction');
+
+  const fatalAuthorizedPatcher = runLifecycleCase('fatal-authorized-patcher', [], {
+    updateFailOpen: true,
+    patchExit: 41,
+    priorRuntime: 'prior installed runtime\n',
+    priorFallback: true,
+  });
+  assert.notEqual(fatalAuthorizedPatcher.run.status, 0, 'non-42 patch failure must remain fatal even when fallback is authorized');
+  assert.deepEqual(fatalAuthorizedPatcher.patchArgs, ['--enhancements-file', fatalAuthorizedPatcher.configPath, '--allow-compatibility-fallback'], 'authorized updater must still provide the fallback opt-in for a fatal patcher result');
+  assertPriorRuntimeRestored(fatalAuthorizedPatcher, 'fatal authorized patcher', { fallback: priorFallbackState });
+
+  const fullPatchClearsFallback = runLifecycleCase('full-patch-clears-fallback', [], {
+    updateFailOpen: true,
+    priorRuntime: 'prior installed runtime\n',
+    priorFallback: true,
+  });
+  assert.equal(fullPatchClearsFallback.run.status, 0, `full patch must succeed: ${fullPatchClearsFallback.run.stdout}${fullPatchClearsFallback.run.stderr}`);
+  assert.equal(fullPatchClearsFallback.fallbackState, null, 'full patch success must clear an old fallback state');
+  assert.equal(fullPatchClearsFallback.chromeMarker, 'invoked\n', 'full patch success must run the Chrome helper before commit');
+
+  const fallbackSanityFailure = runLifecycleCase('fallback-sanity-failure', [], {
+    updateFailOpen: true,
+    patchExit: 42,
+    sanityExit: 37,
+    priorRuntime: 'prior installed runtime\n',
+    priorFallback: true,
+  });
+  assert.notEqual(fallbackSanityFailure.run.status, 0, 'fallback runtime sanity failure must fail the update');
+  assertPriorRuntimeRestored(fallbackSanityFailure, 'fallback sanity failure', { fallback: priorFallbackState });
+  assert.deepEqual(fallbackSanityFailure.transactionDirectories, [], 'fallback sanity rollback must clean a verified transaction');
+
+  const fullPatchSanityFailure = runLifecycleCase('full-patch-sanity-failure', [], {
+    updateFailOpen: true,
+    sanityExit: 37,
+    priorRuntime: 'prior installed runtime\n',
+    priorFallback: true,
+  });
+  assert.notEqual(fullPatchSanityFailure.run.status, 0, 'full patch runtime sanity failure must fail the update');
+  assertPriorRuntimeRestored(fullPatchSanityFailure, 'full patch sanity failure', { fallback: priorFallbackState });
+
+  const fallbackVendorRollback = runLifecycleCase('fallback-vendor-rollback', [], {
+    updateFailOpen: true,
+    patchExit: 42,
+    sanityExit: 37,
+    priorRuntime: 'prior installed runtime\n',
+    priorFallback: true,
+  });
+  assert.notEqual(fallbackVendorRollback.run.status, 0, 'fallback checked vendor sanity failure must fail the update');
+  assertPriorRuntimeRestored(fallbackVendorRollback, 'fallback checked vendor rollback', { fallback: priorFallbackState });
+  assert.deepEqual(fallbackVendorRollback.transactionDirectories, [], 'fallback checked vendor rollback must clean a verified transaction');
+
+  const fallbackVendorConflict = runLifecycleCase('fallback-vendor-conflict', [], {
+    updateFailOpen: true,
+    patchExit: 42,
+    priorRuntime: 'prior installed runtime\n',
+    publishFault: true,
+  });
+  assert.notEqual(fallbackVendorConflict.run.status, 0, 'fallback vendor publication conflict must fail the update');
+  assert.notEqual(fallbackVendorConflict.runtime, 'prior installed runtime\n', 'fallback vendor conflict must preserve the existing no-prior-runtime-restore boundary');
+  assert.equal(fallbackVendorConflict.transactionDirectories.length, 1, 'fallback vendor conflict must retain recovery transaction evidence');
+  assert.equal(fallbackVendorConflict.recoveryEvidence?.conflicts?.[0]?.reason, 'published-entry-identity-changed', 'fallback vendor conflict must retain the established identity-conflict evidence');
 
   const failed = runLifecycleCase('mandatory-patch-failure', [], {
     patchExit: 41,
