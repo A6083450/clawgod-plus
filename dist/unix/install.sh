@@ -7677,7 +7677,8 @@ if (topLevelCommand === 'update' || topLevelCommand === 'upgrade') {
   exitWithOutcome(runSelfUpdate(process.argv.slice(2)));
 }
 
-const { readPatchFallback } = require('./patch-fallback.cjs');
+let readPatchFallback = () => null;
+try { ({ readPatchFallback } = require('./patch-fallback.cjs')); } catch {}
 const patchFallback = readPatchFallback(clawgodDir);
 if (patchFallback) {
   process.stderr.write(`[clawgod] Running Claude Code ${patchFallback.sourceVersion} without bundle enhancements because patch compatibility failed.\n`);

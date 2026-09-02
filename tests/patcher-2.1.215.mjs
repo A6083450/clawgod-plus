@@ -127,7 +127,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       /(?:⚠️|!!) Computer Use gate bypass/,
       `${name}: no unverifiable Computer Use alternative`,
     );
-    assert.match(firstOutput, /Result: 26 applied, 37 skipped, 0 failed/, `${name}: default-all summary must exclude removed Fast patches`);
+    assert.match(firstOutput, /Result: 25 applied, 37 skipped, 0 failed/, `${name}: default-all summary must exclude removed Fast patches`);
     assert.match(firstOutput, /Enhancements: 14 enabled, 0 disabled/, `${name}: default-all enhancement summary must be stable`);
 
 

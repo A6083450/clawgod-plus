@@ -8,8 +8,8 @@ import { dirname, join } from 'node:path';
 const unix = readFileSync(new URL('../src/template/install.sh', import.meta.url), 'utf8');
 const windows = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
 
-const smokeStart = unix.indexOf('dim "Verifying Bun can load patched cli.original.cjs ..."');
-const smokeEnd = unix.indexOf('\n# ─── Replace claude command', smokeStart);
+const smokeStart = unix.indexOf('warn_bun_canary_guidance() {');
+const smokeEnd = unix.indexOf('\ncommit_runtime_transaction() {', smokeStart);
 assert.ok(smokeStart >= 0 && smokeEnd > smokeStart, 'install.sh must retain its post-install smoke block');
 const unixSmoke = unix.slice(smokeStart, smokeEnd);
 
@@ -43,6 +43,7 @@ info() { printf 'INFO:%s\\n' "$*"; }
 warn() { printf 'WARN:%s\\n' "$*" >&2; }
 err() { printf 'ERROR:%s\\n' "$*" >&2; }
 ${unixSmoke}
+verify_runtime
 printf 'mutated\\n' > "$LAUNCHER_SENTINEL"
 `, 'utf8');
   chmodSync(script, 0o755);
