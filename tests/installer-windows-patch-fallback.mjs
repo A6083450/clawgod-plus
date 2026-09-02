@@ -45,6 +45,17 @@ const fixtureSpan = canonicalSpan.replace(
 assert.notEqual(fixtureSpan, canonicalSpan, 'fixture must convert only the process exit boundary so the production finalizer can be observed');
 assert.match(fixtureSpan, /\$RuntimeTransactionCommitted = \$true/, 'fixture span must execute production commit assignment');
 assert.match(fixtureSpan, /\} finally \{/, 'fixture span must execute production rollback finalizer');
+const dedicatedTestSource = readFileSync(new URL(import.meta.url), 'utf8');
+assert.match(
+  dedicatedTestSource,
+  /const candidateSource = candidateSourceForHost\('2\.1\.999'\);/,
+  'candidate source expectation must derive PowerShell Set-Content bytes from the host platform',
+);
+assert.match(
+  dedicatedTestSource,
+  /assert\.deepEqual\(observed\.sourceBytes, candidateSourceBytes,/,
+  'candidate source assertions must remain byte-level so Windows CRLF is verified',
+);
 
 const pwsh = findPwsh();
 if (!pwsh) {
@@ -160,7 +171,14 @@ ${fixtureSpan}
   }, null, 2) + '\n';
   const priorChunk = 'prior chunk\n';
   const candidateRuntime = 'candidate runtime\n';
-  const candidateSource = '2.1.999\n';
+  const candidateSourceForHost = value => `${value}${process.platform === 'win32' ? '\r\n' : '\n'}`;
+  const candidateSource = candidateSourceForHost('2.1.999');
+  assert.match(
+    readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8'),
+    /Set-Content -Path \(Join-Path \$ClawDir "\.source-version"\) -Value \$NativeBinLabel -Encoding ASCII/,
+    'candidate source expectation must model the production ASCII Set-Content write',
+  );
+  const candidateSourceBytes = Buffer.from(candidateSource, 'ascii');
   const candidateChunk = 'candidate chunk\n';
   const oldNative = Buffer.from([0x00, 0x11, 0x80, 0xff]);
   const candidateNative = Buffer.from([0xca, 0xfe, 0xba, 0xbe]);
@@ -171,6 +189,7 @@ ${fixtureSpan}
     return {
       runtime: content(paths.runtime)?.toString('utf8') ?? null,
       source: content(paths.source)?.toString('utf8') ?? null,
+      sourceBytes: content(paths.source),
       fallback: content(paths.fallback)?.toString('utf8') ?? null,
       chunk: content(paths.chunk)?.toString('utf8') ?? null,
       oldNative: content(paths.oldNative),
@@ -289,7 +308,8 @@ ${fixtureSpan}
       assert.equal(result.transactionExists, false, `${fixture.label}: production commit cleanup must remove transaction`);
       assert.equal(observed.transactionExists, false, `${fixture.label}: committed transaction must not retain recovery data`);
       assert.equal(observed.runtime, candidateRuntime, `${fixture.label}: success must retain candidate runtime`);
-      assert.equal(observed.source, candidateSource, `${fixture.label}: success must retain candidate source`);
+      assert.deepEqual(observed.sourceBytes, candidateSourceBytes, `${fixture.label}: success must retain host-native candidate source bytes`);
+      assert.equal(observed.source, candidateSource, `${fixture.label}: success must retain host-native candidate source text`);
       assert.equal(observed.chunk, candidateChunk, `${fixture.label}: success must retain candidate chunks`);
       assert.equal(observed.oldNative, null, `${fixture.label}: success must retire prior vendor bytes`);
       assert.deepEqual(observed.candidateNative, candidateNative, `${fixture.label}: success must publish candidate vendor bytes`);
@@ -317,6 +337,7 @@ ${fixtureSpan}
       assert.ok(observed.evidence?.conflicts?.length, `${fixture.label}: status 21 must retain recovery evidence`);
       assert.deepEqual(content(paths.replacementSentinel), Buffer.from([0x5a, 0x00, 0xa5]), `${fixture.label}: conflict recovery must not mutate replacement vendor`);
       assert.equal(observed.runtime, candidateRuntime, `${fixture.label}: conflict boundary must not restore runtime into unknown vendor state`);
+      assert.deepEqual(observed.sourceBytes, candidateSourceBytes, `${fixture.label}: conflict boundary must retain host-native candidate source bytes`);
       assert.equal(observed.source, candidateSource, `${fixture.label}: conflict boundary must not restore source into unknown vendor state`);
       assert.equal(observed.chunk, candidateChunk, `${fixture.label}: conflict boundary must not restore chunks into unknown vendor state`);
       assert.match(observed.fallback, /"sourceVersion": "2\.1\.999"/, `${fixture.label}: conflict boundary must retain written fallback state`);
