@@ -126,7 +126,7 @@ for (const [installerName, patcherSource] of patcherSources) {
     const run = spawnSync(process.execPath, ['patch.mjs'], { cwd: shiftedDir, encoding: 'utf8' });
     const output = run.stdout + run.stderr;
     assert.equal(run.status, 0, `${shiftedName}: optional mismatch must not fail the patcher: ${output}`);
-    assert.match(output, /Design canvas enable \(skip claude\.ai login\/subscription gate\).*skipped/s, `${shiftedName}: shifted canvas gate must be reported as skipped`);
+    assert.doesNotMatch(output, /Design canvas enable \(skip claude\.ai login\/subscription gate\) \(\d+ replacement/, `${shiftedName}: shifted canvas gate must not be applied`);
   } finally {
     rmSync(shiftedDir, { recursive: true, force: true });
   }

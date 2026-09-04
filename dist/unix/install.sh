@@ -9151,10 +9151,10 @@ var independentPatches = [
   collapsedRowsPatch
 ];
 function createAgentsRegistry({ chromeEnabled }) {
-  const patches13 = chromeEnabled ? [...independentPatches, defaultAgentsViewPatch].sort((left, right) => left.order - right.order) : [...independentPatches];
+  const patches = chromeEnabled ? [...independentPatches, defaultAgentsViewPatch].sort((left, right) => left.order - right.order) : [...independentPatches];
   return Object.freeze({
     id: "agents",
-    patches: Object.freeze(patches13),
+    patches: Object.freeze(patches),
     customPatches: Object.freeze([])
   });
 }
@@ -9933,7 +9933,7 @@ async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.slice(2)
     stored = await readEnhancementConfig({ homeDir, manifest: enhancementManifest });
   }
   const selection = resolveEnhancementSelection({ stored }, enhancementManifest);
-  const { patches: patches13, customPatches: customPatches4 } = createPatchSelection(selection.enabled);
+  const { patches, customPatches } = createPatchSelection(selection.enabled);
   if (revert) {
     if (!restoreBundle(rootDir)) {
       console.error("\u274C No backup found");
@@ -9962,7 +9962,7 @@ ${"\u2550".repeat(55)}`);
   let applied = 0;
   let skipped = 0;
   let failed = 0;
-  for (const patch of patches13) {
+  for (const patch of patches) {
     const matches = [...code.matchAll(patch.pattern)];
     let relevant = matches;
     if (patch.validate) {
@@ -9988,7 +9988,6 @@ ${"\u2550".repeat(55)}`);
         continue;
       }
       if (patch.optional) {
-        console.log(`  \u23ED  ${patch.name} (not present in this version)`);
         skipped++;
         continue;
       }
@@ -10004,12 +10003,10 @@ ${"\u2550".repeat(55)}`);
         applied++;
         continue;
       }
-      console.log(`  \u26A0\uFE0F  ${patch.name} (0 matches, no sentinel \u2014 cannot verify)`);
       skipped++;
       continue;
     }
     if (verify) {
-      console.log(`  \u2B1A  ${patch.name} \u2014 ${relevant.length} match(es), not yet applied`);
       skipped++;
       continue;
     }
@@ -10026,11 +10023,10 @@ ${"\u2550".repeat(55)}`);
       console.log(`  \u2705 ${patch.name} (${count} replacement${count > 1 ? "s" : ""})`);
       applied++;
     } else {
-      console.log(`  \u23ED  ${patch.name} (no change needed)`);
       skipped++;
     }
   }
-  for (const descriptor of customPatches4) {
+  for (const descriptor of customPatches) {
     const result = await descriptor.apply(code, { dryRun, verify, rootDir });
     if (result.status === "applied") {
       if (!dryRun)
@@ -10038,13 +10034,11 @@ ${"\u2550".repeat(55)}`);
       console.log(`  \u2705 ${descriptor.name} (${result.count} replacement${result.count > 1 ? "s" : ""})`);
       applied++;
     } else if (result.status === "verify") {
-      console.log(`  \u2B1A  ${descriptor.name} \u2014 ${result.count} match(es), not yet applied`);
       skipped++;
     } else if (result.status === "already") {
       console.log(`  \u2705 ${descriptor.name} (${result.detail})`);
       applied++;
     } else if (result.status === "skipped") {
-      console.log(`  \u23ED  ${descriptor.name} (${result.detail})`);
       skipped++;
     } else {
       console.log(`  \u274C ${descriptor.name} \u2014 ${result.detail}`);

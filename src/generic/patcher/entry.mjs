@@ -170,7 +170,6 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
         continue;
       }
       if (patch.optional) {
-        console.log(`  ⏭  ${patch.name} (not present in this version)`);
         skipped++;
         continue;
       }
@@ -186,13 +185,11 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
         applied++;
         continue;
       }
-      console.log(`  ⚠️  ${patch.name} (0 matches, no sentinel — cannot verify)`);
       skipped++;
       continue;
     }
 
     if (verify) {
-      console.log(`  ⬚  ${patch.name} — ${relevant.length} match(es), not yet applied`);
       skipped++;
       continue;
     }
@@ -210,7 +207,6 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
       console.log(`  ✅ ${patch.name} (${count} replacement${count > 1 ? 's' : ''})`);
       applied++;
     } else {
-      console.log(`  ⏭  ${patch.name} (no change needed)`);
       skipped++;
     }
   }
@@ -222,13 +218,11 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
       console.log(`  ✅ ${descriptor.name} (${result.count} replacement${result.count > 1 ? 's' : ''})`);
       applied++;
     } else if (result.status === 'verify') {
-      console.log(`  ⬚  ${descriptor.name} — ${result.count} match(es), not yet applied`);
       skipped++;
     } else if (result.status === 'already') {
       console.log(`  ✅ ${descriptor.name} (${result.detail})`);
       applied++;
     } else if (result.status === 'skipped') {
-      console.log(`  ⏭  ${descriptor.name} (${result.detail})`);
       skipped++;
     } else {
       console.log(`  ❌ ${descriptor.name} — ${result.detail}`);
