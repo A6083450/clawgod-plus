@@ -53,13 +53,19 @@ const factorySupport = `
 function bridgeClient(config){return {kind:"bridge",config}}
 function socketClient(config){return {kind:"socket",config}}
 function nativeClient(config){return {kind:"native",config}}
+function allowChromeExtension(){return!0}
 function hasAcceptedChromeOAuthScope(){return!1}
+function hasChromeSubscription(){return!1}
 function logChrome(message){return message}
-function shouldEnableChrome(requested){if(!hasAcceptedChromeOAuthScope())return logChrome("[Claude in Chrome] Disabled: OAuth token has no scope accepted by /api/oauth/validate (needs user:profile, user:office, or user:ccr_inference; env-var and setup-token sessions default to user:inference only)"),!1;if(requested===!0)return!0;return!1}
+function trackChrome(chrome){return chrome}
+function chromeConfig(){return{}}
+function shouldEnableChrome(requested){if(!allowChromeExtension())return!1;if(!hasAcceptedChromeOAuthScope())return logChrome("[Claude in Chrome] Disabled: OAuth token has no scope accepted by /api/oauth/validate (needs user:profile, user:office, or user:ccr_inference; env-var and setup-token sessions default to user:inference only)"),!1;if(requested===!0)return!0;if(requested===!1)return!1;let n=chromeConfig();if(n.claudeInChromeDefaultEnabled!==void 0)return n.claudeInChromeDefaultEnabled;return!1}
+function chromeRuntime(Sr){trackChrome(Sr.chrome);let sr=shouldEnableChrome(Sr.chrome)&&hasChromeSubscription();if(Sr.chrome!==!1&&Sr.chrome===!0){logChrome("tengu_claude_in_chrome_setup")}return sr}
 function parseAgents(args){let r={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1};for(let a of args){if(a==="--strict-mcp-config"){r.strictMcpConfig=!0;continue}}return r}
 function resolveAgents(e){return{strictMcpConfig:e.strictMcpConfig}}function afterResolve(){}
 function dispatchAgents(e){return{args:[...e.strictMcpConfig?["--strict-mcp-config"]:[]]}}
 globalThis.shouldEnableChrome=shouldEnableChrome;
+globalThis.chromeRuntime=chromeRuntime;
 `;
 
 const fixtures = [
@@ -109,6 +115,11 @@ for (const [name, patcherSource] of await getPatcherSources()) {
         const run = spawnSync(process.execPath, args, { cwd: dir, encoding: 'utf8' });
         const output = run.stdout + run.stderr;
         assert.equal(run.status, 0, `${label}: ${output}`);
+        assert.match(
+          output,
+          /0 failed, \d+ warnings?\b/,
+          `${label}: sub-patches that stop matching must surface in the summary line`,
+        );
 
         const patched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
         helperAcornSource ??= readFileSync(join(dir, 'vendor', 'acorn.cjs'), 'utf8');
@@ -122,6 +133,12 @@ for (const [name, patcherSource] of await getPatcherSources()) {
           context.shouldEnableChrome(true),
           true,
           `${label}: an explicit --chrome request must bypass the OAuth scope gate for local socket mode`,
+        );
+        assert.match(patched, /__ccpp_sub_bypass/, `${label}: the claude.ai subscription gate must be bypassed`);
+        assert.equal(
+          context.chromeRuntime({ chrome: true }),
+          true,
+          `${label}: chrome must stay enabled without a claude.ai subscription`,
         );
         const asyncSocketConfig = {
           bridgeConfig: { url: 'wss://bridge.example' },

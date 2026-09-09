@@ -290,7 +290,7 @@
       "type": "regex",
       "order": 12,
       "metadata": {
-        "patternSource": "function ([\\w$]+)\\(([\\w$]+)\\)\\{if\\(![\\w$]+\\(\\)\\)return [\\w$]+\\(\"\\[Claude in Chrome\\] Disabled: OAuth token has no scope accepted by \\/api\\/oauth\\/validate[^\"]*\"\\),!1;if\\(\\2===!0\\)return!0;",
+        "patternSource": "if\\(![\\w$]+\\(\\)\\)return [\\w$]+\\(\"\\[Claude in Chrome\\] Disabled: OAuth token has no scope accepted by \\/api\\/oauth\\/validate[^\"]*\"\\),!1;",
         "patternFlags": "g",
         "sentinel": {
           "$type": "undefined"
@@ -1488,7 +1488,7 @@
       "type": "regex",
       "order": 65,
       "metadata": {
-        "patternSource": "var ([\\w$]+)=\"design\";function ([\\w$]+)\\(\\)\\{return [\\w$]+\\(\\)&&[\\w$]+\\(\\)\\}",
+        "patternSource": "var ([\\w$]+)=\"design\";function ([\\w$]+)\\(\\)\\{return [\\w$]+\\(\\)&&[\\w$]+\\(\\)\\}|function ([\\w$]+)\\(\\)\\{return [\\w$]+\\(\\)&&[\\w$]+\\(\\)\\}(?=[\\s\\S]{0,3000}?export\\{[^}]*\\b\\3 as isDesignCanvasSkillEnabled\\b)",
         "patternFlags": "g",
         "sentinel": "isDesignCanvasSkillEnabled",
         "appliedMarker": "/*__clawgod_design_canvas__*/",

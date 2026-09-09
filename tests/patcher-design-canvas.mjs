@@ -134,6 +134,41 @@ for (const [installerName, patcherSource] of patcherSources) {
 
 // ─── Windows embed-path shape (B:/~BUN/root/...) ───────────────────────
 
+const currentFixture = `
+// Version: 2.1.266 design canvas shape
+function DTn(){return true}
+function lk(){return true}
+function s(){return DTn()&&lk()}
+var d="Create a design canvas",l="Draft a design on a canvas Artifact";
+globalThis.isDesignCanvasSkillEnabled=s;
+export{d as DESIGN_CANVAS_DESCRIPTION,l as DESIGN_CANVAS_MENU_DESCRIPTION,s as isDesignCanvasSkillEnabled};
+`;
+
+for (const [installerName, patcherSource] of patcherSources) {
+  const name = `${installerName} design canvas current`;
+  const dir = mkdtempSync(join(tmpdir(), 'clawgod-design-canvas-current-'));
+  try {
+    seedPatcherAcorn(dir);
+    writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
+    writeFileSync(join(dir, 'cli.original.cjs'), currentFixture, 'utf8');
+    const run = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(run.status, 0, `${name}: ${run.stdout}${run.stderr}`);
+    const patched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
+    assert.equal(
+      patched.match(/\/\*__clawgod_design_canvas__\*\//g)?.length,
+      1,
+      `${name}: current canvas enable marker must be present exactly once`,
+    );
+    assert.match(
+      patched,
+      /function s\(\)\{return!0\/\*__clawgod_design_canvas__\*\/\}/,
+      `${name}: current canvas gate must be rewritten to always-on`,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 const windowsFixture = `
 // Version: 2.1.234 design canvas shape (win32)
 function yt(){}

@@ -113,10 +113,10 @@ function validateRipgrepVersion(output) {
 function validatePatchSummary(label, output) {
   const resultLines = output.split(/\r?\n/).filter(line => line.includes('Result:'));
   assert.equal(resultLines.length, 1, `${label}: expected exactly one Result line, found ${resultLines.length}`);
-  const summary = /^\s*Result: (\d+) applied, (\d+) skipped, 0 failed\s*$/.exec(resultLines[0]);
+  const summary = /^\s*Result: (\d+) applied, (\d+) skipped, 0 failed(?:, (\d+) warnings?)?\s*$/.exec(resultLines[0]);
   assert.notEqual(summary, null, `${label}: Result line must be a canonical patch summary with 0 failed`);
-  const [, applied, skipped] = summary;
-  return `patch summary ${label}: ${applied} applied, ${skipped} skipped, 0 failed`;
+  const [, applied, skipped, warnings] = summary;
+  return `patch summary ${label}: ${applied} applied, ${skipped} skipped, 0 failed${warnings ? `, ${warnings} warnings` : ''}`;
 }
 
 function validatePluginSummary(output, expected = pluginSummaryExpectation()) {

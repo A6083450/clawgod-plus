@@ -157,7 +157,9 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify, rootDir })
   }
 
   if (needs.subscriptionGate && !seen.has('subscriptionGate')) {
-    const pattern = /(\b[\w$]+\(([\w$]+)\.chrome\);let [\w$]+=)([\w$]+\(\2\.chrome\))&&[\w$]+\(\)(?=,[\s\S]{0,1600}?tengu_claude_in_chrome_setup)/g;
+    // The gate call is terminated by `;` when the bundle is concatenated across
+    // modules (2.1.245+ code-split) and by `,` in older single-file bundles.
+    const pattern = /(\b[\w$]+\(([\w$]+)\.chrome\);let [\w$]+=)([\w$]+\(\2\.chrome\))&&[\w$]+\(\)(?=[;,][\s\S]{0,1600}?tengu_claude_in_chrome_setup)/g;
     const match = pattern.exec(source);
     if (match) add('subscriptionGate', match.index, match.index + match[0].length, `${match[1]}${match[3]}/*__ccpp_sub_bypass*/`);
   }
@@ -187,6 +189,11 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify, rootDir })
     return { status: 'failed', detail: 'Chrome socket patterns not found' };
   }
 
+  // A custom patch reports one aggregate status, so a sub-patch that silently
+  // stopped matching (upstream reshape, cross-module split) would otherwise be
+  // hidden behind the successes. Hand it to the caller for the summary line.
+  const missed = Object.keys(needs).filter((name) => needs[name] && !seen.has(name));
+
   if (verify) return { status: 'verify', count: replacements.length };
 
   let next = source;
@@ -196,15 +203,19 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify, rootDir })
       next = next.slice(0, replacement.start) + replacement.replacement + next.slice(replacement.end);
     }
   }
-  return { status: 'applied', count: replacements.length, code: next };
+  return { status: 'applied', count: replacements.length, code: next, warnings: missed };
 }
 
 const patches = [
   {
     order: 12,
     name: 'Claude in Chrome OAuth scope bypass',
-    pattern: /function ([\w$]+)\(([\w$]+)\)\{if\(![\w$]+\(\)\)return [\w$]+\("\[Claude in Chrome\] Disabled: OAuth token has no scope accepted by \/api\/oauth\/validate[^"]*"\),!1;if\(\2===!0\)return!0;/g,
-    replacer: (match, fn, argument) => `function ${fn}(${argument}){/*__ccpp_chrome_oauth_scope_bypass*/if(${argument}===!0)return!0;`,
+    // Upstream nests this guard behind an unrelated policy check
+    // (`if(!rL())return!1;`), so match the guard statement alone instead of
+    // pinning the whole function head. Dropping only the guard keeps the rest
+    // of the gate (explicit --chrome/--no-chrome, env overrides) intact.
+    pattern: /if\(![\w$]+\(\)\)return [\w$]+\("\[Claude in Chrome\] Disabled: OAuth token has no scope accepted by \/api\/oauth\/validate[^"]*"\),!1;/g,
+    replacer: () => '/*__ccpp_chrome_oauth_scope_bypass*/',
     appliedMarker: '/*__ccpp_chrome_oauth_scope_bypass*/',
     optional: true,
   },

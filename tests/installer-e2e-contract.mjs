@@ -457,6 +457,13 @@ const whitespaceSummary = runContract('patch-summary', {
 assert.equal(whitespaceSummary.status, 0, whitespaceSummary.stderr);
 assert.match(whitespaceSummary.stdout, /^patch summary initial: 42 applied, 7 skipped, 0 failed$/m);
 
+const warningSummary = runContract('patch-summary', {
+  label: 'initial',
+  output: '  Result: 42 applied, 7 skipped, 0 failed, 2 warnings\n',
+});
+assert.equal(warningSummary.status, 0, warningSummary.stderr);
+assert.match(warningSummary.stdout, /^patch summary initial: 42 applied, 7 skipped, 0 failed, 2 warnings$/m);
+
 for (const [label, output] of [
   ['missing summary', 'patch complete without a summary\n'],
   ['failed summary', '  Result: 41 applied, 7 skipped, 1 failed\n'],

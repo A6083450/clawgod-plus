@@ -2,16 +2,11 @@ const patches = [
   {
     order: 65,
     name: 'Design canvas enable (skip claude.ai login/subscription gate)',
-    // 2.1.250 shape:
-    //   var r="design";function o(){return Pun()&&OA()}
-    //   export{r as DESIGN_CANVAS_COMMAND_NAME,o as isDesignCanvasSkillEnabled,u as registerDesignCanvasSkill}
-    // o() gates the bundled "design" canvas skill on claude.ai login (OA)
-    // plus the ethereal_nova rollout + artifact runtime/subscription chain
-    // (Pun). Rewrite it to always-on so the canvas draft workflow runs
-    // without a claude.ai account.
-    pattern: /var ([\w$]+)="design";function ([\w$]+)\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\}/g,
-    replacer: (match, commandName, fn) =>
-      `var ${commandName}="design";function ${fn}(){return!0/*__clawgod_design_canvas__*/}`,
+    // 2.1.250 anchors the gate beside `var r="design"`; 2.1.266 moves it
+    // into a module and identifies it only through the export alias.
+    pattern: /var ([\w$]+)="design";function ([\w$]+)\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\}|function ([\w$]+)\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\}(?=[\s\S]{0,3000}?export\{[^}]*\b\3 as isDesignCanvasSkillEnabled\b)/g,
+    replacer: (match, commandName, legacyFn, currentFn) =>
+      `${commandName ? `var ${commandName}="design";` : ''}function ${legacyFn ?? currentFn}(){return!0/*__clawgod_design_canvas__*/}`,
     sentinel: 'isDesignCanvasSkillEnabled',
     appliedMarker: '/*__clawgod_design_canvas__*/',
     optional: true,

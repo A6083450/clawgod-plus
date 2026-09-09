@@ -543,13 +543,13 @@ if (!code.includes('__ccpp_sub_msg_bypass')) {
 // Explicit --chrome uses the local socket client and does not require the
 // Claude.ai OAuth scopes checked by the bridge path.
 if (!code.includes('__ccpp_chrome_oauth_scope_bypass')) {
-    const match = /function ([\w$]+)\(([\w$]+)\)\{if\(![\w$]+\(\)\)return [\w$]+\("\[Claude in Chrome\] Disabled: OAuth token has no scope accepted by \/api\/oauth\/validate[^"]*"\),!1;if\(\2===!0\)return!0;/.exec(code);
+    const match = /if\(![\w$]+\(\)\)return [\w$]+\("\[Claude in Chrome\] Disabled: OAuth token has no scope accepted by \/api\/oauth\/validate[^"]*"\),!1;/.exec(code);
     if (match) {
         fixes.oauthScopeGate.found = true;
         fixes.oauthScopeGate.node = {
             start: match.index,
             end: match.index + match[0].length,
-            replacement: `function ${match[1]}(${match[2]}){/*__ccpp_chrome_oauth_scope_bypass*/if(${match[2]}===!0)return!0;`
+            replacement: '/*__ccpp_chrome_oauth_scope_bypass*/'
         };
         console.log('FOUND:oauthScopeGate -> ' + match[0].slice(0, 80));
     }

@@ -9414,7 +9414,7 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify, rootDir })
       add("clientFactory", match.index, match.index + match[0].length, `function ${match[1]}(${match[2]}){return ${match[2]}.getSocketPaths?${match[4]}:${match[2]}.bridgeConfig?${match[3]}:${match[5]}}/*__ccpp_bridge_fallback_v2*/`);
   }
   if (needs.subscriptionGate && !seen.has("subscriptionGate")) {
-    const pattern = /(\b[\w$]+\(([\w$]+)\.chrome\);let [\w$]+=)([\w$]+\(\2\.chrome\))&&[\w$]+\(\)(?=,[\s\S]{0,1600}?tengu_claude_in_chrome_setup)/g;
+    const pattern = /(\b[\w$]+\(([\w$]+)\.chrome\);let [\w$]+=)([\w$]+\(\2\.chrome\))&&[\w$]+\(\)(?=[;,][\s\S]{0,1600}?tengu_claude_in_chrome_setup)/g;
     const match = pattern.exec(source);
     if (match)
       add("subscriptionGate", match.index, match.index + match[0].length, `${match[1]}${match[3]}/*__ccpp_sub_bypass*/`);
@@ -9440,6 +9440,7 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify, rootDir })
       return { status: "skipped", detail: "not present in this version" };
     return { status: "failed", detail: "Chrome socket patterns not found" };
   }
+  const missed = Object.keys(needs).filter((name) => needs[name] && !seen.has(name));
   if (verify)
     return { status: "verify", count: replacements.length };
   let next = source;
@@ -9449,14 +9450,14 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify, rootDir })
       next = next.slice(0, replacement.start) + replacement.replacement + next.slice(replacement.end);
     }
   }
-  return { status: "applied", count: replacements.length, code: next };
+  return { status: "applied", count: replacements.length, code: next, warnings: missed };
 }
 var patches4 = [
   {
     order: 12,
     name: "Claude in Chrome OAuth scope bypass",
-    pattern: /function ([\w$]+)\(([\w$]+)\)\{if\(![\w$]+\(\)\)return [\w$]+\("\[Claude in Chrome\] Disabled: OAuth token has no scope accepted by \/api\/oauth\/validate[^"]*"\),!1;if\(\2===!0\)return!0;/g,
-    replacer: (match, fn, argument) => `function ${fn}(${argument}){/*__ccpp_chrome_oauth_scope_bypass*/if(${argument}===!0)return!0;`,
+    pattern: /if\(![\w$]+\(\)\)return [\w$]+\("\[Claude in Chrome\] Disabled: OAuth token has no scope accepted by \/api\/oauth\/validate[^"]*"\),!1;/g,
+    replacer: () => "/*__ccpp_chrome_oauth_scope_bypass*/",
     appliedMarker: "/*__ccpp_chrome_oauth_scope_bypass*/",
     optional: true
   },
@@ -9555,8 +9556,8 @@ var patches6 = [
   {
     order: 65,
     name: "Design canvas enable (skip claude.ai login/subscription gate)",
-    pattern: /var ([\w$]+)="design";function ([\w$]+)\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\}/g,
-    replacer: (match, commandName, fn) => `var ${commandName}="design";function ${fn}(){return!0/*__clawgod_design_canvas__*/}`,
+    pattern: /var ([\w$]+)="design";function ([\w$]+)\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\}|function ([\w$]+)\(\)\{return [\w$]+\(\)&&[\w$]+\(\)\}(?=[\s\S]{0,3000}?export\{[^}]*\b\3 as isDesignCanvasSkillEnabled\b)/g,
+    replacer: (match, commandName, legacyFn, currentFn) => `${commandName ? `var ${commandName}="design";` : ""}function ${legacyFn ?? currentFn}(){return!0/*__clawgod_design_canvas__*/}`,
     sentinel: "isDesignCanvasSkillEnabled",
     appliedMarker: "/*__clawgod_design_canvas__*/",
     optional: true
@@ -9962,6 +9963,7 @@ ${"\u2550".repeat(55)}`);
   let applied = 0;
   let skipped = 0;
   let failed = 0;
+  let warnings = 0;
   for (const patch of patches) {
     const matches = [...code.matchAll(patch.pattern)];
     let relevant = matches;
@@ -10033,6 +10035,10 @@ ${"\u2550".repeat(55)}`);
         code = result.code;
       console.log(`  \u2705 ${descriptor.name} (${result.count} replacement${result.count > 1 ? "s" : ""})`);
       applied++;
+      for (const warning of result.warnings ?? []) {
+        console.log(`  \u26A0\uFE0F  ${descriptor.name}: ${warning} \u2014 pattern not found in this version`);
+        warnings++;
+      }
     } else if (result.status === "verify") {
       skipped++;
     } else if (result.status === "already") {
@@ -10047,7 +10053,7 @@ ${"\u2550".repeat(55)}`);
   }
   console.log(`
 ${"\u2500".repeat(55)}`);
-  console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed`);
+  console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed${warnings > 0 ? `, ${warnings} warning${warnings > 1 ? "s" : ""}` : ""}`);
   if (failed === 0 && !dryRun && !verify && applied > 0) {
     backupBundle(rootDir, modules);
     const resultModules = splitModules(code);

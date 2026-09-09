@@ -139,6 +139,7 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   let applied = 0;
   let skipped = 0;
   let failed = 0;
+  let warnings = 0;
 
   for (const patch of patches) {
     const matches = [...code.matchAll(patch.pattern)];
@@ -217,6 +218,10 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
       if (!dryRun) code = result.code;
       console.log(`  ✅ ${descriptor.name} (${result.count} replacement${result.count > 1 ? 's' : ''})`);
       applied++;
+      for (const warning of result.warnings ?? []) {
+        console.log(`  ⚠️  ${descriptor.name}: ${warning} — pattern not found in this version`);
+        warnings++;
+      }
     } else if (result.status === 'verify') {
       skipped++;
     } else if (result.status === 'already') {
@@ -231,7 +236,7 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   }
 
   console.log(`\n${'─'.repeat(55)}`);
-  console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed`);
+  console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed${warnings > 0 ? `, ${warnings} warning${warnings > 1 ? 's' : ''}` : ''}`);
 
   if (failed === 0 && !dryRun && !verify && applied > 0) {
     backupBundle(rootDir, modules);
