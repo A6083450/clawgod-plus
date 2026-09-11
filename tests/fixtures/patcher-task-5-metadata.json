@@ -475,10 +475,14 @@
       "type": "regex",
       "order": 19,
       "metadata": {
-        "patternSource": "(name:\"ultraplan\",[\\s\\S]{1,500}?argumentHint:\"<prompt>\",isEnabled:\\(\\)=>)(?:!1|[\\w$]+\\(\\))",
+        "patternSource": "(name:\"ultraplan\",[\\s\\S]{1,500}?)(?:availability:\\[[^\\]]*\\],)?(isEnabled:\\(\\)=>)(?:!1|[\\w$]+\\(\\))",
         "patternFlags": "g",
         "sentinel": "name:\"ultraplan\"",
-        "appliedMarker": "argumentHint:\"<prompt>\",isEnabled:()=>!0",
+        "appliedMarker": {
+          "$type": "regexp",
+          "source": "name:\"ultraplan\",[\\s\\S]{1,500}?isEnabled:\\(\\)=>!0",
+          "flags": ""
+        },
         "knownShape": {
           "$type": "undefined"
         },

@@ -2,10 +2,14 @@ const patches = [
   {
     order: 19,
     name: 'Ultraplan enable',
-    pattern: /(name:"ultraplan",[\s\S]{1,500}?argumentHint:"<prompt>",isEnabled:\(\)=>)(?:!1|[\w$]+\(\))/g,
-    replacer: (match, prefix) => `${prefix}!0`,
+    // 2.1.268 inserted `availability:["claude-ai"]` before isEnabled. That field is
+    // consumed by the command-list filter (`if(!e.availability)return!0`, case
+    // "claude-ai" requires a first-party login) and would hide the command on
+    // third-party providers, so drop it alongside the gate.
+    pattern: /(name:"ultraplan",[\s\S]{1,500}?)(?:availability:\[[^\]]*\],)?(isEnabled:\(\)=>)(?:!1|[\w$]+\(\))/g,
+    replacer: (match, prefix, enabled) => `${prefix}${enabled}!0`,
     sentinel: 'name:"ultraplan"',
-    appliedMarker: 'argumentHint:"<prompt>",isEnabled:()=>!0',
+    appliedMarker: /name:"ultraplan",[\s\S]{1,500}?isEnabled:\(\)=>!0/,
   },
   {
     order: 20,
