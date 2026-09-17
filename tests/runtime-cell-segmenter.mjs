@@ -1,0 +1,383 @@
+#!/usr/bin/env bun
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
+
+import {
+  CELL_LINE_CELLS_SOURCE,
+  CELL_RENDERER_SOURCE,
+  CELL_SET_CELL_SOURCE,
+  CELL_SEGMENTER_SHAPE,
+  CELL_WRITE_LINE_SOURCE,
+  adaptCellRenderer,
+  findDeclarationEnd,
+} from '../src/generic/runtime/post-processor.mjs';
+
+// The injected renderer calls the module-level helpers that upstream already
+// ships beside it. The digests in CELL_SEGMENTER_SHAPE pin those helpers to a
+// known shape; the doubles below only have to honour their documented
+// contract, so this suite exercises our cell logic rather than upstream's.
+const RENDERER_MODULE = `
+const bn = 3, wo = 0, Xf = 1, hht = 8;
+let chalkLevel = 0;
+function jn(style, link, width) { return (style << 17) | (link << 2) | width; }
+function Rx(screen, char) { return screen.charPool.intern(char); }
+function xx(screen, link) { return screen.hyperlinkPool.intern(link); }
+const MNr = (codes) => codes;
+const LNr = (codes) => codes;
+const Dc = (text) => text.replace(/[\\u061C\\u202A-\\u202E\\u2066-\\u2069]/g, "\\uFFFD");
+function bGt() { return chalkLevel; }
+function setChalkLevel(level) { chalkLevel = level; }
+function endCodeFor(code) {
+  if (code === "" || code === "0") return "reset";
+  if (code === "39" || code.startsWith("3")) return "fg";
+  if (code === "49" || code.startsWith("4")) return "bg";
+  return "end-" + code;
+}
+function cmr(text) {
+  const tokens = [];
+  let index = 0;
+  while (index < text.length) {
+    if (text.charCodeAt(index) === 27 && text.charAt(index + 1) === "[") {
+      const stop = text.indexOf("m", index + 2);
+      if (stop >= 0 && /^[0-9;]*$/.test(text.slice(index + 2, stop))) {
+        for (const part of text.slice(index + 2, stop).split(";")) {
+          tokens.push({ type: "ansi", code: "\\u001b[" + part + "m", endCode: endCodeFor(part) });
+        }
+        index = stop + 1;
+        continue;
+      }
+    }
+    if (text.startsWith("\\u001b]8;;", index)) {
+      const stop = text.indexOf("\\u0007", index + "\\u001b]8;;".length);
+      if (stop >= 0) {
+        tokens.push({ type: "ansi", code: text.slice(index, stop + 1), endCode: "osc8" });
+        index = stop + 1;
+        continue;
+      }
+    }
+    tokens.push({ type: "char", value: text.charAt(index) });
+    index += 1;
+  }
+  return tokens;
+}
+function Kf(styles, tokens) {
+  let merged = styles.slice();
+  for (const token of tokens) {
+    if (token.endCode === "reset") { merged = []; continue; }
+    merged = merged.filter((style) => style.endCode !== token.endCode);
+    merged.push(token);
+  }
+  return merged;
+}
+${CELL_RENDERER_SOURCE}
+${CELL_LINE_CELLS_SOURCE}
+${CELL_SET_CELL_SOURCE}
+${CELL_WRITE_LINE_SOURCE}
+export { Ns, Dd, Cx, xC, setChalkLevel };
+`;
+
+const root = mkdtempSync(join(tmpdir(), 'clawgod-cell-segmenter-'));
+const modulePath = join(root, 'renderer.mjs');
+writeFileSync(modulePath, RENDERER_MODULE);
+const renderer = await import(pathToFileURL(modulePath).href);
+
+function createStylePool() {
+  const codes = new Map([['', 0]]);
+  const values = [[]];
+  return {
+    generation: 0,
+    none: 0,
+    intern(styles) {
+      const key = styles.map((style) => style.code).join('\0');
+      if (!codes.has(key)) codes.set(key, values.push(styles) - 1);
+      return codes.get(key);
+    },
+    get(id) { return values[id] ?? []; },
+  };
+}
+
+function createScreen(stylePool, width = 12, height = 1) {
+  const buffer = new ArrayBuffer(width * height * 8);
+  const characters = [' ', ''];
+  const charIds = new Map([[' ', 0], ['', 1]]);
+  const links = [undefined];
+  const screen = {
+    width,
+    height,
+    cells: new Int32Array(buffer),
+    cells64: new BigInt64Array(buffer),
+    emptyStyleId: stylePool.none,
+    atlasRecorder: { recording: true, entries: [], record(...entry) { this.entries.push(entry); } },
+    charPool: {
+      intern(value) {
+        if (!charIds.has(value)) charIds.set(value, characters.push(value) - 1);
+        return charIds.get(value);
+      },
+    },
+    hyperlinkPool: {
+      intern(value) {
+        if (!links.includes(value)) links.push(value);
+        return links.indexOf(value);
+      },
+    },
+    damage: undefined,
+  };
+  screen.char = (x, y = 0) => characters[screen.cells[(y * width + x) * 2]];
+  screen.packed = (x, y = 0) => screen.cells[(y * width + x) * 2 + 1];
+  screen.widthOf = (x, y = 0) => screen.packed(x, y) & 3;
+  screen.stylesAt = (x, y = 0) => stylePool.get(screen.packed(x, y) >>> 17).map((style) => style.code);
+  screen.hyperlinkAt = (x, y = 0) => links[screen.packed(x, y) >>> 2 & 32767];
+  return screen;
+}
+
+function paint(text, options = {}) {
+  const styles = createStylePool();
+  const screen = createScreen(styles, options.width ?? 12, options.height ?? 1);
+  const line = new renderer.Dd(styles, screen.charPool);
+  const end = renderer.xC(screen, text, options.x ?? 0, options.y ?? 0, line);
+  return { styles, screen, line, end };
+}
+
+let checks = 0;
+function check(name, fn) {
+  fn();
+  checks += 1;
+  console.log(`PASS ${name}`);
+}
+
+check('注入源码保持 ASCII，且不引用私有 Bun API', () => {
+  for (const source of [CELL_RENDERER_SOURCE, CELL_LINE_CELLS_SOURCE, CELL_SET_CELL_SOURCE, CELL_WRITE_LINE_SOURCE]) {
+    assert.doesNotMatch(source, /[^\x00-\x7f]/);
+  }
+  assert.doesNotMatch(RENDERER_MODULE, /Bun\.ant|CellSegmenter/);
+  assert.throws(() => renderer.Ns(), /must not run/);
+});
+
+check('字素按显示宽度写入字符格', () => {
+  const { screen, end } = paint('A中文😀é');
+  assert.equal(end, 8);
+  assert.equal(screen.char(0), 'A');
+  assert.equal(screen.char(1), '中');
+  assert.equal(screen.widthOf(1), 1);
+  assert.equal(screen.widthOf(2), 2);
+  assert.equal(screen.char(3), '文');
+  assert.equal(screen.widthOf(4), 2);
+  assert.equal(screen.char(5), '😀');
+  assert.equal(screen.char(7), 'é');
+  assert.equal(screen.widthOf(7), 0);
+  assert.equal(screen.atlasRecorder.entries.length, 5);
+});
+
+check('超宽字素落在右边界时写入填充格', () => {
+  const { screen } = paint('中', { width: 1 });
+  assert.equal(screen.widthOf(0), 3);
+  assert.equal(screen.char(0), ' ');
+});
+
+check('覆盖宽字符头格时同时清尾格并扩大脏区域', () => {
+  const { screen } = paint('中A', { width: 8 });
+  screen.damage = undefined;
+  renderer.Cx(screen, 0, 0, { char: 'x', styleId: screen.emptyStyleId, width: 0 });
+  assert.equal(screen.char(0), 'x');
+  assert.equal(screen.char(1), ' ');
+  assert.equal(screen.char(2), 'A');
+  assert.deepEqual(screen.damage, { x: 0, y: 0, width: 2, height: 1 });
+});
+
+check('覆盖宽字符尾格时同时清头格', () => {
+  const { screen } = paint('中A', { width: 8 });
+  screen.damage = undefined;
+  renderer.Cx(screen, 1, 0, { char: 'x', styleId: screen.emptyStyleId, width: 0 });
+  assert.equal(screen.char(0), ' ');
+  assert.equal(screen.char(1), 'x');
+  assert.deepEqual(screen.damage, { x: 0, y: 0, width: 2, height: 1 });
+});
+
+check('写入宽字符时清理被覆盖的旧尾格并扩大脏区域', () => {
+  const { screen } = paint('A中B', { width: 8 });
+  screen.damage = undefined;
+  renderer.Cx(screen, 2, 0, { char: '好', styleId: screen.emptyStyleId, width: 1 });
+  assert.equal(screen.char(1), ' ');
+  assert.equal(screen.char(2), '好');
+  assert.equal(screen.widthOf(3), 2);
+  assert.deepEqual(screen.damage, { x: 1, y: 0, width: 3, height: 1 });
+});
+
+check('制表符按起始列对齐', () => {
+  const { screen, line } = paint('a\tb', { x: 3, width: 20 });
+  assert.equal(screen.char(8), 'b');
+  assert.equal(line.width('a\tb', 3), 6);
+  assert.equal(line.width('\t', 0), 8);
+  assert.equal(line.width('\t', 4), 4);
+});
+
+check('负起始列按列裁剪', () => {
+  const { screen } = paint('abcd', { x: -2, width: 10 });
+  assert.equal(screen.char(0), 'c');
+  assert.equal(screen.char(1), 'd');
+});
+
+check('SGR 样式写入样式池并在 reset 后清除', () => {
+  const { screen, styles } = paint('[31m红[0mA');
+  assert.deepEqual(screen.stylesAt(0), ['[31m']);
+  assert.notEqual(screen.packed(0) >>> 17, styles.none);
+  assert.equal(screen.packed(3) >>> 17, styles.none);
+});
+
+check('OSC 8 超链接随样式运行写到字符格', () => {
+  const { screen } = paint(']8;;https://example.com链接]8;;!');
+  assert.equal(screen.hyperlinkAt(0), 'https://example.com');
+  assert.equal(screen.hyperlinkAt(2), 'https://example.com');
+  assert.equal(screen.hyperlinkAt(4), undefined);
+  assert.equal(screen.char(4), '!');
+});
+
+check('危险控制序列与非 SGR 转义被丢弃', () => {
+  const { screen } = paint('A[2JB]52;c;payloadC(BD');
+  assert.equal(screen.char(0), 'A');
+  assert.equal(screen.char(1), 'B');
+  assert.equal(screen.char(2), 'C');
+  assert.equal(screen.char(3), 'D');
+});
+
+check('八位 CSI 被规范化为 SGR', () => {
+  const { screen } = paint('31m红');
+  assert.deepEqual(screen.stylesAt(0), ['[31m']);
+});
+
+check('双向文本控制符替换为替代字符', () => {
+  const { screen } = paint('A‮B');
+  assert.equal(screen.char(1), '�');
+  assert.equal(screen.char(2), 'B');
+});
+
+check('解析结果按文本缓存并在样式池压缩后失效', () => {
+  const { line, styles } = paint('cached');
+  const first = line.parse('cached');
+  assert.equal(first, line.parse('cached'));
+  styles.generation += 1;
+  assert.notEqual(first, line.parse('cached'));
+});
+
+check('终端颜色能力变化后缓存失效', () => {
+  const { line } = paint('cached');
+  const first = line.parse('cached');
+  renderer.setChalkLevel(1);
+  try {
+    assert.notEqual(first, line.parse('cached'));
+  } finally {
+    renderer.setChalkLevel(0);
+  }
+});
+
+check('解析缓存有上限', () => {
+  const { line } = paint('');
+  for (let index = 0; index < 600; index += 1) line.parse(`line ${index}`);
+  assert.ok(line.cache.size <= 512);
+});
+
+check('声明扫描能跨过字符串、模板、正则与注释', () => {
+  const source = 'function sample(){const braces="}{";const nested=`a${ {b:"}"} }c`;'
+    + 'const pattern=/[}/]/;/* } */return {ok:true}}';
+  assert.equal(findDeclarationEnd(source, source.indexOf('{')), source.length - 1);
+  assert.equal(findDeclarationEnd('function broken(){', 16), -1);
+});
+
+check('未知渲染器形态一律拒绝', () => {
+  assert.equal(adaptCellRenderer('function render(){return new Bun.ant.CellSegmenter({});}'), null);
+  assert.equal(adaptCellRenderer(''), null);
+});
+
+check('冻结形态通过改写，并逐条挡住结构漂移', () => {
+  const { shape, source } = CellSegmenterFixture();
+  const adapted = adaptCellRenderer(source, shape);
+  assert.notEqual(adapted, null);
+  assert.doesNotMatch(adapted, /new Bun\.ant\.CellSegmenter/);
+  assert.match(adapted, /function writeCell\(screen, x, y, cell\)/);
+  assert.doesNotMatch(adapted, /let ge=Dc\(oe\),ve=U\.x2-B/);
+  assert.match(adapted, /Bun\.sliceAnsi|ge=C8\(/);
+  for (const broken of [
+    source.replace('import{hht,C8}from"./a.js";', 'import{hht}from"./a.js";'),
+    source.replace('var Ss="\\x1B]8;;";', 'var Ss="\\x1B]8;";'),
+    source.replace('let ge=Dc(oe),ve=U.x2-B', 'let ge=null'),
+    source.replace('function Dc(n){}', 'function Dc(n){return n}'),
+    `${source}\nvar writeCell;`,
+  ]) {
+    assert.equal(adaptCellRenderer(broken, shape), null);
+  }
+});
+
+{
+  const processor = new URL('../src/generic/runtime/post-processor.mjs', import.meta.url);
+  const constructor = 'function render(){return new Bun.ant.CellSegmenter({});}';
+  for (const split of [false, true]) {
+    for (const required of [false, true]) {
+      for (const available of [false, true]) {
+        const dir = join(root, `install-${split}-${required}-${available}`);
+        mkdirSync(dir);
+        copyFileSync(processor, join(dir, 'post-process.mjs'));
+        const source = required ? constructor : 'console.log("compatible");';
+        const entry = join(dir, 'cli.original.js');
+        writeFileSync(entry, split ? 'import "/$bunfs/root/chunk-render.js";' : source);
+        let chunk;
+        if (split) {
+          mkdirSync(join(dir, 'chunks'));
+          chunk = join(dir, 'chunks', 'chunk-render.js');
+          writeFileSync(chunk, source);
+        }
+        const originalEntry = readFileSync(entry, 'utf8');
+        const preload = join(dir, 'runtime.mjs');
+        writeFileSync(preload, available
+          ? 'Bun.ant = { CellSegmenter: class CellSegmenter {} };'
+          : 'Bun.ant = undefined;');
+        const result = spawnSync(process.execPath, ['--preload', preload, join(dir, 'post-process.mjs')], {
+          encoding: 'utf8', timeout: 10000,
+        });
+        assert.ifError(result.error);
+        if (required && !available) {
+          assert.notEqual(result.status, 0, '缺少私有 API 时必须拒绝候选版本');
+          assert.match(result.stderr, /Bun\.ant\.CellSegmenter/);
+          assert.match(result.stderr, /--version/);
+          assert.equal(existsSync(join(dir, 'cli.original.cjs')), false);
+          assert.equal(readFileSync(entry, 'utf8'), originalEntry, '拒绝时不能改写候选入口');
+          if (chunk) assert.equal(readFileSync(chunk, 'utf8'), source);
+        } else {
+          assert.equal(result.status, 0, result.stderr);
+          assert.equal(existsSync(entry), false);
+          assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'),
+            split ? 'import "./chunks/chunk-render.js";' : source);
+        }
+      }
+    }
+  }
+  checks += 8;
+  console.log('PASS 安装流程对未知私有渲染器形态的拒绝与放行矩阵');
+}
+
+// A synthetic module with the same declared shape as the real renderer, so the
+// guard rails around the rewrite can be exercised offline. The frozen table is
+// checked separately by the installation matrix below.
+function CellSegmenterFixture() {
+  const shape = CELL_SEGMENTER_SHAPE.map(({ header }) => {
+    const text = `${header}}`;
+    return { header, digest: createHash('sha256').update(text).digest('hex') };
+  });
+  return {
+    shape,
+    source: [
+      'import{hht,C8}from"./a.js";',
+      'import{MNr,LNr}from"./b.js";',
+      'var Ss="\\x1B]8;;";',
+      'function useScreen(n){let ge=Dc(oe),ve=U.x2-B;return ge}',
+      shape.map(({ header }) => `${header}}`).join('\n'),
+    ].join('\n'),
+  };
+}
+
+rmSync(root, { recursive: true, force: true });
+console.log(`${checks} 项公开 Bun 字符格渲染契约检查通过`);

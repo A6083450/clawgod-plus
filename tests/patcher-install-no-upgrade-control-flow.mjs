@@ -201,7 +201,9 @@ if (name === 'install-ripgrep.mjs') {
 } else if (name === 'extract-natives.mjs') {
   const output = args[1];
   const native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');
-  writeFileSync(join(output, 'cli.original.js'), '(function(exports,require,module,__filename,__dirname){})');
+  writeFileSync(join(output, 'cli.original.js'), process.env.CELL_SEGMENTER_REQUIRED === '1'
+    ? 'new Bun.ant.CellSegmenter({});'
+    : '(function(exports,require,module,__filename,__dirname){})');
   if (process.env.CANDIDATE_VENDOR_SYMLINK === '1') {
     symlinkSync(process.env.EXTERNAL_VENDOR_ROOT, join(output, 'vendor'));
   } else {
@@ -258,6 +260,10 @@ if (name === 'install-ripgrep.mjs') {
     process.exit(1);
   }
 } else if (name === 'post-process.mjs') {
+  if (process.env.CELL_SEGMENTER_REQUIRED === '1') {
+    const child = spawnSync(process.execPath, [target, ...args], { env: process.env, stdio: 'inherit' });
+    process.exit(child.status ?? 1);
+  }
   const root = dirname(target);
   writeFileSync(join(root, 'cli.original.cjs'), '(function(exports,require,module,__filename,__dirname){})');
   rmSync(join(root, 'cli.original.js'), { force: true });
@@ -369,6 +375,7 @@ if (name === 'install-ripgrep.mjs') {
         CLAUDE_RESOLVER_MARKER: claudeResolver,
         PATCH_ARGS_MARKER: patchArgs,
         PATCH_EXIT: String(options.patchExit || 0),
+        CELL_SEGMENTER_REQUIRED: options.cellSegmenterRequired ? '1' : '0',
         SANITY_EXIT: String(options.sanityExit || 0),
         SANITY_PANIC: options.sanityPanic ? '1' : '0',
         CLAWGOD_UPDATE_PATCH_FAIL_OPEN: options.updateFailOpen ? '1' : '',
@@ -525,6 +532,20 @@ if (name === 'install-ripgrep.mjs') {
   }, 'authorized updater fallback must persist valid release-format compatibility state');
   assert.equal(updateCompatibilityFallback.chromeMarker, null, 'authorized updater fallback must skip the Chrome helper');
   assert.match(`${updateCompatibilityFallback.run.stdout}${updateCompatibilityFallback.run.stderr}`, /compatibility fallback/i, 'authorized updater fallback must emit a prominent compatibility warning');
+
+  const cellSegmenterCompatibilityFailure = runLifecycleCase('cell-segmenter-compatibility-failure', [], {
+    updateFailOpen: true,
+    priorRuntime: 'prior installed runtime\n',
+    priorChunks: true,
+    priorFallback: true,
+    cellSegmenterRequired: true,
+  });
+  assert.notEqual(cellSegmenterCompatibilityFailure.run.status, 0, 'missing CellSegmenter must fail before authorized patch compatibility fallback');
+  assert.match(`${cellSegmenterCompatibilityFailure.run.stdout}${cellSegmenterCompatibilityFailure.run.stderr}`, /Bun\.ant\.CellSegmenter/, 'missing CellSegmenter must report the runtime incompatibility');
+  assert.equal(cellSegmenterCompatibilityFailure.patchArgs, null, 'missing CellSegmenter must not run the patcher');
+  assert.deepEqual(cellSegmenterCompatibilityFailure.runtimeCheckCalls, [], 'missing CellSegmenter must not run runtime sanity checks');
+  assert.equal(cellSegmenterCompatibilityFailure.chunks, 'prior chunk fixture\n', 'missing CellSegmenter must preserve prior chunks');
+  assertPriorRuntimeRestored(cellSegmenterCompatibilityFailure, 'missing CellSegmenter', { fallback: priorFallbackState });
 
   const firstInstallCompatibilityFailure = runLifecycleCase('first-install-compatibility-failure', [], {
     updateFailOpen: true,
