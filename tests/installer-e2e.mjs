@@ -445,7 +445,7 @@ function validateWorkerResolver(source) {
 }
 
 function validateUninstallCleanup({ managedRoot, settingsPath, expectedSettingsBase64, expectedSettings, externalPaths }) {
-  const allowedPersistentEntries = new Set(['provider.json', 'features.json', 'enhancements.json', '.lean-disabled', '.lean-max']);
+  const allowedPersistentEntries = new Set(['provider.json', 'features.json', 'enhancements.json', 'patches.json', '.lean-disabled', '.lean-max']);
   const staleManaged = existsSync(managedRoot)
     ? readdirSync(managedRoot).filter(entry => !allowedPersistentEntries.has(entry))
     : [];
@@ -776,6 +776,15 @@ try {
   mkdirSync(dirname(claudeMemSentinelPath), { recursive: true });
   writeFileSync(claudeMemSentinelPath, claudeMemSentinel);
 
+  mkdirSync(clawgodDir, { recursive: true, mode: 0o700 });
+  const patchesFile = join(clawgodDir, 'patches.json');
+  const patchesBytes = '{ "classifier-tuning": false }\n';
+  writeFileSync(patchesFile, patchesBytes, { mode: 0o600 });
+  const patchesBefore = lstatSync(patchesFile);
+  const assertRuntimeConfigPreserved = () => {
+    assert.equal(readFileSync(patchesFile, 'utf8'), patchesBytes, '安装和卸载必须保留运行时开关配置字节');
+    assert.equal(sameFileIdentity(patchesBefore, lstatSync(patchesFile)), true, '安装和卸载不得替换运行时配置或修改权限');
+  };
   const fullPluginValidation = e2eEnhancements === '';
   const initialInstallOutput = run('initial --lean-on install', '/bin/bash', [join(root, 'dist/unix/install.sh'), '--lean-on', ...selectionArgs()]);
   console.log(validatePatchSummary('unix initial', initialInstallOutput));
@@ -785,6 +794,8 @@ try {
   assertHarborKitePreserved('initial install');
   assertLeanOn();
   console.log(assertEnhancementConfig('initial'));
+  assertRuntimeConfigPreserved();
+  assert.equal(existsSync(join(clawgodDir, 'feature-gates.cjs')), true, '安装必须部署运行时开关解析器');
   console.log(validateCleanFallbackState('unix initial'));
   let managedHudModulePath = join(clawgodDir, 'claude-hud-statusline.mjs');
   let initialPlugins;
@@ -828,6 +839,7 @@ try {
   assertHarborKitePreserved('no-upgrade install');
   assertLeanOff();
   console.log(assertEnhancementConfig('no-upgrade'));
+  assertRuntimeConfigPreserved();
   console.log(validateCleanFallbackState('unix no-upgrade'));
   if (fullPluginValidation) {
     const noUpgradePlugins = validateInstalledPluginState('no-upgrade install');
@@ -866,7 +878,8 @@ try {
     join(clawgodDir, 'cache', 'claude-plugins'),
     join(clawgodDir, 'staging', 'claude-plugins'),
   ]) assert.equal(existsSync(path), false, `uninstall must remove ClawGod plugin artifact: ${path}`);
-  for (const fallbackFile of ['self-update.cjs', 'patch-fallback.cjs', 'patch-fallback.json']) {
+  assertRuntimeConfigPreserved();
+  for (const fallbackFile of ['self-update.cjs', 'patch-fallback.cjs', 'patch-fallback.json', 'feature-gates.cjs']) {
     assert.equal(existsSync(join(clawgodDir, fallbackFile)), false, `uninstall must remove the update/fallback runtime file: ${fallbackFile}`);
   }
   assertHarborKitePreserved('uninstall');

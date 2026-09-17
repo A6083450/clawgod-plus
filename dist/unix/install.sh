@@ -1002,7 +1002,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -7229,9 +7229,8 @@ function sanitizeControlSequences(text) {
       if (code === 155) {
         var eightBit = clawgodCsiEnd(text, index + 1);
         if (eightBit >= 0) {
-          if (text.charAt(eightBit) === "m") {
-            out += String.fromCharCode(27) + "[" + text.slice(index + 1, eightBit + 1);
-          }
+          var normalized = String.fromCharCode(27) + "[" + text.slice(index + 1, eightBit + 1);
+          if (clawgodSgr.test(normalized)) out += normalized;
           index = eightBit;
         }
         continue;
@@ -7240,7 +7239,8 @@ function sanitizeControlSequences(text) {
       if (next === "[") {
         var csi = clawgodCsiEnd(text, index + 2);
         if (csi >= 0) {
-          if (text.charAt(csi) === "m") out += text.slice(index, csi + 1);
+          var sequence = text.slice(index, csi + 1);
+          if (clawgodSgr.test(sequence)) out += sequence;
           index = csi;
         }
         continue;
@@ -7249,12 +7249,10 @@ function sanitizeControlSequences(text) {
         var osc = clawgodOscEnd(text, index + 2);
         if (osc >= 0) {
           var body = text.slice(index + 2, osc);
-          if (body.slice(0, 2) === "8;") {
-            var payload = body.slice(2);
-            var uri = payload.slice(payload.indexOf(";") + 1);
-            out += uri === ""
-              ? clawgodOsc8Prefix + String.fromCharCode(7)
-              : clawgodOsc8Prefix + uri + String.fromCharCode(7);
+          var separator = body.indexOf(";", 2);
+          if (body.slice(0, 2) === "8;" && separator >= 0) {
+            var uri = body.slice(separator + 1);
+            out += clawgodOsc8Prefix + uri + String.fromCharCode(7);
           }
           index = text.charCodeAt(osc) === 27 ? osc + 1 : osc;
         }
@@ -7628,18 +7626,23 @@ const CELL_SEGMENTER_REFERENCE = /\bnew\s+Bun\s*\.\s*ant\s*\.\s*CellSegmenter\s*
 
 function installPublicCellRenderer(modulePaths) {
   if (typeof globalThis.Bun?.ant?.CellSegmenter === 'function') return;
-  const targets = modulePaths.filter((path) => CELL_SEGMENTER_REFERENCE.test(readFileSync(path, 'utf8')));
+  const targets = [];
+  for (const path of modulePaths) {
+    const source = readFileSync(path, 'utf8');
+    if (CELL_SEGMENTER_REFERENCE.test(source)) targets.push({ path, source });
+  }
   if (targets.length === 0) return;
   if (targets.length > 1) {
     throw new Error(`多个分块都依赖私有 Bun.ant.CellSegmenter，形态无法确认；已拒绝安装（${targets.length} 个）。`);
   }
-  const adapted = adaptCellRenderer(readFileSync(targets[0], 'utf8'));
+  const { path, source } = targets[0];
+  const adapted = adaptCellRenderer(source);
   if (adapted === null) {
     throw new Error('此 Claude Code 依赖私有 Bun.ant.CellSegmenter，且渲染器形态未被 ClawGod 识别；'
       + '已拒绝安装，避免产生无法进入交互界面的运行时。请用 --version 安装受支持的版本。');
   }
-  writeFileSync(targets[0], adapted);
-  console.log(`已用公开 Bun 字符格渲染器替换私有实现: ${targets[0].slice(here.length + 1)}`);
+  writeFileSync(path, adapted);
+  console.log(`已用公开 Bun 字符格渲染器替换私有实现: ${path.slice(here.length + 1)}`);
 }
 
 function processCandidate() {
@@ -8118,6 +8121,40 @@ info "OpenAI-compatible proxy created (openai-proxy.cjs)"
 
 install_update_runtime_helpers
 
+cat > "$CLAWGOD_DIR/feature-gates.cjs" << 'FEATURE_GATES_EOF'
+'use strict';
+const { readFileSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
+
+function loadFeatureGates(directory, metadata = JSON.parse('{"agent-teams":["agent-teams"],"computer-use-sub":["computer-use"],"computer-use-default":["computer-use"],"computer-use-gate":["computer-use"],"ultraplan":["ultraplan"],"ultrareview-gate":["ultrareview"],"ultrareview-direct":["ultrareview"],"voice-mode":["voice-mode"],"auto-mode-helper-gate":["auto-mode"],"auto-mode-inline-gate":["auto-mode"],"auto-mode-provider-opt-in":["auto-mode"],"classifier-timeout":["classifier-tuning"],"classifier-model":["classifier-tuning"],"classifier-retries":["classifier-tuning"],"theme-logo-rgb":["theme"],"theme-logo-ansi":["theme"],"theme-claude-rgb-dark":["theme"],"theme-claude-rgb-light":["theme"],"theme-shimmer-rgb":["theme"],"theme-shimmer-rgb-light":["theme"],"theme-hex":["theme"],"theme-claude-ansi":["theme"],"theme-shimmer-ansi":["theme"],"theme-brief-rgb-dark":["theme"],"theme-brief-rgb-light":["theme"],"theme-brief-ansi":["theme"],"geo-stego-date":["geo-neutralize"],"geo-detect-probe":["geo-neutralize"],"geo-apostrophe-stego":["geo-neutralize"],"remove-cyber-risk":["cyber-risk"],"remove-url-restriction":["url-restriction"],"remove-cautious-actions":["cautious-actions"],"remove-not-logged-in":["not-logged-in"],"attachment-filter-bypass":["message-filter"],"message-filter-legacy":["message-filter"],"message-filter-s8":["message-filter"]}'), env = process.env, warn = text => process.stderr.write(text)) {
+  const configFile = join(directory, 'patches.json');
+  let config = Object.create(null);
+  try {
+    const parsed = JSON.parse(readFileSync(configFile, 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      Object.assign(config, parsed);
+    }
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      try { writeFileSync(configFile, '{}\n', { flag: 'wx', mode: 0o600 }); } catch {}
+    }
+  }
+  for (const [name, value] of Object.entries(env)) {
+    if (!name.startsWith('CLAWGOD_FEATURE_') || (value !== 'true' && value !== 'false')) continue;
+    config[name.slice('CLAWGOD_FEATURE_'.length).toLowerCase().replaceAll('_', '-')] = value === 'true';
+  }
+  const known = new Set(Object.values(metadata).flat());
+  for (const name of Object.keys(config)) {
+    if (!known.has(name)) warn(`[clawgod] Unknown runtime feature: ${JSON.stringify(name)}\n`);
+  }
+  return Object.fromEntries(Object.entries(metadata).map(([id, features]) => [
+    id, features.some(feature => config[feature] !== false),
+  ]));
+}
+
+module.exports = { loadFeatureGates };
+FEATURE_GATES_EOF
+
 cat > "$CLAWGOD_DIR/cli.cjs" << 'WRAPPER_EOF'
 #!/usr/bin/env bun
 const { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync, renameSync } = require('fs');
@@ -8420,6 +8457,10 @@ try {
       }).catch(function() {});
     }
   }
+} catch {}
+
+try {
+  globalThis.__clawgodPatches = require('./feature-gates.cjs').loadFeatureGates(clawgodDir);
 } catch {}
 
 require('./cli.original.cjs');
@@ -9548,13 +9589,55 @@ var enhancements_default = `[
 ]
 `;
 
+// src/generic/patcher/runtime-features.mjs
+var gate = (patchId) => `globalThis.__clawgodPatches?.[${JSON.stringify(patchId)}]!==!1`;
+var runtimeFeatureMetadata = Object.freeze({
+  "agent-teams": ["agent-teams"],
+  "computer-use-sub": ["computer-use"],
+  "computer-use-default": ["computer-use"],
+  "computer-use-gate": ["computer-use"],
+  ultraplan: ["ultraplan"],
+  "ultrareview-gate": ["ultrareview"],
+  "ultrareview-direct": ["ultrareview"],
+  "voice-mode": ["voice-mode"],
+  "auto-mode-helper-gate": ["auto-mode"],
+  "auto-mode-inline-gate": ["auto-mode"],
+  "auto-mode-provider-opt-in": ["auto-mode"],
+  "classifier-timeout": ["classifier-tuning"],
+  "classifier-model": ["classifier-tuning"],
+  "classifier-retries": ["classifier-tuning"],
+  "theme-logo-rgb": ["theme"],
+  "theme-logo-ansi": ["theme"],
+  "theme-claude-rgb-dark": ["theme"],
+  "theme-claude-rgb-light": ["theme"],
+  "theme-shimmer-rgb": ["theme"],
+  "theme-shimmer-rgb-light": ["theme"],
+  "theme-hex": ["theme"],
+  "theme-claude-ansi": ["theme"],
+  "theme-shimmer-ansi": ["theme"],
+  "theme-brief-rgb-dark": ["theme"],
+  "theme-brief-rgb-light": ["theme"],
+  "theme-brief-ansi": ["theme"],
+  "geo-stego-date": ["geo-neutralize"],
+  "geo-detect-probe": ["geo-neutralize"],
+  "geo-apostrophe-stego": ["geo-neutralize"],
+  "remove-cyber-risk": ["cyber-risk"],
+  "remove-url-restriction": ["url-restriction"],
+  "remove-cautious-actions": ["cautious-actions"],
+  "remove-not-logged-in": ["not-logged-in"],
+  "attachment-filter-bypass": ["message-filter"],
+  "message-filter-legacy": ["message-filter"],
+  "message-filter-s8": ["message-filter"]
+});
+
 // src/generic/patcher/enhancements/agents.mjs
 var agentTeamsPatch = {
   order: 5,
   name: "Agent Teams always enabled",
   pattern: /function ([\w$]+)\(\)\{if\(![\w$]+\(process\.env\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\)&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}|function ([\w$]+)\(\)\{if\(![\w$]+\.[\w$]+&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}/g,
-  replacer: (match, firstFn, secondFn) => `function ${firstFn || secondFn}(){return!0}`,
-  sentinel: "tengu_amber_flint"
+  replacer: (match, firstFn, secondFn) => `function ${firstFn || secondFn}(){if(${gate("agent-teams")})return!0;${match.slice(match.indexOf("{") + 1, -1)}}`,
+  sentinel: "tengu_amber_flint",
+  appliedMarker: /function [\w$]+\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]/
 };
 var sessionMetadataPatch = {
   order: 6,
@@ -9642,22 +9725,47 @@ var patches2 = [
     order: 26,
     name: "Auto-mode unlock for third-party API (provider helper gate)",
     pattern: /if\(!([\w$]+)\(([\w$]+)\)\)return!1;(?=(?:(?!function\s).){0,300}!=="firstParty")/g,
-    replacer: () => "",
+    replacer: (match) => `if(${gate("auto-mode-helper-gate")}===!1&&` + match.slice(3, -10) + ")return!1;",
     optional: true
   },
   {
     order: 27,
     name: "Auto-mode unlock for third-party API (inline gate)",
     pattern: /if\(([\w$]+)!=="firstParty"&&(?:\1!=="anthropicAws"|![\w$]+\(\1\))[^;]*\)return!1;/g,
-    replacer: () => "",
+    replacer: (match) => `if(${gate("auto-mode-inline-gate")}===!1&&` + match.slice(3, -10) + ")return!1;",
     optional: true
   },
   {
     order: 28,
     name: "Auto-mode unlock for third-party API (provider opt-in helper)",
     pattern: /function ([\w$]+)\(([\w$]+)\)\{if\(\2==="firstParty"\|\|\2==="anthropicAws"\)return!0;return [\w$]+\(process\.env\.CLAUDE_CODE_ENABLE_AUTO_MODE\)\}/g,
-    replacer: (match, fn) => `function ${fn}(){return!0}`,
-    sentinel: "process.env.CLAUDE_CODE_ENABLE_AUTO_MODE)}"
+    replacer: (match, fn, arg) => `function ${fn}(${arg}){if(${gate("auto-mode-provider-opt-in")})return!0;${match.slice(match.indexOf("{") + 1, -1)}}`,
+    sentinel: "process.env.CLAUDE_CODE_ENABLE_AUTO_MODE)}",
+    appliedMarker: /function [\w$]+\([^)]*\)\{if\(globalThis\.__clawgodPatches\?\.\["auto-mode-provider-opt-in"\]/
+  },
+  {
+    order: 68,
+    name: "Auto-mode classifier timeout override (CLAWGOD_CLASSIFIER_TIMEOUT_MS)",
+    pattern: /function ([\w$]+)\(([\w$]+)\)\{let ([\w$]+)=Math\.max\(0,Math\.ceil\(\(\2-50000\)\/50000\)\);return Math\.min\(([\w$]+),([\w$]+)\+\3\*1e4\)\}/g,
+    replacer: (match, fn, arg, step, cap, base) => `function ${fn}(${arg}){let ${step}=Math.max(0,Math.ceil((${arg}-50000)/50000)),_r=Math.min(${cap},${base}+${step}*1e4),_ct=+process.env.CLAWGOD_CLASSIFIER_TIMEOUT_MS;return ${gate("classifier-timeout")}&&Number.isFinite(_ct)&&process.env.CLAWGOD_CLASSIFIER_TIMEOUT_MS.trim()!==""?Math.max(_r,_ct):_r}`,
+    unique: true,
+    optional: true
+  },
+  {
+    order: 69,
+    name: "Auto-mode classifier model override (CLAWGOD_CLASSIFIER_MODEL)",
+    pattern: /function ([\w$]+)\(\)\{let [\w$]+=[\w$]+\(\),[\w$]+=[\w$]+\(.*?\),[\w$]+=[\w$]+\([\w$]+\?\.modelByMainModel,\{vet:/g,
+    replacer: (match, fn) => `function ${fn}(){let _cm=process.env.CLAWGOD_CLASSIFIER_MODEL?.trim();if(_cm&&${gate("classifier-model")})return{value:_cm,src:"default"};` + match.slice(match.indexOf("{") + 1),
+    unique: true,
+    optional: true
+  },
+  {
+    order: 70,
+    name: "Auto-mode classifier retries override (CLAWGOD_CLASSIFIER_RETRIES)",
+    pattern: /function ([\w$]+)\(\)\{let [\w$]+=[\w$]+\([^)]*\)\?\.maxRetries;return typeof [\w$]+==="number"&&Number\.isInteger\([\w$]+\)&&[\w$]+>=0\?\{value:[\w$]+,src:"gb"\}:\{value:([\w$]+),src:"default"\}\}/g,
+    replacer: (match, fn) => `function ${fn}(){let _cr=process.env.CLAWGOD_CLASSIFIER_RETRIES?.trim();if(${gate("classifier-retries")}&&_cr!==undefined&&_cr!==""&&Number.isInteger(+_cr)&&+_cr>=0)return{value:+_cr,src:"default"};` + match.slice(match.indexOf("{") + 1),
+    unique: true,
+    optional: true
   }
 ];
 var autoModeRegistry = Object.freeze({
@@ -9671,81 +9779,82 @@ var patches3 = [
   {
     order: 30,
     name: "Logo + brand color \u2192 green (RGB dark)",
-    pattern: /clawd_body:"rgb\(215,119,87\)"/g,
-    replacer: () => 'clawd_body:"rgb(34,197,94)"',
+    pattern: /(clawd_body:)"rgb\(215,119,87\)"/g,
+    replacer: (match, key) => `${key}${gate("theme-logo-rgb")}?"rgb(34,197,94)":"rgb(215,119,87)"`,
     sentinel: 'clawd_body:"rgb(215,119,87)"'
   },
   {
     order: 31,
     name: "Logo + brand color \u2192 green (ANSI)",
-    pattern: /clawd_body:"ansi:redBright"/g,
-    replacer: () => 'clawd_body:"ansi:greenBright"',
+    pattern: /(clawd_body:)"ansi:redBright"/g,
+    replacer: (match, key) => `${key}${gate("theme-logo-ansi")}?"ansi:greenBright":"ansi:redBright"`,
     sentinel: 'clawd_body:"ansi:redBright"'
   },
   {
     order: 32,
     name: "Theme claude color \u2192 green (dark)",
-    pattern: /claude:"rgb\(215,119,87\)"/g,
-    replacer: () => 'claude:"rgb(34,197,94)"',
+    pattern: /(claude:)"rgb\(215,119,87\)"/g,
+    replacer: (match, key) => `${key}${gate("theme-claude-rgb-dark")}?"rgb(34,197,94)":"rgb(215,119,87)"`,
     sentinel: 'claude:"rgb(215,119,87)"'
   },
   {
     order: 33,
     name: "Theme claude color \u2192 green (light)",
-    pattern: /claude:"rgb\(255,153,51\)"/g,
-    replacer: () => 'claude:"rgb(22,163,74)"',
+    pattern: /(claude:)"rgb\(255,153,51\)"/g,
+    replacer: (match, key) => `${key}${gate("theme-claude-rgb-light")}?"rgb(22,163,74)":"rgb(255,153,51)"`,
     sentinel: 'claude:"rgb(255,153,51)"'
   },
   {
     order: 34,
     name: "Shimmer \u2192 green",
-    pattern: /claudeShimmer:"rgb\(2[34]5,1[45]9,1[12]7\)"/g,
-    replacer: () => 'claudeShimmer:"rgb(74,222,128)"',
+    pattern: /(claudeShimmer:)"rgb\(2[34]5,1[45]9,1[12]7\)"/g,
+    replacer: (match, key) => `${key}${gate("theme-shimmer-rgb")}?"rgb(74,222,128)":${match.slice(key.length)}`,
     appliedMarker: 'claudeShimmer:"rgb(74,222,128)"'
   },
   {
     order: 35,
     name: "Shimmer light \u2192 green",
-    pattern: /claudeShimmer:"rgb\(255,183,101\)"/g,
-    replacer: () => 'claudeShimmer:"rgb(34,197,94)"',
+    pattern: /(claudeShimmer:)"rgb\(255,183,101\)"/g,
+    replacer: (match, key) => `${key}${gate("theme-shimmer-rgb-light")}?"rgb(34,197,94)":"rgb(255,183,101)"`,
     sentinel: 'claudeShimmer:"rgb(255,183,101)"'
   },
   {
     order: 36,
     name: "Hex brand color \u2192 green",
-    pattern: /#da7756/g,
-    replacer: () => "#22c55e",
-    sentinel: "#da7756"
+    pattern: /"#da7756"/g,
+    replacer: () => `${gate("theme-hex")}?"#22c55e":'#da7756'`,
+    sentinel: "#da7756",
+    appliedMarker: /globalThis\.__clawgodPatches\?\.\["theme-hex"\]/
   },
   {
     order: 37,
     name: "Theme claude color \u2192 green (ANSI)",
-    pattern: /claude:"ansi:redBright"/g,
-    replacer: () => 'claude:"ansi:greenBright"'
+    pattern: /(claude:)"ansi:redBright"/g,
+    replacer: (match, key) => `${key}${gate("theme-claude-ansi")}?"ansi:greenBright":"ansi:redBright"`
   },
   {
     order: 38,
     name: "Shimmer \u2192 green (ANSI)",
-    pattern: /claudeShimmer:"ansi:yellowBright"/g,
-    replacer: () => 'claudeShimmer:"ansi:greenBright"'
+    pattern: /(claudeShimmer:)"ansi:yellowBright"/g,
+    replacer: (match, key) => `${key}${gate("theme-shimmer-ansi")}?"ansi:greenBright":"ansi:yellowBright"`
   },
   {
     order: 39,
     name: "Brief label claude color \u2192 green (RGB dark)",
-    pattern: /briefLabelClaude:"rgb\(215,119,87\)"/g,
-    replacer: () => 'briefLabelClaude:"rgb(34,197,94)"'
+    pattern: /(briefLabelClaude:)"rgb\(215,119,87\)"/g,
+    replacer: (match, key) => `${key}${gate("theme-brief-rgb-dark")}?"rgb(34,197,94)":"rgb(215,119,87)"`
   },
   {
     order: 40,
     name: "Brief label claude color \u2192 green (RGB light)",
-    pattern: /briefLabelClaude:"rgb\(255,153,51\)"/g,
-    replacer: () => 'briefLabelClaude:"rgb(22,163,74)"'
+    pattern: /(briefLabelClaude:)"rgb\(255,153,51\)"/g,
+    replacer: (match, key) => `${key}${gate("theme-brief-rgb-light")}?"rgb(22,163,74)":"rgb(255,153,51)"`
   },
   {
     order: 41,
     name: "Brief label claude color \u2192 green (ANSI)",
-    pattern: /briefLabelClaude:"ansi:redBright"/g,
-    replacer: () => 'briefLabelClaude:"ansi:greenBright"'
+    pattern: /(briefLabelClaude:)"ansi:redBright"/g,
+    replacer: (match, key) => `${key}${gate("theme-brief-ansi")}?"ansi:greenBright":"ansi:redBright"`
   }
 ];
 var brandingRegistry = Object.freeze({
@@ -9988,33 +10097,33 @@ var patches5 = [
     order: 17,
     name: "Computer Use subscription bypass",
     pattern: /function ([\w$]+)\(\)\{let [\w$]+=[\w$]+\(\);return [\w$]+==="max"\|\|[\w$]+==="pro"\}/g,
-    replacer: (match, fn) => `function ${fn}(){/*__clawgod_computer_use_subscription__*/return!0}`,
+    replacer: (match, fn) => `function ${fn}(){if(${gate("computer-use-sub")})return!0;${match.slice(`function ${fn}(){`.length, -1)}}`,
     appliedMarker: "/*__clawgod_computer_use_subscription__*/"
   },
   {
     order: 18,
     name: "Computer Use default enabled",
     pattern: /([\w$]+=)\{enabled:!1,pixelValidation/g,
-    replacer: (match, prefix) => `${prefix}{enabled:!0,pixelValidation`,
+    replacer: (match, prefix) => `${prefix}{enabled:${gate("computer-use-default")}?!0:!1,pixelValidation`,
     sentinel: "{enabled:!1,pixelValidation"
   },
   {
     order: 23,
     name: "Computer Use gate bypass",
     pattern: /function ([\w$]+)\(\)\{if\([\w$]+\("hipaa"\)\)return\s*!1;[^{}]*\}/g,
-    replacer: (match, fn) => `function ${fn}(){/*__clawgod_computer_use_gate__*/return!0}`,
+    replacer: (match, fn) => `function ${fn}(){if(${gate("computer-use-gate")})return!0;${match.slice(`function ${fn}(){`.length, -1)}}`,
     sentinel: '"hipaa"',
-    appliedMarker: "/*__clawgod_computer_use_gate__*/"
+    appliedMarker: /function [\w$]+\(\)\{if\(globalThis\.__clawgodPatches\?\.\["computer-use-gate"\]/
   },
   {
     order: 24,
     name: "Computer Use in noninteractive sessions",
     pattern: /if\((?:([\w$]+)\(\)==="macos"&&)?!([\w$]+)\(\)((?:&&![\w$]+)?)&&([\w$]+)\(\)\)try\{let\{setupComputerUseMCP:/g,
-    replacer: (match, platform, isNonInteractive, safetyCondition, gate) => {
+    replacer: (match, platform, isNonInteractive, safetyCondition, gateFn) => {
       const retainedConditions = [
         platform ? `${platform}()==="macos"` : "",
         safetyCondition.replace(/^&&/, ""),
-        `${gate}()`
+        `${gateFn}()`
       ].filter(Boolean).join("&&");
       return `if(${retainedConditions})/*__clawgod_computer_use_noninteractive__*/try{let{setupComputerUseMCP:`;
     },
@@ -10101,16 +10210,16 @@ var patches8 = [
   {
     order: 19,
     name: "Ultraplan enable",
-    pattern: /(name:"ultraplan",[\s\S]{1,500}?)(?:availability:\[[^\]]*\],)?(isEnabled:\(\)=>)(?:!1|[\w$]+\(\))/g,
-    replacer: (match, prefix, enabled) => `${prefix}${enabled}!0`,
+    pattern: /(name:"ultraplan",[\s\S]{1,500}?)(?:availability:(\[[^\]]*\]),)?(isEnabled:\(\)=>)(!1|[\w$]+\(\))/g,
+    replacer: (match, prefix, availability, enabled, original) => availability ? `${prefix}availability:${gate("ultraplan")}?undefined:${availability},${enabled}${gate("ultraplan")}?!0:${original}` : `${prefix}${enabled}${gate("ultraplan")}?!0:${original}`,
     sentinel: 'name:"ultraplan"',
-    appliedMarker: /name:"ultraplan",[\s\S]{1,500}?isEnabled:\(\)=>!0/
+    appliedMarker: /name:"ultraplan",[\s\S]{1,500}?globalThis\.__clawgodPatches\?\.\["ultraplan"\]/
   },
   {
     order: 20,
     name: "Ultrareview enable (rQt gate)",
     pattern: /function ([\w$]+)\(\)\{return ([\w$]+)\(\)\?\.enabled===!0&&[\w$]+\(\)&&![\w$]+\(\)\}/g,
-    replacer: (match, fn) => `function ${fn}(){/*__clawgod_ultrareview_enabled__*/return!0}`,
+    replacer: (match, fn) => `function ${fn}(){return ${gate("ultrareview-gate")}?!0:(${match.slice(`function ${fn}(){return `.length, -1)})}`,
     optional: true,
     appliedMarker: "/*__clawgod_ultrareview_enabled__*/"
   },
@@ -10118,18 +10227,18 @@ var patches8 = [
     order: 21,
     name: "Ultrareview enable (direct literal, <=2.1.213)",
     pattern: /function ([\w$]+)\(\)\{return ([\w$]+)\("tengu_review_bughunter_config",null\)(\?\.enabled===!0)?\}/g,
-    replacer: (match, fn, getter, gate) => gate ? `function ${fn}(){return!0}` : `function ${fn}(){let _r=${getter}("tengu_review_bughunter_config",null);return _r?{..._r,enabled:!0}:{enabled:!0}}`,
+    replacer: (match, fn, getter, hasGate) => hasGate ? `function ${fn}(){if(${gate("ultrareview-direct")})return!0;${match.slice(`function ${fn}(){`.length, -1)}}` : `function ${fn}(){let _r=${getter}("tengu_review_bughunter_config",null);return ${gate("ultrareview-direct")}?_r?{..._r,enabled:!0}:{enabled:!0}:_r}`,
     optional: true,
     sentinel: '("tengu_review_bughunter_config",null)',
-    appliedMarker: ",enabled:!0}:{enabled:!0}}"
+    appliedMarker: /function [\w$]+\(\)\{(?:if\(globalThis\.__clawgodPatches\?\.\["ultrareview-direct"\]|let _r=[\w$]+\("tengu_review_bughunter_config",null\);return globalThis\.__clawgodPatches\?\.\["ultrareview-direct"\])/
   },
   {
     order: 22,
     name: "Ultrareview enable (v2.1.215+ gate)",
     pattern: /(function ([\w$]+)\(\)\{return [\w$]+\(ulu,null\)\})([\s\S]{0,1500}?)(function ([\w$]+)\(\)\{return \2\(\)\?\.enabled===!0&&[\w$]+\(\)&&![\w$]+\(\)\})/g,
-    replacer: (match, getterDefinition, getter, between, gateDefinition, gate) => `${getterDefinition}${between}function ${gate}(){/*__clawgod_ultrareview_enabled__*/return!0}`,
+    replacer: (match, getterDefinition, getter, between, gateDefinition, gateFn) => `${getterDefinition}${between}function ${gateFn}(){return ${gate("ultrareview-gate")}?!0:(${gateDefinition.slice(`function ${gateFn}(){return `.length, -1)})}`,
     sentinel: 'var ulu="tengu_review_bughunter_config"',
-    appliedMarker: "/*__clawgod_ultrareview_enabled__*/"
+    appliedMarker: /function [\w$]+\(\)\{return globalThis\.__clawgodPatches\?\.\["ultrareview-gate"\]/
   }
 ];
 var planningRegistry = Object.freeze({
@@ -10143,34 +10252,24 @@ var patches9 = [
   {
     order: 47,
     name: "Neutralize geo-steganography in date string (qla)",
-    pattern: /function ([\w$]+)\([\w$]+\)\{let [\w$]+=[\w$]+\(\),[\w$]+=[\w$]+\([\w$]+\?\.[\w$]+\?\?!1,[\w$]+\?\.[\w$]+\?\?!1\),[\w$]+=[\w$]+\?\.[\w$]+\?[\w$]+\.replaceAll\("-","\/"\):[\w$]+;return`Today\$\{[\w$]+\}s date is \$\{[\w$]+\}\.`\}/g,
-    replacer: (match) => {
-      const functionMatch = match.match(/^function ([\w$]+)\(([\w$]+)\)/);
-      if (!functionMatch)
-        return match;
-      const [, fn, parameter] = functionMatch;
-      return `function ${fn}(${parameter}){return\`Today's date is \${${parameter}}.\`}`;
-    },
-    sentinel: 'replaceAll("-","/")'
+    pattern: /function ([\w$]+)\(([\w$]+)\)\{let [\w$]+=[\w$]+\(\),[\w$]+=[\w$]+\([\w$]+\?\.[\w$]+\?\?!1,[\w$]+\?\.[\w$]+\?\?!1\),[\w$]+=[\w$]+\?\.[\w$]+\?[\w$]+\.replaceAll\("-","\/"\):[\w$]+;return`Today\$\{[\w$]+\}s date is \$\{[\w$]+\}\.`\}/g,
+    replacer: (match, fn, parameter) => `function ${fn}(${parameter}){if(${gate("geo-stego-date")})return\`Today's date is \${${parameter}}.\`;${match.slice(match.indexOf("{") + 1, -1)}}`,
+    sentinel: 'replaceAll("-","/")',
+    appliedMarker: /function [\w$]+\([^)]*\)\{if\(globalThis\.__clawgodPatches\?\.\["geo-stego-date"\]/
   },
   {
     order: 48,
     name: "Neutralize geo-detection probe (rdp)",
     pattern: /function ([\w$]+)\(\)\{if\([\w$]+\(\)\)return null;let [\w$]+=[\w$]+\(\),[\w$]+=[\w$]+\(\),[\w$]+=[\w$]+==="Asia\/Shanghai"\|\|[\w$]+==="Asia\/Urumqi"[\s\S]*?\}\}/g,
-    replacer: (match) => {
-      const fn = match.match(/^function ([\w$]+)/)[1];
-      return `function ${fn}(){return null}`;
-    },
-    sentinel: "Asia/Shanghai"
+    replacer: (match, fn) => `function ${fn}(){if(${gate("geo-detect-probe")})return null;${match.slice(`function ${fn}(){`.length, -1)}}`,
+    sentinel: "Asia/Shanghai",
+    appliedMarker: /function [\w$]+\(\)\{if\(globalThis\.__clawgodPatches\?\.\["geo-detect-probe"\]/
   },
   {
     order: 49,
     name: "Neutralize apostrophe steganography (odp)",
     pattern: new RegExp("function ([\\w$]+)\\(([\\w$]+),([\\w$]+)\\)\\{" + `if\\(!\\2&&!\\3\\)return"'";` + 'if\\(\\2&&!\\3\\)return"(?:\\\\u2019|\\u2019)";' + 'if\\(!\\2&&\\3\\)return"(?:\\\\u02[Bb][Cc]|\\u02BC)";' + 'return"(?:\\\\u02[Bb]9|\\u02B9)"\\}', "g"),
-    replacer: (match) => {
-      const fn = match.match(/^function ([\w$]+)/)[1];
-      return `function ${fn}(e,t){return"'"}`;
-    },
+    replacer: (match, fn, first, second) => `function ${fn}(${first},${second}){if(${gate("geo-apostrophe-stego")})return"'";${match.slice(match.indexOf("{") + 1, -1)}}`,
     optional: true
   }
 ];
@@ -10193,50 +10292,54 @@ var patches10 = [
   {
     order: 50,
     name: "Remove CYBER_RISK_INSTRUCTION",
-    pattern: /([\w$]+)="IMPORTANT: Assist with authorized security testing[^"]*"/g,
-    replacer: (match, variable) => `${variable}=""`,
-    sentinel: "Assist with authorized security testing"
+    pattern: /([\w$]+)="(IMPORTANT: Assist with authorized security testing[^"]*)"/g,
+    replacer: (match, variable, original) => `${variable}=${gate("remove-cyber-risk")}?"":${JSON.stringify(original)}`,
+    sentinel: "Assist with authorized security testing",
+    appliedMarker: /globalThis\.__clawgodPatches\?\.\["remove-cyber-risk"\]/
   },
   {
     order: 51,
     name: "Remove URL generation restriction",
-    pattern: /\n\$\{[\w$]+\}\nIMPORTANT: You must NEVER generate or guess URLs[^.]*\. You may use URLs provided by the user in their messages or local files\./g,
-    replacer: () => "",
-    sentinel: "IMPORTANT: You must NEVER generate or guess URLs"
+    pattern: /(\n\$\{[\w$]+\})(\nIMPORTANT: You must NEVER generate or guess URLs[^.]*\. You may use URLs provided by the user in their messages or local files\.)/g,
+    replacer: (match, prefix, sentence) => `\${${gate("remove-url-restriction")}?"":\`${prefix}\`+'${sentence.replace(`
+`, "\\n")}'}`,
+    sentinel: "IMPORTANT: You must NEVER generate or guess URLs",
+    appliedMarker: /globalThis\.__clawgodPatches\?\.\["remove-url-restriction"\]/
   },
   {
     order: 52,
     name: "Remove cautious actions section",
     pattern: /function ([\w$]+)\(([\w$]*)\)\{(?:if\([\s\S]{1,200}?\)return`# Executing actions with care\n\n[\s\S]*?`;)?return`# Executing actions with care\n\n[\s\S]*?`\}/g,
-    replacer: (match, fn, argument) => `function ${fn}(${argument}){return\`\`}`,
-    sentinel: "# Executing actions with care"
+    replacer: (match, fn, argument) => `function ${fn}(${argument}){if(${gate("remove-cautious-actions")})return\`\`;${match.slice(`function ${fn}(${argument}){`.length, -1)}}`,
+    sentinel: "# Executing actions with care",
+    appliedMarker: /function [\w$]+\([^)]*\)\{if\(globalThis\.__clawgodPatches\?\.\["remove-cautious-actions"\]/
   },
   {
     order: 53,
     name: 'Remove "Not logged in" notice',
-    pattern: /Not logged in\. Run [\w ]+ to authenticate\./g,
-    replacer: () => "",
+    pattern: /"(Not logged in\. Run [\w ]+ to authenticate\.)"/g,
+    replacer: (match, original) => `(${gate("remove-not-logged-in")}?"":'${original}')`,
     optional: true
   },
   {
     order: 54,
     name: "Attachment filter bypass",
     pattern: /([\w$]+)\(\)!=="ant"(&&[\w$]+\.has\([\w$]+\.attachment\.type\)|\)\{if\([\w$]+\.attachment\.type==="hook_additional_context")/g,
-    replacer: (match) => match.replace(/([\w$]+)\(\)!=="ant"/, "false"),
+    replacer: (match) => match.replace(/([\w$]+)\(\)!=="ant"(&&|\))/, (ignored, fn, separator) => separator === "&&" ? `(${gate("attachment-filter-bypass")}?!1:${fn}()!=="ant")&&` : `(${gate("attachment-filter-bypass")}?!1:${fn}()!=="ant"))`),
     optional: true
   },
   {
     order: 55,
     name: "Message list filter bypass (legacy ternary)",
     pattern: /([\w$]+)\(\)!=="ant"\?([\w$]+)\(([\w$]+),([\w$]+)\(([\w$]+)\)\):([\w$]+)/g,
-    replacer: (match, fn, filter, underscore, nestedFilter, value, fallback) => fallback,
+    replacer: (match, fn) => match.replace(/^[\w$]+\(\)!=="ant"\?/, `(${gate("message-filter-legacy")}?!1:${fn}()!=="ant")?`),
     optional: true
   },
   {
     order: 56,
     name: "Message list filter bypass (s_8 form)",
     pattern: /if\(([\w$]+)\(\)==="ant"\)return ([\w$]+);let ([\w$]+)=([\w$]+) instanceof Set\?\4:([\w$]+)\(\4\);return ([\w$]+)\(\2,\3\)/g,
-    replacer: (match, fn, returned) => `return ${returned}`,
+    replacer: (match, fn) => match.replace(/if\([\w$]+\(\)==="ant"\)/, `if(${gate("message-filter-s8")}||${fn}()==="ant")`),
     optional: true
   }
 ];
@@ -10251,7 +10354,7 @@ var patches11 = [{
   order: 25,
   name: "Voice Mode enable (bypass GrowthBook kill)",
   pattern: /function ([\w$]+)\(\)\{return![\w$]+\("tengu_amber_quartz_disabled",!1\)\}/g,
-  replacer: (match, fn) => `function ${fn}(){return!0}`,
+  replacer: (match, fn) => `function ${fn}(){return ${gate("voice-mode")}?!0:(${match.slice(`function ${fn}(){return`.length, -1)})}`,
   optional: true
 }];
 var voiceRegistry = Object.freeze({

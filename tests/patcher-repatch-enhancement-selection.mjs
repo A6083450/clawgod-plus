@@ -26,8 +26,10 @@ try {
   const ripgrep = join(vendor, 'ripgrep', 'bin', 'rg');
   const externalReplacement = join(vendor, 'external-replacement', 'data.bin');
   const enhancementsFile = join(installedRoot, 'enhancements.json');
+  const patchesFile = join(installedRoot, 'patches.json');
   const patchArgs = join(fixtureRoot, 'patch-args.json');
   const savedConfig = '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents"\n  ]\n}\n';
+  const savedPatches = '{\n  "agent-teams": false\n}\n';
   const priorRuntime = 'prior installed runtime\n';
   const candidateRuntime = 'candidate runtime\n';
   const oldNativeBytes = Buffer.from([0x00, 0x11, 0x80, 0xff]);
@@ -48,6 +50,7 @@ try {
   writeFileSync(target, priorRuntime, 'utf8');
   writeFileSync(sourceVersion, '2.1.225\n', 'utf8');
   writeFileSync(enhancementsFile, savedConfig, { mode: 0o600 });
+  writeFileSync(patchesFile, savedPatches, { mode: 0o640 });
   mkdirSync(dirname(oldNative), { recursive: true });
   mkdirSync(dirname(oldOnly), { recursive: true });
   mkdirSync(dirname(ripgrep), { recursive: true });
@@ -56,6 +59,7 @@ try {
   symlinkSync('old-only/nested/data.bin', oldLink);
   writeFileSync(ripgrep, ripgrepBytes, { mode: 0o711 });
   const configBefore = statSync(enhancementsFile);
+  const patchesBefore = statSync(patchesFile);
   const oldNativeBefore = lstatSync(oldNative);
   const ripgrepBefore = lstatSync(ripgrep);
 
@@ -81,6 +85,9 @@ try {
   assert.deepEqual(JSON.parse(readFileSync(patchArgs, 'utf8')), ['--enhancements-file', enhancementsFile], 'repatch must pass exact saved config argv');
   assert.equal(readFileSync(target, 'utf8'), priorRuntime, 'repatch must restore prior runtime after mandatory patch failure');
   assert.equal(readFileSync(sourceVersion, 'utf8'), '2.1.225\n', 'repatch must preserve prior source marker after mandatory patch failure');
+  assert.equal(readFileSync(patchesFile, 'utf8'), savedPatches, 'failed repatch must preserve runtime patch config bytes');
+  assert.equal(statSync(patchesFile).mode & 0o7777, patchesBefore.mode & 0o7777, 'failed repatch must preserve runtime patch config mode');
+  assert.equal(statSync(patchesFile).ino, patchesBefore.ino, 'failed repatch must preserve runtime patch config identity');
   assert.deepEqual(readFileSync(oldNative), oldNativeBytes, 'failed repatch must preserve prior native bytes');
   assert.equal(statSync(oldNative).mode & 0o7777, 0o640, 'failed repatch must preserve prior native mode');
   assert.deepEqual(readFileSync(oldOnly), oldOnlyBytes, 'failed repatch must preserve nested old-only bytes');
@@ -115,9 +122,13 @@ try {
   assert.equal(lstatSync(ripgrep).ino, ripgrepBefore.ino, 'successful repatch must not replace managed ripgrep');
   assert.deepEqual(readdirSync(fixtureRoot).filter(name => name.startsWith('.runtime-rollback.')), [], 'successful repatch must remove committed transaction data');
   const configAfter = statSync(enhancementsFile);
+  const patchesAfter = statSync(patchesFile);
   assert.equal(readFileSync(enhancementsFile, 'utf8'), savedConfig, 'repatch must preserve saved config bytes');
   assert.equal(configAfter.mode & 0o7777, configBefore.mode & 0o7777, 'repatch must preserve saved config mode');
   assert.equal(configAfter.ino, configBefore.ino, 'repatch must preserve saved config identity');
+  assert.equal(readFileSync(patchesFile, 'utf8'), savedPatches, 'repatch must preserve runtime patch config bytes');
+  assert.equal(patchesAfter.mode & 0o7777, patchesBefore.mode & 0o7777, 'repatch must preserve runtime patch config mode');
+  assert.equal(patchesAfter.ino, patchesBefore.ino, 'repatch must preserve runtime patch config identity');
 } finally {
   rmSync(fixtureRoot, { recursive: true, force: true });
 }

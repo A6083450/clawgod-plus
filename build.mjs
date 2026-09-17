@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url';
 
 import { loadEnhancementManifest } from './src/generic/enhancement-config.mjs';
+import { runtimeFeatureMetadata } from './src/generic/patcher/registry.mjs';
 
 export const GENERATED_HEADER = 'GENERATED FILE - edit src/ and run: bun build.mjs';
 export const OUTPUTS = Object.freeze([
@@ -173,6 +174,7 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     SELF_UPDATE_CJS: 'src/generic/runtime/self-update.cjs',
     PATCH_FALLBACK_CJS: 'src/generic/runtime/patch-fallback.cjs',
     WRAPPER_CJS: 'src/generic/runtime/wrapper.cjs',
+    FEATURE_GATES_CJS: 'src/generic/runtime/feature-gates.cjs',
     OPENAI_PROXY_CJS: 'src/generic/runtime/openai-proxy.cjs',
     CLAUDE_MEM_COMPAT_CJS: 'src/generic/runtime/claude-mem-compat.cjs',
     PLUGIN_DEPENDENCIES_MJS: 'src/generic/runtime/plugin-dependencies.mjs',
@@ -186,6 +188,9 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     ]),
   ));
   runtimeSources.PATCHER_MJS = patcherBundle;
+  runtimeSources.FEATURE_GATES_CJS = renderTemplate(runtimeSources.FEATURE_GATES_CJS, {
+    RUNTIME_FEATURE_METADATA: JSON.stringify(runtimeFeatureMetadata),
+  });
   runtimeSources.PLUGIN_DEPENDENCIES_MJS = renderTemplate(
     runtimeSources.PLUGIN_DEPENDENCIES_MJS,
     { HUD_STATUSLINE_SOURCE_JSON: JSON.stringify(JSON.stringify(runtimeSources.CLAUDE_HUD_STATUSLINE_MJS)).slice(1, -1) },

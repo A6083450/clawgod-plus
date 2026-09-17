@@ -139,6 +139,7 @@ $ExtractorBytes = [System.Text.Encoding]::UTF8.GetBytes($env:CLAWGOD_TEST_EXTRAC
 $PostProcessorBytes = [System.Text.Encoding]::UTF8.GetBytes($env:CLAWGOD_TEST_POST_PROCESSOR)
 $RepatcherBytes = [System.Text.Encoding]::UTF8.GetBytes('export {};')
 $OpenAIProxyBytes = [System.Text.Encoding]::UTF8.GetBytes('module.exports = {};')
+$FeatureGatesBytes = [System.Text.Encoding]::UTF8.GetBytes('module.exports = {};')
 $WrapperBytes = [System.Text.Encoding]::UTF8.GetBytes($env:CLAWGOD_TEST_CLI)
 $PatcherBytes = [System.Text.Encoding]::UTF8.GetBytes($env:CLAWGOD_TEST_PATCHER)
 $SelfUpdateBytes = [System.Text.Encoding]::UTF8.GetBytes('module.exports = {};')
@@ -308,6 +309,7 @@ ${fixtureSpan}
     const resultLine = run.stdout.trim().split(/\r?\n/).findLast(line => line.startsWith('{'));
     assert.ok(resultLine, `${fixture.label}: native harness must emit transaction observations`);
     const result = JSON.parse(resultLine);
+    assert.ok(existsSync(paths.patchArgs), `${fixture.label}: patcher was not reached: ${result.caught}`);
     const args = JSON.parse(readFileSync(paths.patchArgs, 'utf8'));
     const observed = inspect(paths);
     assert.equal(args.includes('--allow-compatibility-fallback'), fixture.allow, `${fixture.label}: argv authorization must honor env, NoUpgrade, and prior target`);

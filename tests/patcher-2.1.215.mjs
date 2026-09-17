@@ -89,7 +89,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     const patched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
     assert.equal(
       createHash('sha256').update(patched).digest('hex'),
-      '18c49a8bad4d7096a42c2000a9ba580f6f37254e219f58e4db9170b0b763edda',
+      '20d5af60f25d2338a3ef6610962feee65cc279f8ee192d859ffa4905b667bb86',
       `${name}: default-all representative output bytes must retain the pre-extraction fingerprint`,
     );
     assert.match(patched, /function Bot\(\)\{return et\(ulu,null\)\}/, `${name}: getter must survive`);
@@ -97,37 +97,37 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     assert.match(patched, /function r5r\(\)\{return"api_key_auth"\}/, `${name}: adjacent functions must survive`);
     assert.match(
       patched,
-      /function oQt\(\)\{\/\*__clawgod_ultrareview_enabled__\*\/return!0\}/,
-      `${name}: only the Ultrareview gate should be replaced`,
+      /function oQt\(\)\{return globalThis\.__clawgodPatches\?\.\["ultrareview-gate"\]!==!1\?!0:\(Bot\(\)\?\.enabled===!0&&ru\(\)&&!X6\(\)\)\}/,
+      `${name}: Ultrareview must preserve its exact original gate when disabled`,
     );
     assert.match(
       patched,
-      /function Sub\(\)\{\/\*__clawgod_computer_use_subscription__\*\/return!0\}/,
-      `${name}: Computer Use subscription bypass needs an idempotency marker`,
+      /function Sub\(\)\{if\(globalThis\.__clawgodPatches\?\.\["computer-use-sub"\]!==!1\)return!0;let plan=currentPlan\(\);return plan==="max"\|\|plan==="pro"\}/,
+      `${name}: Computer Use subscription must retain exact disabled semantics`,
     );
     assert.match(
       patched,
-      /function AA6\(\)\{\/\*__clawgod_computer_use_gate__\*\/return!0\}/,
-      `${name}: Computer Use gate bypass needs an idempotency marker`,
+      /function AA6\(\)\{if\(globalThis\.__clawgodPatches\?\.\["computer-use-gate"\]!==!1\)return!0;if\(vo5\("hipaa"\)\)return!1;return zQ\(\)&&oL8\(\)\.enabled\}/,
+      `${name}: Computer Use gate must retain exact disabled semantics`,
     );
-    assert.match(patched, /function teams\(\)\{return!0\}/, `${name}: Agent Teams must stay enabled`);
-    assert.match(patched, /argumentHint:"<prompt>",isEnabled:\(\)=>!0/, `${name}: planning must stay enabled`);
-    assert.match(patched, /function voice\(\)\{return!0\}/, `${name}: voice mode must stay enabled`);
-    assert.match(patched, /function autoProvider\(\)\{return!0\}/, `${name}: auto mode must accept third-party providers`);
-    assert.match(patched, /clawd_body:"rgb\(34,197,94\)"/, `${name}: branding must retain the green palette`);
-    assert.match(patched, /hex:"#22c55e"/, `${name}: branding must retain the green hex color`);
-    assert.match(patched, /const risk=""/, `${name}: security-research permissions must stay unrestricted`);
-    assert.match(patched, /function careful\(\)\{return``\}/, `${name}: cautious-action restriction must stay removed`);
-    assert.match(patched, /const login=""/, `${name}: authentication notice must stay removed`);
-    assert.match(patched, /if\(false&&types\.has/, `${name}: attachment permissions must stay unrestricted`);
-    assert.match(patched, /function privateDate\(e\)\{return`Today's date is \$\{e\}\.\`\}/, `${name}: privacy date must not encode geo state`);
+    assert.match(patched, /function teams\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]!==!1\)return!0;/, `${name}: Agent Teams must be runtime gated`);
+    assert.match(patched, /argumentHint:"<prompt>",isEnabled:\(\)=>globalThis\.__clawgodPatches\?\.\["ultraplan"\]!==!1\?!0:!1/, `${name}: planning must be runtime gated`);
+    assert.match(patched, /function voice\(\)\{return globalThis\.__clawgodPatches\?\.\["voice-mode"\]!==!1\?!0:/, `${name}: voice mode must be runtime gated`);
+    assert.match(patched, /function autoProvider\(e\)\{if\(globalThis\.__clawgodPatches\?\.\["auto-mode-provider-opt-in"\]!==!1\)return!0;/, `${name}: auto mode must be runtime gated`);
+    assert.match(patched, /clawd_body:globalThis\.__clawgodPatches\?\.\["theme-logo-rgb"\]!==!1\?"rgb\(34,197,94\)":"rgb\(215,119,87\)"/, `${name}: branding must be runtime gated`);
+    assert.match(patched, /hex:globalThis\.__clawgodPatches\?\.\["theme-hex"\]!==!1\?"#22c55e":'#da7756'/, `${name}: branding hex must be runtime gated`);
+    assert.match(patched, /const risk=globalThis\.__clawgodPatches\?\.\["remove-cyber-risk"\]!==!1\?"":"IMPORTANT:/, `${name}: security-research permissions must be runtime gated`);
+    assert.match(patched, /function careful\(\)\{if\(globalThis\.__clawgodPatches\?\.\["remove-cautious-actions"\]!==!1\)return``;/, `${name}: cautious-action restriction must be runtime gated`);
+    assert.match(patched, /const login=\(globalThis\.__clawgodPatches\?\.\["remove-not-logged-in"\]!==!1\?"":'Not logged in/, `${name}: authentication notice must be runtime gated`);
+    assert.match(patched, /if\(\(globalThis\.__clawgodPatches\?\.\["attachment-filter-bypass"\]!==!1\?!1:userType\(\)!=="ant"\)&&types\.has/, `${name}: attachment permissions must be runtime gated`);
+    assert.match(patched, /function privateDate\(e\)\{if\(globalThis\.__clawgodPatches\?\.\["geo-stego-date"\]!==!1\)return`Today's date is \$\{e\}\.\`;/, `${name}: privacy date must be runtime gated`);
     assert.doesNotMatch(firstOutput, /(?:❌|XX) Ultrareview enable/, `${name}: no stale Ultrareview error`);
     assert.doesNotMatch(
       firstOutput,
       /(?:⚠️|!!) Computer Use gate bypass/,
       `${name}: no unverifiable Computer Use alternative`,
     );
-    assert.match(firstOutput, /Result: 25 applied, 37 skipped, 0 failed/, `${name}: default-all summary must exclude removed Fast patches`);
+    assert.match(firstOutput, /Result: 25 applied, 40 skipped, 0 failed/, `${name}: default-all summary must include the three optional classifier descriptors`);
     assert.match(firstOutput, /Enhancements: 14 enabled, 0 disabled/, `${name}: default-all enhancement summary must be stable`);
 
 

@@ -301,4 +301,8 @@ try {
   }
 } catch {}
 
+try {
+  globalThis.__clawgodPatches = require('./feature-gates.cjs').loadFeatureGates(clawgodDir);
+} catch {}
+
 require('./cli.original.cjs');

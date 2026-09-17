@@ -129,6 +129,27 @@ Windows PowerShell では次の引数になります。
 
 その後の `claude update` は `~/.clawgod/enhancements.json` に保存済みの選択を再利用し、一切プロンプトを表示しません。`claude-hud` または `claude-mem` を無効化すると ClawGod が管理する設定を復元し、`superpowers` を無効化しても管理を停止するだけで、ユーザーがインストールしたプラグインは削除しません。
 
+### 実行時パッチスイッチ
+
+`~/.clawgod/enhancements.json` は**インストール時の上限**です。一方、`~/.clawgod/patches.json` は疎な実行時スイッチです。存在しない場合は `{}` として扱われ、boolean の `false` だけが機能を無効にします。変更は次回起動時に有効になり、再パッチは不要です。インストールしていない拡張の機能は、この設定で有効化できません。
+
+```json
+{ "theme": false, "geo-neutralize": false }
+```
+
+v1.9.4 の実行時キーは `agent-teams`、`computer-use`、`ultraplan`、`ultrareview`、`voice-mode`、`auto-mode`、`classifier-tuning`、`theme`、`geo-neutralize`、`cyber-risk`、`url-restriction`、`cautious-actions`、`not-logged-in`、`message-filter` です。`classifier-tuning` は個別に切り替えられますが、新しい manifest ID ではなく、インストール時は `auto-mode` に属します。未知のキーは警告されます。
+
+起動した Shell から継承される `CLAWGOD_FEATURE_<NAME>` には、正確な lowercase の `true` または `false` を指定でき、`patches.json` より優先されます。ハイフンはアンダースコアに変換します。
+
+```bash
+CLAWGOD_FEATURE_THEME=false claude
+CLAWGOD_FEATURE_GEO_NEUTRALIZE=true claude
+```
+
+`features.json` は `CLAUDE_INTERNAL_FC_OVERRIDES` として渡す Claude 内部の GrowthBook override であり、`patches.json` の ClawGod 実行時スイッチとは別物です。
+
+`classifier-tuning` は分類器の安全判断を無効化せず、次のパラメータだけを調整します。`CLAWGOD_CLASSIFIER_TIMEOUT_MS` は有限数値の deadline 下限、`CLAWGOD_CLASSIFIER_MODEL` は trim 後の空でないモデル名、`CLAWGOD_CLASSIFIER_RETRIES` は 0 以上の整数です。これらは呼び出し時に読むため、`~/.claude/settings.json` の `env` でも設定できます。
+
 ## コマンドと起動動作
 
 ```bash

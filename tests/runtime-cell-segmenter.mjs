@@ -250,6 +250,34 @@ check('八位 CSI 被规范化为 SGR', () => {
   assert.deepEqual(screen.stylesAt(0), ['[31m']);
 });
 
+check('七位和八位 CSI 丢弃不支持的 SGR 参数，不留下可见残片', () => {
+  for (const prefix of ['\x1b[', '\x9b']) {
+    for (const parameters of ['?25', '31:', '1$']) {
+      const { screen, end } = paint(`A${prefix}${parameters}mB`);
+      assert.equal(end, 2);
+      assert.equal(screen.char(0), 'A');
+      assert.equal(screen.char(1), 'B');
+      assert.deepEqual(screen.stylesAt(1), []);
+    }
+  }
+});
+
+check('不完整 OSC 8 不创建链接，也不清除既有链接', () => {
+  for (const terminator of ['\x07', '\x1b\\']) {
+    for (const body of ['8;https://example.com', '8;']) {
+      const malformed = `\x1b]${body}${terminator}`;
+      const { screen, end } = paint(`A${malformed}B`);
+      assert.equal(end, 2);
+      assert.equal(screen.char(1), 'B');
+      assert.equal(screen.hyperlinkAt(1), undefined);
+      const linked = paint(`\x1b]8;id=test;https://valid.example${terminator}A${malformed}B\x1b]8;;${terminator}C`).screen;
+      assert.equal(linked.hyperlinkAt(1), 'https://valid.example');
+      assert.equal(linked.hyperlinkAt(2), undefined);
+      assert.equal(linked.char(2), 'C');
+    }
+  }
+});
+
 check('双向文本控制符替换为替代字符', () => {
   const { screen } = paint('A‮B');
   assert.equal(screen.char(1), '�');

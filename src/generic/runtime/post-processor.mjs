@@ -106,9 +106,8 @@ function sanitizeControlSequences(text) {
       if (code === 155) {
         var eightBit = clawgodCsiEnd(text, index + 1);
         if (eightBit >= 0) {
-          if (text.charAt(eightBit) === "m") {
-            out += String.fromCharCode(27) + "[" + text.slice(index + 1, eightBit + 1);
-          }
+          var normalized = String.fromCharCode(27) + "[" + text.slice(index + 1, eightBit + 1);
+          if (clawgodSgr.test(normalized)) out += normalized;
           index = eightBit;
         }
         continue;
@@ -117,7 +116,8 @@ function sanitizeControlSequences(text) {
       if (next === "[") {
         var csi = clawgodCsiEnd(text, index + 2);
         if (csi >= 0) {
-          if (text.charAt(csi) === "m") out += text.slice(index, csi + 1);
+          var sequence = text.slice(index, csi + 1);
+          if (clawgodSgr.test(sequence)) out += sequence;
           index = csi;
         }
         continue;
@@ -126,12 +126,10 @@ function sanitizeControlSequences(text) {
         var osc = clawgodOscEnd(text, index + 2);
         if (osc >= 0) {
           var body = text.slice(index + 2, osc);
-          if (body.slice(0, 2) === "8;") {
-            var payload = body.slice(2);
-            var uri = payload.slice(payload.indexOf(";") + 1);
-            out += uri === ""
-              ? clawgodOsc8Prefix + String.fromCharCode(7)
-              : clawgodOsc8Prefix + uri + String.fromCharCode(7);
+          var separator = body.indexOf(";", 2);
+          if (body.slice(0, 2) === "8;" && separator >= 0) {
+            var uri = body.slice(separator + 1);
+            out += clawgodOsc8Prefix + uri + String.fromCharCode(7);
           }
           index = text.charCodeAt(osc) === 27 ? osc + 1 : osc;
         }
@@ -505,18 +503,23 @@ const CELL_SEGMENTER_REFERENCE = /\bnew\s+Bun\s*\.\s*ant\s*\.\s*CellSegmenter\s*
 
 function installPublicCellRenderer(modulePaths) {
   if (typeof globalThis.Bun?.ant?.CellSegmenter === 'function') return;
-  const targets = modulePaths.filter((path) => CELL_SEGMENTER_REFERENCE.test(readFileSync(path, 'utf8')));
+  const targets = [];
+  for (const path of modulePaths) {
+    const source = readFileSync(path, 'utf8');
+    if (CELL_SEGMENTER_REFERENCE.test(source)) targets.push({ path, source });
+  }
   if (targets.length === 0) return;
   if (targets.length > 1) {
     throw new Error(`多个分块都依赖私有 Bun.ant.CellSegmenter，形态无法确认；已拒绝安装（${targets.length} 个）。`);
   }
-  const adapted = adaptCellRenderer(readFileSync(targets[0], 'utf8'));
+  const { path, source } = targets[0];
+  const adapted = adaptCellRenderer(source);
   if (adapted === null) {
     throw new Error('此 Claude Code 依赖私有 Bun.ant.CellSegmenter，且渲染器形态未被 ClawGod 识别；'
       + '已拒绝安装，避免产生无法进入交互界面的运行时。请用 --version 安装受支持的版本。');
   }
-  writeFileSync(targets[0], adapted);
-  console.log(`已用公开 Bun 字符格渲染器替换私有实现: ${targets[0].slice(here.length + 1)}`);
+  writeFileSync(path, adapted);
+  console.log(`已用公开 Bun 字符格渲染器替换私有实现: ${path.slice(here.length + 1)}`);
 }
 
 function processCandidate() {

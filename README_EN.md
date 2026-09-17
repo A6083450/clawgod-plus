@@ -129,6 +129,27 @@ Windows PowerShell equivalents:
 
 A later `claude update` reuses the saved selection from `~/.clawgod/enhancements.json` and never prompts. Disabling `claude-hud` or `claude-mem` restores the configuration ClawGod owns, while disabling `superpowers` only stops management and never deletes the plugin you installed.
 
+### Runtime patch switches
+
+`~/.clawgod/enhancements.json` is the **installation-time ceiling**. `~/.clawgod/patches.json` is a sparse runtime switch: a missing file means `{}`, and only a boolean `false` disables a feature. Changes apply at the next launch without re-patching. A runtime switch cannot enable an enhancement that was not installed.
+
+```json
+{ "theme": false, "geo-neutralize": false }
+```
+
+The fixed v1.9.4 runtime keys are `agent-teams`, `computer-use`, `ultraplan`, `ultrareview`, `voice-mode`, `auto-mode`, `classifier-tuning`, `theme`, `geo-neutralize`, `cyber-risk`, `url-restriction`, `cautious-actions`, `not-logged-in`, and `message-filter`. `classifier-tuning` is independently switchable, but has no new manifest ID: it belongs to `auto-mode` at installation time. Unknown keys produce a warning.
+
+An environment variable inherited from the launching shell, `CLAWGOD_FEATURE_<NAME>`, accepts exact lowercase `true` or `false` and takes precedence over the file; convert hyphens in the key to underscores.
+
+```bash
+CLAWGOD_FEATURE_THEME=false claude
+CLAWGOD_FEATURE_GEO_NEUTRALIZE=true claude
+```
+
+`features.json` supplies Claude-internal GrowthBook overrides through `CLAUDE_INTERNAL_FC_OVERRIDES`; it is distinct from ClawGod's `patches.json` runtime switches.
+
+`classifier-tuning` does not disable the classifier's own safety decision. It only adjusts `CLAWGOD_CLASSIFIER_TIMEOUT_MS` (a finite numeric deadline floor), `CLAWGOD_CLASSIFIER_MODEL` (a non-empty trimmed model name), and `CLAWGOD_CLASSIFIER_RETRIES` (a non-negative integer). These values are read at call time, so they can also be configured in `~/.claude/settings.json` under `env`.
+
 ## Commands and launch behavior
 
 ```bash

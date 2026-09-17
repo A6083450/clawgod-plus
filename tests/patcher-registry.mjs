@@ -106,6 +106,7 @@ const {
   enhancementRegistries,
   patches,
   patchRegistries,
+  runtimeFeatureMetadata,
 } = await import('../src/generic/patcher/registry.mjs');
 const { createAgentsRegistry } = await import('../src/generic/patcher/enhancements/agents.mjs');
 const { inspectPatcherSource } = await import('../src/generic/patcher/core.mjs');
@@ -126,7 +127,8 @@ const ownedDescriptors = patchRegistries.flatMap(registry => [
   ...registry.patches.map(descriptor => ({ descriptor, owner: registry.id })),
   ...registry.customPatches.map(descriptor => ({ descriptor, owner: registry.id })),
 ]);
-assert.equal(ownedDescriptors.length, 62, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(ownedDescriptors.length, 65, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(Object.keys(runtimeFeatureMetadata).length, 36, 'all upstream runtime feature patch IDs must be exported');
 assert.equal(
   new Set(ownedDescriptors.map(({ descriptor }) => descriptor)).size,
   ownedDescriptors.length,
@@ -146,9 +148,21 @@ const canonicalDescriptors = ownedDescriptors
   }))
   .sort((left, right) => left.descriptor.order - right.descriptor.order);
 assert.deepEqual(
-  canonicalDescriptors.map(({ descriptor, type }) => ({ name: descriptor.name, type, order: descriptor.order })),
+  canonicalDescriptors
+    .filter(({ descriptor }) => descriptor.order < 68)
+    .map(({ descriptor, type }) => ({ name: descriptor.name, type, order: descriptor.order })),
   task5Snapshot.descriptors.map(({ name, type, order }) => ({ name, type, order })),
-  'all 62 non-Fast descriptor names, types, and exact global order values must remain canonical',
+  'pre-runtime-feature descriptor names, types, and exact global order values must remain canonical',
+);
+assert.deepEqual(
+  canonicalDescriptors.filter(({ descriptor }) => descriptor.order >= 68)
+    .map(({ descriptor, type }) => ({ name: descriptor.name, type, order: descriptor.order })),
+  [
+    { name: 'Auto-mode classifier timeout override (CLAWGOD_CLASSIFIER_TIMEOUT_MS)', type: 'regex', order: 68 },
+    { name: 'Auto-mode classifier model override (CLAWGOD_CLASSIFIER_MODEL)', type: 'regex', order: 69 },
+    { name: 'Auto-mode classifier retries override (CLAWGOD_CLASSIFIER_RETRIES)', type: 'regex', order: 70 },
+  ],
+  'classifier runtime descriptors must have stable post-canonical order values',
 );
 
 function normalizeMetadataValue(value) {
@@ -156,6 +170,43 @@ function normalizeMetadataValue(value) {
   if (value instanceof RegExp) return { $type: 'regexp', source: value.source, flags: value.flags };
   return value;
 }
+
+const runtimePatchedDescriptorNames = new Set([
+  'Agent Teams always enabled',
+  'Computer Use subscription bypass',
+  'Computer Use default enabled',
+  'Ultraplan enable',
+  'Ultrareview enable (rQt gate)',
+  'Ultrareview enable (direct literal, <=2.1.213)',
+  'Ultrareview enable (v2.1.215+ gate)',
+  'Computer Use gate bypass',
+  'Voice Mode enable (bypass GrowthBook kill)',
+  'Auto-mode unlock for third-party API (provider helper gate)',
+  'Auto-mode unlock for third-party API (inline gate)',
+  'Auto-mode unlock for third-party API (provider opt-in helper)',
+  'Logo + brand color → green (RGB dark)',
+  'Logo + brand color → green (ANSI)',
+  'Theme claude color → green (dark)',
+  'Theme claude color → green (light)',
+  'Shimmer → green',
+  'Shimmer light → green',
+  'Hex brand color → green',
+  'Theme claude color → green (ANSI)',
+  'Shimmer → green (ANSI)',
+  'Brief label claude color → green (RGB dark)',
+  'Brief label claude color → green (RGB light)',
+  'Brief label claude color → green (ANSI)',
+  'Neutralize geo-steganography in date string (qla)',
+  'Neutralize geo-detection probe (rdp)',
+  'Neutralize apostrophe steganography (odp)',
+  'Remove CYBER_RISK_INSTRUCTION',
+  'Remove URL generation restriction',
+  'Remove cautious actions section',
+  'Remove "Not logged in" notice',
+  'Attachment filter bypass',
+  'Message list filter bypass (legacy ternary)',
+  'Message list filter bypass (s_8 form)',
+]);
 
 function assertTask5RegexMetadata(descriptor, expected) {
   const actual = {
@@ -176,7 +227,7 @@ function assertTask5RegexMetadata(descriptor, expected) {
 for (const expected of task5Snapshot.descriptors.filter(descriptor => descriptor.type === 'regex')) {
   const actual = canonicalDescriptors.find(({ descriptor }) => descriptor.name === expected.name)?.descriptor;
   assert.ok(actual, `missing Task 5 descriptor: ${expected.name}`);
-  assertTask5RegexMetadata(actual, expected);
+  if (!runtimePatchedDescriptorNames.has(expected.name)) assertTask5RegexMetadata(actual, expected);
 }
 
 const firstExpected = task5Snapshot.descriptors[0];
@@ -190,7 +241,7 @@ assert.throws(
   'the metadata gate must reject a controlled regex mutation that the former name/order gate accepted',
 );
 
-assert.deepEqual(patches.map(descriptor => descriptor.name), expectedRegexOrder, 'default-all regex order must remain canonical');
+assert.deepEqual(patches.filter(descriptor => descriptor.order < 68).map(descriptor => descriptor.name), expectedRegexOrder, 'pre-runtime-feature regex order must remain canonical');
 assert.deepEqual(
   customPatches.map(descriptor => descriptor.name),
   ['Claude in Chrome local socket fallback', 'Context limit configurable', 'Claude API skill lazy docs'],

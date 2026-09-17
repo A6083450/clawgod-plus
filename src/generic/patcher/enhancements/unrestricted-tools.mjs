@@ -1,3 +1,5 @@
+import { gate } from '../runtime-features.mjs';
+
 const patches = [
   {
     order: 46,
@@ -11,50 +13,56 @@ const patches = [
   {
     order: 50,
     name: 'Remove CYBER_RISK_INSTRUCTION',
-    pattern: /([\w$]+)="IMPORTANT: Assist with authorized security testing[^"]*"/g,
-    replacer: (match, variable) => `${variable}=""`,
+    pattern: /([\w$]+)="(IMPORTANT: Assist with authorized security testing[^"]*)"/g,
+    replacer: (match, variable, original) => `${variable}=${gate('remove-cyber-risk')}?"":${JSON.stringify(original)}`,
     sentinel: 'Assist with authorized security testing',
+    appliedMarker: /globalThis\.__clawgodPatches\?\.\["remove-cyber-risk"\]/,
   },
   {
     order: 51,
     name: 'Remove URL generation restriction',
-    pattern: /\n\$\{[\w$]+\}\nIMPORTANT: You must NEVER generate or guess URLs[^.]*\. You may use URLs provided by the user in their messages or local files\./g,
-    replacer: () => '',
+    pattern: /(\n\$\{[\w$]+\})(\nIMPORTANT: You must NEVER generate or guess URLs[^.]*\. You may use URLs provided by the user in their messages or local files\.)/g,
+    replacer: (match, prefix, sentence) => `\${${gate('remove-url-restriction')}?"":\`${prefix}\`+'${sentence.replace('\n', '\\n')}'}`,
     sentinel: 'IMPORTANT: You must NEVER generate or guess URLs',
+    appliedMarker: /globalThis\.__clawgodPatches\?\.\["remove-url-restriction"\]/,
   },
   {
     order: 52,
     name: 'Remove cautious actions section',
     pattern: /function ([\w$]+)\(([\w$]*)\)\{(?:if\([\s\S]{1,200}?\)return`# Executing actions with care\n\n[\s\S]*?`;)?return`# Executing actions with care\n\n[\s\S]*?`\}/g,
-    replacer: (match, fn, argument) => `function ${fn}(${argument}){return\`\`}`,
+    replacer: (match, fn, argument) => `function ${fn}(${argument}){if(${gate('remove-cautious-actions')})return\`\`;${match.slice(`function ${fn}(${argument}){`.length, -1)}}`,
     sentinel: '# Executing actions with care',
+    appliedMarker: /function [\w$]+\([^)]*\)\{if\(globalThis\.__clawgodPatches\?\.\["remove-cautious-actions"\]/,
   },
   {
     order: 53,
     name: 'Remove "Not logged in" notice',
-    pattern: /Not logged in\. Run [\w ]+ to authenticate\./g,
-    replacer: () => '',
+    pattern: /"(Not logged in\. Run [\w ]+ to authenticate\.)"/g,
+    replacer: (match, original) => `(${gate('remove-not-logged-in')}?"":'${original}')`,
     optional: true,
   },
   {
     order: 54,
     name: 'Attachment filter bypass',
     pattern: /([\w$]+)\(\)!=="ant"(&&[\w$]+\.has\([\w$]+\.attachment\.type\)|\)\{if\([\w$]+\.attachment\.type==="hook_additional_context")/g,
-    replacer: (match) => match.replace(/([\w$]+)\(\)!=="ant"/, 'false'),
+    replacer: (match) => match.replace(/([\w$]+)\(\)!=="ant"(&&|\))/, (ignored, fn, separator) =>
+      separator === '&&'
+        ? `(${gate('attachment-filter-bypass')}?!1:${fn}()!=="ant")&&`
+        : `(${gate('attachment-filter-bypass')}?!1:${fn}()!=="ant"))`),
     optional: true,
   },
   {
     order: 55,
     name: 'Message list filter bypass (legacy ternary)',
     pattern: /([\w$]+)\(\)!=="ant"\?([\w$]+)\(([\w$]+),([\w$]+)\(([\w$]+)\)\):([\w$]+)/g,
-    replacer: (match, fn, filter, underscore, nestedFilter, value, fallback) => fallback,
+    replacer: (match, fn) => match.replace(/^[\w$]+\(\)!=="ant"\?/, `(${gate('message-filter-legacy')}?!1:${fn}()!=="ant")?`),
     optional: true,
   },
   {
     order: 56,
     name: 'Message list filter bypass (s_8 form)',
     pattern: /if\(([\w$]+)\(\)==="ant"\)return ([\w$]+);let ([\w$]+)=([\w$]+) instanceof Set\?\4:([\w$]+)\(\4\);return ([\w$]+)\(\2,\3\)/g,
-    replacer: (match, fn, returned) => `return ${returned}`,
+    replacer: (match, fn) => match.replace(/if\([\w$]+\(\)==="ant"\)/, `if(${gate('message-filter-s8')}||${fn}()==="ant")`),
     optional: true,
   },
 ];

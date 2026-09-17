@@ -1537,10 +1537,10 @@ assert.match(windowsBackup, /Copy-Item \$latestExe\.FullName \$claudeOrigExe -Fo
 assert.match(windowsUninstall, /Move-Item -Force \$claudeExeOrig \$claudeExe/, 'Windows uninstall must restore the backed-up versions executable');
 
 for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', windowsUninstall]]) {
-  for (const artifact of ['.clawgod-version', '.update-check', 'enhancement-config.mjs', 'enhancement-manifest.json']) {
+  for (const artifact of ['.clawgod-version', '.update-check', 'enhancement-config.mjs', 'enhancement-manifest.json', 'feature-gates.cjs']) {
     assert.ok(uninstall.includes(artifact), `${name}: uninstall must remove ${artifact}`);
   }
-  for (const preserved of ['provider.json', 'features.json', 'enhancements.json', '.lean-disabled', '.lean-max']) {
+  for (const preserved of ['provider.json', 'features.json', 'enhancements.json', 'patches.json', '.lean-disabled', '.lean-max']) {
     assert.doesNotMatch(uninstall, new RegExp(preserved.replace('.', '\\\.')), `${name}: uninstall must preserve ${preserved}`);
   }
 }

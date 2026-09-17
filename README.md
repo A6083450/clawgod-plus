@@ -129,6 +129,27 @@ Windows PowerShell 对应参数：
 
 后续运行 `claude update` 会复用 `~/.clawgod/enhancements.json` 中已保存的选择，并且从不主动询问。关闭 `claude-hud` 或 `claude-mem` 会恢复由 ClawGod 托管的对应配置；关闭 `superpowers` 只会停止托管，不会删除你已安装的插件。
 
+### 运行时补丁开关
+
+`~/.clawgod/enhancements.json` 是**安装期上限**；`~/.clawgod/patches.json` 则是稀疏的运行时开关。文件不存在时按 `{}` 处理，只有 boolean `false` 会关闭对应功能。修改在下次启动生效，无需重打补丁；不能用它启用安装时未选择的增强。
+
+```json
+{ "theme": false, "geo-neutralize": false }
+```
+
+v1.9.4 固定的 14 个运行时 key 为：`agent-teams`、`computer-use`、`ultraplan`、`ultrareview`、`voice-mode`、`auto-mode`、`classifier-tuning`、`theme`、`geo-neutralize`、`cyber-risk`、`url-restriction`、`cautious-actions`、`not-logged-in`、`message-filter`。`classifier-tuning` 可独立开关，但不新增 manifest ID，安装期归属 `auto-mode`。未知 key 会产生警告。
+
+从启动 Shell 继承的环境变量 `CLAWGOD_FEATURE_<NAME>` 可用精确的小写 `true` 或 `false` 覆盖文件配置；连字符改为下划线，且环境变量优先。
+
+```bash
+CLAWGOD_FEATURE_THEME=false claude
+CLAWGOD_FEATURE_GEO_NEUTRALIZE=true claude
+```
+
+`features.json` 是通过 `CLAUDE_INTERNAL_FC_OVERRIDES` 传给 Claude 内部 GrowthBook 的覆盖配置，不是 `patches.json` 这套 ClawGod 运行时开关。
+
+`classifier-tuning` 不会关闭分类器自身的安全判断，只调节参数：`CLAWGOD_CLASSIFIER_TIMEOUT_MS` 是有限数值的 deadline 下限，`CLAWGOD_CLASSIFIER_MODEL` 使用 trim 后的非空模型名，`CLAWGOD_CLASSIFIER_RETRIES` 必须是非负整数。这三个值在调用时读取，因此也可以写入 `~/.claude/settings.json` 的 `env`。
+
 ## 命令与启动行为
 
 ```bash

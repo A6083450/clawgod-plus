@@ -8,18 +8,13 @@ on:
 permissions:
   contents: write
 
-# Project policy: never run JS-based actions on Node 20 — they're already
-# deprecated and forced off after 2026-06-02. Pin every action that runs
-# JS (actions/checkout etc.) to Node 24 across all our workflows.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
+# JavaScript actions use native Node.js 24 releases.
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -32,7 +27,7 @@ jobs:
         run: bun build.mjs --check
 
       - name: Build release notes without system Git
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('node:fs');

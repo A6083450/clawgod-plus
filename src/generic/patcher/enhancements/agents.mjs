@@ -1,9 +1,12 @@
+import { gate } from '../runtime-features.mjs';
+
 const agentTeamsPatch = {
   order: 5,
   name: 'Agent Teams always enabled',
   pattern: /function ([\w$]+)\(\)\{if\(![\w$]+\(process\.env\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\)&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}|function ([\w$]+)\(\)\{if\(![\w$]+\.[\w$]+&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}/g,
-  replacer: (match, firstFn, secondFn) => `function ${firstFn || secondFn}(){return!0}`,
+  replacer: (match, firstFn, secondFn) => `function ${firstFn || secondFn}(){if(${gate('agent-teams')})return!0;${match.slice(match.indexOf('{') + 1, -1)}}`,
   sentinel: 'tengu_amber_flint',
+  appliedMarker: /function [\w$]+\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]/,
 };
 
 const sessionMetadataPatch = {

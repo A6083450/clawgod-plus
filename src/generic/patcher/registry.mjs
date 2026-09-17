@@ -12,6 +12,7 @@ import { planningRegistry } from './enhancements/planning.mjs';
 import { privacyRegistry } from './enhancements/privacy.mjs';
 import { unrestrictedToolsRegistry } from './enhancements/unrestricted-tools.mjs';
 import { voiceRegistry } from './enhancements/voice.mjs';
+export { runtimeFeatureMetadata } from './runtime-features.mjs';
 
 export const enhancementManifest = loadEnhancementManifest(enhancementManifestSource, { filename: 'enhancements.json' });
 

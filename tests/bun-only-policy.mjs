@@ -581,13 +581,33 @@ assert.match(workflow, /Invoke-Checked\s+['"]initial -LeanOn irm-pipe install['"
 assert.match(workflow, /Invoke-Expression\s+\$installerSource/, 'Windows PowerShell 5.1 fixture must execute the installer as a decoded string');
 
 assert.deepEqual(findForbiddenDependencies(workflow, { allowBadgePublishGit: true }), [], 'compat-daily must not require an external Node, npm, system Git, or system ripgrep executable outside badge publishing');
-assert.equal(workflow.match(/FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/g)?.length, 1, 'compat-daily must retain exactly one GitHub Actions runtime setting');
-assert.match(workflow, /^\s*FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*["']true["']\s*$/m, 'compat-daily must keep the exact GitHub Actions Node 24 opt-in');
-assert.match(workflow, /GitHub-hosted Actions[^\n]*internals|internals[^\n]*GitHub-hosted Actions/i, 'compat-daily must explain that the Node 24 setting applies only to GitHub-hosted Actions internals');
+assert.doesNotMatch(workflow, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/, 'native Node 24 actions must not need the deprecated runtime override');
+assert.doesNotMatch(workflow, /actions\/setup-node@/, 'the Bun-only compatibility workflow must not provision a product Node runtime');
 assert.match(workflow, /uses:\s*oven-sh\/setup-bun@v2[\s\S]{0,160}bun-version:\s*canary/, 'compat-daily must use Bun canary');
-assert.match(workflow, /CLAWGOD_E2E=1\s+bun\s+tests\/installer-e2e\.mjs/, 'Linux smoke must run the isolated installer E2E with Bun');
+assert.match(workflow, /strategy:[\s\S]{0,320}macos-26[\s\S]{0,160}platform:\s*macos[\s\S]{0,80}arch:\s*arm64/, 'Unix smoke must cover macOS 26 ARM64');
+assert.match(workflow, /SMOKE_PLATFORM:\s*\$\{\{ matrix\.platform \}\}/, 'Unix smoke must expose its platform for platform-specific failure reports');
+assert.match(workflow, /EXPECTED_ARCH:\s*\$\{\{ matrix\.arch \}\}/, 'Unix smoke must expose its expected architecture');
+assert.match(workflow, /\[\[ "\$\(uname -m\)" == "\$EXPECTED_ARCH" \]\]/, 'Unix smoke must reject an unexpected runner architecture');
+assert.match(workflow, /CLAWGOD_E2E=1\s+bun\s+tests\/installer-e2e\.mjs/, 'Unix smoke must run the isolated installer E2E with Bun and its private ripgrep');
+assert.match(workflow, /Publish supported-Claude-version badge[\s\S]{0,160}matrix\.platform\s*==\s*'linux'/, 'only Linux may publish the supported-Claude-version badge');
 assert.match(workflow, /^\s*windows-smoke:\s*$/m, 'compat-daily must include a Windows smoke job');
 assert.match(workflow, /windows-smoke:[\s\S]*github\.event_name\s*!=\s*'schedule'/, 'Windows smoke must skip scheduled daily runs');
+
+const nativeActionVersions = new Map([
+  ['actions/checkout', 'v5'],
+  ['actions/cache', 'v5'],
+  ['actions/github-script', 'v8'],
+  ['actions/upload-artifact', 'v6'],
+  ['actions/download-artifact', 'v7'],
+  ['oven-sh/setup-bun', 'v2'],
+]);
+for (const path of readdirSync(join(root, '.github/workflows')).filter(path => /\.ya?ml$/.test(path))) {
+  const source = read(`.github/workflows/${path}`);
+  assert.doesNotMatch(source, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/, `${path} must use native Node 24 actions without the runtime override`);
+  for (const [, action, version] of source.matchAll(/^\s*uses:\s*((?:actions|oven-sh)\/[^@\s]+)@([^\s#]+)/gm)) {
+    assert.equal(version, nativeActionVersions.get(action), `${path} must pin ${action} to its native Node 24 release`);
+  }
+}
 for (const variable of ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) {
   assert.match(workflow, new RegExp(`\\$env:${variable}\\s*=\\s*\\$sandbox`), `Windows smoke must sandbox ${variable}`);
 }
