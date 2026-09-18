@@ -704,7 +704,7 @@ jobs:
           $null = $expectedSettingsAfterUninstall.Remove('statusLine')
           $null = Invoke-Checked '-Uninstall' $pwshBin @('-NoLogo', '-NoProfile', '-File', $installer, '-Uninstall')
           $managedRoot = Join-Path $env:USERPROFILE '.clawgod'
-          $allowedPersistent = @('provider.json', 'features.json', 'enhancements.json', '.lean-disabled', '.lean-max')
+          $allowedPersistent = @('provider.json', 'features.json', 'enhancements.json', 'patches.json', '.lean-disabled', '.lean-max')
           $remainingManaged = @(Get-ChildItem $managedRoot -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin $allowedPersistent })
           if ($remainingManaged.Count -ne 0) { throw "Uninstall retained managed artifacts: $($remainingManaged.Name -join ', ')" }
           $externalManaged = @(

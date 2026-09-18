@@ -833,6 +833,10 @@ const windowsUninstall = windows.slice(
   windows.indexOf('if ($Uninstall) {'),
   windows.indexOf('# --- Bun prerequisite'),
 );
+const windowsUninstallAllowlist = compatDailyWorkflow.slice(
+  compatDailyWorkflow.indexOf("$allowedPersistent = @(", compatDailyWorkflow.indexOf("$null = Invoke-Checked '-Uninstall'")),
+  compatDailyWorkflow.indexOf('$remainingManaged =', compatDailyWorkflow.indexOf("$null = Invoke-Checked '-Uninstall'")),
+);
 
 const unixLauncherStart = unix.indexOf('LAUNCHER_CONTENT="');
 const unixLauncherEnd = unix.indexOf('"\n\n\n# Back up original claude', unixLauncherStart);
@@ -1543,6 +1547,9 @@ for (const [name, uninstall] of [['install.sh', unixUninstall], ['install.ps1', 
   for (const preserved of ['provider.json', 'features.json', 'enhancements.json', 'patches.json', '.lean-disabled', '.lean-max']) {
     assert.doesNotMatch(uninstall, new RegExp(preserved.replace('.', '\\\.')), `${name}: uninstall must preserve ${preserved}`);
   }
+}
+for (const preserved of ['provider.json', 'features.json', 'enhancements.json', 'patches.json', '.lean-disabled', '.lean-max']) {
+  assert.ok(windowsUninstallAllowlist.includes(`'${preserved}'`), `Windows uninstall smoke must allow persistent ${preserved}`);
 }
 
 assert.doesNotMatch(unix, /\$\(\$BUN_BIN\s+--version/, 'Unix Bun version probes must quote paths containing spaces');
