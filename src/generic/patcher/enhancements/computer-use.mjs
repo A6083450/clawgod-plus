@@ -18,9 +18,9 @@ const patches = [
   {
     order: 23,
     name: 'Computer Use gate bypass',
-    pattern: /function ([\w$]+)\(\)\{if\([\w$]+\("hipaa"\)\)return\s*!1;[^{}]*\}/g,
+    pattern: /function ([\w$]+)\(\)\{if\([\w$]+\("hipaa"\)\)return\s*!1;(?:if\([\w$]+\(\)\)return!0;)?return [\w$]+\(\)(?:&&[\w$]+\(\))*&&[\w$]+(?:\(\))?\.(?:enabled|read)\}/g,
     replacer: (match, fn) => `function ${fn}(){if(${gate('computer-use-gate')})return!0;${match.slice(`function ${fn}(){`.length, -1)}}`,
-    sentinel: '"hipaa"',
+    sentinel: '"hipaa"))return!1;return',
     appliedMarker: /function [\w$]+\(\)\{if\(globalThis\.__clawgodPatches\?\.\["computer-use-gate"\]/,
   },
   {

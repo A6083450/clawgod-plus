@@ -572,6 +572,33 @@ function runUnixTtyCase(label, lines, expected, {
   }
 }
 
+// Esc 判定窗口读到 ICRNL 映射的 LF 时，必须把它保留给下次作为回车处理。
+{
+  const fixture = createUnixFixture('clawgod-selection-tty-escape-newline-');
+  const scriptCommand = findScriptCommand();
+  const runner = join(fixture.fixtureRoot, 'escape-newline-runner');
+  writeFileSync(runner, `#!/bin/bash\nset -e\n${unixLifecycle}\nclawgod_menu_raw_on\nclawgod_menu_read_key\nprintf 'CLAWGOD_TEST_KEY=%s\\n' "$CLAWGOD_MENU_KEY"\nclawgod_menu_read_key\nprintf 'CLAWGOD_TEST_KEY=%s\\n' "$CLAWGOD_MENU_KEY"\nclawgod_menu_raw_off\n`, 'utf8');
+  chmodSync(runner, 0o700);
+  try {
+    const shellCommand = process.platform === 'darwin'
+      ? '{ /bin/sleep 0.1; printf "\\033\\r"; /bin/sleep 0.1; } | "$1" -q -e /dev/null "$2"'
+      : '{ /bin/sleep 0.1; printf "\\033\\r"; /bin/sleep 0.1; } | "$1" -q -e -c "$2" /dev/null';
+    const run = spawnSync('/bin/bash', ['-c', shellCommand, 'clawgod-escape-newline-test', scriptCommand, runner], {
+      encoding: 'utf8',
+      env: selectionEnvironment(fixture),
+      timeout: 10_000,
+    });
+    assert.equal(run.status, 0, `escape followed by Enter must not block: ${run.stdout}${run.stderr}`);
+    assert.deepEqual(
+      `${run.stdout}${run.stderr}`.match(/CLAWGOD_TEST_KEY=.+/g),
+      ['CLAWGOD_TEST_KEY=ESC', 'CLAWGOD_TEST_KEY=ENTER'],
+      'Escape lookahead must preserve a queued Enter',
+    );
+  } finally {
+    rmSync(fixture.fixtureRoot, { recursive: true, force: true });
+  }
+}
+
 runUnixTtyCase('enter', [], allConfig, { keys: '\r', expectedMenuCount: 1 });
 runUnixTtyCase('space-toggle-first', [], withoutFirstConfig, { keys: ' \r', expectedMenuCount: 2 });
 runUnixTtyCase('arrow-toggle', [], withoutSecondConfig, { keys: '\x1b[B \r', expectedMenuCount: 3 });

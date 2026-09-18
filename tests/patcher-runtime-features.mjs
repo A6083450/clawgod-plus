@@ -71,6 +71,17 @@ function privateDate(e){let t=rdp(),n=odp(t?.known??!1,t?.labKw??!1),r=t?.cnTZ?e
   writeFileSync(sourceFile, source);
   const autoMode = await import('../src/generic/patcher/enhancements/auto-mode.mjs');
   const computerUse = await import('../src/generic/patcher/enhancements/computer-use.mjs');
+  const computerUseGate = computerUse.computerUseRegistry.patches.find(({ name }) => name === 'Computer Use gate bypass');
+  const darwinComputerUseGate = 'function $Ot(){if(up("hipaa"))return!1;return r()&&o().enabled}';
+  const legacyComputerUseGate = 'function MEe(){if(up("hipaa"))return!1;if(B7())return!0;return Pm()&&Bn()&&o.read}';
+  const unsupportedPlatformHipaa = 'function Aoe(e){if(Sf("hipaa"))return!1;if(a.CLAUDE_CODE_FORCE_MID_CONVERSATION_SYSTEM)return!0;return M0(cc(e))}';
+  assert.equal([...darwinComputerUseGate.matchAll(computerUseGate.pattern)].length, 1, 'Computer Use gate must match the 2.1.276 macOS implementation');
+  computerUseGate.pattern.lastIndex = 0;
+  assert.equal([...legacyComputerUseGate.matchAll(computerUseGate.pattern)].length, 1, 'Computer Use gate must retain the 2.1.258 intermediate-flag form');
+  computerUseGate.pattern.lastIndex = 0;
+  assert.equal([...unsupportedPlatformHipaa.matchAll(computerUseGate.pattern)].length, 0, 'unrelated HIPAA checks on unsupported platforms must not be patched as Computer Use');
+  computerUseGate.pattern.lastIndex = 0;
+  assert.equal(unsupportedPlatformHipaa.includes(computerUseGate.sentinel), false, 'the Computer Use sentinel must not mistake an unrelated HIPAA check for a missing gate');
   const planning = await import('../src/generic/patcher/enhancements/planning.mjs');
   const voice = await import('../src/generic/patcher/enhancements/voice.mjs');
   const agents = await import('../src/generic/patcher/enhancements/agents.mjs');

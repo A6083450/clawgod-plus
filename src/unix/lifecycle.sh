@@ -178,7 +178,7 @@ clawgod_menu_raw_off() {
 
 # 读取一个按键；置全局 CLAWGOD_MENU_KEY 为 UP / DOWN / SPACE / ENTER / ESC / EOF / CHAR:<单字节>
 # 常态 min 1 time 0 下 dd 返回空即 EOF；ESC 判定窗口（min 0 time 1）下 dd 返回空即超时。
-# dd bs=1 保证内核每次只交付 1 字节，多余字节留在队列，快速连按不吞键。
+# 用非换行 sentinel 防止命令替换吞掉 ICRNL 映射的 LF；否则 Esc+Enter 会丢掉 Enter。
 # ESC 判定窗口读到的非 '[' 字节（快速连按 Esc+数字等）缓存到 CLAWGOD_MENU_PUSHED，
 # 下次 read_key 先消费缓存字节并按同一 case 分类，保证快速连按不吞键。
 # 超时读的 dd 返回非零是正常路径，必须 `|| :` 兜住——脚本带 set -e，命令替换失败会终止安装器。
@@ -188,16 +188,19 @@ clawgod_menu_read_key() {
     first="$CLAWGOD_MENU_PUSHED"
     CLAWGOD_MENU_PUSHED=""
   else
-    first="$(dd bs=1 count=1 2>/dev/null < /dev/tty)" || { CLAWGOD_MENU_KEY=EOF; return 0; }
+    first="$(dd bs=1 count=1 2>/dev/null < /dev/tty; status=$?; printf .; exit "$status")" || { CLAWGOD_MENU_KEY=EOF; return 0; }
+    first="${first%.}"
   fi
   case "$first" in
     $'\e')
       stty min 0 time 1 < /dev/tty 2>/dev/null
-      second="$(dd bs=1 count=1 2>/dev/null < /dev/tty)" || :
+      second="$(dd bs=1 count=1 2>/dev/null < /dev/tty; status=$?; printf .; exit "$status")" || :
+      second="${second%.}"
       if [ -z "$second" ]; then
         CLAWGOD_MENU_KEY=ESC
       elif [ "$second" = "[" ]; then
-        third="$(dd bs=1 count=1 2>/dev/null < /dev/tty)" || :
+        third="$(dd bs=1 count=1 2>/dev/null < /dev/tty; status=$?; printf .; exit "$status")" || :
+        third="${third%.}"
         case "$third" in
           A) CLAWGOD_MENU_KEY=UP ;;
           B) CLAWGOD_MENU_KEY=DOWN ;;
