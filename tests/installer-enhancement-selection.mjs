@@ -580,7 +580,8 @@ runUnixTtyCase('cursor-wrap', [], withoutFirstConfig, {
   keys: '\x1b[B'.repeat(14) + ' \r',
   expectedMenuCount: 16,
 });
-runUnixTtyCase('eof-confirm', [], allConfig, { keys: '', expectedMenuCount: 1 });
+// BSD script 关闭输入管道仍保留 PTY；显式发送 EOT 才能测试终端 EOF。
+runUnixTtyCase('eof-confirm', [], allConfig, { keys: '\x04', expectedMenuCount: 1 });
 
 {
   const output = runUnixTtyCase('arrow-cursor-frame', [], withoutSecondConfig, {

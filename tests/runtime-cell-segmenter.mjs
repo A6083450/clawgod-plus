@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { parse } from './fixtures/acorn-8.16.0.cjs';
 
 import {
   CELL_LINE_CELLS_SOURCE,
@@ -316,6 +317,68 @@ check('声明扫描能跨过字符串、模板、正则与注释', () => {
   assert.equal(findDeclarationEnd('function broken(){', 16), -1);
 });
 
+check('三平台真实声明可适配，未知漂移仍被拒绝', () => {
+  for (const platform of ['2.1.274-darwin', '2.1.274-linux', '2.1.274-win32', '2.1.276-darwin', '2.1.276-linux', '2.1.276-win32']) {
+    const source = readFileSync(new URL(`./fixtures/cell-renderer-${platform}.txt`, import.meta.url), 'utf8');
+    const adapted = adaptCellRenderer(source);
+    assert.notEqual(adapted, null, `${platform}: 官方声明必须可适配`);
+    assert.doesNotMatch(adapted, /new Bun\.ant\.CellSegmenter/);
+    const originalAst = parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+    parse(adapted, { ecmaVersion: 'latest', sourceType: 'module' });
+    for (const node of originalAst.body.filter(node => node.type === 'ImportDeclaration' || ['Kf', 'Dc', 'cmr', 'qmr', 'Jmr'].includes(node.id?.name))) {
+      assert.ok(adapted.includes(source.slice(node.start, node.end)), `${platform}: 上游依赖必须原文保留`);
+    }
+    for (const binding of originalAst.body.filter(node => node.type === 'ImportDeclaration').flatMap(node => node.specifiers)) {
+      if (binding.local.name === 'xC') continue;
+      const broken = source.slice(0, binding.local.start) + `missing_${binding.local.name}` + source.slice(binding.local.end);
+      assert.equal(adaptCellRenderer(broken), null, `${platform}: 缺少 ${binding.local.name} 必须拒绝`);
+    }
+    assert.equal(adaptCellRenderer(source.replace('ambiguousIsNarrow:!0', 'ambiguousIsNarrow:!1')), null);
+    assert.equal(adaptCellRenderer(`${source}\nvar writeCell;`), null);
+  }
+});
+
+for (const [platform, names, headers] of [
+  ['2.1.274-linux', { Cx: 'xx', xC: 'SC', cmr: 'qmr', Rx: 'Cx', xx: 'Ex', hht: 'nht', C8: '_Y', MNr: 'LVn', LNr: 'wdt', bGt: 'nqt' },
+    ['function Ns()', 'class Dd ', 'function xx(', 'function SC(']],
+  ['2.1.274-win32', { Cx: 'Rx', xC: 'CC', cmr: 'Jmr', Rx: 'Mx', xx: 'Cx', hht: 'tht', C8: 'v8', MNr: 'zVn', LNr: 'vdt', bGt: 'oqt' },
+    ['function Ns()', 'class Dd ', 'function Rx(', 'function CC(']],
+  ['2.1.276-darwin', { Ns: 'Ss', Dd: 'Cd', Cx: 'cx', xC: 'cC', cmr: '_br', Kf: 'Lf', Dc: 'xc', bn: 'gn', wo: 'Ho', Xf: 'Kf', Rx: 'fx', xx: 'ux', hht: 'j_t', C8: 'uY', MNr: 'g2r', LNr: 'h2r', bGt: 'mqt' },
+    ['function Ss()', 'class Cd ', 'function cx(', 'function cC(']],
+  ['2.1.276-linux', { Ns: 'Ss', Dd: 'Cd', Cx: 'ax', xC: 'uC', cmr: 'Wbr', Kf: 'Lf', Dc: 'xc', bn: 'gn', wo: 'Bo', Xf: 'Kf', Rx: 'sx', xx: 'rx', hht: 'R_t', C8: 'r9', MNr: 'LBr', LNr: 'DBr', bGt: 'X4t' },
+    ['function Ss()', 'class Cd ', 'function ax(', 'function uC(']],
+  ['2.1.276-win32', { Ns: 'Ss', Dd: 'Cd', Cx: 'ux', xC: 'uC', cmr: 'Ybr', Kf: 'Lf', Dc: 'xc', bn: 'gn', wo: 'Ho', Xf: 'Kf', Rx: 'cx', xx: 'sx', hht: 'R_t', C8: 'l9', MNr: '$Br', LNr: 'FBr', bGt: 'e3t' },
+    ['function Ss()', 'class Cd ', 'function ux(', 'function uC(']],
+]) {
+  const source = readFileSync(new URL(`./fixtures/cell-renderer-${platform}.txt`, import.meta.url), 'utf8');
+  const adapted = adaptCellRenderer(source);
+  const declarations = headers.slice(1).map(header => {
+    const start = adapted.indexOf(header);
+    assert.ok(start >= 0, `${platform}: 缺少 ${header}`);
+    return adapted.slice(start, findDeclarationEnd(adapted, adapted.indexOf('{', start)) + 1);
+  });
+  const publicStart = adapted.indexOf('// ClawGod:');
+  const publicEnd = findDeclarationEnd(adapted, adapted.indexOf('{', adapted.indexOf(headers[0], publicStart))) + 1;
+  // 保持原测试的屏幕接口，只替换边界上的上游依赖名；执行的是适配器实际输出。
+  const helpers = RENDERER_MODULE.slice(0, RENDERER_MODULE.indexOf(CELL_RENDERER_SOURCE))
+    .replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
+  const actual = new Function(`${helpers}\n${adapted.slice(publicStart, publicEnd)}\n${declarations.join('\n')}\nreturn { Dd: ${names.Dd ?? 'Dd'}, paint: ${names.xC} };`)();
+  check(`${platform} 注入输出实际绘制宽字符、制表符、样式及超链接`, () => {
+    const styles = createStylePool();
+    const screen = createScreen(styles, 20);
+    const line = new actual.Dd(styles, screen.charPool);
+    const end = actual.paint(screen, '\x1b[31m中\x1b[0m\t\x1b]8;;https://example.com\x07A\x1b]8;;\x07', 0, 0, line);
+    assert.equal(end, 9);
+    assert.equal(screen.char(0), '中');
+    assert.equal(screen.widthOf(1), 2);
+    assert.deepEqual(screen.stylesAt(0), ['\x1b[31m']);
+    assert.equal(screen.char(8), 'A');
+    assert.equal(screen.hyperlinkAt(8), 'https://example.com');
+    assert.equal(line.width('中\tA', 0), 9);
+    assert.equal(line.parse('A\x1b[?25mB').map(cell => cell.value).join(''), 'AB');
+  });
+}
+
 check('未知渲染器形态一律拒绝', () => {
   assert.equal(adaptCellRenderer('function render(){return new Bun.ant.CellSegmenter({});}'), null);
   assert.equal(adaptCellRenderer(''), null);
@@ -399,7 +462,7 @@ function CellSegmenterFixture() {
     shape,
     source: [
       'import{hht,C8}from"./a.js";',
-      'import{MNr,LNr}from"./b.js";',
+      'import{MNr,LNr,bGt}from"./b.js";',
       'var Ss="\\x1B]8;;";',
       'function useScreen(n){let ge=Dc(oe),ve=U.x2-B;return ge}',
       shape.map(({ header }) => `${header}}`).join('\n'),

@@ -7486,8 +7486,95 @@ export const CELL_SEGMENTER_SHAPE = Object.freeze([
 
 // The renderer also leans on these module-level bindings. They are checked by
 // name so a renamed or removed import fails closed instead of at runtime.
-const CELL_SEGMENTER_BINDINGS = Object.freeze(['hht', 'C8', 'MNr', 'LNr']);
+const CELL_SEGMENTER_BINDINGS = Object.freeze(['hht', 'C8', 'MNr', 'LNr', 'bGt']);
 const OSC8_DECLARATION = 'var Ss="\\x1B]8;;"';
+
+// 同版本跨平台会重命名压缩标识符。只映射注入源码，绝不重命名上游模块；
+// 每个平台仍须通过完整声明的 SHA-256 校验，而不是依赖运行机器的平台。
+const CELL_PLATFORM_SHAPES = [
+  {
+    shape: CELL_SEGMENTER_SHAPE,
+    names: {},
+    tabAnchor: TAB_CLIP_ANCHOR,
+    tabReplacement: TAB_CLIP_REPLACEMENT,
+  },
+  {
+    shape: [
+      { header: 'function Ns(n){', digest: 'ac30ce81cada59843be0fa495b883808c0c4338bfe199d068e9ed5eab5062e74' },
+      { header: 'class Dd{', digest: '7bed0618f1608b4b221fefa36167bb319d0c9f5cd2cd4d819277b89d7bbe1903' },
+      { header: 'function xx(n,s,u,f){', digest: 'deac5d3bb248a2fd8dbdd347f4e1024ddef40623eb5b13fd7a60ddbc2c528925' },
+      { header: 'function SC(n,s,u,f,m){', digest: 'bb6854b10f0e6846cfcf1af6749b3b185f171370589b580a2ea1948dd22310f5' },
+      { header: 'function qmr(n,s=Number.POSITIVE_INFINITY){', digest: '59a3a009130c86c7223ce4ff3c8f24c9b71727cf157199cb24c9b8337cd5e42d' },
+      { header: 'function Kf(n,s){', digest: '833c8aba97c1c5351305daabf62c531b87b37f9da291fa067416c99332cdf285' },
+      { header: 'function Dc(n){', digest: 'b906f74a22265209d7f233e752a1b43bc1b5172fd7dc8d1028ef90f928805658' },
+    ],
+    names: { Cx: 'xx', xC: 'SC', cmr: 'qmr', Rx: 'Cx', xx: 'Ex', hht: 'nht', C8: '_Y', MNr: 'LVn', LNr: 'wdt', bGt: 'nqt' },
+    tabAnchor: 'let be=Dc(oe),ge=F.x2-w',
+    tabReplacement: 'let be=Dc(oe);if(be.indexOf(String.fromCharCode(9))>=0){let q=((w%nht)+nht)%nht;be=_Y(" ".repeat(q)+be).slice(q)}let ge=F.x2-w',
+  },
+  {
+    shape: [
+      { header: 'function Ns(n){', digest: '736a25ec268896d71d07162d41f0d171a6eac36db7902a2f07bbcde9f8ceed5d' },
+      { header: 'class Dd{', digest: '77c3b10775ae166bf39189f35445bac7d3b0a1afc92ddc5ba3e4998fcb7b5e87' },
+      { header: 'function Rx(n,s,u,f){', digest: '96c198edfb189f58e281309e2820ecb8e82d86a90f4b682ba124f71190e2f045' },
+      { header: 'function CC(n,s,u,f,h){', digest: '8a4b8e4f74ae43c7e26c9337de933ead26d765b64f863ff3675a948ed600863b' },
+      { header: 'function Jmr(n,s=Number.POSITIVE_INFINITY){', digest: 'b6efb306c3b5a4a2a7fe779f214f8747a08cf149d3fce068802c2580f35085ab' },
+      { header: 'function Kf(n,s){', digest: '7696e200d0fdf7b4c84049db7941177071620a5c6b68272fae60f5ebf0d41db1' },
+      { header: 'function Dc(n){', digest: '55e89daf20204474e099191c0f4d1a843cf51c94fbd569f4051c69b7bc726149' },
+    ],
+    names: { Cx: 'Rx', xC: 'CC', cmr: 'Jmr', Rx: 'Mx', xx: 'Cx', hht: 'tht', C8: 'v8', MNr: 'zVn', LNr: 'vdt', bGt: 'oqt' },
+    tabAnchor: 'let be=Dc(oe),ge=L.x2-H',
+    tabReplacement: 'let be=Dc(oe);if(be.indexOf(String.fromCharCode(9))>=0){let q=((H%tht)+tht)%tht;be=v8(" ".repeat(q)+be).slice(q)}let ge=L.x2-H',
+  },
+  // 2.1.276 darwin
+  {
+    shape: [
+      { header: 'function Ss(n){', digest: 'a0dd4522389a8dc1967f76410f73889df40bdf86f47e95cd08d6d0673018b9dd' },
+      { header: 'class Cd{', digest: '00fdec476f2ad30e68b1594fad389af0be769b0a9ffaceac093f6f773eaad1ef' },
+      { header: 'function cx(n,s,u,f){', digest: '551fdb0cb11d12cab8e0396011a0a0149f3fcfcf3f2689d810df561d48716037' },
+      { header: 'function cC(n,s,u,f,m){', digest: 'd3381a42bb35979e80423552684344b3903928fd7017af1504e3f424a86b41db' },
+      { header: 'function _br(n,s=Number.POSITIVE_INFINITY){', digest: 'fcf061b6dfef0ef35dc17cc5d65bcaa25defad452f687dc78b7efe93bce698e3' },
+      { header: 'function Lf(n,s){', digest: '20026d512dbaf213e8b6886de96427524a408b128630cf018a1663a93153ffec' },
+      { header: 'function xc(n){', digest: '43b72b923bf142999721ae83f4750b4068e184b05835b6d0e90fc11d7675d332' },
+    ],
+    names: { Ns: 'Ss', Dd: 'Cd', Cx: 'cx', xC: 'cC', cmr: '_br', Kf: 'Lf', Dc: 'xc', bn: 'gn', wo: 'Ho', Xf: 'Kf', Rx: 'fx', xx: 'ux', hht: 'j_t', C8: 'uY', MNr: 'g2r', LNr: 'h2r', bGt: 'mqt' },
+    oscDeclaration: 'var ys="\\x1B]8;;"',
+    tabAnchor: 'let fe=xc(oe),ge=U.x2-H',
+    tabReplacement: 'let fe=xc(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((H%j_t)+j_t)%j_t;fe=uY(" ".repeat(q)+fe).slice(q)}let ge=U.x2-H',
+  },
+  // 2.1.276 linux
+  {
+    shape: [
+      { header: 'function Ss(n){', digest: 'a8789e212cdc179cb9dcab6d0b151df1e54374f229abf06269d8af3dfa2608e3' },
+      { header: 'class Cd{', digest: 'da7e444b7296895b90e3e95e3e95119eec19f9030cc6857db42c4bfc892777b8' },
+      { header: 'function ax(n,s,u,f){', digest: '07bbebc3e21c46baaf7c5852eefcd63c69e253e3c4608774e7171dd15a544040' },
+      { header: 'function uC(n,s,u,f,m){', digest: '17493b884635fc837b3f66dd2eaae3ffa99f758080e8e229e47b0ae24f4e1a5d' },
+      { header: 'function Wbr(n,s=Number.POSITIVE_INFINITY){', digest: '825eda9f6c8a22e2090a41d5b1df77d96e74024840bd2239e86186aef6e0b493' },
+      { header: 'function Lf(n,s){', digest: 'd8a635ea00ff8f6b75098bdea95b0a4e683f4e7e26440b65dbce03a5524dad22' },
+      { header: 'function xc(n){', digest: 'b7d454b07e4d7443691841d0bbfbf998743050241f8a8f6dba819fdf69eff375' },
+    ],
+    names: { Ns: 'Ss', Dd: 'Cd', Cx: 'ax', xC: 'uC', cmr: 'Wbr', Kf: 'Lf', Dc: 'xc', bn: 'gn', wo: 'Bo', Xf: 'Kf', Rx: 'sx', xx: 'rx', hht: 'R_t', C8: 'r9', MNr: 'LBr', LNr: 'DBr', bGt: 'X4t' },
+    oscDeclaration: 'var ys="\\x1B]8;;"',
+    tabAnchor: 'let fe=xc(oe),ge=P.x2-B',
+    tabReplacement: 'let fe=xc(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((B%R_t)+R_t)%R_t;fe=r9(" ".repeat(q)+fe).slice(q)}let ge=P.x2-B',
+  },
+  // 2.1.276 win32
+  {
+    shape: [
+      { header: 'function Ss(n){', digest: '4dc4fb9aec1e8d12f2142a2e3af9592e8eee119c0e5574d8000244527b3ce6ef' },
+      { header: 'class Cd{', digest: '05def87fb3a883645f33f12486e5e529b7ab519173d7f890b2733675dc6258d2' },
+      { header: 'function ux(n,s,u,f){', digest: '7b878069aae21e0c2e94304adfcd4bb225a7217b0d0343cb8dc35b5c94d007ba' },
+      { header: 'function uC(n,s,u,f,m){', digest: '3f43193067f814623bf3a7b97d60e15eef7ca6990204fb562702c9591c6e17a8' },
+      { header: 'function Ybr(n,s=Number.POSITIVE_INFINITY){', digest: '0d3186c7f2bf757c66164290f4a839f76a3e25547f392972da8ef7b56b5e0b89' },
+      { header: 'function Lf(n,s){', digest: '60da48ed9f91315e49151c21cbbd6b219fba63d2db6c8e9a0159888e07e69ebd' },
+      { header: 'function xc(n){', digest: 'edc201f072ecabe926a01ecda3ed3abe904fb2e0be9bb7e86fe796b08e73af19' },
+    ],
+    names: { Ns: 'Ss', Dd: 'Cd', Cx: 'ux', xC: 'uC', cmr: 'Ybr', Kf: 'Lf', Dc: 'xc', bn: 'gn', wo: 'Ho', Xf: 'Kf', Rx: 'cx', xx: 'sx', hht: 'R_t', C8: 'l9', MNr: '$Br', LNr: 'FBr', bGt: 'e3t' },
+    oscDeclaration: 'var ys="\\x1B]8;;"',
+    tabAnchor: 'let fe=xc(oe),ge=U.x2-H',
+    tabReplacement: 'let fe=xc(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((H%R_t)+R_t)%R_t;fe=l9(" ".repeat(q)+fe).slice(q)}let ge=U.x2-H',
+  },
+];
 
 // Every name the injected source introduces must be free in the target module;
 // a collision would silently change unrelated rendering.
@@ -7583,20 +7670,32 @@ function startsExpression(previous) {
 
 /**
  * Rewrites a frozen private-runtime renderer into the public-Bun one.
- * Returns null when the module is not the known 2.1.274 shape, so the caller
+ * Returns null when the module matches no frozen platform shape, so the caller
  * can refuse the candidate instead of installing a runtime that cannot start.
  * `shape` is a parameter so the guard rails around the rewrite can be
  * exercised offline; production callers always use the frozen table.
  */
-export function adaptCellRenderer(source, shape = CELL_SEGMENTER_SHAPE) {
+export function adaptCellRenderer(source, shape) {
+  const profiles = shape ? [{ ...CELL_PLATFORM_SHAPES[0], shape }] : CELL_PLATFORM_SHAPES;
+  for (const profile of profiles) {
+    const adapted = adaptCellRendererShape(source, profile);
+    if (adapted !== null) return adapted;
+  }
+  return null;
+}
+
+function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, oscDeclaration = OSC8_DECLARATION }) {
   for (const name of CELL_RENDERER_NAMES) {
     if (source.includes(name)) return null;
   }
-  if (!source.includes(OSC8_DECLARATION)) return null;
+  if (!source.includes(oscDeclaration)) return null;
   for (const binding of CELL_SEGMENTER_BINDINGS) {
-    if (!new RegExp(`import\\{[^}]*\\b${binding}\\b[^}]*\\}from`).test(source)) return null;
+    const local = names[binding] ?? binding;
+    const present = [...source.matchAll(/import\{([^}]*)\}from/g)].some((match) =>
+      match[1].split(',').some(specifier => specifier.trim().split(/\s+as\s+/).at(-1) === local));
+    if (!present) return null;
   }
-  if (source.split(TAB_CLIP_ANCHOR).length !== 2) return null;
+  if (source.split(tabAnchor).length !== 2) return null;
   const spans = [];
   for (const { header, digest } of shape) {
     const start = source.indexOf(header);
@@ -7614,9 +7713,11 @@ export function adaptCellRenderer(source, shape = CELL_SEGMENTER_SHAPE) {
   ].sort((first, second) => second[0].start - first[0].start);
   let adapted = source;
   for (const [span, text] of replacements) {
-    adapted = adapted.slice(0, span.start) + text + adapted.slice(span.end);
+    // 注入模板中的这些短名只作为标识符出现；单次替换避免 Cx→Rx→Mx 连锁改名。
+    const mapped = text.replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
+    adapted = adapted.slice(0, span.start) + mapped + adapted.slice(span.end);
   }
-  return adapted.replace(TAB_CLIP_ANCHOR, TAB_CLIP_REPLACEMENT);
+  return adapted.replace(tabAnchor, tabReplacement);
 }
 
 // 2.1.269+ 渲染器硬依赖私有 Bun.ant.CellSegmenter。公开 Bun 给不了，所以在
