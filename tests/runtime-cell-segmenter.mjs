@@ -318,7 +318,7 @@ check('声明扫描能跨过字符串、模板、正则与注释', () => {
 });
 
 check('三平台真实声明可适配，未知漂移仍被拒绝', () => {
-  for (const platform of ['2.1.274-darwin', '2.1.274-linux', '2.1.274-win32', '2.1.276-darwin', '2.1.276-linux', '2.1.276-win32']) {
+  for (const platform of ['2.1.274-darwin', '2.1.274-linux', '2.1.274-win32', '2.1.276-darwin', '2.1.276-linux', '2.1.276-win32', '2.1.278-darwin', '2.1.278-linux', '2.1.278-win32']) {
     const source = readFileSync(new URL(`./fixtures/cell-renderer-${platform}.txt`, import.meta.url), 'utf8');
     const adapted = adaptCellRenderer(source);
     assert.notEqual(adapted, null, `${platform}: 官方声明必须可适配`);
@@ -349,6 +349,12 @@ for (const [platform, names, headers] of [
     ['function Ss()', 'class Cd ', 'function ax(', 'function uC(']],
   ['2.1.276-win32', { Ns: 'Ss', Dd: 'Cd', Cx: 'ux', xC: 'uC', cmr: 'Ybr', Kf: 'Lf', Dc: 'xc', bn: 'gn', wo: 'Ho', Xf: 'Kf', Rx: 'cx', xx: 'sx', hht: 'R_t', C8: 'l9', MNr: '$Br', LNr: 'FBr', bGt: 'e3t' },
     ['function Ss()', 'class Cd ', 'function ux(', 'function uC(']],
+  ['2.1.278-darwin', { Ns: 'vs', Dd: 'Mf', Cx: 'px', xC: 'xC', cmr: 'bCr', Kf: 'Bd', Dc: 'Ec', bn: 'gn', wo: 'Ho', Xf: 'kd', Rx: 'yx', xx: 'mx', hht: 'cwt', C8: 'fX', MNr: 'bzr', LNr: 'wzr', bGt: 'T5t' },
+    ['function vs()', 'class Mf ', 'function px(', 'function xC(']],
+  ['2.1.278-linux', { Ns: 'Ss', Dd: 'Rf', Cx: 'hx', xC: 'xC', cmr: 'ckr', Kf: 'Bd', Dc: 'xc', bn: 'gn', wo: 'Bo', Xf: 'kd', Rx: 'mx', xx: 'fx', hht: 'YSt', C8: 'iX', MNr: 'FGr', LNr: 'UGr', bGt: 'l8t' },
+    ['function Ss()', 'class Rf ', 'function hx(', 'function xC(']],
+  ['2.1.278-win32', { Ns: 'Ss', Dd: 'Mf', Cx: 'px', xC: 'EC', cmr: 'mkr', Kf: 'Bd', Dc: 'Ec', bn: 'gn', wo: 'Ho', Xf: 'kd', Rx: 'yx', xx: 'mx', hht: 'YSt', C8: 'uX', MNr: 'zGr', LNr: 'WGr', bGt: 'pYt' },
+    ['function Ss()', 'class Mf ', 'function px(', 'function EC(']],
 ]) {
   const source = readFileSync(new URL(`./fixtures/cell-renderer-${platform}.txt`, import.meta.url), 'utf8');
   const adapted = adaptCellRenderer(source);

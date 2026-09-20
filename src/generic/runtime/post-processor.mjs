@@ -451,6 +451,54 @@ const CELL_PLATFORM_SHAPES = [
     tabAnchor: 'let fe=xc(oe),ge=U.x2-H',
     tabReplacement: 'let fe=xc(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((H%R_t)+R_t)%R_t;fe=l9(" ".repeat(q)+fe).slice(q)}let ge=U.x2-H',
   },
+  // 2.1.278 darwin
+  {
+    shape: [
+      { header: 'function vs(n){', digest: 'd4a8296094cac9707122b9e5460138ae8b0c3f9194e3185e141db1216ca70cfc' },
+      { header: 'class Mf{', digest: '134c725be2ec7ec795ad0ca288e0671abdfabda01fcce28e1370b47069096721' },
+      { header: 'function px(n,s,u,f){', digest: '6fed0460bd35861f2649f88e19c888f6051aa8b8ed05f4e2f6b0854af10d41d1' },
+      { header: 'function xC(n,s,u,f,m){', digest: '74f0a5164e92d9e99518b27ff2d9007552c0c1627eb5b7fac281e5fe7756a2b8' },
+      { header: 'function bCr(n,s=Number.POSITIVE_INFINITY){', digest: '857ed54815e1d96529dc71cf7f4d9655613aadbeecfc3a10885b3b0ecbc8e43d' },
+      { header: 'function Bd(n,s){', digest: 'd37554a039a8c7364ee2ff7d6ff28bb15920c627ecfb909de192406c1c5e7c78' },
+      { header: 'function Ec(n){', digest: 'cd3da2b7dc88940ea34fc9da20134e596a9e4dbcd1f39238d8aad7199e82fe8c' },
+    ],
+    names: { Ns: 'vs', Dd: 'Mf', Cx: 'px', xC: 'xC', cmr: 'bCr', Kf: 'Bd', Dc: 'Ec', bn: 'gn', wo: 'Ho', Xf: 'kd', Rx: 'yx', xx: 'mx', hht: 'cwt', C8: 'fX', MNr: 'bzr', LNr: 'wzr', bGt: 'T5t' },
+    oscDeclaration: 'var ys="\\x1B]8;;"',
+    tabAnchor: 'let fe=Ec(oe),ge=F.x2-H',
+    tabReplacement: 'let fe=Ec(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((H%cwt)+cwt)%cwt;fe=fX(" ".repeat(q)+fe).slice(q)}let ge=F.x2-H',
+  },
+  // 2.1.278 linux
+  {
+    shape: [
+      { header: 'function Ss(n){', digest: '0634b77a7740a9fcde19c3985049d09b24618d1b5baee2e60a65ff90e8215e00' },
+      { header: 'class Rf{', digest: '3e9a874886729829a6e370f9d6ecc83a888c1d2eb0f2ffd6273d464464be6956' },
+      { header: 'function hx(n,s,u,f){', digest: '820518bd51fa6bc8177cfb53fc0ffde817122bfdaed171895a220ae552f53b63' },
+      { header: 'function xC(n,s,u,f,m){', digest: '21bfc2d2353fb3ef83d702a609b6f592dcd742d3a2ef9170ba2417610d2893f6' },
+      { header: 'function ckr(n,s=Number.POSITIVE_INFINITY){', digest: '3473ce0607774850f4803c3b31d478a6ead374ce5dfd6f93fdfc4c77f43f3589' },
+      { header: 'function Bd(n,s){', digest: '2c8459be8474405142e31e0dfc24151411ace0cb7e6e6c28dc0b961aa2deadf0' },
+      { header: 'function xc(n){', digest: 'c0b05868714c4c6446bedf98f853769dd91c76c3fde53648567e2f2f6c20c48c' },
+    ],
+    names: { Ns: 'Ss', Dd: 'Rf', Cx: 'hx', xC: 'xC', cmr: 'ckr', Kf: 'Bd', Dc: 'xc', bn: 'gn', wo: 'Bo', Xf: 'kd', Rx: 'mx', xx: 'fx', hht: 'YSt', C8: 'iX', MNr: 'FGr', LNr: 'UGr', bGt: 'l8t' },
+    oscDeclaration: 'var gs="\\x1B]8;;"',
+    tabAnchor: 'let fe=xc(oe),ge=L.x2-B',
+    tabReplacement: 'let fe=xc(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((B%YSt)+YSt)%YSt;fe=iX(" ".repeat(q)+fe).slice(q)}let ge=L.x2-B',
+  },
+  // 2.1.278 win32
+  {
+    shape: [
+      { header: 'function Ss(n){', digest: 'b72e953d299ddf87ee7906bc25cb673fe56a2f54f6ee57e726a893981e43e0d8' },
+      { header: 'class Mf{', digest: '27fe1ba7d7289fafac5ae625645228a8eb1c343f839a23d6b927e2fa484a3bb9' },
+      { header: 'function px(n,s,u,f){', digest: '0fa001b973bafe1401fd0fe20d57103a567428bd2dec5f0ef98c95d1176cb422' },
+      { header: 'function EC(n,s,u,f,m){', digest: 'b5c9f67c07cc451feeb200cf93cdca3c6d07e1557a66151b39cbeb3725c3d4e8' },
+      { header: 'function mkr(n,s=Number.POSITIVE_INFINITY){', digest: 'c9855fa3632f839f5955da35f7a6522e6041afd7e6b79918ad025b92726d6b1c' },
+      { header: 'function Bd(n,s){', digest: '9b1427b49efb55c454c6c935d2c62bb145184d0f55214c3ea8ce399cd6622935' },
+      { header: 'function Ec(n){', digest: '7008506e2fe7aa92fa08c1c468397756e853d7bdf8c15a6c68cf99da7bbdb4dc' },
+    ],
+    names: { Ns: 'Ss', Dd: 'Mf', Cx: 'px', xC: 'EC', cmr: 'mkr', Kf: 'Bd', Dc: 'Ec', bn: 'gn', wo: 'Ho', Xf: 'kd', Rx: 'yx', xx: 'mx', hht: 'YSt', C8: 'uX', MNr: 'zGr', LNr: 'WGr', bGt: 'pYt' },
+    oscDeclaration: 'var gs="\\x1B]8;;"',
+    tabAnchor: 'let fe=Ec(oe),ge=F.x2-H',
+    tabReplacement: 'let fe=Ec(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((H%YSt)+YSt)%YSt;fe=uX(" ".repeat(q)+fe).slice(q)}let ge=F.x2-H',
+  },
 ];
 
 // Every name the injected source introduces must be free in the target module;
