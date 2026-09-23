@@ -7625,6 +7625,54 @@ const CELL_PLATFORM_SHAPES = [
     tabAnchor: 'let fe=Ec(oe),ge=F.x2-H',
     tabReplacement: 'let fe=Ec(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((H%YSt)+YSt)%YSt;fe=uX(" ".repeat(q)+fe).slice(q)}let ge=F.x2-H',
   },
+  // 2.1.280 darwin
+  {
+    shape: [
+      { header: 'function gs(n){', digest: '451500eeb2148705f8efb2c6f462a4694d35db36e8a58249e5e8bcf43797a2ad' },
+      { header: 'class Kd{', digest: '4a95b3099242d27d4a1f3368c69b2369e185abc422dcfc5799018c8452906388' },
+      { header: 'function WE(n,s,u,f){', digest: '8ad35a3ee724264f7d7864935000c0006feedc300a40ad1e4f982c7611131b19' },
+      { header: 'function $x(n,s,u,f,m){', digest: 'a170ead8f986ec28ddeacd93f1490a957866dcf321ccb0bc5f8d182d6596c07a' },
+      { header: 'function UMr(n,s=Number.POSITIVE_INFINITY){', digest: '3a703d643b7b327d93744ac87f44b91ce6a42811266b121eb9800533dd0c9148' },
+      { header: 'function ud(n,s){', digest: 'f8d29d2b93f36ba509529c3c3622438cbedea3495018f8d51e373296dbbc2306' },
+      { header: 'function gc(n){', digest: 'fee256ff9a34ed06a504164cc065414a5c334259f6ff1f90a96e36d700b31208' },
+    ],
+    names: { Ns: 'gs', Dd: 'Kd', Cx: 'WE', xC: '$x', cmr: 'UMr', Kf: 'ud', Dc: 'gc', bn: 'gn', wo: 'Do', Xf: 'pd', jn: 'Yn', Rx: 'qE', xx: 'jE', hht: 'ITt', C8: 'eJ', MNr: 'WXr', LNr: 'GXr', bGt: 'QZt' },
+    oscDeclaration: 'var ms="\\x1B]8;;"',
+    tabAnchor: 'let fe=gc(oe),ge=F.x2-H',
+    tabReplacement: 'let fe=gc(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((H%ITt)+ITt)%ITt;fe=eJ(" ".repeat(q)+fe).slice(q)}let ge=F.x2-H',
+  },
+  // 2.1.280 linux
+  {
+    shape: [
+      { header: 'function gs(n){', digest: '6763991fc5b3df480c2dbf79f805a87c753c1b0bb15419b2aa1a1b11473009f2' },
+      { header: 'class Kd{', digest: 'd0409e7aa3498854187ed619ed7f298f580f26acf778719f50916e3c70ffa203' },
+      { header: 'function IE(n,s,u,f){', digest: '946b728782e4f0af594653a125a01fc96dece05cbd302693511cb3f86bd807c3' },
+      { header: 'function Qx(n,s,u,f,m){', digest: 'b78125da953622f610cae658a8dc00cb95c0976efd1db8343c79490145841ecf' },
+      { header: 'function pLr(n,s=Number.POSITIVE_INFINITY){', digest: '3098b06aad5590987e5c7deb10540401bceca300517d3df03116f21c01d06b9f' },
+      { header: 'function ud(n,s){', digest: 'dfbad4e6a5fd98ae20c0f403e57f3e1ca8478a2d25c22e20ea3f972070b9d066' },
+      { header: 'function gc(n){', digest: '98db97d40a90642343d59bc908e66b1b50ef8e6e4bc850bfd95a36abd70b965a' },
+    ],
+    names: { Ns: 'gs', Dd: 'Kd', Cx: 'IE', xC: 'Qx', cmr: 'pLr', Kf: 'ud', Dc: 'gc', bn: 'gn', wo: 'No', Xf: 'pd', jn: 'Yn', Rx: 'KE', xx: 'kE', hht: 'yTt', C8: 'VJ', MNr: 'sXr', LNr: 'iXr', bGt: 'DZt' },
+    oscDeclaration: 'var ms="\\x1B]8;;"',
+    tabAnchor: 'let fe=gc(oe),ge=L.x2-B',
+    tabReplacement: 'let fe=gc(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((B%yTt)+yTt)%yTt;fe=VJ(" ".repeat(q)+fe).slice(q)}let ge=L.x2-B',
+  },
+  // 2.1.280 win32
+  {
+    shape: [
+      { header: 'function gs(n){', digest: '73e2f2b383b85627c5e55c4e655693826e1ccb51de1993ef14acfca15984afae' },
+      { header: 'class Kd{', digest: 'b4413fb01fca4840d1ab17e566c666215192bf15ed74f9615c2d9a5d305a9d53' },
+      { header: 'function IE(n,s,c,f){', digest: '7d59d694db37fc2f83d1eae6f375fe5d52c969c7b5069d5c041ab535b196af69' },
+      { header: 'function Zx(n,s,c,f,m){', digest: '41ceded8b5e47c852cdb8d5b95f8e3f91f3b5cb926dd76b63ec25561b65409e2' },
+      { header: 'function ILr(n,s=Number.POSITIVE_INFINITY){', digest: '1ee383323def178309c1f1a5217d7d92a1a14459d56948be4d0ddcb8f65f9cc3' },
+      { header: 'function ud(n,s){', digest: 'a025d26a071a69d37db47f5264fc030dae50e46640ca0d216b77295a62bbf0ad' },
+      { header: 'function gc(n){', digest: '32f70c54b303068cdc05668408c2f0f2dd7b54cc2a91862a2646a93cc3df7f97' },
+    ],
+    names: { Ns: 'gs', Dd: 'Kd', Cx: 'IE', xC: 'Zx', cmr: 'ILr', Kf: 'ud', Dc: 'gc', bn: 'gn', wo: 'No', Xf: 'pd', jn: 'Yn', Rx: 'KE', xx: 'kE', hht: '_Ct', C8: 'QJ', MNr: 'dXr', LNr: 'uXr', bGt: 'UZt' },
+    oscDeclaration: 'var ms="\\x1B]8;;"',
+    tabAnchor: 'let fe=gc(oe),ge=F.x2-H',
+    tabReplacement: 'let fe=gc(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((H%_Ct)+_Ct)%_Ct;fe=QJ(" ".repeat(q)+fe).slice(q)}let ge=F.x2-H',
+  },
 ];
 
 // Every name the injected source introduces must be free in the target module;
@@ -7765,7 +7813,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
   let adapted = source;
   for (const [span, text] of replacements) {
     // 注入模板中的这些短名只作为标识符出现；单次替换避免 Cx→Rx→Mx 连锁改名。
-    const mapped = text.replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
+    const mapped = text.replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
     adapted = adapted.slice(0, span.start) + mapped + adapted.slice(span.end);
   }
   return adapted.replace(tabAnchor, tabReplacement);

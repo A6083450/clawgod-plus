@@ -318,7 +318,7 @@ check('声明扫描能跨过字符串、模板、正则与注释', () => {
 });
 
 check('三平台真实声明可适配，未知漂移仍被拒绝', () => {
-  for (const platform of ['2.1.274-darwin', '2.1.274-linux', '2.1.274-win32', '2.1.276-darwin', '2.1.276-linux', '2.1.276-win32', '2.1.278-darwin', '2.1.278-linux', '2.1.278-win32']) {
+  for (const platform of ['2.1.274-darwin', '2.1.274-linux', '2.1.274-win32', '2.1.276-darwin', '2.1.276-linux', '2.1.276-win32', '2.1.278-darwin', '2.1.278-linux', '2.1.278-win32', '2.1.280-darwin', '2.1.280-linux', '2.1.280-win32']) {
     const source = readFileSync(new URL(`./fixtures/cell-renderer-${platform}.txt`, import.meta.url), 'utf8');
     const adapted = adaptCellRenderer(source);
     assert.notEqual(adapted, null, `${platform}: 官方声明必须可适配`);
@@ -355,6 +355,12 @@ for (const [platform, names, headers] of [
     ['function Ss()', 'class Rf ', 'function hx(', 'function xC(']],
   ['2.1.278-win32', { Ns: 'Ss', Dd: 'Mf', Cx: 'px', xC: 'EC', cmr: 'mkr', Kf: 'Bd', Dc: 'Ec', bn: 'gn', wo: 'Ho', Xf: 'kd', Rx: 'yx', xx: 'mx', hht: 'YSt', C8: 'uX', MNr: 'zGr', LNr: 'WGr', bGt: 'pYt' },
     ['function Ss()', 'class Mf ', 'function px(', 'function EC(']],
+  ['2.1.280-darwin', { Ns: 'gs', Dd: 'Kd', Cx: 'WE', xC: '$x', cmr: 'UMr', Kf: 'ud', Dc: 'gc', bn: 'gn', wo: 'Do', Xf: 'pd', jn: 'Yn', Rx: 'qE', xx: 'jE', hht: 'ITt', C8: 'eJ', MNr: 'WXr', LNr: 'GXr', bGt: 'QZt' },
+    ['function gs()', 'class Kd ', 'function WE(', 'function $x(']],
+  ['2.1.280-linux', { Ns: 'gs', Dd: 'Kd', Cx: 'IE', xC: 'Qx', cmr: 'pLr', Kf: 'ud', Dc: 'gc', bn: 'gn', wo: 'No', Xf: 'pd', jn: 'Yn', Rx: 'KE', xx: 'kE', hht: 'yTt', C8: 'VJ', MNr: 'sXr', LNr: 'iXr', bGt: 'DZt' },
+    ['function gs()', 'class Kd ', 'function IE(', 'function Qx(']],
+  ['2.1.280-win32', { Ns: 'gs', Dd: 'Kd', Cx: 'IE', xC: 'Zx', cmr: 'ILr', Kf: 'ud', Dc: 'gc', bn: 'gn', wo: 'No', Xf: 'pd', jn: 'Yn', Rx: 'KE', xx: 'kE', hht: '_Ct', C8: 'QJ', MNr: 'dXr', LNr: 'uXr', bGt: 'UZt' },
+    ['function gs()', 'class Kd ', 'function IE(', 'function Zx(']],
 ]) {
   const source = readFileSync(new URL(`./fixtures/cell-renderer-${platform}.txt`, import.meta.url), 'utf8');
   const adapted = adaptCellRenderer(source);
@@ -367,7 +373,7 @@ for (const [platform, names, headers] of [
   const publicEnd = findDeclarationEnd(adapted, adapted.indexOf('{', adapted.indexOf(headers[0], publicStart))) + 1;
   // 保持原测试的屏幕接口，只替换边界上的上游依赖名；执行的是适配器实际输出。
   const helpers = RENDERER_MODULE.slice(0, RENDERER_MODULE.indexOf(CELL_RENDERER_SOURCE))
-    .replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
+    .replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
   const actual = new Function(`${helpers}\n${adapted.slice(publicStart, publicEnd)}\n${declarations.join('\n')}\nreturn { Dd: ${names.Dd ?? 'Dd'}, paint: ${names.xC} };`)();
   check(`${platform} 注入输出实际绘制宽字符、制表符、样式及超链接`, () => {
     const styles = createStylePool();
@@ -384,6 +390,26 @@ for (const [platform, names, headers] of [
     assert.equal(line.parse('A\x1b[?25mB').map(cell => cell.value).join(''), 'AB');
   });
 }
+
+check('2.1.280 裁剪制表符时使用上游展开函数', () => {
+  for (const [platform, helper] of [['darwin', 'eJ'], ['linux', 'VJ'], ['win32', 'QJ']]) {
+    const source = readFileSync(new URL(`./fixtures/cell-renderer-2.1.280-${platform}.txt`, import.meta.url), 'utf8');
+    const adapted = adaptCellRenderer(source);
+    const start = adapted.indexOf('function tabClip(');
+    const declaration = adapted.slice(start, findDeclarationEnd(adapted, adapted.indexOf('{', start)) + 1);
+    const tabWidth = { darwin: 'ITt', linux: 'yTt', win32: '_Ct' }[platform];
+    const clip = new Function('gc', helper, tabWidth, 'Bun', `${declaration};return tabClip`)(
+      text => text,
+      text => {
+        assert.equal(text, '   a\tb');
+        return '   a    b';
+      },
+      8,
+      { sliceAnsi: text => text },
+    );
+    assert.equal(clip('a\tb', 3, 0, { x2: 20 }), 'a    b', platform);
+  }
+});
 
 check('未知渲染器形态一律拒绝', () => {
   assert.equal(adaptCellRenderer('function render(){return new Bun.ant.CellSegmenter({});}'), null);
