@@ -10,6 +10,7 @@ on:
   push:
     branches: [main]
     paths:
+      - '.gitattributes'
       - 'dist/**'
       - 'apply-claude-code-*.sh'
       - 'apply-claude-code-*.ps1'
@@ -27,6 +28,7 @@ on:
       - .github/workflows/compat-daily.yml
   pull_request:
     paths:
+      - '.gitattributes'
       - 'dist/**'
       - 'apply-claude-code-*.sh'
       - 'apply-claude-code-*.ps1'

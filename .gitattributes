@@ -1,0 +1,2 @@
+# Keep canonical manifests, generated installers and source fixtures byte-stable on Windows.
+* text=auto eol=lf
