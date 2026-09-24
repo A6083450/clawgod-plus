@@ -62,6 +62,13 @@ const expectedIds = [
   'paste-images',
   'privacy',
   'branding',
+  'classifier-fail-open',
+  'cleanup-period',
+  'disable-collapse-read-search',
+  'enable-keybindings',
+  'file-read-limit',
+  'transcript-dialog-replay',
+  'unlock-ultracode',
   'claude-hud',
   'claude-mem',
   'superpowers',
@@ -102,6 +109,13 @@ const withoutFirstTwoConfig = `{
     "paste-images",
     "privacy",
     "branding",
+    "classifier-fail-open",
+    "cleanup-period",
+    "disable-collapse-read-search",
+    "enable-keybindings",
+    "file-read-limit",
+    "transcript-dialog-replay",
+    "unlock-ultracode",
     "claude-hud",
     "claude-mem",
     "superpowers"
@@ -122,6 +136,13 @@ const withoutFirstConfig = `{
     "paste-images",
     "privacy",
     "branding",
+    "classifier-fail-open",
+    "cleanup-period",
+    "disable-collapse-read-search",
+    "enable-keybindings",
+    "file-read-limit",
+    "transcript-dialog-replay",
+    "unlock-ultracode",
     "claude-hud",
     "claude-mem",
     "superpowers"
@@ -142,6 +163,13 @@ const withoutSecondConfig = `{
     "paste-images",
     "privacy",
     "branding",
+    "classifier-fail-open",
+    "cleanup-period",
+    "disable-collapse-read-search",
+    "enable-keybindings",
+    "file-read-limit",
+    "transcript-dialog-replay",
+    "unlock-ultracode",
     "claude-hud",
     "claude-mem",
     "superpowers"
@@ -602,10 +630,10 @@ function runUnixTtyCase(label, lines, expected, {
 runUnixTtyCase('enter', [], allConfig, { keys: '\r', expectedMenuCount: 1 });
 runUnixTtyCase('space-toggle-first', [], withoutFirstConfig, { keys: ' \r', expectedMenuCount: 2 });
 runUnixTtyCase('arrow-toggle', [], withoutSecondConfig, { keys: '\x1b[B \r', expectedMenuCount: 3 });
-runUnixTtyCase('uncheck-all', [], noneConfig, { keys: ' ' + '\x1b[B '.repeat(13) + '\r', expectedMenuCount: 28 });
+runUnixTtyCase('uncheck-all', [], noneConfig, { keys: ' ' + '\x1b[B '.repeat(expectedIds.length - 1) + '\r', expectedMenuCount: expectedIds.length * 2 });
 runUnixTtyCase('cursor-wrap', [], withoutFirstConfig, {
-  keys: '\x1b[B'.repeat(14) + ' \r',
-  expectedMenuCount: 16,
+  keys: '\x1b[B'.repeat(expectedIds.length) + ' \r',
+  expectedMenuCount: expectedIds.length + 2,
 });
 // BSD script 关闭输入管道仍保留 PTY；显式发送 EOT 才能测试终端 EOF。
 runUnixTtyCase('eof-confirm', [], allConfig, { keys: '\x04', expectedMenuCount: 1 });
@@ -619,8 +647,8 @@ runUnixTtyCase('eof-confirm', [], allConfig, { keys: '\x04', expectedMenuCount: 
 }
 {
   const output = runUnixTtyCase('wrap-cursor-frame', [], withoutFirstConfig, {
-    keys: '\x1b[B'.repeat(14) + ' \r',
-    expectedMenuCount: 16,
+    keys: '\x1b[B'.repeat(expectedIds.length) + ' \r',
+    expectedMenuCount: expectedIds.length + 2,
   });
   assert.ok(output.includes('>  1) [ ] chrome'), 'wrapped cursor frame must mark row 1 with >');
 }
@@ -874,7 +902,7 @@ if (pwsh) {
   for (const [label, keySequence, expected, warnings] of [
     ['enter', ['Enter'], allConfig, []],
     ['arrow-toggle', ['DownArrow', 'Spacebar', 'Enter'], withoutSecondConfig, []],
-    ['uncheck-all', ['Spacebar', ...Array(13).fill(['DownArrow', 'Spacebar']).flat(), 'Enter'], noneConfig, []],
+    ['uncheck-all', ['Spacebar', ...Array(expectedIds.length - 1).fill(['DownArrow', 'Spacebar']).flat(), 'Enter'], noneConfig, []],
   ]) {
     output = runPowerShell(pwsh, `prompt-${label}`, ['-ChooseEnhancements'], expected, { keySequence });
     assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, `PowerShell ${label} prompt must not fall back`);

@@ -72,6 +72,13 @@ CLAWGOD_ENHANCEMENT_IDS=(
   paste-images
   privacy
   branding
+  classifier-fail-open
+  cleanup-period
+  disable-collapse-read-search
+  enable-keybindings
+  file-read-limit
+  transcript-dialog-replay
+  unlock-ultracode
   claude-hud
   claude-mem
   superpowers
@@ -89,6 +96,13 @@ CLAWGOD_ENHANCEMENT_LABELS=(
   'Paste Images'
   'Privacy'
   'Branding'
+  'Classifier: Ask on Outage'
+  'Keep History'
+  'Expanded Tool Calls'
+  'Keybindings'
+  '100k File Read'
+  'Replay Dialogs'
+  'Ultracode'
   'Claude HUD'
   'claude-mem'
   'Superpowers'
@@ -1005,7 +1019,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -2376,6 +2390,13 @@ cat > "$CLAWGOD_DIR/enhancement-manifest.json" << 'ENHANCEMENT_MANIFEST_EOF'
   { "id": "paste-images", "kind": "patch" },
   { "id": "privacy", "kind": "patch" },
   { "id": "branding", "kind": "patch" },
+  { "id": "classifier-fail-open", "kind": "patch" },
+  { "id": "cleanup-period", "kind": "patch" },
+  { "id": "disable-collapse-read-search", "kind": "patch" },
+  { "id": "enable-keybindings", "kind": "patch" },
+  { "id": "file-read-limit", "kind": "patch" },
+  { "id": "transcript-dialog-replay", "kind": "patch" },
+  { "id": "unlock-ultracode", "kind": "patch" },
   { "id": "claude-hud", "kind": "plugin" },
   { "id": "claude-mem", "kind": "plugin" },
   { "id": "superpowers", "kind": "plugin" }
@@ -5525,6 +5546,105 @@ if (import.meta.main) {
 PLUGIN_DEPENDENCIES_EOF
 chmod 700 "$CLAWGOD_DIR/plugin-dependencies.mjs"
 
+cat > "$CLAWGOD_DIR/install-voice-asr.mjs" << 'INSTALL_VOICE_ASR_EOF'
+#!/usr/bin/env bun
+// Original Cometix addon, pinned by source commit and SHA-256. No model setup.
+// The native addon uses its upstream network service; it is NOT offline ASR.
+import { createHash } from 'node:crypto';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { fetchWithProxy } from './proxy-fetch.mjs';
+
+const commit = '68fd5465eb631ff8180631f37ca0046a2b38c85a';
+const hashes = Object.freeze({
+  'index.js': 'dd8c63ee0e45fe8e99329e5224108457e4abfbc252a85790520bae242314f74b',
+  'package.json': '93955600a167d9adbcd94f3fdf92d448feb4582d4abe09b044b51a6fce8581d8',
+  'PROVENANCE.txt': 'dc143c5bf65d2c9d507074d9e5992acbf6f00fc9406d4f2c1844be53b0ce962a',
+  'libcometix-asr.darwin-arm64.node': '6a0a02e48b615f7914f53211c761cb9f91b5b09cfd09d56adfb4db4be84a754a',
+  'libcometix-asr.darwin-x64.node': '1e8070ba8ac56ebbf78e1a77071386df8cfd46ba2e4233ee36174fa8b979b193',
+  'libcometix-asr.linux-x64-gnu.node': '1540730bf8b5ecca36658326689c5025fad468c0710d821679bfaf6988951055',
+  'libcometix-asr.win32-x64-msvc.node': 'e26b26abddc8193e3a097b34d822f6fa5d877acebdf0713021a15a2741ac3974',
+});
+export function voiceAsrFiles(target) {
+  const suffix = { 'darwin-arm64':'darwin-arm64', 'darwin-x64':'darwin-x64', 'linux-x64':'linux-x64-gnu', 'win32-x64':'win32-x64-msvc' }[target];
+  if (!suffix) throw new Error(`Cometix ASR unsupported platform: ${target}; original upstream has no addon for this target`);
+  return ['package.json', 'index.js', 'PROVENANCE.txt', `libcometix-asr.${suffix}.node`];
+}
+export function verifyVoiceAsrFile(name, bytes) {
+  if (!Object.hasOwn(hashes, name) || createHash('sha256').update(bytes).digest('hex') !== hashes[name]) throw new Error(`Cometix ASR checksum mismatch: ${name}`);
+}
+async function status(path) {
+  try { return await lstat(path); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+function directory(info, path) {
+  if (!info?.isDirectory() || info.isSymbolicLink()) throw new Error(`Refusing non-directory or symlink: ${path}`);
+}
+function checkAddon(path) {
+  // Load only. Never call startSession/ensureDid or capture audio during install.
+  const result = Bun.spawnSync([process.execPath, '-e', `const m=require(process.argv[1]);for(const k of ['startSession','feedPcm','finalizeSession','closeSession','isConnected'])if(typeof m[k]!=='function')throw Error('Missing ASR export: '+k)`, path], { stdout:'pipe', stderr:'pipe', timeout:15000 });
+  if (result.exitCode !== 0) throw new Error(`Cometix ASR cannot load in Bun: ${result.stderr.toString().slice(0,1000)}`);
+}
+export async function installVoiceAsr(root, { target = `${process.platform}-${process.arch}`, download = fetchWithProxy } = {}) {
+  const files = voiceAsrFiles(target);
+  if (target === 'linux-x64' && process.platform === 'linux' && !process.report?.getReport?.().header?.glibcVersionRuntime) throw new Error('Cometix ASR requires glibc; upstream has no musl addon');
+  directory(await status(root), root);
+  const vendor = join(root,'vendor'), destination = join(vendor,'cometix-asr');
+  if (!await status(vendor)) await mkdir(vendor, {mode:0o700});
+  directory(await status(vendor), vendor);
+  const existing = await status(destination);
+  if (existing) {
+    directory(existing, destination);
+    try {
+      const names=await readdir(destination);
+      if (names.length!==files.length || names.some(n=>!files.includes(n))) throw new Error('unexpected addon files');
+      for (const name of files) {
+        const path=join(destination,name), info=await status(path);
+        if (!info?.isFile() || info.isSymbolicLink()) throw new Error('unsafe addon file');
+        verifyVoiceAsrFile(name,await readFile(path));
+      }
+    } catch (error) { throw new Error(`Existing Cometix ASR directory preserved: ${error.message}`); }
+    checkAddon(destination);
+    return 'Cometix ASR already verified (Bun load-only)';
+  }
+  const staging=await mkdtemp(join(vendor,'.cometix-asr-'));
+  try {
+    for (const name of files) {
+      const response=await download(`https://raw.githubusercontent.com/CometixSpace/claude-code/${commit}/patcher/assets/cometix-asr/${name}`, {signal:AbortSignal.timeout(60000)});
+      if (!response.ok || !response.body) throw new Error(`Cometix ASR download failed: ${name} HTTP ${response.status}`);
+      const chunks=[];let size=0;
+      for await (const chunk of response.body) {
+        size+=chunk.byteLength;
+        if (size>5*1024*1024) throw new Error(`Cometix ASR download too large: ${name}`);
+        chunks.push(Buffer.from(chunk));
+      }
+      const bytes=Buffer.concat(chunks);verifyVoiceAsrFile(name,bytes);
+      await writeFile(join(staging,name),bytes,{flag:'wx',mode:0o600});
+    }
+    checkAddon(staging);
+    if (await status(destination)) throw new Error('Existing Cometix ASR directory appeared during install; preserved');
+    await rename(staging,destination);
+    return 'Cometix ASR installed and verified (Bun load-only; network transcription not tested)';
+  } finally { await rm(staging,{recursive:true,force:true}); }
+}
+if (import.meta.main) {
+  try {
+    const root=resolve(process.argv[2] || dirname(fileURLToPath(import.meta.url)));
+    const {loadEnhancementManifest,readEnhancementConfig,resolveEnhancementSelection}=await import(pathToFileURL(join(root,'enhancement-config.mjs')).href);
+    const manifest=loadEnhancementManifest(await readFile(join(root,'enhancement-manifest.json'),'utf8'));
+    const stored=await readEnhancementConfig({homeDir:dirname(root),manifest});
+    const selected=resolveEnhancementSelection({stored},manifest).enabled.includes('voice');
+    const {loadFeatureGates}=createRequire(import.meta.url)(join(root,'feature-gates.cjs'));
+    const gates=loadFeatureGates(root);
+    const enabled=['voice-asr-backend','voice-mode','enable-voice-mode'].every(id=>gates[id]!==false);
+    if (selected && enabled && process.env.CLAUDE_CODE_ASR!=='0' && !await status(join(root,'patch-fallback.json'))) console.log(await installVoiceAsr(root));
+    else console.log('Cometix ASR setup skipped (voice disabled or compatibility fallback)');
+  } catch(error) { console.error(error.message);process.exitCode=1; }
+}
+INSTALL_VOICE_ASR_EOF
+chmod 700 "$CLAWGOD_DIR/install-voice-asr.mjs"
+
 # --- Managed ripgrep -------------------------------------------------
 
 cat > "$CLAWGOD_DIR/install-ripgrep.mjs" << 'INSTALL_RIPGREP_EOF'
@@ -5883,11 +6003,11 @@ function verifyBoundRoots(roots, includeCandidate = true) {
   }
   if (includeCandidate) for (const binding of roots.candidate) verifyBinding(binding);
   if (roots.ripgrepBound) {
-    const ripgrep = status(join(roots.live.path, 'ripgrep'));
-    if (!sameIdentity(ripgrep, roots.ripgrep)) {
-      throw rootConflictError(
-        'vendor transaction: managed ripgrep identity changed',
-        { root: 'ripgrep', reason: 'managed-ripgrep-identity-changed', expected: roots.ripgrep, actual: ripgrep },
+    for (const [name, expected] of [['ripgrep', roots.ripgrep], ['cometix-asr', roots.cometixAsr]]) {
+      const actual = status(join(roots.live.path, name));
+      if (!sameIdentity(actual, expected)) throw rootConflictError(
+        `vendor transaction: managed ${name} identity changed`,
+        { root: name, reason: `managed-${name}-identity-changed`, expected, actual },
       );
     }
   }
@@ -5952,16 +6072,14 @@ function assessPreMutationRollback(roots, cause) {
     const liveParentTrusted = verify(roots.liveParent);
     const liveTrusted = liveParentTrusted && verify(roots.live);
     if (liveTrusted && roots.ripgrepBound) {
-      try {
-        const actual = status(join(roots.live.path, 'ripgrep'));
-        if (!sameIdentity(actual, roots.ripgrep)) {
-          throw rootConflictError(
-            'vendor transaction: managed ripgrep identity changed',
-            { root: 'ripgrep', reason: 'managed-ripgrep-identity-changed', expected: roots.ripgrep, actual },
+      for (const [name, expected] of [['ripgrep', roots.ripgrep], ['cometix-asr', roots.cometixAsr]]) {
+        try {
+          const actual = status(join(roots.live.path, name));
+          if (!sameIdentity(actual, expected)) throw rootConflictError(
+            `vendor transaction: managed ${name} identity changed`,
+            { root: name, reason: `managed-${name}-identity-changed`, expected, actual },
           );
-        }
-      } catch (error) {
-        record(error, 'ripgrep', false);
+        } catch (error) { record(error, name, false); }
       }
     }
 
@@ -5988,10 +6106,10 @@ function assessPreMutationRollback(roots, cause) {
   return { rollbackComplete, cleanupAllowed };
 }
 
-function boundEntries(binding, roots, skipRipgrep = false, includeCandidate = true) {
+function boundEntries(binding, roots, skipManaged = false, includeCandidate = true) {
   verifyRoots(roots, includeCandidate);
   if (binding.identity === null) return [];
-  const names = readdirSync(binding.path).filter(name => !skipRipgrep || name !== 'ripgrep').sort();
+  const names = readdirSync(binding.path).filter(name => !skipManaged || (name !== 'ripgrep' && name !== 'cometix-asr')).sort();
   verifyRoots(roots, includeCandidate);
   return names;
 }
@@ -6124,6 +6242,7 @@ function rollback({ roots, published, oldEntries, cause }) {
       const expectedNames = [
         ...oldEntries.map(entry => entry.name),
         ...(roots.ripgrep === null ? [] : ['ripgrep']),
+        ...(roots.cometixAsr === null ? [] : ['cometix-asr']),
       ].toSorted();
       const actualNames = boundEntries(roots.live, roots, false, false).toSorted();
       if (!actualNames.every((name, index) => name === expectedNames[index]) || actualNames.length !== expectedNames.length) {
@@ -6150,6 +6269,7 @@ export function publishVendorTransaction({ liveVendor, candidateVendor, transact
     candidate: [],
     old: null,
     ripgrep: undefined,
+    cometixAsr: undefined,
     ripgrepBound: false,
   };
 
@@ -6158,6 +6278,7 @@ export function publishVendorTransaction({ liveVendor, candidateVendor, transact
     roots.liveParent = bindDirectory(dirname(liveVendor), 'live vendor parent');
     roots.live = bindDirectory(liveVendor, 'live vendor');
     roots.ripgrep = status(join(liveVendor, 'ripgrep'));
+    roots.cometixAsr = status(join(liveVendor, 'cometix-asr'));
     roots.ripgrepBound = true;
     bindDescendant(roots.transaction, candidateVendor, 'candidate vendor', roots.candidate);
     if (status(oldVendor) !== null) throw new Error('vendor transaction: old vendor path must not already exist');
@@ -6165,8 +6286,8 @@ export function publishVendorTransaction({ liveVendor, candidateVendor, transact
     roots.old = bindDirectory(oldVendor, 'old vendor');
 
     const candidateRoot = roots.candidate.at(-1);
-    if (boundEntries(candidateRoot, roots).includes('ripgrep')) {
-      throw new Error('vendor transaction: candidate must not contain managed ripgrep');
+    for (const name of ['ripgrep', 'cometix-asr']) {
+      if (boundEntries(candidateRoot, roots).includes(name)) throw new Error(`vendor transaction: candidate must not contain managed ${name}`);
     }
     for (const name of boundEntries(roots.live, roots, true)) {
       verifyRoots(roots);
@@ -8177,7 +8298,7 @@ function stripCacheControl(obj) {
   return out;
 }
 
-function translateRequest(body) {
+function translateRequest(body, configuredEffort) {
   var cleaned = stripCacheControl(body);
   var systemMsgs = translateSystem(cleaned.system);
   var userMsgs = translateMessages(cleaned.messages || []);
@@ -8186,6 +8307,10 @@ function translateRequest(body) {
   if (cleaned.temperature !== undefined) openaiBody.temperature = cleaned.temperature;
   if (cleaned.top_p !== undefined) openaiBody.top_p = cleaned.top_p;
   if (cleaned.stop_sequences) openaiBody.stop = cleaned.stop_sequences;
+  // Explicit launcher effort also applies to custom model aliases for which
+  // Claude omits output_config. "auto" leaves the upstream default untouched.
+  var effort = configuredEffort || (cleaned.output_config && cleaned.output_config.effort);
+  if (effort && effort !== 'auto') openaiBody.reasoning_effort = effort === 'max' ? 'xhigh' : effort;
   var tools = translateTools(cleaned.tools);
   if (tools) openaiBody.tools = tools;
   if (cleaned.stream) openaiBody.stream_options = { include_usage: true };
@@ -8293,7 +8418,7 @@ function startProxy(config) {
       var requestModel = body.model || config.model || '';
       var isStream = !!body.stream;
       var openaiBody;
-      try { openaiBody = translateRequest(body); } catch (e) {
+      try { openaiBody = translateRequest(body, config.effort); } catch (e) {
         return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Translation error: ' + e.message } }), { status: 400, headers: { 'Content-Type': 'application/json' } });
       }
 
@@ -8374,7 +8499,7 @@ cat > "$CLAWGOD_DIR/feature-gates.cjs" << 'FEATURE_GATES_EOF'
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 
-function loadFeatureGates(directory, metadata = JSON.parse('{"agent-teams":["agent-teams"],"computer-use-sub":["computer-use"],"computer-use-default":["computer-use"],"computer-use-gate":["computer-use"],"ultraplan":["ultraplan"],"ultrareview-gate":["ultrareview"],"ultrareview-direct":["ultrareview"],"voice-mode":["voice-mode"],"auto-mode-helper-gate":["auto-mode"],"auto-mode-inline-gate":["auto-mode"],"auto-mode-provider-opt-in":["auto-mode"],"classifier-timeout":["classifier-tuning"],"classifier-model":["classifier-tuning"],"classifier-retries":["classifier-tuning"],"theme-logo-rgb":["theme"],"theme-logo-ansi":["theme"],"theme-claude-rgb-dark":["theme"],"theme-claude-rgb-light":["theme"],"theme-shimmer-rgb":["theme"],"theme-shimmer-rgb-light":["theme"],"theme-hex":["theme"],"theme-claude-ansi":["theme"],"theme-shimmer-ansi":["theme"],"theme-brief-rgb-dark":["theme"],"theme-brief-rgb-light":["theme"],"theme-brief-ansi":["theme"],"geo-stego-date":["geo-neutralize"],"geo-detect-probe":["geo-neutralize"],"geo-apostrophe-stego":["geo-neutralize"],"remove-cyber-risk":["cyber-risk"],"remove-url-restriction":["url-restriction"],"remove-cautious-actions":["cautious-actions"],"remove-not-logged-in":["not-logged-in"],"attachment-filter-bypass":["message-filter"],"message-filter-legacy":["message-filter"],"message-filter-s8":["message-filter"]}'), env = process.env, warn = text => process.stderr.write(text)) {
+function loadFeatureGates(directory, metadata = JSON.parse('{"classifier-fail-open":["classifier-fail-open"],"cleanup-period":["cleanup-period"],"disable-collapse-read-search":["disable-collapse-read-search"],"enable-keybindings":["enable-keybindings"],"file-read-limit":["file-read-limit"],"transcript-dialog-replay":["transcript-dialog-replay"],"unlock-ultracode":["unlock-ultracode"],"chrome-local-socket":["chrome-local-socket"],"context-limit":["context-limit"],"computer-use":["computer-use"],"enable-voice-mode":["voice-mode"],"voice-asr-backend":["voice-asr-backend"],"agent-teams":["agent-teams"],"computer-use-sub":["computer-use"],"computer-use-default":["computer-use"],"computer-use-gate":["computer-use"],"ultraplan":["ultraplan"],"ultrareview-gate":["ultrareview"],"ultrareview-direct":["ultrareview"],"voice-mode":["voice-mode"],"auto-mode-helper-gate":["auto-mode"],"auto-mode-inline-gate":["auto-mode"],"auto-mode-provider-opt-in":["auto-mode"],"classifier-timeout":["classifier-tuning"],"classifier-model":["classifier-tuning"],"classifier-retries":["classifier-tuning"],"theme-logo-rgb":["theme"],"theme-logo-ansi":["theme"],"theme-claude-rgb-dark":["theme"],"theme-claude-rgb-light":["theme"],"theme-shimmer-rgb":["theme"],"theme-shimmer-rgb-light":["theme"],"theme-hex":["theme"],"theme-claude-ansi":["theme"],"theme-shimmer-ansi":["theme"],"theme-brief-rgb-dark":["theme"],"theme-brief-rgb-light":["theme"],"theme-brief-ansi":["theme"],"geo-stego-date":["geo-neutralize"],"geo-detect-probe":["geo-neutralize"],"geo-apostrophe-stego":["geo-neutralize"],"remove-cyber-risk":["cyber-risk"],"remove-url-restriction":["url-restriction"],"remove-cautious-actions":["cautious-actions"],"remove-not-logged-in":["not-logged-in"],"attachment-filter-bypass":["message-filter"],"message-filter-legacy":["message-filter"],"message-filter-s8":["message-filter"]}'), env = process.env, warn = text => process.stderr.write(text)) {
   const configFile = join(directory, 'patches.json');
   let config = Object.create(null);
   try {
@@ -8479,6 +8604,7 @@ const defaultConfig = {
   baseURL: 'https://api.anthropic.com',
   model: '',
   smallModel: '',
+  effort: '',
   timeoutMs: 3000000,
 };
 
@@ -8495,6 +8621,7 @@ if (existsSync(configFile)) {
 
 // OpenAI-compatible provider proxy (grok, openai-compat, etc.)
 const _proxyTypes = { grok: 1, 'openai-compat': 1 };
+let _proxyActive = false;
 if (_proxyTypes[config.type]) {
   let _proxyKey = config.apiKey || '';
   if (!_proxyKey && config.type === 'grok') {
@@ -8510,8 +8637,10 @@ if (_proxyTypes[config.type]) {
       apiKey: _proxyKey,
       baseURL: config.baseURL || (config.type === 'grok' ? 'https://api.x.ai/v1' : ''),
       model: config.model || '',
+      effort: process.env.CLAUDE_CODE_EFFORT_LEVEL ?? config.effort,
     });
-    process.env.ANTHROPIC_API_KEY = 'proxy-passthrough';
+    _proxyActive = true;
+    delete process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:' + _proxy.port;
     process.env.ANTHROPIC_AUTH_TOKEN = 'proxy-passthrough';
     if (config.model) process.env.ANTHROPIC_MODEL = config.model;
@@ -8520,7 +8649,7 @@ if (_proxyTypes[config.type]) {
     process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS ??= '1';
     process.on('exit', function () { try { _proxy.stop(); } catch {} });
     process.stderr.write('[clawgod] OpenAI-compat proxy on port ' + _proxy.port + ' (type: ' + config.type + ')\n');
-    config = { ...defaultConfig };  // prevent fallthrough to apiKey/baseURL injection below
+    config = { ...config, apiKey: '', baseURL: '', model: '', smallModel: '' };  // prevent fallthrough to apiKey/baseURL injection below
   } else {
     process.stderr.write('[clawgod] Warning: type=' + config.type + ' but no API key found\n');
   }
@@ -8529,12 +8658,15 @@ if (_proxyTypes[config.type]) {
 const hasProviderApiKey = !!config.apiKey;
 
 if (hasProviderApiKey) {
-  process.env.ANTHROPIC_API_KEY = config.apiKey;
   if (config.baseURL) process.env.ANTHROPIC_BASE_URL = config.baseURL;
   if (config.model) process.env.ANTHROPIC_MODEL = config.model;
   if (config.smallModel) process.env.ANTHROPIC_SMALL_FAST_MODEL = config.smallModel;
   if (config.baseURL && !/anthropic\.com/i.test(config.baseURL)) {
-    process.env.ANTHROPIC_AUTH_TOKEN ??= config.apiKey;
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_AUTH_TOKEN = (process.env.ANTHROPIC_AUTH_TOKEN || '').trim() || config.apiKey;
+  } else {
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    process.env.ANTHROPIC_API_KEY = config.apiKey;
   }
 } else if (config.baseURL && config.baseURL !== defaultConfig.baseURL) {
   process.env.ANTHROPIC_BASE_URL ??= config.baseURL;
@@ -8553,13 +8685,9 @@ if (process.env.CLAWGOD_CLAUDE_MEM === '1') {
   const _cmValue = function(v) { return typeof v === 'string' && v && !/[\r\n\0]/.test(v) ? v : ''; };
   const _cmHaiku = _cmValue(_cmEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL) || _cmValue(process.env.ANTHROPIC_SMALL_FAST_MODEL);
   if (_cmHaiku) process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = _cmHaiku;
-  const _cmProxyActive = process.env.ANTHROPIC_API_KEY === 'proxy-passthrough';
-  if (!_cmProxyActive && hasProviderApiKey) {
-    process.env.ANTHROPIC_API_KEY = config.apiKey;
-    if (config.baseURL) process.env.ANTHROPIC_BASE_URL = config.baseURL;
-    if (config.baseURL && !/anthropic\.com/i.test(config.baseURL)) process.env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-    else delete process.env.ANTHROPIC_AUTH_TOKEN;
-  } else if (!_cmProxyActive && !hasProviderApiKey) {
+  // Provider credentials were already routed above; do not reintroduce a second
+  // auth header or replace an active local proxy with settings credentials.
+  if (!_proxyActive && !hasProviderApiKey) {
     const _cmApiKey = _cmValue(_cmEnv.ANTHROPIC_API_KEY);
     const _cmAuthToken = _cmValue(_cmEnv.ANTHROPIC_AUTH_TOKEN);
     const _cmBaseURL = _cmValue(_cmEnv.ANTHROPIC_BASE_URL);
@@ -8579,25 +8707,20 @@ if (process.env.CLAWGOD_CLAUDE_MEM === '1') {
 // Users can force re-enable with CLAUDE_CODE_ATTRIBUTION_HEADER=1 if needed.
 if (config.baseURL && !/anthropic\.com/i.test(config.baseURL)) {
   process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ??= '0';
-  // Third-party proxies (headroom, etc.) often require remote control.
-  // Lean mode sets disableRemoteControl:true in settings.json — undo it
-  // when the user is routing through a non-Anthropic endpoint.
-  try {
-    const _rcSettings = join(homedir(), '.claude', 'settings.json');
-    if (existsSync(_rcSettings)) {
-      const _rcS = JSON.parse(readFileSync(_rcSettings, 'utf8'));
-      if (_rcS.disableRemoteControl) {
-        delete _rcS.disableRemoteControl;
-        writeFileSync(_rcSettings, JSON.stringify(_rcS, null, 2) + '\n');
-      }
-    }
-  } catch {}
+}
+
+if (config.effort) {
+  process.env.CLAUDE_CODE_EFFORT_LEVEL ??= config.effort;
 }
 
 if (config.timeoutMs) {
   process.env.API_TIMEOUT_MS ??= String(config.timeoutMs);
 }
-process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ??= '1';
+// Remote Control needs feature-flag queries; only max mode restricts traffic
+// by default. Explicit user environment settings retain precedence.
+if (existsSync(join(clawgodDir, '.lean-max')) && !existsSync(join(clawgodDir, '.lean-disabled'))) {
+  process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ??= '1';
+}
 process.env.DISABLE_INSTALLATION_CHECKS ??= '1';
 // "Built-in" ripgrep resolves through the ClawGod-managed PATH above.
 process.env.USE_BUILTIN_RIPGREP ??= '1';
@@ -8637,8 +8760,8 @@ if (process.argv.includes('--lean-off') || process.argv.includes('--lean-on') ||
   const _leanSettings = join(homedir(), '.claude', 'settings.json');
   const _baseDeny = ['DesignSync','NotebookEdit','PushNotification','RemoteTrigger','CronCreate','CronDelete','CronList'];
   const _maxDeny = ['EnterPlanMode','ExitPlanMode','SendMessage','ScheduleWakeup','AskUserQuestion','ReportFindings'];
-  const _baseFlags = ['disableWorkflows','disableRemoteControl','disableClaudeAiConnectors','disableArtifact'];
-  const _maxFlags = ['disableBundledSkills'];
+  const _baseFlags = ['disableWorkflows','disableClaudeAiConnectors','disableArtifact'];
+  const _maxFlags = ['disableBundledSkills','disableRemoteControl'];
   const _allDeny = new Set([..._baseDeny, ..._maxDeny]);
   const _allFlags = [..._baseFlags, ..._maxFlags];
   const _unlink = function(p) { try { require('fs').unlinkSync(p); } catch {} };
@@ -9714,6 +9837,18 @@ async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   }
   return { status: "applied", count: replacements.length, code: next };
 }
+function terminalReplyDelay(querier, reader, now) {
+  const parse = reader?.parse;
+  if (parse?.mode !== "NORMAL" || typeof parse.incomplete !== "string")
+    return 0;
+  if (!/^\x1b(?:\[(?:\?[\d;]*)?)?$/.test(parse.incomplete))
+    return 0;
+  if (!Array.isArray(querier?.queue) || !querier.queue.some((entry) => entry?.kind === "barrier" || entry?.kind === "sentinel" && entry.written !== false))
+    return 0;
+  if (!Number.isFinite(now) || !Number.isFinite(reader.lastInputAt))
+    return 0;
+  return Math.max(0, 2000 - Math.max(0, now - reader.lastInputAt));
+}
 var patches = [
   {
     order: 0,
@@ -9767,6 +9902,15 @@ var patches = [
     pattern: /if\(([\w$]+)\(\)==="bun"\)return\[([\w$]+)\(([\w$]+),"claude"\)\];if\([\w$]+\(\)==="windows"\)return\[\2\(\3,"claude\.cmd"\),\2\(\3,"claude\.exe"\)\];return\[\2\(\3,"bin","claude"\)\]/g,
     replacer: (match) => match.replace(/claude/g, "claude.orig"),
     appliedMarker: '"claude.orig.cmd"',
+    optional: true
+  },
+  {
+    order: 90,
+    id: "terminal-reply-fragments",
+    name: "Preserve split terminal replies while a DA1 probe is pending",
+    pattern: /(flushIncomplete=\(\)=>\{if\(this\.incompleteEscapeTimer=null,![\w$]+\(this\.keyReader\)\)return;if\(this\.props\.stdin\.readableLength>0\)\{this\.incompleteEscapeTimer=setTimeout\(this\.flushIncomplete,[\w$]+\);return\}let ([\w$]+)=performance\.now\(\);)(this\.applyKeysRead\([\w$]+\(this\.keyReader,\2\),\2\)\})/g,
+    replacer: (match, prefix, now, suffix) => prefix + `/*__clawgod_terminal_reply_fragments__*/const _clawgodReplyDelay=(${terminalReplyDelay.toString()})(this.querier,this.keyReader,${now});if(_clawgodReplyDelay>0){this.incompleteEscapeTimer=setTimeout(this.flushIncomplete,_clawgodReplyDelay);return}` + suffix,
+    appliedMarker: "/*__clawgod_terminal_reply_fragments__*/",
     optional: true
   }
 ];
@@ -9831,6 +9975,13 @@ var enhancements_default = `[
   { "id": "paste-images", "kind": "patch" },
   { "id": "privacy", "kind": "patch" },
   { "id": "branding", "kind": "patch" },
+  { "id": "classifier-fail-open", "kind": "patch" },
+  { "id": "cleanup-period", "kind": "patch" },
+  { "id": "disable-collapse-read-search", "kind": "patch" },
+  { "id": "enable-keybindings", "kind": "patch" },
+  { "id": "file-read-limit", "kind": "patch" },
+  { "id": "transcript-dialog-replay", "kind": "patch" },
+  { "id": "unlock-ultracode", "kind": "patch" },
   { "id": "claude-hud", "kind": "plugin" },
   { "id": "claude-mem", "kind": "plugin" },
   { "id": "superpowers", "kind": "plugin" }
@@ -9840,6 +9991,18 @@ var enhancements_default = `[
 // src/generic/patcher/runtime-features.mjs
 var gate = (patchId) => `globalThis.__clawgodPatches?.[${JSON.stringify(patchId)}]!==!1`;
 var runtimeFeatureMetadata = Object.freeze({
+  "classifier-fail-open": ["classifier-fail-open"],
+  "cleanup-period": ["cleanup-period"],
+  "disable-collapse-read-search": ["disable-collapse-read-search"],
+  "enable-keybindings": ["enable-keybindings"],
+  "file-read-limit": ["file-read-limit"],
+  "transcript-dialog-replay": ["transcript-dialog-replay"],
+  "unlock-ultracode": ["unlock-ultracode"],
+  "chrome-local-socket": ["chrome-local-socket"],
+  "context-limit": ["context-limit"],
+  "computer-use": ["computer-use"],
+  "enable-voice-mode": ["voice-mode"],
+  "voice-asr-backend": ["voice-asr-backend"],
   "agent-teams": ["agent-teams"],
   "computer-use-sub": ["computer-use"],
   "computer-use-default": ["computer-use"],
@@ -9877,6 +10040,624 @@ var runtimeFeatureMetadata = Object.freeze({
   "message-filter-legacy": ["message-filter"],
   "message-filter-s8": ["message-filter"]
 });
+
+// src/generic/patcher/enhancements/voice-asr-cometix.js
+var voice_asr_cometix_default = `// Upstream: CometixSpace/claude-code @ 68fd5465eb631ff8180631f37ca0046a2b38c85a
+// patcher/payloads/voice-asr-cometix.js; only the ClawGod vendor search path differs.
+async function __ccppAsrConnect(e, t) {
+// cometix-asr voice transport.
+//
+// The adapter body below is the 2.1.241 one, unchanged: its handling of
+// cumulative previews and the single session_final commit came from running
+// against the real host, and rewriting it would throw that away.
+//
+// What did have to change is how it reaches Node. On 2.1.241 this was spliced
+// into one CommonJS bundle, so require and __dirname were simply in scope.
+// Since 2.1.242 it lands in an ESM chunk where neither exists, hence the
+// prelude \u2014 the addon is a .node binary and has to go through a real require.
+const {createRequire:__ccppCreateRequire}=await import("node:module");
+const require=__ccppCreateRequire(import.meta.url);
+const __dirname=require("path").dirname(require("url").fileURLToPath(import.meta.url));
+/* CC voice bridge: cumulative Preview + one final result for the whole hold */
+const _path=require("path"),_fs=require("fs");
+function __loadCometixAsr(){
+  const tryLoad=(p)=>{try{if(!p)return null;const m=require(p);if(m&&typeof m.startSession==="function")return m}catch{}return null};
+  const dirs=[];
+  try{dirs.push(_path.join(__dirname,"vendor","cometix-asr"))}catch{}
+  // ClawGod split bundles place the transport one level below the vendor directory.
+  try{dirs.push(_path.join(__dirname,"..","vendor","cometix-asr"))}catch{}
+  for(const dir of dirs){
+    if(!dir||!_fs.existsSync(dir))continue;
+    let m=tryLoad(_path.join(dir,"index.js"));if(m)return m;
+    m=tryLoad(dir);if(m)return m;
+    try{for(const f of _fs.readdirSync(dir).filter(x=>x.startsWith("libcometix-asr")&&x.endsWith(".node"))){m=tryLoad(_path.join(dir,f));if(m)return m}}catch{}
+  }
+  return null;
+}
+const __asr=__loadCometixAsr();
+if(!__asr){try{e.onError("cometix-asr vendor missing startSession",{fatal:true,connectFailureCode:"cometix_asr_missing"})}catch{}return null}
+let __handle=null,__connected=false,__finalized=false,__closed=false,__readyFired=false;
+let __finalText="",__previewText="",__previewBase="",__livePiece="";
+let __previewAcceptedAt=0;
+let __emittedFinal=false,__finResolve=null,__finTimer=null;
+let __audioChunks=0,__audioBytes=0;
+const __traceFile=String(process.env.COMETIX_ASR_TRACE_FILE||"").trim();
+const __traceId=String(process.pid)+"-"+String(Date.now())+"-"+Math.random().toString(36).slice(2,8);
+const __traceStartedAt=Date.now();
+let __traceLastAt=__traceStartedAt,__traceSeq=0,__traceWriteFailed=false;
+function __trace(kind,data){
+  if(!__traceFile)return;
+  const now=Date.now();
+  const row={
+    schema:1,traceId:__traceId,seq:++__traceSeq,
+    at:new Date(now).toISOString(),elapsedMs:now-__traceStartedAt,
+    deltaMs:now-__traceLastAt,kind,...(data||{})
+  };
+  __traceLastAt=now;
+  try{
+    const line=JSON.stringify(row,(key,value)=>{
+      if(typeof value==="string"&&value.length>2000)return value.slice(0,2000)+"\u2026<len="+String(value.length)+">";
+      return value;
+    });
+    _fs.appendFileSync(__traceFile,line+String.fromCharCode(10),"utf8");
+  }catch(err){
+    if(!__traceWriteFailed){
+      __traceWriteFailed=true;
+      try{if(typeof v==="function")v("[cometix_asr_trace] write failed: "+String(err))}catch{}
+    }
+  }
+}
+function __previewState(){
+  return {
+    previewText:__previewText,previewBase:__previewBase,livePiece:__livePiece,
+    previewAcceptedAt:__previewAcceptedAt,
+    finalText:__finalText,emittedFinal:__emittedFinal
+  };
+}
+function __cleanTranscript(text){return String(text||"").trim()}
+function __commonPrefixLength(a,b){
+  let n=Math.min(a.length,b.length),i=0;
+  while(i<n&&a.charCodeAt(i)===b.charCodeAt(i))i++;
+  return i;
+}
+function __sameLiveRewrite(a,b){
+  a=__cleanTranscript(a);b=__cleanTranscript(b);
+  if(!a||!b||a.startsWith(b)||b.startsWith(a))return true;
+  const short=Math.min(a.length,b.length),common=__commonPrefixLength(a,b);
+  return common>=Math.min(4,Math.max(1,Math.ceil(short*0.45)));
+}
+function __isStrictProjection(container,candidate){
+  return Boolean(
+    container&&candidate&&container!==candidate&&
+    (container.startsWith(candidate)||container.endsWith(candidate))
+  );
+}
+function __appendTranscript(base,tail){
+  base=__cleanTranscript(base);tail=__cleanTranscript(tail);
+  if(!base)return tail;
+  if(!tail||base.endsWith(tail))return base;
+  if(tail.startsWith(base))return tail;
+  for(let n=Math.min(base.length,tail.length);n>0;n--){
+    if(base.endsWith(tail.slice(0,n)))return base+tail.slice(n);
+  }
+  const sep=/[A-Za-z0-9]$/.test(base)&&/^[A-Za-z0-9]/.test(tail)?" ":"";
+  return base+sep+tail;
+}
+function __cumulativePreview(full,piece,stage){
+  full=__cleanTranscript(full);piece=__cleanTranscript(piece);
+  const before=__previewState(),incoming=full||piece,previous=__previewText;
+  const now=Date.now(),projectionAgeMs=__previewAcceptedAt?now-__previewAcceptedAt:null;
+  if(!incoming){
+    __trace("preview.normalize",{
+      stage,decision:"empty",full,piece,projectionAgeMs,
+      before,after:__previewState(),output:__previewText
+    });
+    return __previewText;
+  }
+
+  let decision="",next=previous,accepted=false;
+  const live=piece||incoming;
+  if(!previous){
+    decision=stage+".first";
+    next=incoming;
+    accepted=true;
+  }else if(incoming===previous){
+    decision=stage+".ignore_duplicate";
+    // A duplicate cumulative projection is the anchor for the remaining
+    // prefix/suffix entries emitted from the same results[] batch.
+    __previewAcceptedAt=now;
+  }else if(
+    __isStrictProjection(previous,incoming)&&
+    projectionAgeMs!==null&&projectionAgeMs<=20
+  ){
+    // The addon can publish cumulative, stable-prefix and live-suffix entries
+    // from one results[] batch within the same tick. Only the cumulative entry
+    // is a new Preview; the other two are parallel projections.
+    decision=stage+".ignore_parallel_projection";
+    if(stage==="stable"&&previous.startsWith(incoming)){
+      __previewBase=incoming;
+      __livePiece=previous.slice(incoming.length);
+    }
+  }else if(incoming.startsWith(previous)){
+    decision=stage+".accept_extension";
+    next=incoming;
+    accepted=true;
+  }else if(previous.startsWith(incoming)||__sameLiveRewrite(previous,incoming)){
+    decision=stage+".accept_whole_rewrite";
+    next=incoming;
+    accepted=true;
+  }else if(__previewBase){
+    if(incoming.startsWith(__previewBase)&&incoming.length>__previewBase.length){
+      decision=stage+".accept_cumulative_display";
+      next=incoming;
+    }else if(__livePiece&&__sameLiveRewrite(__livePiece,live)){
+      decision=stage+".rewrite_live_piece";
+      next=__appendTranscript(__previewBase,live);
+    }else{
+      decision=stage+".rebuild_from_base";
+      next=__appendTranscript(__previewBase,live);
+    }
+    accepted=true;
+  }else{
+    // Fallback for providers that really reset to phrase-only interim text.
+    decision=stage+".new_phrase_reset";
+    __previewBase=previous;
+    __livePiece=live;
+    next=__appendTranscript(__previewBase,live);
+    accepted=true;
+  }
+
+  if(accepted){
+    __previewText=next;
+    __previewAcceptedAt=now;
+    if(stage==="stable"){
+      __previewBase=next;
+      __livePiece="";
+    }else if(__previewBase&&next.startsWith(__previewBase)){
+      __livePiece=next.slice(__previewBase.length);
+    }else{
+      __livePiece=live;
+    }
+  }
+  __trace("preview.normalize",{
+    stage,decision,full,piece,projectionAgeMs,accepted,
+    before,after:__previewState(),output:__previewText
+  });
+  return __previewText;
+}
+function __emitFinalOnce(text,source){
+  text=__cleanTranscript(text);source=source||"unknown";
+  if(!text){
+    __trace("final.skip",{source,reason:"empty",state:__previewState()});
+    return;
+  }
+  if(__emittedFinal){
+    __trace("final.skip",{source,reason:"already_emitted",text,textLength:text.length,state:__previewState()});
+    return;
+  }
+  __emittedFinal=true;
+  __finalText=text;
+  __trace("cc.onTranscript",{source,isFinal:true,text,textLength:text.length,state:__previewState()});
+  try{e.onTranscript(text,true)}catch(err){__trace("cc.onTranscript.error",{source,isFinal:true,error:String(err)})}
+  if(__finResolve){
+    const r=__finResolve;__finResolve=null;
+    if(__finTimer){clearTimeout(__finTimer);__finTimer=null}
+    __trace("bridge.finalize.resolve",{source,result:"session_final",state:__previewState()});
+    r("session_final");
+  }
+}
+__trace("bridge.init",{pid:process.pid,traceFile:__traceFile});
+const __api={
+  send(k){
+    if(!__connected||__finalized||__closed||__handle==null)return;
+    const size=k&&typeof k.length==="number"?k.length:0;
+    __audioChunks++;__audioBytes+=size;
+    try{__asr.feedPcm(__handle,Buffer.from(k))}catch(err){
+      __trace("audio.feed.error",{error:String(err),chunkBytes:size,audioChunks:__audioChunks,audioBytes:__audioBytes});
+    }
+  },
+  finalize(){
+    if(__finalized||__closed){
+      __trace("bridge.finalize.skip",{reason:"already_closed",finalized:__finalized,closed:__closed,state:__previewState()});
+      return Promise.resolve("ws_already_closed");
+    }
+    __finalized=true;
+    __trace("bridge.finalize.request",{audioChunks:__audioChunks,audioBytes:__audioBytes,state:__previewState()});
+    return new Promise((resolve)=>{
+      __finResolve=resolve;
+      try{__asr.finalizeSession(__handle)}catch(err){__trace("addon.finalize.error",{error:String(err)})}
+      // wait SessionFinished/final text; do not resolve early or CC \u2192 No speech detected
+      __finTimer=setTimeout(()=>{
+        __finTimer=null;
+        __trace("bridge.finalize.timeout",{hasFinalText:Boolean(__finalText),state:__previewState()});
+        if(!__emittedFinal&&__finalText)__emitFinalOnce(__finalText,"finalize_timeout_fallback");
+        const r=__finResolve;__finResolve=null;
+        if(r){
+          const result=__emittedFinal?"session_final":"safety_timeout";
+          __trace("bridge.finalize.resolve",{source:"timeout",result,state:__previewState()});
+          r(result);
+        }
+      },12000);
+    });
+  },
+  close(){
+    __trace("bridge.close.request",{audioChunks:__audioChunks,audioBytes:__audioBytes,state:__previewState()});
+    __closed=true;__connected=false;
+    try{if(__handle!=null)__asr.closeSession(__handle)}catch(err){__trace("addon.close.error",{error:String(err)})}
+    __handle=null;
+    if(__finResolve){
+      const r=__finResolve;__finResolve=null;
+      if(__finTimer){clearTimeout(__finTimer);__finTimer=null}
+      __trace("bridge.finalize.resolve",{source:"api.close",result:"ws_close",state:__previewState()});
+      r("ws_close");
+    }
+    try{e.onClose&&e.onClose()}catch(err){__trace("cc.onClose.error",{error:String(err)})}
+  },
+  isConnected(){return __connected&&!__closed}
+};
+function __startLive(){
+  // empty \u2192 Rust product_config + ensureDid (post-asr default off in product_config for CC)
+  __trace("addon.start.request",{});
+  __handle=__asr.startSession("{}",(err,j)=>{
+    if(err){
+      __trace("addon.callback.error",{error:String(err)});
+      try{e.onError(String(err))}catch(callbackErr){__trace("cc.onError.error",{error:String(callbackErr)})}
+      return;
+    }
+    let ev;
+    try{ev=JSON.parse(j)}catch(parseErr){
+      __trace("addon.event.parse_error",{error:String(parseErr),raw:String(j||"")});
+      return;
+    }
+    if(ev.type==="ready"){
+      __connected=true;
+      __trace("addon.ready",{sessionId:ev.session_id||"",mode:ev.mode||""});
+      if(!__readyFired){
+        __readyFired=true;
+        __trace("cc.onReady",{});
+        try{e.onReady(__api)}catch(callbackErr){__trace("cc.onReady.error",{error:String(callbackErr)})}
+      }
+    }else if(ev.type==="transcript"){
+      const display=__cleanTranscript(ev.display),piece=__cleanTranscript(ev.text);
+      const full=display||piece;
+      const stage=ev.stage||((ev.is_vad_finished||ev.is_final)?"stable":"interim");
+      __trace("addon.transcript",{
+        rawStage:ev.stage||"",stage,isInterim:Boolean(ev.is_interim),
+        isVadFinished:Boolean(ev.is_vad_finished),isFinal:Boolean(ev.is_final),
+        text:piece,textLength:piece.length,display,displayLength:display.length,
+        passCount:Number(ev.pass_count||0),
+        stableText:__cleanTranscript(ev.stable_text),
+        liveText:__cleanTranscript(ev.live_text),
+        state:__previewState()
+      });
+      if(!full&&!__previewText){
+        __trace("transcript.skip",{reason:"empty",stage,state:__previewState()});
+        return;
+      }
+      if(stage==="session_final"){
+        // SessionFinished is authoritative. Commit exactly once so CC does not
+        // append the already-previewed stable segments a second time.
+        __emitFinalOnce(full||__previewText,"addon.session_final");
+      }else{
+        // CC replaces voiceInterimTranscript on every isFinal=false callback.
+        // Therefore both interim and stable must carry a cumulative Preview.
+        const normalizedStage=stage==="stable"?"stable":"interim";
+        const previousPreview=__previewText;
+        const preview=__cumulativePreview(full,piece,normalizedStage);
+        if(!preview){
+          __trace("transcript.skip",{reason:"normalized_empty",stage,state:__previewState()});
+          return;
+        }
+        __finalText=preview;
+        if(preview===previousPreview){
+          __trace("cc.onTranscript.skip",{
+            source:"preview."+normalizedStage,reason:"unchanged_projection",
+            text:preview,textLength:preview.length,state:__previewState()
+          });
+          return;
+        }
+        __trace("cc.onTranscript",{
+          source:"preview."+normalizedStage,isFinal:false,text:preview,
+          textLength:preview.length,state:__previewState()
+        });
+        try{e.onTranscript(preview,false)}catch(callbackErr){
+          __trace("cc.onTranscript.error",{source:"preview."+normalizedStage,isFinal:false,error:String(callbackErr)});
+        }
+      }
+    }else if(ev.type==="processed"){
+      __trace("addon.processed",{text:__cleanTranscript(ev.text),fmtText:__cleanTranscript(ev.fmt_text)});
+      // if post ever enabled, prefer single processed final
+      __emitFinalOnce(ev.text||ev.fmt_text||"","addon.processed");
+    }else if(ev.type==="error"){
+      __trace("addon.error",{message:ev.message||"asr error",code:ev.code||""});
+      try{e.onError(ev.message||"asr error")}catch(callbackErr){__trace("cc.onError.error",{error:String(callbackErr)})}
+    }else if(ev.type==="close"){
+      __connected=false;
+      __trace("addon.close",{state:__previewState(),audioChunks:__audioChunks,audioBytes:__audioBytes});
+      if(__finalText&&!__emittedFinal)__emitFinalOnce(__finalText,"addon.close_fallback");
+      if(__finResolve){
+        const r=__finResolve;__finResolve=null;
+        if(__finTimer){clearTimeout(__finTimer);__finTimer=null}
+        const result=__emittedFinal?"session_final":"close";
+        __trace("bridge.finalize.resolve",{source:"addon.close",result,state:__previewState()});
+        r(result);
+      }
+      try{e.onClose&&e.onClose()}catch(callbackErr){__trace("cc.onClose.error",{error:String(callbackErr)})}
+    }else if(ev.type==="debug"){
+      __trace("addon.debug",{message:ev.message||""});
+    }else{
+      __trace("addon.unknown",{event:ev});
+    }
+  });
+}
+try{__startLive()}catch(err){
+  __trace("addon.start.error",{error:String(err)});
+  try{e.onError(String(err),{fatal:true,connectFailureCode:"cometix_start_failed"})}catch(callbackErr){__trace("cc.onError.error",{error:String(callbackErr)})}
+  return null;
+}
+return __api;
+}
+`;
+
+// src/generic/patcher/enhancements/cometix.mjs
+var separator = `
+/*__CLAWGOD_MODULE_BOUNDARY__*/
+`;
+var prop = (node, name) => node?.properties?.find((p) => (p.key?.name ?? p.key?.value) === name);
+var member = (node, name) => node?.type === "MemberExpression" && node.property?.name === name;
+var literal = (node, value) => node?.type === "Literal" && node.value === value;
+function one(nodes, label) {
+  if (nodes.length !== 1)
+    throw new Error(`${label}: expected one site, found ${nodes.length}`);
+  return nodes[0];
+}
+function transform(id, source, ast) {
+  const edits = [];
+  const text = (n) => source.slice(n.start, n.end);
+  const nodes = (type, predicate = () => true, root = ast) => findNodes(root, (n) => n.type === type && predicate(n));
+  const functions = (parts, params) => nodes("FunctionDeclaration", (n) => (params === undefined || n.params.length === params) && parts.every((part) => text(n).includes(part)));
+  const replace = (node, value) => edits.push({ start: node.start, end: node.end, value });
+  const insert = (at, value) => edits.push({ start: at, end: at, value });
+  const prepend = (fn, value) => insert(fn.body.start + 1, value);
+  const enabled = gate(id);
+  const choose = (yes, original) => `(${enabled}?${yes}:${text(original)})`;
+  if (id === "voice-asr-backend") {
+    const asrEnabled = `(${enabled}&&(${gate("enable-voice-mode")})&&(${gate("voice-mode")})&&process.env.CLAUDE_CODE_ASR!=="0")`;
+    const previousTransport = source.includes("/*__clawgod_cometix_voice-asr-backend__*/");
+    const connectors = previousTransport ? [] : functions(["No OAuth token available", "VOICE_STREAM_BASE_URL"], 3);
+    if (connectors.length) {
+      const fn = one(connectors, "voice connector");
+      if (!fn.params.every((p) => p.type === "Identifier"))
+        throw new Error("unexpected voice connector parameters");
+      const available = functions([".accessToken"], 0).filter((f) => nodes("ReturnStatement", (n) => n.argument?.type === "LogicalExpression" && n.argument.operator === "&&" && n.argument.right?.type === "BinaryExpression" && n.argument.right.operator === "!==" && member(n.argument.right.left, "accessToken") && literal(n.argument.right.right, null), f).length);
+      if (available.length)
+        prepend(one(available, "voice transport availability"), `if(${asrEnabled})return!0;`);
+      insert(fn.start, voice_asr_cometix_default + `
+`);
+      prepend(fn, `if(${asrEnabled})return __ccppAsrConnect(${fn.params[0].name},${fn.params[1].name});`);
+    }
+    for (const command of previousTransport ? [] : nodes("ObjectExpression", (n) => literal(prop(n, "name")?.value, "voice"))) {
+      const availability = prop(command, "availability")?.value;
+      if (availability?.type === "ArrayExpression" && availability.elements.length === 1 && literal(availability.elements[0], "claude-ai")) {
+        replace(availability, `(${asrEnabled}?undefined:${text(availability)})`);
+      }
+    }
+    const flags = functions(['"allow_voice_mode"'], 0).filter((fn) => fn.body.body.length === 1 && fn.body.body[0].type === "ReturnStatement" && fn.body.body[0].argument?.type === "CallExpression" && literal(fn.body.body[0].argument.arguments[0], "allow_voice_mode"));
+    if (flags.length) {
+      const flag = one(flags, "voice flag reader");
+      const combined = nodes("ReturnStatement", (n) => n.argument?.operator === "&&" && n.argument.right?.type === "CallExpression" && n.argument.right.callee.name === flag.id.name && n.argument.left?.type === "CallExpression" && n.argument.left.callee.type === "Identifier");
+      if (combined.length) {
+        const authName = one(combined, "voice combined gate").argument.left.callee.name;
+        const auth = one(nodes("FunctionDeclaration", (fn) => fn.id?.name === authName && fn.params.length === 0), "voice auth probe");
+        if (auth.body.body.length !== 1 || auth.body.body[0].type !== "TryStatement")
+          throw new Error("unexpected voice auth probe");
+        prepend(auth, `if(${asrEnabled})return!0;`);
+        prepend(flag, `if(${asrEnabled})return!0;`);
+      }
+    }
+  } else if (id === "cleanup-period" || id === "file-read-limit") {
+    const bindings = id === "cleanup-period" ? nodes("LogicalExpression", (n) => n.operator === "??" && member(n.left, "cleanupPeriodDays") && n.right.type === "Identifier").map((n) => n.right.name) : nodes("Property", (n) => n.key?.name === "maxTokens" && n.value.operator === "??" && n.value.right.type === "Identifier").map((n) => n.value.right.name);
+    if (!bindings.length)
+      return edits;
+    const name = one([...new Set(bindings)], "default binding");
+    const declaration = one(nodes("VariableDeclarator", (n) => n.id.name === name && n.init?.type === "Literal" && typeof n.init.value === "number"), "default declaration");
+    if (declaration.init.value <= 0 || id === "cleanup-period" && declaration.init.value > 365)
+      throw new Error("unexpected default value");
+    replace(declaration.init, choose(id === "cleanup-period" ? "9999" : "100000", declaration.init));
+  } else if (id === "context-limit") {
+    const targets = functions(["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], 2).filter((fn) => nodes("ReturnStatement", (n) => literal(n.argument, 1e6), fn).length);
+    if (!targets.length)
+      return edits;
+    prepend(one(targets, "context resolver"), `if(${enabled}){let __clawgodLimit=Number(process.env.CLAUDE_CODE_CONTEXT_LIMIT);if(Number.isFinite(__clawgodLimit)&&__clawgodLimit>0)return __clawgodLimit;}`);
+  } else if (id === "classifier-model") {
+    const targets = functions(['classifierStage:"xml_s1"', 'classifierStage:"xml_s2"']);
+    if (!targets.length)
+      return edits;
+    const fn = one(targets, "classifier entry");
+    const names = nodes("Property", (n) => n.key?.name === "classifierModel" && n.value.type === "Identifier", fn).map((n) => n.value.name);
+    const name = one([...new Set(names)], "classifier model");
+    const parameters = fn.params.filter((n) => n.type === "Identifier").map((n) => n.name);
+    if (!parameters.includes(name))
+      throw new Error("classifier model is not a parameter");
+    prepend(fn, `if(${enabled}){let __clawgodModel=(process.env.CLAWGOD_CLASSIFIER_MODEL||process.env.CLAUDE_CLASSIFIER_MODEL||"").trim();if(__clawgodModel)${name}=__clawgodModel;}`);
+  } else if (id === "classifier-fail-open") {
+    const targets = nodes("ObjectExpression", (n) => literal(prop(n, "behavior")?.value, "deny") && nodes("Property", (p) => p.key?.name === "classifier" && literal(p.value, "auto-mode"), n).length > 0 && text(n).includes("httpStatus") && text(n).includes("errorKind") && !text(n).includes("noVerdict"));
+    if (!targets.length)
+      return edits;
+    replace(prop(one(targets, "classifier unavailable result"), "behavior").value, `(${enabled}?"ask":"deny")`);
+  } else if (id === "enable-keybindings") {
+    for (const call of nodes("CallExpression", (n) => n.arguments.length === 2 && literal(n.arguments[0], "tengu_keybinding_customization_release"))) {
+      replace(call.arguments[1], choose("!0", call.arguments[1]));
+    }
+    for (const p of nodes("Property", (n) => literal(n.key, "ctrl+c") && literal(n.value, "app:interrupt")))
+      replace(p.value, choose('"app:exit"', p.value));
+  } else if (id === "unlock-ultracode") {
+    const targets = functions(['"xhigh_effort"', "claude-3-"], 1);
+    if (targets.length)
+      prepend(one(targets, "xhigh capability"), `if(${enabled})return!0;`);
+  } else if (id === "chrome-local-socket") {
+    const targets = functions([".bridgeConfig", ".getSocketPaths"], 1).filter((fn) => fn.body.body.length === 1 && fn.body.body[0].type === "ReturnStatement");
+    if (!targets.length)
+      return edits;
+    const fn = one(targets, "Chrome factory"), arg = fn.params[0].name;
+    const returned = fn.body.body[0].argument;
+    if (returned.type !== "ConditionalExpression")
+      throw new Error("unexpected Chrome dispatch");
+    let socket, native;
+    if (member(returned.test, "bridgeConfig") && member(returned.alternate?.test, "getSocketPaths")) {
+      socket = returned.alternate.consequent;
+      native = returned.alternate.alternate;
+    } else if (member(returned.test, "getSocketPaths") && member(returned.alternate?.test, "bridgeConfig")) {
+      socket = returned.consequent;
+      native = returned.alternate.alternate;
+    } else
+      throw new Error("unexpected Chrome dispatch arms");
+    prepend(fn, `if(${enabled}){${arg}.bridgeConfig=void 0;return ${arg}.getSocketPaths?${text(socket)}:${text(native)}}`);
+  } else if (id === "computer-use") {
+    const targets = functions(['"hipaa"'], 0).filter((fn) => fn.body.body.some((n) => n.type === "ReturnStatement" && n.argument?.operator === "&&" && member(n.argument.right, "enabled")));
+    if (!targets.length)
+      return edits;
+    const fn = one(targets, "computer-use compliance gate");
+    const compliance = fn.body.body.find((n) => n.type === "IfStatement" && text(n).includes('"hipaa"'));
+    if (!compliance)
+      throw new Error("missing compliance guard");
+    insert(compliance.end, `if(${enabled}&&process.env.CLAUDE_CODE_COMPUTER_USE)return!0;`);
+  } else if (id === "disable-collapse-read-search") {
+    const admission = functions(["grouped_tool_use", "toolUseIds", "isAbsorbedSilently", "readPaths"], 2);
+    const classifier = functions(["isSearchOrReadCommand", "isCollapsible", "isAbsorbedSilently", "popsOutOnError"], 3);
+    const scanners = functions([".isCollapsible", "redacted_thinking", "grouped_tool_use", "return-1"]);
+    if (!admission.length && !classifier.length && !scanners.length)
+      return edits;
+    if (admission.length) {
+      const fn = one(admission, "fold admission");
+      const guard = one(nodes("IfStatement", (n) => n.test.type === "UnaryExpression" && n.test.operator === "!" && n.test.argument.type === "Identifier" && n.consequent.type === "ReturnStatement" && literal(n.consequent.argument, null), fn), "fold guard");
+      const info = text(guard.test.argument);
+      replace(guard.test, `(${text(guard.test)}||(${enabled}&&(${info}.isAbsorbedSilently!==!0||${info}.isREPL===!0)))`);
+    }
+    if (classifier.length) {
+      const classify = one(classifier, "tool classifier");
+      const condition = one(nodes("IfStatement", (n) => n.test.operator === "||" && n.test.left.operator === "&&" && n.test.left.left.type === "CallExpression" && n.test.left.right.operator === "===" && text(n.consequent).includes("popsOutOnError"), classify), "ToolSearch branch");
+      replace(condition.test.left, choose(text(condition.test.left.right), condition.test.left));
+    }
+    for (const scanner of scanners)
+      for (const call of nodes("MemberExpression", (n) => n.property.name === "isCollapsible" && n.object.type === "CallExpression", scanner)) {
+        replace(call, choose(`((v)=>v.isAbsorbedSilently===!0&&v.isREPL!==!0)(${text(call.object)})`, call));
+      }
+  } else if (id === "enable-voice-mode") {
+    const readers = functions(["allow_voice_mode"], 0).filter((n) => n.body.body.length === 1 && n.body.body[0].type === "ReturnStatement");
+    if (readers.length) {
+      const reader = one(readers, "voice flag reader");
+      const targets = nodes("FunctionDeclaration", (n) => n.params.length === 0 && n.body.body.length === 1 && n.body.body[0].argument?.operator === "&&" && n.body.body[0].argument.right?.callee?.name === reader.id.name);
+      if (targets.length)
+        prepend(one(targets, "voice availability"), `if(${enabled})return!0;`);
+    }
+    const builders = functions(['id:"autoCompact"', "settingsData:", "setSettingsData:", "setAppState:", "changeLog:"]);
+    if (!builders.length)
+      return edits;
+    const fn = one(builders, "config builder");
+    if (nodes("Property", (n) => n.key?.name === "id" && literal(n.value, "voiceMode"), fn).length)
+      return edits;
+    const binding = (key) => one(nodes("Property", (n) => n.key?.name === key && n.value.type === "Identifier", fn), key).value.name;
+    const sd = binding("settingsData"), set = binding("setSettingsData"), app = binding("setAppState"), log = binding("changeLog");
+    const writer = one(nodes("FunctionDeclaration", (n) => n.params.length === 1 && text(n).includes('"userSettings"'), fn).filter((n) => n !== fn), "settings writer").id.name;
+    const row = one(nodes("ObjectExpression", (n) => literal(prop(n, "id")?.value, "autoCompact"), fn), "autoCompact row");
+    const rowSource = `{id:"voiceMode",label:"Voice mode",type:"enum",options:["off","hold","tap"],value:(${sd}?.voice?.enabled??${sd}?.voiceEnabled)?(${sd}?.voice?.mode??"hold"):"off",async onChange(mode){if(!["off","hold","tap"].includes(mode))return{error:"Invalid voice mode"};let on=mode!=="off",voice={...${sd}?.voice,enabled:on,mode:on?mode:(${sd}?.voice?.mode??"hold")},update={voiceEnabled:on,voice},result=await ${writer}(update);if(result?.error)return result;${set}(s=>({...s,...update}));${app}(s=>({...s,settings:{...s.settings,...update}}));${log}.record("Voice mode",mode)}}`;
+    insert(row.start, `...(${enabled}?[${rowSource}]:[]),`);
+  } else if (id === "transcript-dialog-replay") {
+    const targets = functions(["dialog-", "subscribe(", "onFirstReveal"], 0).filter((fn) => fn.body.body[0]?.declarations?.[3]?.init?.callee?.name === "Map");
+    if (!targets.length)
+      return edits;
+    const fn = one(targets, "dialog channel");
+    const pending = fn.body.body[0].declarations[3].id.name;
+    const method = (name) => one(nodes("Property", (n) => n.key?.name === name && n.value.type === "FunctionExpression", fn), `dialog ${name}`).value;
+    const subscribe = method("subscribe");
+    const listener = subscribe.params[0].name;
+    const reply = method("reply");
+    const request = method("request");
+    if ([subscribe, reply].some((n) => n.params.length !== 1 || n.params[0].type !== "Identifier"))
+      throw new Error("unexpected dialog parameters");
+    const unsubscribe = one(subscribe.body.body.filter((n) => n.type === "ReturnStatement" && ["ArrowFunctionExpression", "FunctionExpression"].includes(n.argument?.type)), "dialog unsubscribe").argument;
+    if (unsubscribe.body.type === "BlockStatement")
+      prepend(unsubscribe, "__clawgodListening=!1;");
+    else
+      replace(unsubscribe.body, `(__clawgodListening=!1,${text(unsubscribe.body)})`);
+    const abort = one(nodes("IfStatement", (n) => n.test.operator === "||" && n.test.left.type === "ChainExpression" && n.test.right.operator === "===" && literal(n.test.right.right, 0) && text(n).includes("cancelled:!0"), request), "dialog cancellation");
+    const emit = one(nodes("CallExpression", (n) => member(n.callee, "emit") && n.arguments.length === 1 && n.arguments[0].type === "ObjectExpression" && prop(n.arguments[0], "onFirstReveal"), request), "dialog event");
+    const event = emit.arguments[0], eventId = text(prop(event, "id").value);
+    prepend(fn, "let __clawgodDialogs=new Map;");
+    replace(abort.test, `(${text(abort.test.left)}||(${enabled}===!1&&${text(abort.test.right)}))`);
+    replace(event, `(${enabled}?(__clawgodDialogs.set(${eventId},${text(event)}),__clawgodDialogs.get(${eventId})):${text(event)})`);
+    prepend(subscribe, `let __clawgodListening=!0;if(${enabled})for(let [id,event]of __clawgodDialogs){if(!${pending}.has(id)){__clawgodDialogs.delete(id);continue}queueMicrotask(()=>{if(__clawgodListening&&${pending}.has(id))${listener}(__clawgodDialogs.get(id)??event)})}`);
+    prepend(reply, `__clawgodDialogs.delete(${reply.params[0].name}.id);`);
+    for (const update of nodes("CallExpression", (n) => member(n.callee, "emit") && n.arguments.length === 1 && n.arguments[0].type === "ObjectExpression" && prop(n.arguments[0], "id") && prop(n.arguments[0], "payload") && !prop(n.arguments[0], "onFirstReveal"), request)) {
+      const value = update.arguments[0];
+      replace(value, `((event)=>{let saved=__clawgodDialogs.get(event.id);if(saved)__clawgodDialogs.set(event.id,{...saved,payload:event.payload});return event})(${text(value)})`);
+    }
+    for (const deletion of nodes("CallExpression", (n) => member(n.callee, "delete") && n.callee.object.name === pending && n.arguments.length === 1, fn)) {
+      replace(deletion, `(__clawgodDialogs.delete(${text(deletion.arguments[0])}),${text(deletion)})`);
+    }
+  }
+  return edits;
+}
+var definitions = [
+  ["chrome-local-socket", "chrome", "bridgeConfig"],
+  ["classifier-fail-open", "classifier-fail-open", "denying with retry guidance"],
+  ["classifier-model", "auto-mode", "classifierStage"],
+  ["cleanup-period", "cleanup-period", "cleanupPeriodDays"],
+  ["computer-use", "computer-use", "hipaa"],
+  ["context-limit", "core", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+  ["disable-collapse-read-search", "disable-collapse-read-search", "isAbsorbedSilently", ".isCollapsible"],
+  ["enable-keybindings", "enable-keybindings", "ctrl+c", "tengu_keybinding_customization_release"],
+  ["enable-voice-mode", "voice", "allow_voice_mode", 'id:"autoCompact"'],
+  ["file-read-limit", "file-read-limit", "defaultFileReadingLimits"],
+  ["transcript-dialog-replay", "transcript-dialog-replay", "dialog-"],
+  ["unlock-ultracode", "unlock-ultracode", "xhigh_effort"],
+  ["voice-asr-backend", "voice", "VOICE_STREAM_BASE_URL", 'name:"voice"', "allow_voice_mode"]
+];
+var cometixPatches = Object.freeze(definitions.map(([id, enhancement, ...anchors], i) => Object.freeze({
+  id,
+  enhancement,
+  order: 100 + i,
+  name: `Cometix parity: ${id}`,
+  async apply(source, { rootDir, dryRun = false, verify = false } = {}) {
+    const marker = `/*__clawgod_cometix_${id}${id === "voice-asr-backend" ? "_v2" : ""}__*/`;
+    const modules = source.split(separator);
+    const candidates = modules.map((code, index) => ({ code, index })).filter((m) => !m.code.includes(marker) && anchors.some((a) => m.code.includes(a)) && (id !== "context-limit" || /\breturn\s+(?:1e6|1000000)\b/.test(m.code)));
+    if (!candidates.length)
+      return { status: source.includes(marker) ? "already" : "skipped", detail: "no unpatched sites" };
+    const acorn = await loadAcorn(rootDir);
+    if (!acorn)
+      return { status: "failed", detail: "Acorn unavailable; no writes" };
+    let count = 0;
+    try {
+      for (const { code, index } of candidates) {
+        const ast = acorn.parse(code, { ecmaVersion: "latest", sourceType: "module", allowReturnOutsideFunction: true });
+        const edits = transform(id, code, ast).sort((a, b) => b.start - a.start || b.end - a.end);
+        let next = code, boundary = code.length;
+        for (const edit of edits) {
+          if (edit.end > boundary)
+            throw new Error("overlapping patch sites");
+          next = next.slice(0, edit.start) + edit.value + next.slice(edit.end);
+          boundary = edit.start;
+        }
+        if (!edits.length)
+          continue;
+        acorn.parse(next, { ecmaVersion: "latest", sourceType: "module", allowReturnOutsideFunction: true });
+        modules[index] = `${next}
+${marker}`;
+        count += edits.length;
+      }
+    } catch (error) {
+      return { status: "failed", detail: `${error.message}; no writes` };
+    }
+    if (!count)
+      return { status: source.includes(marker) ? "already" : "skipped", detail: "target shape not present" };
+    return { status: verify ? "verify" : "applied", count, code: dryRun || verify ? source : modules.join(separator) };
+  }
+})));
+function extendWithCometix(registry) {
+  return Object.freeze({ ...registry, customPatches: Object.freeze([...registry.customPatches, ...cometixPatches.filter((p) => p.enhancement === registry.id)]) });
+}
 
 // src/generic/patcher/enhancements/agents.mjs
 var agentTeamsPatch = {
@@ -10359,9 +11140,9 @@ var patches5 = [
     order: 23,
     name: "Computer Use gate bypass",
     pattern: /function ([\w$]+)\(\)\{if\([\w$]+\("hipaa"\)\)return\s*!1;(?:if\([\w$]+\(\)\)return!0;)?return [\w$]+\(\)(?:&&[\w$]+\(\))*&&[\w$]+(?:\(\))?\.(?:enabled|read)\}/g,
-    replacer: (match, fn) => `function ${fn}(){if(${gate("computer-use-gate")})return!0;${match.slice(`function ${fn}(){`.length, -1)}}`,
+    replacer: (match) => match.replace(/(return\s*!1;)/, `$1if(${gate("computer-use-gate")})return!0;/*__clawgod_computer_use_gate_v2__*/`),
     sentinel: '"hipaa"))return!1;return',
-    appliedMarker: /function [\w$]+\(\)\{if\(globalThis\.__clawgodPatches\?\.\["computer-use-gate"\]/
+    appliedMarker: "/*__clawgod_computer_use_gate_v2__*/"
   },
   {
     order: 24,
@@ -10612,6 +11393,7 @@ var voiceRegistry = Object.freeze({
 });
 
 // src/generic/patcher/registry.mjs
+var coreRegistry2 = extendWithCometix(coreRegistry);
 var enhancementManifest = loadEnhancementManifest(enhancements_default, { filename: "enhancements.json" });
 var patchIds = enhancementManifest.filter((entry) => entry.kind === "patch").map((entry) => entry.id);
 var registryById = new Map([
@@ -10626,16 +11408,21 @@ var registryById = new Map([
   [privacyRegistry.id, privacyRegistry],
   [brandingRegistry.id, brandingRegistry]
 ]);
+for (const { enhancement } of cometixPatches) {
+  if (enhancement !== "core" && !registryById.has(enhancement)) {
+    registryById.set(enhancement, { id: enhancement, patches: Object.freeze([]), customPatches: Object.freeze([]) });
+  }
+}
 function enhancementRegistry(id, enabledIds) {
   if (id === "agents")
     return createAgentsRegistry({ chromeEnabled: enabledIds.has("chrome") });
   const registry = registryById.get(id);
   if (!registry)
     throw new Error(`Missing patch registry for enhancement: ${id}`);
-  return registry;
+  return extendWithCometix(registry);
 }
 var enhancementRegistries = Object.freeze(patchIds.map((id) => enhancementRegistry(id, new Set(patchIds))));
-var patchRegistries = Object.freeze([coreRegistry, ...enhancementRegistries]);
+var patchRegistries = Object.freeze([coreRegistry2, ...enhancementRegistries]);
 var ownedDescriptors = patchRegistries.flatMap((registry) => [
   ...registry.patches.map((descriptor) => ({ descriptor, type: "regex" })),
   ...registry.customPatches.map((descriptor) => ({ descriptor, type: "custom" }))
@@ -10674,7 +11461,7 @@ function createPatchSelection(enabled) {
       throw new Error(`Unknown enabled enhancement: ${id}`);
   }
   const selectedRegistries = patchIds.filter((id) => enabledIds.has(id)).map((id) => enhancementRegistry(id, enabledIds));
-  const registries = [coreRegistry, ...selectedRegistries];
+  const registries = [coreRegistry2, ...selectedRegistries];
   return Object.freeze({
     patches: Object.freeze(registries.flatMap((registry) => orderedRegistryDescriptors(registry, "regex"))),
     customPatches: Object.freeze(registries.flatMap((registry) => orderedRegistryDescriptors(registry, "custom")))
@@ -11011,16 +11798,25 @@ if [ ! -f "$LEAN_OFF_FLAG" ]; then
   "$BUN_BIN" -e '
 const fs = require("fs");
 const settingsPath = process.argv[1];
-const isMax = process.argv[2] === "true";
+const isMax = process.argv[2]?.toLowerCase() === "true";
 const baseDeny = ["DesignSync","NotebookEdit","PushNotification","RemoteTrigger","CronCreate","CronDelete","CronList"];
 const maxDeny = ["EnterPlanMode","ExitPlanMode","SendMessage","ScheduleWakeup","AskUserQuestion","ReportFindings"];
-const baseFlags = ["disableWorkflows","disableRemoteControl","disableClaudeAiConnectors","disableArtifact"];
-const maxFlags = ["disableBundledSkills"];
+const baseFlags = ["disableWorkflows","disableClaudeAiConnectors","disableArtifact"];
+const maxFlags = ["disableBundledSkills","disableRemoteControl"];
 const deny = isMax ? [...baseDeny, ...maxDeny] : baseDeny;
 const flags = isMax ? [...baseFlags, ...maxFlags] : baseFlags;
 let s = {};
 try { s = JSON.parse(fs.readFileSync(settingsPath, "utf8")); } catch {}
 let changed = false;
+// Migrate old Lean defaults and remove max-only settings when switching to on.
+if (!isMax) {
+  for (const k of maxFlags) { if (k in s) { delete s[k]; changed = true; } }
+  if (Array.isArray(s.permissions?.deny)) {
+    const before = s.permissions.deny.length;
+    s.permissions.deny = s.permissions.deny.filter(t => !maxDeny.includes(t));
+    if (s.permissions.deny.length !== before) changed = true;
+  }
+}
 for (const k of flags) { if (!(k in s)) { s[k] = true; changed = true; } }
 if (!s.permissions) s.permissions = {};
 if (!Array.isArray(s.permissions.deny)) s.permissions.deny = [];
@@ -11215,6 +12011,11 @@ fi
 #  - User restored claude.orig via uninstall but still wants the patched one
 write_launcher "$BIN_DIR/clawgod"
 info "Command 'clawgod' → patched ($BIN_DIR/clawgod)"
+
+# Only the selected voice enhancement downloads the original, checksum-pinned addon.
+if ! "$BUN_BIN" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR"; then
+  warn "Optional Cometix ASR setup failed; /voice will report a missing backend until repaired"
+fi
 
 # --- Ensure optional Claude plugins ---------------------------------
 

@@ -152,6 +152,19 @@ async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   return { status: 'applied', count: replacements.length, code: next };
 }
 
+// v1.9.5 upstream DA1 fix: only wait for incomplete probe replies, never
+// filter input. Keep this function self-contained: the patch embeds it so old
+// wrappers also work without a new runtime helper file.
+export function terminalReplyDelay(querier, reader, now) {
+  const parse = reader?.parse;
+  if (parse?.mode !== 'NORMAL' || typeof parse.incomplete !== 'string') return 0;
+  if (!/^\x1b(?:\[(?:\?[\d;]*)?)?$/.test(parse.incomplete)) return 0;
+  if (!Array.isArray(querier?.queue) || !querier.queue.some(entry =>
+    entry?.kind === 'barrier' || (entry?.kind === 'sentinel' && entry.written !== false))) return 0;
+  if (!Number.isFinite(now) || !Number.isFinite(reader.lastInputAt)) return 0;
+  return Math.max(0, 2000 - Math.max(0, now - reader.lastInputAt));
+}
+
 const patches = [
   {
     order: 0,
@@ -207,6 +220,17 @@ const patches = [
     replacer: (match) => match.replace(/claude/g, 'claude.orig'),
     appliedMarker: '"claude.orig.cmd"',
     optional: true,
+  },
+  {
+    order: 90,
+    id: 'terminal-reply-fragments',
+    name: 'Preserve split terminal replies while a DA1 probe is pending',
+    pattern: /(flushIncomplete=\(\)=>\{if\(this\.incompleteEscapeTimer=null,![\w$]+\(this\.keyReader\)\)return;if\(this\.props\.stdin\.readableLength>0\)\{this\.incompleteEscapeTimer=setTimeout\(this\.flushIncomplete,[\w$]+\);return\}let ([\w$]+)=performance\.now\(\);)(this\.applyKeysRead\([\w$]+\(this\.keyReader,\2\),\2\)\})/g,
+    replacer: (match, prefix, now, suffix) => prefix +
+      `/*__clawgod_terminal_reply_fragments__*/const _clawgodReplyDelay=(${terminalReplyDelay.toString()})(this.querier,this.keyReader,${now});` +
+      'if(_clawgodReplyDelay>0){this.incompleteEscapeTimer=setTimeout(this.flushIncomplete,_clawgodReplyDelay);return}' + suffix,
+    appliedMarker: '/*__clawgod_terminal_reply_fragments__*/',
+    optional: true, // Other renderer versions may use a different input loop.
   },
 ];
 

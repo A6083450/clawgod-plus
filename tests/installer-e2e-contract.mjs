@@ -24,6 +24,15 @@ function runContract(contract, input) {
   return spawnSync(process.execPath, [e2e.pathname], { encoding: 'utf8', env });
 }
 
+const enhancementCount = JSON.parse(readFileSync(new URL('../src/generic/enhancements.json', import.meta.url), 'utf8')).length;
+for (const enabled of [0, 3]) assert.ok(compatWorkflow.includes(`enhancements summary: ${enabled} enabled, ${enhancementCount - enabled} disabled`), 'CI selection summaries must match the current manifest');
+
+const allEnhancements = runContract('enhancement-summary', 'Enhancements: 21 enabled, 0 disabled\n');
+assert.equal(allEnhancements.status, 0, allEnhancements.stderr);
+assert.match(allEnhancements.stdout, /21 enabled/);
+const staleEnhancements = runContract('enhancement-summary', 'Enhancements: 14 enabled, 0 disabled\n');
+assert.notEqual(staleEnhancements.status, 0, 'old enhancement count must be rejected');
+
 const pluginSummary = runContract('plugin-summary', {
   output: [
     'claude-hud@claude-hud: ready - installed 0.7.0',

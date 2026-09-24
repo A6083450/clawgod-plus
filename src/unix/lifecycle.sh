@@ -57,6 +57,13 @@ CLAWGOD_ENHANCEMENT_IDS=(
   paste-images
   privacy
   branding
+  classifier-fail-open
+  cleanup-period
+  disable-collapse-read-search
+  enable-keybindings
+  file-read-limit
+  transcript-dialog-replay
+  unlock-ultracode
   claude-hud
   claude-mem
   superpowers
@@ -74,6 +81,13 @@ CLAWGOD_ENHANCEMENT_LABELS=(
   'Paste Images'
   'Privacy'
   'Branding'
+  'Classifier: Ask on Outage'
+  'Keep History'
+  'Expanded Tool Calls'
+  'Keybindings'
+  '100k File Read'
+  'Replay Dialogs'
+  'Ultracode'
   'Claude HUD'
   'claude-mem'
   'Superpowers'

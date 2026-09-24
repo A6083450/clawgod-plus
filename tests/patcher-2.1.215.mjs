@@ -89,8 +89,8 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     const patched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
     assert.equal(
       createHash('sha256').update(patched).digest('hex'),
-      '20d5af60f25d2338a3ef6610962feee65cc279f8ee192d859ffa4905b667bb86',
-      `${name}: default-all representative output bytes must retain the pre-extraction fingerprint`,
+      'd6188a6bf0e57d3b3a9be3d4d99bfb85be9d48279ae9a49364fa30ef366264b0',
+      `${name}: default-all representative output bytes must retain the reviewed compliance-first parity fingerprint`,
     );
     assert.match(patched, /function Bot\(\)\{return et\(ulu,null\)\}/, `${name}: getter must survive`);
     assert.match(patched, /function Jre\(\)\{return!1\}/, `${name}: intermediate functions must survive`);
@@ -107,7 +107,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     );
     assert.match(
       patched,
-      /function AA6\(\)\{if\(globalThis\.__clawgodPatches\?\.\["computer-use-gate"\]!==!1\)return!0;if\(vo5\("hipaa"\)\)return!1;return zQ\(\)&&oL8\(\)\.enabled\}/,
+      /function AA6\(\)\{if\(vo5\("hipaa"\)\)return!1;if\(globalThis\.__clawgodPatches\?\.\["computer-use"\]!==!1&&process\.env\.CLAUDE_CODE_COMPUTER_USE\)return!0;if\(globalThis\.__clawgodPatches\?\.\["computer-use-gate"\]!==!1\)return!0;\/\*__clawgod_computer_use_gate_v2__\*\/return zQ\(\)&&oL8\(\)\.enabled\}/,
       `${name}: Computer Use gate must retain exact disabled semantics`,
     );
     assert.match(patched, /function teams\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]!==!1\)return!0;/, `${name}: Agent Teams must be runtime gated`);
@@ -127,8 +127,8 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       /(?:⚠️|!!) Computer Use gate bypass/,
       `${name}: no unverifiable Computer Use alternative`,
     );
-    assert.match(firstOutput, /Result: 25 applied, 40 skipped, 0 failed/, `${name}: default-all summary must include the three optional classifier descriptors`);
-    assert.match(firstOutput, /Enhancements: 14 enabled, 0 disabled/, `${name}: default-all enhancement summary must be stable`);
+    assert.match(firstOutput, /Result: 26 applied, 53 skipped, 0 failed/, `${name}: default-all summary must include optional classifier and terminal descriptors`);
+    assert.match(firstOutput, /Enhancements: 21 enabled, 0 disabled/, `${name}: default-all enhancement summary must be stable`);
 
 
 

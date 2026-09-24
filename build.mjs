@@ -166,6 +166,7 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     PROXY_FETCH_MJS: 'src/generic/runtime/proxy-fetch.mjs',
     FETCH_FILE_MJS: 'src/generic/runtime/fetch-file.mjs',
     FETCH_PACKAGE_MJS: 'src/generic/runtime/fetch-package.mjs',
+    INSTALL_VOICE_ASR_MJS: 'src/generic/runtime/install-voice-asr.mjs',
     INSTALL_RIPGREP_MJS: 'src/generic/runtime/install-ripgrep.mjs',
     EXTRACTOR_MJS: 'src/generic/runtime/extractor.mjs',
     POST_PROCESSOR_MJS: 'src/generic/runtime/post-processor.mjs',

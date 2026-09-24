@@ -114,6 +114,12 @@ for (const [name, patcherSource] of await getPatcherSources()) {
         const args = noAcorn ? ['no-fetch.cjs', './patch.mjs'] : ['patch.mjs'];
         const run = spawnSync(process.execPath, args, { cwd: dir, encoding: 'utf8' });
         const output = run.stdout + run.stderr;
+        if (noAcorn) {
+          assert.notEqual(run.status, 0, `${label}: AST-only parity must fail closed without Acorn`);
+          assert.match(output, /Acorn unavailable; no writes/);
+          assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), fixture, 'no partial bundle writes');
+          continue;
+        }
         assert.equal(run.status, 0, `${label}: ${output}`);
         assert.match(
           output,
@@ -151,8 +157,8 @@ for (const [name, patcherSource] of await getPatcherSources()) {
         );
         assert.equal(
           context.createChromeClient({ bridgeConfig: { url: 'wss://bridge.example' } }).kind,
-          'bridge',
-          `${label}: bridge-only configurations must keep using the bridge client`,
+          'native',
+          `${label}: bridge-only configurations must use the native path without advertising cloud-only tools`,
         );
       } finally {
         rmSync(dir, { recursive: true, force: true });

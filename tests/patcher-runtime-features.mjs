@@ -4,10 +4,24 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const { runtimeFeatureMetadata } = await import('../src/generic/patcher/registry.mjs');
 
 assert.deepEqual(runtimeFeatureMetadata, {
+  'classifier-fail-open': ['classifier-fail-open'],
+  'cleanup-period': ['cleanup-period'],
+  'disable-collapse-read-search': ['disable-collapse-read-search'],
+  'enable-keybindings': ['enable-keybindings'],
+  'file-read-limit': ['file-read-limit'],
+  'transcript-dialog-replay': ['transcript-dialog-replay'],
+  'unlock-ultracode': ['unlock-ultracode'],
+  'chrome-local-socket': ['chrome-local-socket'],
+  'context-limit': ['context-limit'],
+  'computer-use': ['computer-use'],
+  'enable-voice-mode': ['voice-mode'],
+  'voice-asr-backend': ['voice-asr-backend'],
+
   'agent-teams': ['agent-teams'],
   'computer-use-sub': ['computer-use'],
   'computer-use-default': ['computer-use'],
@@ -123,7 +137,7 @@ let { teams, sub, cu, planning, review, voice, autoProvider, timeout, model, ret
 if(teams()!==false||sub()!==false||cu()!==false||planning.isEnabled()!==false||planning.availability[0]!=="claude-ai"||review()!==false||voice()!==false||autoProvider("third")!==false||timeout(1)!==60000||model().value!=="gb-model"||retries().value!==7||theme.clawd_body!=="rgb(215,119,87)"||theme.claude!=="rgb(255,153,51)"||theme.claudeShimmer!=="rgb(255,183,101)"||theme.hex!=="#da7756"||risk!=="IMPORTANT: Assist with authorized security testing only"||careful()!=="# Executing actions with care\\n\\nConfirm scope."||login!=="Not logged in. Run login to authenticate."||attachments({attachment:{type:"x"}})!==null||privateDate("2026-01-01")!=="Todayxs date is 2026/01/01.") throw Error("off semantics");
 process.env.CLAWGOD_CLASSIFIER_TIMEOUT_MS="130001.8"; process.env.CLAWGOD_CLASSIFIER_MODEL="  custom  "; process.env.CLAWGOD_CLASSIFIER_RETRIES="3";
 ({ teams, sub, cu, planning, review, voice, autoProvider, timeout, model, retries, theme, risk, careful, login, attachments, privateDate } = load({}));
-if(teams()!==true||sub()!==true||cu()!==true||planning.isEnabled()!==true||planning.availability!==undefined||review()!==true||voice()!==true||autoProvider("third")!==true||timeout(1)!==130001.8||model().value!=="custom"||retries().value!==3||theme.clawd_body!=="rgb(34,197,94)"||theme.claude!=="rgb(22,163,74)"||theme.claudeShimmer!=="rgb(34,197,94)"||theme.hex!=="#22c55e"||risk!==""||careful()!==""||login!==""||attachments({attachment:{type:"x"}})?.attachment.type!=="x"||privateDate("2026-01-01")!=="Today's date is 2026-01-01.") throw Error("on semantics");
+if(teams()!==true||sub()!==true||cu()!==false||planning.isEnabled()!==true||planning.availability!==undefined||review()!==true||voice()!==true||autoProvider("third")!==true||timeout(1)!==130001.8||model().value!=="custom"||retries().value!==3||theme.clawd_body!=="rgb(34,197,94)"||theme.claude!=="rgb(22,163,74)"||theme.claudeShimmer!=="rgb(34,197,94)"||theme.hex!=="#22c55e"||risk!==""||careful()!==""||login!==""||attachments({attachment:{type:"x"}})?.attachment.type!=="x"||privateDate("2026-01-01")!=="Today's date is 2026-01-01.") throw Error("on semantics");
 `);
   const run = spawnSync(process.execPath, [scriptFile], { encoding: 'utf8' });
   assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
@@ -152,6 +166,7 @@ function privateDate(e){let t=rdp(),n=odp(t?.known??!1,t?.labKw??!1),r=t?.cnTZ?e
 function rdp(){if(firstParty())return null;let e=url(),t=zone(),n=t==="Asia/Shanghai"||t==="Asia/Urumqi";if(!e)return{known:!1,labKw:!1,cnTZ:n,host:null};return{known:!1,labKw:!1,cnTZ:n,host:e}}
 `;
   mkdirSync(root, { recursive: true, mode: 0o700 });
+  seedPatcherAcorn(root);
   writeFileSync(join(root, 'cli.original.cjs'), fixture);
   writeFileSync(config, '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "computer-use",\n    "agents",\n    "auto-mode",\n    "unrestricted-tools",\n    "privacy",\n    "branding"\n  ]\n}\n', { mode: 0o600 });
   writeFileSync(runner, `await import(${JSON.stringify(entryUrl)});`);

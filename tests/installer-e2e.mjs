@@ -21,15 +21,15 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { voiceAsrFiles, verifyVoiceAsrFile } from '../src/generic/runtime/install-voice-asr.mjs';
 
 const forbiddenText = 'forbidden dependency invoked:';
 
-// Stable enhancement manifest (order matters; must match src/generic/enhancements.json).
-const ENHANCEMENT_IDS = Object.freeze([
-  'chrome', 'computer-use', 'design-canvas', 'agents', 'planning', 'voice', 'auto-mode',
-  'unrestricted-tools', 'paste-images', 'privacy', 'branding',
-  'claude-hud', 'claude-mem', 'superpowers',
-]);
+// Read the canonical selection list; new patches must participate in the real E2E run.
+const ENHANCEMENT_IDS = Object.freeze(JSON.parse(
+  readFileSync(new URL('../src/generic/enhancements.json', import.meta.url), 'utf8'),
+).map(({ id }) => id));
 const PLUGIN_ENHANCEMENT_IDS = Object.freeze(['claude-hud', 'claude-mem', 'superpowers']);
 // '' = default all-enabled, 'none' = core-only, otherwise a CSV subset.
 const e2eEnhancements = process.env.CLAWGOD_E2E_ENHANCEMENTS ?? '';
@@ -483,6 +483,8 @@ if (process.env.CLAWGOD_E2E_CONTRACT) {
         warnings: fixture.warnings ?? 0,
       });
       marker = `plugin summary: ready=${result.ready} disabled=${result.disabled} warnings=${result.warnings}`;
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'enhancement-summary') {
+      marker = validateEnhancementSummary(input);
     } else if (process.env.CLAWGOD_E2E_CONTRACT === 'enhancement-config') {
       const fixture = JSON.parse(input);
       const config = validateEnhancementConfigBytes(fixture.source, { mode: fixture.mode, enabled: fixture.enabled ?? [] });
@@ -601,7 +603,9 @@ function assertHarborKitePreserved(label) {
 
 function assertLeanOn() {
   const settings = readSettings();
-  for (const key of ['disableWorkflows', 'disableRemoteControl', 'disableClaudeAiConnectors', 'disableArtifact']) {
+  assert.equal(Object.hasOwn(settings, 'disableRemoteControl'), false, '--lean-on must not disable Remote Control');
+  assert.equal(Object.hasOwn(settings.env ?? {}, 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'), false, '--lean-on must not inherit max-only traffic restrictions');
+  for (const key of ['disableWorkflows', 'disableClaudeAiConnectors', 'disableArtifact']) {
     assert.equal(settings[key], true, `--lean-on must enable ${key}`);
   }
   assert.equal(existsSync(join(clawgodDir, '.lean-disabled')), false, '--lean-on must remove the lean-disabled marker');
@@ -738,6 +742,20 @@ function selectionArgs() {
   return e2eEnhancements === '' ? [] : ['--enhancements', e2eEnhancements];
 }
 
+function assertVoiceAsr(label) {
+  if (e2eEnhancements !== '' && !requestedEnhancementIds().includes('voice')) return null;
+  const target = `${process.platform}-${process.arch}`;
+  if (!['darwin-arm64', 'darwin-x64', 'linux-x64', 'win32-x64'].includes(target)) return null;
+  const hash = createHash('sha256');
+  for (const name of voiceAsrFiles(target)) {
+    const path = join(clawgodDir, 'vendor', 'cometix-asr', name);
+    assert.ok(lstatSync(path).isFile(), `${label}: ASR asset must be a regular file`);
+    const bytes = readFileSync(path); verifyVoiceAsrFile(name, bytes); hash.update(name).update(bytes);
+  }
+  console.log(`voice ASR ${label}: pinned assets verified (no audio/session call)`);
+  return hash.digest('hex');
+}
+
 function assertEnhancementConfig(label) {
   const config = validateEnhancementConfigBytes(
     readFileSync(join(clawgodDir, 'enhancements.json'), 'utf8'),
@@ -794,6 +812,7 @@ try {
   assertHarborKitePreserved('initial install');
   assertLeanOn();
   console.log(assertEnhancementConfig('initial'));
+  const initialAsrHash = assertVoiceAsr('initial');
   assertRuntimeConfigPreserved();
   assert.equal(existsSync(join(clawgodDir, 'feature-gates.cjs')), true, '安装必须部署运行时开关解析器');
   console.log(validateCleanFallbackState('unix initial'));
@@ -839,6 +858,8 @@ try {
   assertHarborKitePreserved('no-upgrade install');
   assertLeanOff();
   console.log(assertEnhancementConfig('no-upgrade'));
+  assert.equal(assertVoiceAsr('no-upgrade'), initialAsrHash, 'reinstall must preserve the original ASR addon');
+  if (initialAsrHash) assert.match(noUpgradeOutput, /Cometix ASR already verified/, 'reinstall must reuse the verified addon without downloading it again');
   assertRuntimeConfigPreserved();
   console.log(validateCleanFallbackState('unix no-upgrade'));
   if (fullPluginValidation) {
@@ -879,7 +900,7 @@ try {
     join(clawgodDir, 'staging', 'claude-plugins'),
   ]) assert.equal(existsSync(path), false, `uninstall must remove ClawGod plugin artifact: ${path}`);
   assertRuntimeConfigPreserved();
-  for (const fallbackFile of ['self-update.cjs', 'patch-fallback.cjs', 'patch-fallback.json', 'feature-gates.cjs']) {
+  for (const fallbackFile of ['self-update.cjs', 'patch-fallback.cjs', 'patch-fallback.json', 'feature-gates.cjs', 'install-voice-asr.mjs', 'vendor/cometix-asr']) {
     assert.equal(existsSync(join(clawgodDir, fallbackFile)), false, `uninstall must remove the update/fallback runtime file: ${fallbackFile}`);
   }
   assertHarborKitePreserved('uninstall');

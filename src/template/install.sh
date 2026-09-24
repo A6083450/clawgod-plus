@@ -182,7 +182,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -255,6 +255,11 @@ cat > "$CLAWGOD_DIR/plugin-dependencies.mjs" << 'PLUGIN_DEPENDENCIES_EOF'
 @@CLAWGOD_PLUGIN_DEPENDENCIES_MJS@@
 PLUGIN_DEPENDENCIES_EOF
 chmod 700 "$CLAWGOD_DIR/plugin-dependencies.mjs"
+
+cat > "$CLAWGOD_DIR/install-voice-asr.mjs" << 'INSTALL_VOICE_ASR_EOF'
+@@CLAWGOD_INSTALL_VOICE_ASR_MJS@@
+INSTALL_VOICE_ASR_EOF
+chmod 700 "$CLAWGOD_DIR/install-voice-asr.mjs"
 
 # --- Managed ripgrep -------------------------------------------------
 
@@ -799,16 +804,25 @@ if [ ! -f "$LEAN_OFF_FLAG" ]; then
   "$BUN_BIN" -e '
 const fs = require("fs");
 const settingsPath = process.argv[1];
-const isMax = process.argv[2] === "true";
+const isMax = process.argv[2]?.toLowerCase() === "true";
 const baseDeny = ["DesignSync","NotebookEdit","PushNotification","RemoteTrigger","CronCreate","CronDelete","CronList"];
 const maxDeny = ["EnterPlanMode","ExitPlanMode","SendMessage","ScheduleWakeup","AskUserQuestion","ReportFindings"];
-const baseFlags = ["disableWorkflows","disableRemoteControl","disableClaudeAiConnectors","disableArtifact"];
-const maxFlags = ["disableBundledSkills"];
+const baseFlags = ["disableWorkflows","disableClaudeAiConnectors","disableArtifact"];
+const maxFlags = ["disableBundledSkills","disableRemoteControl"];
 const deny = isMax ? [...baseDeny, ...maxDeny] : baseDeny;
 const flags = isMax ? [...baseFlags, ...maxFlags] : baseFlags;
 let s = {};
 try { s = JSON.parse(fs.readFileSync(settingsPath, "utf8")); } catch {}
 let changed = false;
+// Migrate old Lean defaults and remove max-only settings when switching to on.
+if (!isMax) {
+  for (const k of maxFlags) { if (k in s) { delete s[k]; changed = true; } }
+  if (Array.isArray(s.permissions?.deny)) {
+    const before = s.permissions.deny.length;
+    s.permissions.deny = s.permissions.deny.filter(t => !maxDeny.includes(t));
+    if (s.permissions.deny.length !== before) changed = true;
+  }
+}
 for (const k of flags) { if (!(k in s)) { s[k] = true; changed = true; } }
 if (!s.permissions) s.permissions = {};
 if (!Array.isArray(s.permissions.deny)) s.permissions.deny = [];
@@ -945,6 +959,11 @@ fi
 #  - User restored claude.orig via uninstall but still wants the patched one
 write_launcher "$BIN_DIR/clawgod"
 info "Command 'clawgod' → patched ($BIN_DIR/clawgod)"
+
+# Only the selected voice enhancement downloads the original, checksum-pinned addon.
+if ! "$BUN_BIN" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR"; then
+  warn "Optional Cometix ASR setup failed; /voice will report a missing backend until repaired"
+fi
 
 # --- Ensure optional Claude plugins ---------------------------------
 

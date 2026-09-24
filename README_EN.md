@@ -80,14 +80,14 @@ Green branding means the patched runtime is active. The original command is back
 
 ## Optional enhancements
 
-ClawGod Plus offers 13 optional enhancements, all enabled by default. The enhancement IDs are stable and ordered as follows:
+ClawGod Plus offers 21 optional enhancements, all enabled by default. The enhancement IDs are stable and ordered as follows:
 
 | Kind | Enhancement ID |
 |---|---|
-| Patch | `chrome`, `computer-use`, `agents`, `planning`, `voice`, `auto-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding` |
+| Patch | `chrome`, `computer-use`, `design-canvas`, `agents`, `planning`, `voice`, `auto-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding`, `classifier-fail-open`, `cleanup-period`, `disable-collapse-read-search`, `enable-keybindings`, `file-read-limit`, `transcript-dialog-replay`, `unlock-ultracode` |
 | Plugin | `claude-hud`, `claude-mem`, `superpowers` |
 
-With no option and no interactive terminal (piped installs, CI, `claude update`), all 13 enhancements are enabled by default. The selection is persisted as strict JSON in `~/.clawgod/enhancements.json`:
+With no option and no interactive terminal (piped installs, CI, `claude update`), all 21 enhancements are enabled by default. The selection is persisted as strict JSON in `~/.clawgod/enhancements.json`:
 
 ```json
 {
@@ -102,11 +102,11 @@ With no option and no interactive terminal (piped installs, CI, `claude update`)
 Running the installer directly in a terminal asks automatically, no flags to remember:
 
 ```
-  ClawGod Plus 增强选择
-   1) 全部 13 项增强（默认，回车即选）
-   2) 仅核心（不装任何增强）
-   3) 自定义菜单（逐项勾选）
-   回车 全部增强 · Esc 退出
+  ClawGod Plus enhancement selection
+   1) All 21 enhancements (default, Enter to select)
+   2) Core only (no enhancements)
+   3) Custom menu (toggle individual items)
+   Enter: all enhancements · Esc: cancel
 ```
 
 The custom menu is keyboard-driven: `↑`/`↓` move the cursor (wrapping at the ends), `Space` toggles the item, `Enter` confirms, `Esc` returns to the mode menu. Confirming with everything unchecked equals core-only. Pressing `Esc` at the top level cancels the install.
@@ -128,6 +128,32 @@ Windows PowerShell equivalents:
 ```
 
 A later `claude update` reuses the saved selection from `~/.clawgod/enhancements.json` and never prompts. Disabling `claude-hud` or `claude-mem` restores the configuration ClawGod owns, while disabling `superpowers` only stops management and never deletes the plugin you installed.
+
+### Cometix patch integration
+
+The behavior reference is [CometixSpace/claude-code](https://github.com/CometixSpace/claude-code/tree/44ae56d8f1a6367091bdd8681961b2463edab7ec/patcher) at pinned commit `44ae56d8f1a6367091bdd8681961b2463edab7ec`. These 12 capabilities use the existing patch registry, not a second patcher CLI, npm runtime or upstream TUI. Existing custom selections are unchanged; `all` includes new entries.
+
+| Upstream patch | Installation owner | Behavior |
+|---|---|---|
+| `chrome-local-socket` | `chrome` | Clear cloud bridge config and use socket/native transport |
+| `classifier-fail-open` | `classifier-fail-open` | Ask on classifier outages; retain actual unsafe denials |
+| `classifier-model` | `auto-mode` | Support CLAUDE_CLASSIFIER_MODEL; CLAWGOD_CLASSIFIER_MODEL takes priority |
+| `cleanup-period` | `cleanup-period` | Default history retention to 9999 days; preserve explicit cleanupPeriodDays |
+| `computer-use` | `computer-use` | Support CLAUDE_CODE_COMPUTER_USE and retain the HIPAA denial |
+| `context-limit` | `core` | Positive finite CLAUDE_CODE_CONTEXT_LIMIT wins over long-context early returns |
+| `disable-collapse-read-search` | `disable-collapse-read-search` | Show tool calls separately; keep thinking and silent task folding |
+| `enable-keybindings` | `enable-keybindings` | Enable keybinding customization default; Ctrl+C maps to exit, not interrupt |
+| `enable-voice-mode` | `voice` | Voice gate and off / hold / tap in /config |
+| `file-read-limit` | `file-read-limit` | Default per-file limit of 100000 tokens; preserve explicit overrides |
+| `transcript-dialog-replay` | `transcript-dialog-replay` | Replay pending dialogs when listeners return; never replay cancelled/replied dialogs |
+| `unlock-ultracode` | `unlock-ultracode` | Unlock the xhigh capability check; does not guarantee server model support |
+
+The seven new installation options also have same-named `patches.json` switches. Additional runtime keys are `chrome-local-socket` and `context-limit`; voice additions use `voice-mode`, and classifier model selection uses `classifier-tuning`. The `context-limit` switch controls the new resolver override only; existing core 200K fallback compatibility is unchanged. Longer history retention consumes disk, and Ctrl+C exit differs from the original interrupt action; disable these options if undesired.
+
+**Voice:** The `voice` enhancement restores the original Cometix ASR adapter and checksum-pinned native addon, including newer `/voice` command-list and transport-availability checks. No transcription-model configuration is needed. This is **not offline ASR**: recording connects to the addon’s upstream service, including device registration, independently of your chat provider; review its availability and data policy yourself. Installation only checks Bun loading and never records audio. Addons support macOS arm64/x64, Linux x64 glibc, and Windows x64. Unsupported targets/download failures warn without failing the core installation; voice may remain unavailable. Set `CLAUDE_CODE_ASR=0` or `"voice-asr-backend": false` in `patches.json` to restore the original authentication/recognition path; `"voice-mode": false` disables voice patches.
+
+New patches parse individual modules and validate generated syntax; ambiguity or a missing parser prevents writes. Inapplicable version shapes are skipped. `--dry-run` is non-mutating; existing `--revert` behavior is retained. These changes are in source and locally generated installers, not automatically in the pinned Release downloads above before publication.
+
 
 ### Runtime patch switches
 
@@ -253,6 +279,7 @@ The first launch creates `~/.clawgod/provider.json`:
   "baseURL": "https://api.anthropic.com",
   "model": "",
   "smallModel": "",
+  "effort": "",
   "timeoutMs": 3000000
 }
 ```
@@ -261,6 +288,20 @@ The first launch creates `~/.clawgod/provider.json`:
 - Leave `apiKey` empty to use `claude auth login` and the normal OAuth path.
 - A non-Anthropic `baseURL` automatically configures compatible gateway auth and disables the per-request attribution header that can reduce prompt-cache hits.
 - Existing `~/.claude` agents, skills, hooks, and MCP settings remain available.
+
+### Provider authentication and reasoning effort (upstream v1.9.7)
+
+- Custom Anthropic-compatible endpoints use only `ANTHROPIC_AUTH_TOKEN`, clearing a conflicting `ANTHROPIC_API_KEY`. An existing nonblank environment token takes priority; a blank token falls back to `provider.json.apiKey`. Official Anthropic API key mode clears stale tokens; leaving the key unset preserves OAuth.
+- Set `effort` to `low`, `medium`, `high`, `max`, or `auto`; an empty string leaves it unspecified. The `CLAUDE_CODE_EFFORT_LEVEL` environment variable takes priority. Supported levels depend on the model; this does not unlock unsupported model capabilities.
+- For `type: "grok"` / `"openai-compat"`, the bundled proxy forwards `reasoning_effort` for streaming and non-streaming requests: `max` becomes `xhigh`, and `auto` omits the field. Explicit configuration also covers custom model aliases whose requests omit effort. Proxy startup preserves `effort` and `timeoutMs`; `API_TIMEOUT_MS` still takes priority.
+
+### Lean and terminal compatibility (upstream v1.9.5–v1.9.6)
+
+New installs of this fork still default to Lean **off**, preserving the existing enhancement selection. Switch with `claude --lean-on`, `claude --lean-off`, or `claude --lean-max`:
+
+- `on` / `off` no longer disable Remote Control or set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` by default. `max` retains those restrictions; explicit environment settings take priority. Remote Control still requires upstream account, authentication, endpoint, and organization eligibility.
+- Applying `on` during installation or running `--lean-on` removes the old Lean Remote Control disable flag and max-only settings/tool restrictions. Third-party endpoints no longer undo `max` restrictions. Windows also handles `True` / `False` correctly.
+- The existing public-Bun cell renderer is retained, with regression coverage for multiple hyperlinks, more than 2048 styles, and indented soft wraps. Split DA1 replies extend the incomplete-escape timeout only while a sent probe is pending; ordinary keys and paste are not filtered.
 
 ## Configurable context window
 

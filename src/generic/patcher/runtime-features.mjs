@@ -1,6 +1,19 @@
 export const gate = (patchId) => `globalThis.__clawgodPatches?.[${JSON.stringify(patchId)}]!==!1`;
 
 export const runtimeFeatureMetadata = Object.freeze({
+  'classifier-fail-open': ['classifier-fail-open'],
+  'cleanup-period': ['cleanup-period'],
+  'disable-collapse-read-search': ['disable-collapse-read-search'],
+  'enable-keybindings': ['enable-keybindings'],
+  'file-read-limit': ['file-read-limit'],
+  'transcript-dialog-replay': ['transcript-dialog-replay'],
+  'unlock-ultracode': ['unlock-ultracode'],
+  'chrome-local-socket': ['chrome-local-socket'],
+  'context-limit': ['context-limit'],
+  'computer-use': ['computer-use'],
+  'enable-voice-mode': ['voice-mode'],
+  'voice-asr-backend': ['voice-asr-backend'],
+
   'agent-teams': ['agent-teams'],
   'computer-use-sub': ['computer-use'],
   'computer-use-default': ['computer-use'],

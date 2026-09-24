@@ -76,7 +76,7 @@ function stripCacheControl(obj) {
   return out;
 }
 
-function translateRequest(body) {
+function translateRequest(body, configuredEffort) {
   var cleaned = stripCacheControl(body);
   var systemMsgs = translateSystem(cleaned.system);
   var userMsgs = translateMessages(cleaned.messages || []);
@@ -85,6 +85,10 @@ function translateRequest(body) {
   if (cleaned.temperature !== undefined) openaiBody.temperature = cleaned.temperature;
   if (cleaned.top_p !== undefined) openaiBody.top_p = cleaned.top_p;
   if (cleaned.stop_sequences) openaiBody.stop = cleaned.stop_sequences;
+  // Explicit launcher effort also applies to custom model aliases for which
+  // Claude omits output_config. "auto" leaves the upstream default untouched.
+  var effort = configuredEffort || (cleaned.output_config && cleaned.output_config.effort);
+  if (effort && effort !== 'auto') openaiBody.reasoning_effort = effort === 'max' ? 'xhigh' : effort;
   var tools = translateTools(cleaned.tools);
   if (tools) openaiBody.tools = tools;
   if (cleaned.stream) openaiBody.stream_options = { include_usage: true };
@@ -192,7 +196,7 @@ function startProxy(config) {
       var requestModel = body.model || config.model || '';
       var isStream = !!body.stream;
       var openaiBody;
-      try { openaiBody = translateRequest(body); } catch (e) {
+      try { openaiBody = translateRequest(body, config.effort); } catch (e) {
         return new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Translation error: ' + e.message } }), { status: 400, headers: { 'Content-Type': 'application/json' } });
       }
 

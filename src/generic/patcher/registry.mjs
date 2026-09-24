@@ -1,6 +1,7 @@
 import enhancementManifestSource from '../enhancements.json' with { type: 'text' };
 import { loadEnhancementManifest } from '../enhancement-config.mjs';
-import { coreRegistry } from './core.mjs';
+import { coreRegistry as baseCoreRegistry } from './core.mjs';
+import { cometixPatches, extendWithCometix } from './enhancements/cometix.mjs';
 import { createAgentsRegistry } from './enhancements/agents.mjs';
 import { autoModeRegistry } from './enhancements/auto-mode.mjs';
 import { brandingRegistry } from './enhancements/branding.mjs';
@@ -13,6 +14,8 @@ import { privacyRegistry } from './enhancements/privacy.mjs';
 import { unrestrictedToolsRegistry } from './enhancements/unrestricted-tools.mjs';
 import { voiceRegistry } from './enhancements/voice.mjs';
 export { runtimeFeatureMetadata } from './runtime-features.mjs';
+
+const coreRegistry = extendWithCometix(baseCoreRegistry);
 
 export const enhancementManifest = loadEnhancementManifest(enhancementManifestSource, { filename: 'enhancements.json' });
 
@@ -33,11 +36,17 @@ const registryById = new Map([
   [brandingRegistry.id, brandingRegistry],
 ]);
 
+for (const { enhancement } of cometixPatches) {
+  if (enhancement !== 'core' && !registryById.has(enhancement)) {
+    registryById.set(enhancement, { id: enhancement, patches: Object.freeze([]), customPatches: Object.freeze([]) });
+  }
+}
+
 function enhancementRegistry(id, enabledIds) {
   if (id === 'agents') return createAgentsRegistry({ chromeEnabled: enabledIds.has('chrome') });
   const registry = registryById.get(id);
   if (!registry) throw new Error(`Missing patch registry for enhancement: ${id}`);
-  return registry;
+  return extendWithCometix(registry);
 }
 
 export const enhancementRegistries = Object.freeze(patchIds.map(id => enhancementRegistry(id, new Set(patchIds))));

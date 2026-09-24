@@ -238,6 +238,27 @@ check('OSC 8 超链接随样式运行写到字符格', () => {
   assert.equal(screen.char(4), '!');
 });
 
+// v1.9.5 regression contracts: our public-Bun renderer already uses the
+// screen's own pools and absolute columns, so retain it instead of adding a shim.
+check('多个链接保留各自的目标且缩进换行返回绝对结束列', () => {
+  const { screen, end } = paint('\x1b]8;;https://first.example\x07A\x1b]8;;https://second.example\x07B\x1b]8;;\x07C', { x: 3 });
+  assert.equal(end, 6);
+  assert.equal(screen.hyperlinkAt(3), 'https://first.example');
+  assert.equal(screen.hyperlinkAt(4), 'https://second.example');
+  assert.equal(screen.hyperlinkAt(5), undefined);
+});
+
+check('超过 2048 个样式后仍保留旧样式 ID 与颜色', () => {
+  const { line, styles, screen } = paint('\x1b[31mA\x1b[0m');
+  const red = line.parse('\x1b[31mA\x1b[0m')[0].styleId;
+  for (let i = 0; i < 2050; i++) styles.intern([{ code: `style-${i}`, endCode: 'fg' }]);
+  line.paint(screen, '\x1b[32mB\x1b[0m', 1, 0);
+  assert.ok(screen.packed(1) >>> 17 > 2048);
+  assert.deepEqual(screen.stylesAt(1), ['\x1b[32m']);
+  assert.deepEqual(screen.stylesAt(0), ['\x1b[31m']);
+  assert.equal(line.parse('\x1b[31mA\x1b[0m')[0].styleId, red);
+});
+
 check('危险控制序列与非 SGR 转义被丢弃', () => {
   const { screen } = paint('A[2JB]52;c;payloadC(BD');
   assert.equal(screen.char(0), 'A');
@@ -387,6 +408,7 @@ for (const [platform, names, headers] of [
     const line = new actual.Dd(styles, screen.charPool);
     const end = actual.paint(screen, '\x1b[31m中\x1b[0m\t\x1b]8;;https://example.com\x07A\x1b]8;;\x07', 0, 0, line);
     assert.equal(end, 9);
+    assert.equal(actual.paint(screen, 'AB', 10, 0, line), 12, `${platform}: indented wrap returns an absolute column`);
     assert.equal(screen.char(0), '中');
     assert.equal(screen.widthOf(1), 2);
     assert.deepEqual(screen.stylesAt(0), ['\x1b[31m']);

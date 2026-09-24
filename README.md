@@ -80,14 +80,14 @@ bash install.sh --lean-off        # 恢复完整工具集；默认值
 
 ## 可选增强（Enhancements）
 
-ClawGod Plus 提供 13 项可选增强，默认启用全部。增强 ID 固定且按以下顺序排列：
+ClawGod Plus 提供 21 项可选增强，默认启用全部。增强 ID 固定且按以下顺序排列：
 
 | 类型 | 增强 ID |
 |---|---|
-| 补丁 | `chrome`、`computer-use`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding` |
+| 补丁 | `chrome`、`computer-use`、`design-canvas`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding`、`classifier-fail-open`、`cleanup-period`、`disable-collapse-read-search`、`enable-keybindings`、`file-read-limit`、`transcript-dialog-replay`、`unlock-ultracode` |
 | 插件 | `claude-hud`、`claude-mem`、`superpowers` |
 
-非交互环境（管道安装、CI、`claude update`）不传任何选项时，默认启用全部 13 项增强。选择会以严格 JSON 形式保存到 `~/.clawgod/enhancements.json`：
+非交互环境（管道安装、CI、`claude update`）不传任何选项时，默认启用全部 21 项增强。选择会以严格 JSON 形式保存到 `~/.clawgod/enhancements.json`：
 
 ```json
 {
@@ -103,7 +103,7 @@ ClawGod Plus 提供 13 项可选增强，默认启用全部。增强 ID 固定�
 
 ```
   ClawGod Plus 增强选择
-   1) 全部 13 项增强（默认，回车即选）
+   1) 全部 21 项增强（默认，回车即选）
    2) 仅核心（不装任何增强）
    3) 自定义菜单（逐项勾选）
    回车 全部增强 · Esc 退出
@@ -128,6 +128,32 @@ Windows PowerShell 对应参数：
 ```
 
 后续运行 `claude update` 会复用 `~/.clawgod/enhancements.json` 中已保存的选择，并且从不主动询问。关闭 `claude-hud` 或 `claude-mem` 会恢复由 ClawGod 托管的对应配置；关闭 `superpowers` 只会停止托管，不会删除你已安装的插件。
+
+### Cometix 补丁融合
+
+以 [CometixSpace/claude-code](https://github.com/CometixSpace/claude-code/tree/44ae56d8f1a6367091bdd8681961b2463edab7ec/patcher) 的固定提交 `44ae56d8f1a6367091bdd8681961b2463edab7ec` 为行为参考，在现有补丁注册表中实现以下 12 项，不引入第二套 patcher CLI、npm 运行时或上游 TUI。原有自定义选择保持不变；`all` 会包含新增项。
+
+| 上游补丁 | 安装期归属 | 行为 |
+|---|---|---|
+| `chrome-local-socket` | `chrome` | 清除云桥配置，使用本地 socket / native 通道 |
+| `classifier-fail-open` | `classifier-fail-open` | 分类器不可用时改为人工确认；真实不安全判定仍拒绝 |
+| `classifier-model` | `auto-mode` | 兼容 CLAUDE_CLASSIFIER_MODEL；CLAWGOD_CLASSIFIER_MODEL 优先 |
+| `cleanup-period` | `cleanup-period` | 历史默认保留 9999 天；不覆盖显式 cleanupPeriodDays |
+| `computer-use` | `computer-use` | 兼容 CLAUDE_CODE_COMPUTER_USE，保留 HIPAA 拒绝分支 |
+| `context-limit` | `core` | 正的有限 CLAUDE_CODE_CONTEXT_LIMIT 优先于长上下文早返回 |
+| `disable-collapse-read-search` | `disable-collapse-read-search` | 工具调用独立展示；保留思考和静默任务折叠 |
+| `enable-keybindings` | `enable-keybindings` | 开启快捷键配置默认值；Ctrl+C 从 interrupt 改为 exit |
+| `enable-voice-mode` | `voice` | 语音入口与 /config 的 off / hold / tap 设置 |
+| `file-read-limit` | `file-read-limit` | 默认单文件读取上限 100000 tokens，保留显式配置 |
+| `transcript-dialog-replay` | `transcript-dialog-replay` | 订阅恢复后重放未完成弹窗；取消和已回复弹窗不重放 |
+| `unlock-ultracode` | `unlock-ultracode` | 放开 xhigh 能力检查；不保证服务端模型支持 |
+
+新增的 7 个安装选项也可用同名 `patches.json` key 关闭。`chrome-local-socket` 和 `context-limit` 另有同名运行时 key；语音补充逻辑沿用 `voice-mode`，分类器模型沿用 `classifier-tuning`。`context-limit` 开关只控制新增的 resolver 覆写，旧有核心 200K fallback 兼容逻辑不变。历史保留增大会占用更多磁盘，Ctrl+C 的退出行为也与默认中断行为不同，可按需关闭。
+
+**语音说明：** `voice` 增强现在接回 Cometix 原版 ASR 适配器和校验固定版本的原生模块，并适配新版 `/voice` 的命令列表与转写可用性检查。无需自行配置识别模型，但这不是离线识别：开始录音后，原生模块会连接其上游服务（包含设备注册）；不使用你的对话模型配置，服务可用性与数据政策需自行确认。安装只验证 Bun 加载，不会录音。原生模块支持 macOS arm64/x64、Linux x64 glibc、Windows x64；其他平台或下载失败只警告，不影响核心安装，但不能保证语音可用。设置 `CLAUDE_CODE_ASR=0` 或 `patches.json` 中的 `"voice-asr-backend": false` 可恢复原有认证与识别通道；`"voice-mode": false` 关闭语音补丁。
+
+新补丁按模块解析并验证生成语法，歧义和缺少解析器会阻止写入；不适用的版本形态会跳过。`--dry-run` 不写入，现有 `--revert` 恢复机制不变。源码和本地生成安装器包含这些改动，但未发布的改动不会自动出现在上方固定版本的 Release 下载中。
+
 
 ### 运行时补丁开关
 
@@ -253,6 +279,7 @@ CLAWGOD_NO_AUTO_CHROME=1 claude
   "baseURL": "https://api.anthropic.com",
   "model": "",
   "smallModel": "",
+  "effort": "",
   "timeoutMs": 3000000
 }
 ```
@@ -261,6 +288,20 @@ CLAWGOD_NO_AUTO_CHROME=1 claude
 - `apiKey` 留空时，执行 `claude auth login` 并使用标准 OAuth 路径。
 - 非 Anthropic 的 `baseURL` 会自动配置兼容网关认证，并关闭可能降低 Prompt Cache 命中率的逐请求 Attribution Header。
 - 现有 `~/.claude` 中的 Agent、Skill、Hook 和 MCP 设置仍然可用。
+
+### 供应商认证与推理强度（同步上游 v1.9.7）
+
+- 自定义 Anthropic 兼容端点只设置 `ANTHROPIC_AUTH_TOKEN`，清除冲突的 `ANTHROPIC_API_KEY`；已有非空环境 token 优先，空白 token 回退到 `provider.json.apiKey`。官方 Anthropic API Key 路径会清除旧 token，未配置密钥时保留 OAuth。
+- `effort` 可设置为 `low`、`medium`、`high`、`max` 或 `auto`，空字符串表示不指定；`CLAUDE_CODE_EFFORT_LEVEL` 环境变量优先。实际支持的档位取决于模型，不会解锁模型不支持的能力。
+- `type: "grok"` / `"openai-compat"` 的内置代理对流式、非流式请求均转发 `reasoning_effort`：`max` 映射到 `xhigh`，`auto` 不发送该字段；显式配置也适用于未携带 effort 的自定义模型别名。代理启动后保留 `effort` 和 `timeoutMs`；`API_TIMEOUT_MS` 环境变量仍优先。
+
+### Lean 与终端兼容（同步上游 v1.9.5–v1.9.6）
+
+本分支新安装仍默认 Lean **off**，不改变现有的功能选择。用 `claude --lean-on`、`claude --lean-off`、`claude --lean-max` 切换：
+
+- `on` / `off` 不再默认禁用远程控制，也不默认设置 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`；`max` 保留这些限制，显式环境设置优先。远程控制仍需满足上游账户、认证、端点与组织策略要求。
+- 安装时应用 `on` 或执行 `--lean-on` 会清理旧 Lean 的远程控制禁用项，以及 `max` 独有的设置/工具限制；第三方端点不再自动撤销 `max` 限制。Windows 同样处理 `True` / `False`。
+- 保留本分支公开 Bun 字符格渲染器，覆盖多个超链接、超过 2048 个样式和缩进软换行的契约；新增 DA1 终端探测响应分包保护，仅在已发送的探测尚未返回时延长未完成转义序列的等待时间，普通按键与粘贴不被过滤。
 
 ## 可配置上下文窗口
 

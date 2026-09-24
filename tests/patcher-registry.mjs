@@ -17,6 +17,13 @@ const expectedManifest = [
   { id: 'paste-images', kind: 'patch' },
   { id: 'privacy', kind: 'patch' },
   { id: 'branding', kind: 'patch' },
+  { id: 'classifier-fail-open', kind: 'patch' },
+  { id: 'cleanup-period', kind: 'patch' },
+  { id: 'disable-collapse-read-search', kind: 'patch' },
+  { id: 'enable-keybindings', kind: 'patch' },
+  { id: 'file-read-limit', kind: 'patch' },
+  { id: 'transcript-dialog-replay', kind: 'patch' },
+  { id: 'unlock-ultracode', kind: 'patch' },
   { id: 'claude-hud', kind: 'plugin' },
   { id: 'claude-mem', kind: 'plugin' },
   { id: 'superpowers', kind: 'plugin' },
@@ -127,8 +134,8 @@ const ownedDescriptors = patchRegistries.flatMap(registry => [
   ...registry.patches.map(descriptor => ({ descriptor, owner: registry.id })),
   ...registry.customPatches.map(descriptor => ({ descriptor, owner: registry.id })),
 ]);
-assert.equal(ownedDescriptors.length, 65, 'every regex and custom patch descriptor must retain exactly one owner');
-assert.equal(Object.keys(runtimeFeatureMetadata).length, 36, 'all upstream runtime feature patch IDs must be exported');
+assert.equal(ownedDescriptors.length, 79, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(Object.keys(runtimeFeatureMetadata).length, 48, 'all upstream runtime feature patch IDs must be exported');
 assert.equal(
   new Set(ownedDescriptors.map(({ descriptor }) => descriptor)).size,
   ownedDescriptors.length,
@@ -155,14 +162,15 @@ assert.deepEqual(
   'pre-runtime-feature descriptor names, types, and exact global order values must remain canonical',
 );
 assert.deepEqual(
-  canonicalDescriptors.filter(({ descriptor }) => descriptor.order >= 68)
+  canonicalDescriptors.filter(({ descriptor }) => descriptor.order >= 68 && descriptor.order < 100)
     .map(({ descriptor, type }) => ({ name: descriptor.name, type, order: descriptor.order })),
   [
     { name: 'Auto-mode classifier timeout override (CLAWGOD_CLASSIFIER_TIMEOUT_MS)', type: 'regex', order: 68 },
     { name: 'Auto-mode classifier model override (CLAWGOD_CLASSIFIER_MODEL)', type: 'regex', order: 69 },
     { name: 'Auto-mode classifier retries override (CLAWGOD_CLASSIFIER_RETRIES)', type: 'regex', order: 70 },
+    { name: 'Preserve split terminal replies while a DA1 probe is pending', type: 'regex', order: 90 },
   ],
-  'classifier runtime descriptors must have stable post-canonical order values',
+  'runtime and terminal descriptors must have stable post-canonical order values',
 );
 
 function normalizeMetadataValue(value) {
@@ -243,7 +251,7 @@ assert.throws(
 
 assert.deepEqual(patches.filter(descriptor => descriptor.order < 68).map(descriptor => descriptor.name), expectedRegexOrder, 'pre-runtime-feature regex order must remain canonical');
 assert.deepEqual(
-  customPatches.map(descriptor => descriptor.name),
+  customPatches.filter(descriptor => descriptor.order < 100).map(descriptor => descriptor.name),
   ['Claude in Chrome local socket fallback', 'Context limit configurable', 'Claude API skill lazy docs'],
   'custom patches must retain their canonical post-regex order',
 );
@@ -255,8 +263,10 @@ const expectedCore = [
   'GrowthBook env overrides',
   'GrowthBook config overrides',
   'Shell integration → claude.orig (multitool dispatch fix)',
+  'Preserve split terminal replies while a DA1 probe is pending',
   'Context limit configurable',
   'Claude API skill lazy docs',
+  'Cometix parity: context-limit',
 ];
 const core = patchRegistries.find(registry => registry.id === 'core');
 assert.deepEqual(

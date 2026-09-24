@@ -10,6 +10,13 @@
   { "id": "paste-images", "kind": "patch" },
   { "id": "privacy", "kind": "patch" },
   { "id": "branding", "kind": "patch" },
+  { "id": "classifier-fail-open", "kind": "patch" },
+  { "id": "cleanup-period", "kind": "patch" },
+  { "id": "disable-collapse-read-search", "kind": "patch" },
+  { "id": "enable-keybindings", "kind": "patch" },
+  { "id": "file-read-limit", "kind": "patch" },
+  { "id": "transcript-dialog-replay", "kind": "patch" },
+  { "id": "unlock-ultracode", "kind": "patch" },
   { "id": "claude-hud", "kind": "plugin" },
   { "id": "claude-mem", "kind": "plugin" },
   { "id": "superpowers", "kind": "plugin" }

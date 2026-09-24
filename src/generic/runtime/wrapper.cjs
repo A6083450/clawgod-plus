@@ -73,6 +73,7 @@ const defaultConfig = {
   baseURL: 'https://api.anthropic.com',
   model: '',
   smallModel: '',
+  effort: '',
   timeoutMs: 3000000,
 };
 
@@ -89,6 +90,7 @@ if (existsSync(configFile)) {
 
 // OpenAI-compatible provider proxy (grok, openai-compat, etc.)
 const _proxyTypes = { grok: 1, 'openai-compat': 1 };
+let _proxyActive = false;
 if (_proxyTypes[config.type]) {
   let _proxyKey = config.apiKey || '';
   if (!_proxyKey && config.type === 'grok') {
@@ -104,8 +106,10 @@ if (_proxyTypes[config.type]) {
       apiKey: _proxyKey,
       baseURL: config.baseURL || (config.type === 'grok' ? 'https://api.x.ai/v1' : ''),
       model: config.model || '',
+      effort: process.env.CLAUDE_CODE_EFFORT_LEVEL ?? config.effort,
     });
-    process.env.ANTHROPIC_API_KEY = 'proxy-passthrough';
+    _proxyActive = true;
+    delete process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:' + _proxy.port;
     process.env.ANTHROPIC_AUTH_TOKEN = 'proxy-passthrough';
     if (config.model) process.env.ANTHROPIC_MODEL = config.model;
@@ -114,7 +118,7 @@ if (_proxyTypes[config.type]) {
     process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS ??= '1';
     process.on('exit', function () { try { _proxy.stop(); } catch {} });
     process.stderr.write('[clawgod] OpenAI-compat proxy on port ' + _proxy.port + ' (type: ' + config.type + ')\n');
-    config = { ...defaultConfig };  // prevent fallthrough to apiKey/baseURL injection below
+    config = { ...config, apiKey: '', baseURL: '', model: '', smallModel: '' };  // prevent fallthrough to apiKey/baseURL injection below
   } else {
     process.stderr.write('[clawgod] Warning: type=' + config.type + ' but no API key found\n');
   }
@@ -123,12 +127,15 @@ if (_proxyTypes[config.type]) {
 const hasProviderApiKey = !!config.apiKey;
 
 if (hasProviderApiKey) {
-  process.env.ANTHROPIC_API_KEY = config.apiKey;
   if (config.baseURL) process.env.ANTHROPIC_BASE_URL = config.baseURL;
   if (config.model) process.env.ANTHROPIC_MODEL = config.model;
   if (config.smallModel) process.env.ANTHROPIC_SMALL_FAST_MODEL = config.smallModel;
   if (config.baseURL && !/anthropic\.com/i.test(config.baseURL)) {
-    process.env.ANTHROPIC_AUTH_TOKEN ??= config.apiKey;
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_AUTH_TOKEN = (process.env.ANTHROPIC_AUTH_TOKEN || '').trim() || config.apiKey;
+  } else {
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    process.env.ANTHROPIC_API_KEY = config.apiKey;
   }
 } else if (config.baseURL && config.baseURL !== defaultConfig.baseURL) {
   process.env.ANTHROPIC_BASE_URL ??= config.baseURL;
@@ -147,13 +154,9 @@ if (process.env.CLAWGOD_CLAUDE_MEM === '1') {
   const _cmValue = function(v) { return typeof v === 'string' && v && !/[\r\n\0]/.test(v) ? v : ''; };
   const _cmHaiku = _cmValue(_cmEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL) || _cmValue(process.env.ANTHROPIC_SMALL_FAST_MODEL);
   if (_cmHaiku) process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = _cmHaiku;
-  const _cmProxyActive = process.env.ANTHROPIC_API_KEY === 'proxy-passthrough';
-  if (!_cmProxyActive && hasProviderApiKey) {
-    process.env.ANTHROPIC_API_KEY = config.apiKey;
-    if (config.baseURL) process.env.ANTHROPIC_BASE_URL = config.baseURL;
-    if (config.baseURL && !/anthropic\.com/i.test(config.baseURL)) process.env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-    else delete process.env.ANTHROPIC_AUTH_TOKEN;
-  } else if (!_cmProxyActive && !hasProviderApiKey) {
+  // Provider credentials were already routed above; do not reintroduce a second
+  // auth header or replace an active local proxy with settings credentials.
+  if (!_proxyActive && !hasProviderApiKey) {
     const _cmApiKey = _cmValue(_cmEnv.ANTHROPIC_API_KEY);
     const _cmAuthToken = _cmValue(_cmEnv.ANTHROPIC_AUTH_TOKEN);
     const _cmBaseURL = _cmValue(_cmEnv.ANTHROPIC_BASE_URL);
@@ -173,25 +176,20 @@ if (process.env.CLAWGOD_CLAUDE_MEM === '1') {
 // Users can force re-enable with CLAUDE_CODE_ATTRIBUTION_HEADER=1 if needed.
 if (config.baseURL && !/anthropic\.com/i.test(config.baseURL)) {
   process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ??= '0';
-  // Third-party proxies (headroom, etc.) often require remote control.
-  // Lean mode sets disableRemoteControl:true in settings.json — undo it
-  // when the user is routing through a non-Anthropic endpoint.
-  try {
-    const _rcSettings = join(homedir(), '.claude', 'settings.json');
-    if (existsSync(_rcSettings)) {
-      const _rcS = JSON.parse(readFileSync(_rcSettings, 'utf8'));
-      if (_rcS.disableRemoteControl) {
-        delete _rcS.disableRemoteControl;
-        writeFileSync(_rcSettings, JSON.stringify(_rcS, null, 2) + '\n');
-      }
-    }
-  } catch {}
+}
+
+if (config.effort) {
+  process.env.CLAUDE_CODE_EFFORT_LEVEL ??= config.effort;
 }
 
 if (config.timeoutMs) {
   process.env.API_TIMEOUT_MS ??= String(config.timeoutMs);
 }
-process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ??= '1';
+// Remote Control needs feature-flag queries; only max mode restricts traffic
+// by default. Explicit user environment settings retain precedence.
+if (existsSync(join(clawgodDir, '.lean-max')) && !existsSync(join(clawgodDir, '.lean-disabled'))) {
+  process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ??= '1';
+}
 process.env.DISABLE_INSTALLATION_CHECKS ??= '1';
 // "Built-in" ripgrep resolves through the ClawGod-managed PATH above.
 process.env.USE_BUILTIN_RIPGREP ??= '1';
@@ -231,8 +229,8 @@ if (process.argv.includes('--lean-off') || process.argv.includes('--lean-on') ||
   const _leanSettings = join(homedir(), '.claude', 'settings.json');
   const _baseDeny = ['DesignSync','NotebookEdit','PushNotification','RemoteTrigger','CronCreate','CronDelete','CronList'];
   const _maxDeny = ['EnterPlanMode','ExitPlanMode','SendMessage','ScheduleWakeup','AskUserQuestion','ReportFindings'];
-  const _baseFlags = ['disableWorkflows','disableRemoteControl','disableClaudeAiConnectors','disableArtifact'];
-  const _maxFlags = ['disableBundledSkills'];
+  const _baseFlags = ['disableWorkflows','disableClaudeAiConnectors','disableArtifact'];
+  const _maxFlags = ['disableBundledSkills','disableRemoteControl'];
   const _allDeny = new Set([..._baseDeny, ..._maxDeny]);
   const _allFlags = [..._baseFlags, ..._maxFlags];
   const _unlink = function(p) { try { require('fs').unlinkSync(p); } catch {} };

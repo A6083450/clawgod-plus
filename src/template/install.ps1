@@ -323,7 +323,7 @@ if ($Uninstall) {
         Write-OK "Removed clawgod alias"
     }
 
-    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","self-update.cjs","patch-fallback.cjs","feature-gates.cjs","patch-fallback.json","openai-proxy.cjs","proxy-fetch.mjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging","assets","chunks","chunks.bak",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
+    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","self-update.cjs","patch-fallback.cjs","feature-gates.cjs","patch-fallback.json","openai-proxy.cjs","proxy-fetch.mjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","install-voice-asr.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging","assets","chunks","chunks.bak",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
@@ -399,6 +399,9 @@ Initialize-EnhancementSelection
 
 $PluginDependenciesBytes = [Convert]::FromBase64String('@@CLAWGOD_PLUGIN_DEPENDENCIES_MJS_BASE64@@')
 [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "plugin-dependencies.mjs"), $PluginDependenciesBytes)
+
+$InstallVoiceAsrBytes = [Convert]::FromBase64String('@@CLAWGOD_INSTALL_VOICE_ASR_MJS_BASE64@@')
+[System.IO.File]::WriteAllBytes((Join-Path $ClawDir "install-voice-asr.mjs"), $InstallVoiceAsrBytes)
 
 # --- Managed ripgrep -------------------------------------------------
 
@@ -843,16 +846,25 @@ if (-not (Test-Path $leanOffFlag)) {
     $leanApplyScript = @'
 const fs = require("fs");
 const settingsPath = process.argv[2];
-const isMax = process.argv[3] === "true";
+const isMax = process.argv[3]?.toLowerCase() === "true";
 const baseDeny = ["DesignSync","NotebookEdit","PushNotification","RemoteTrigger","CronCreate","CronDelete","CronList"];
 const maxDeny = ["EnterPlanMode","ExitPlanMode","SendMessage","ScheduleWakeup","AskUserQuestion","ReportFindings"];
-const baseFlags = ["disableWorkflows","disableRemoteControl","disableClaudeAiConnectors","disableArtifact"];
-const maxFlags = ["disableBundledSkills"];
+const baseFlags = ["disableWorkflows","disableClaudeAiConnectors","disableArtifact"];
+const maxFlags = ["disableBundledSkills","disableRemoteControl"];
 const deny = isMax ? [...baseDeny, ...maxDeny] : baseDeny;
 const flags = isMax ? [...baseFlags, ...maxFlags] : baseFlags;
 let s = {};
 try { s = JSON.parse(fs.readFileSync(settingsPath, "utf8")); } catch {}
 let changed = false;
+// Migrate old Lean defaults and remove max-only settings when switching to on.
+if (!isMax) {
+  for (const k of maxFlags) { if (k in s) { delete s[k]; changed = true; } }
+  if (Array.isArray(s.permissions?.deny)) {
+    const before = s.permissions.deny.length;
+    s.permissions.deny = s.permissions.deny.filter(t => !maxDeny.includes(t));
+    if (s.permissions.deny.length !== before) changed = true;
+  }
+}
 for (const k of flags) { if (!(k in s)) { s[k] = true; changed = true; } }
 if (!s.permissions) s.permissions = {};
 if (!Array.isArray(s.permissions.deny)) s.permissions.deny = [];
@@ -986,6 +998,10 @@ foreach ($cmd in @("claude", "clawgod")) {
     $launcherContent | Set-Content (Join-Path $BinDir "$cmd.cmd") -Encoding Default
 }
 Write-OK "Commands 'claude' + 'clawgod' -> patched"
+
+# Only the selected voice enhancement downloads the original, checksum-pinned addon.
+& $BunBin (Join-Path $ClawDir "install-voice-asr.mjs") $ClawDir
+if ($LASTEXITCODE -ne 0) { Write-Warn "Optional Cometix ASR setup failed; /voice will report a missing backend until repaired" }
 
 # --- Ensure optional Claude plugins ---------------------------------
 

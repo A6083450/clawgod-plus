@@ -80,14 +80,14 @@ bash install.sh --lean-off        # 全ツールを復元。デフォルト
 
 ## 任意の拡張機能（Enhancements）
 
-ClawGod Plus は 13 の任意拡張機能を提供し、デフォルトで全て有効です。拡張機能 ID は固定されており、次の順序です。
+ClawGod Plus は 21 の任意拡張機能を提供し、デフォルトで全て有効です。拡張機能 ID は固定されており、次の順序です。
 
 | 種類 | 拡張機能 ID |
 |---|---|
-| パッチ | `chrome`、`computer-use`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding` |
+| パッチ | `chrome`、`computer-use`、`design-canvas`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding`、`classifier-fail-open`、`cleanup-period`、`disable-collapse-read-search`、`enable-keybindings`、`file-read-limit`、`transcript-dialog-replay`、`unlock-ultracode` |
 | プラグイン | `claude-hud`、`claude-mem`、`superpowers` |
 
-非対話環境（パイプインストール、CI、`claude update`）でオプションを指定しない場合、デフォルトで 13 の拡張機能がすべて有効になります。選択内容は厳密な JSON として `~/.clawgod/enhancements.json` に保存されます。
+非対話環境（パイプインストール、CI、`claude update`）でオプションを指定しない場合、デフォルトで 21 の拡張機能がすべて有効になります。選択内容は厳密な JSON として `~/.clawgod/enhancements.json` に保存されます。
 
 ```json
 {
@@ -102,11 +102,11 @@ ClawGod Plus は 13 の任意拡張機能を提供し、デフォルトで全て
 端末でインストーラーを直接実行すると自動で質問されるため、引数を覚える必要はありません：
 
 ```
-  ClawGod Plus 增强选择
-   1) 全部 13 项增强（默认，回车即选）
-   2) 仅核心（不装任何增强）
-   3) 自定义菜单（逐项勾选）
-   回车 全部增强 · Esc 退出
+  ClawGod Plus 拡張機能の選択
+   1) 全21項目（既定、Enter で選択）
+   2) コアのみ（拡張機能なし）
+   3) カスタム（項目ごとに選択）
+   Enter: 全項目 · Esc: 中止
 ```
 
 カスタムメニューはキーボード操作です：`↑`/`↓` でカーソル移動（先頭・末尾でループ）、`Space` でチェック切り替え、`Enter` で確定、`Esc` で上位メニューに戻ります。すべて解除して確定するとコアのみと同じ扱いです。最上位で `Esc` を押すとインストールを中止します。
@@ -128,6 +128,32 @@ Windows PowerShell では次の引数になります。
 ```
 
 その後の `claude update` は `~/.clawgod/enhancements.json` に保存済みの選択を再利用し、一切プロンプトを表示しません。`claude-hud` または `claude-mem` を無効化すると ClawGod が管理する設定を復元し、`superpowers` を無効化しても管理を停止するだけで、ユーザーがインストールしたプラグインは削除しません。
+
+### Cometix パッチの統合
+
+[CometixSpace/claude-code](https://github.com/CometixSpace/claude-code/tree/44ae56d8f1a6367091bdd8681961b2463edab7ec/patcher) の固定コミット `44ae56d8f1a6367091bdd8681961b2463edab7ec` を動作仕様の参考に、既存レジストリへ次の12機能を実装しています。別の patcher CLI、npm ランタイム、上流 TUI は導入しません。既存のカスタム選択は維持され、`all` には新規項目が追加されます。
+
+| 上流パッチ | インストール時の所属 | 動作 |
+|---|---|---|
+| `chrome-local-socket` | `chrome` | クラウドブリッジ設定を消し、socket/native 経路を使用 |
+| `classifier-fail-open` | `classifier-fail-open` | 分類器停止時は確認ダイアログへ。危険判定による拒否は維持 |
+| `classifier-model` | `auto-mode` | CLAUDE_CLASSIFIER_MODEL に対応。CLAWGOD_CLASSIFIER_MODEL を優先 |
+| `cleanup-period` | `cleanup-period` | 履歴の既定保持期間を9999日に変更。明示的な cleanupPeriodDays は維持 |
+| `computer-use` | `computer-use` | CLAUDE_CODE_COMPUTER_USE に対応し、HIPAA の拒否分岐を維持 |
+| `context-limit` | `core` | 正の有限値 CLAUDE_CODE_CONTEXT_LIMIT を長文脈の早期 return より優先 |
+| `disable-collapse-read-search` | `disable-collapse-read-search` | ツール呼び出しを個別表示。思考と非表示タスクの折り畳みは維持 |
+| `enable-keybindings` | `enable-keybindings` | キー設定の既定値を有効化。Ctrl+C を interrupt から exit へ変更 |
+| `enable-voice-mode` | `voice` | 音声機能と /config の off / hold / tap 設定 |
+| `file-read-limit` | `file-read-limit` | ファイル読み取り上限の既定値を100000 tokensへ。明示設定は維持 |
+| `transcript-dialog-replay` | `transcript-dialog-replay` | 購読再開時に保留ダイアログを再表示。取消・回答済みは除外 |
+| `unlock-ultracode` | `unlock-ultracode` | xhigh 能力チェックを解除。サーバー側モデルの対応を保証しない |
+
+新しい7つのインストール項目は同名の `patches.json` キーでも無効化できます。追加キーは `chrome-local-socket` と `context-limit` です。音声追加部分は `voice-mode`、分類器モデルは `classifier-tuning` を使用します。`context-limit` キーは新しい resolver 上書きのみを制御し、既存のコア200K fallback は変更しません。履歴保持期間の延長はディスクを消費し、Ctrl+C の終了動作は従来の中断と異なります。不要なら無効化してください。
+
+**音声について：** `voice` 拡張は Cometix 原版 ASR アダプターとハッシュ固定のネイティブモジュールを利用し、新版 `/voice` のコマンド表示・転写可用性判定にも対応します。認識モデルの個別設定は不要ですが、オフライン認識ではありません。録音開始時に上流サービスへ接続し、端末登録も行います。会話モデルとは独立しており、サービスの可用性とデータ方針は利用者が確認してください。インストール時は Bun の読み込みだけを確認し、録音しません。対応環境は macOS arm64/x64、Linux x64 glibc、Windows x64。非対応・ダウンロード失敗は警告のみで、本体の導入は継続しますが音声動作は保証されません。`CLAUDE_CODE_ASR=0` または `patches.json` の `"voice-asr-backend": false` で元の認証・認識経路に戻せます。`"voice-mode": false` は音声パッチを無効化します。
+
+追加パッチはモジュール単位で構文解析と生成コードの検証を行い、曖昧な形態やパーサー欠落時は書き込みません。対象外のバージョン形態はスキップします。`--dry-run` は変更せず、既存の `--revert` を維持します。変更はソースとローカル生成インストーラに含まれ、未公開の間は上記固定 Release のダウンロードには含まれません。
+
 
 ### 実行時パッチスイッチ
 
@@ -253,6 +279,7 @@ HUD では、インストーラが以下の正確な profile を維持し、`~/.
   "baseURL": "https://api.anthropic.com",
   "model": "",
   "smallModel": "",
+  "effort": "",
   "timeoutMs": 3000000
 }
 ```
@@ -261,6 +288,20 @@ HUD では、インストーラが以下の正確な profile を維持し、`~/.
 - `apiKey` を空にすると、`claude auth login` と通常の OAuth パスを使用します。
 - Anthropic 以外の `baseURL` では互換ゲートウェイ認証を自動設定し、Prompt Cache ヒット率を下げる可能性があるリクエスト単位の Attribution Header を無効化します。
 - 既存の `~/.claude` にある Agent、Skill、Hook、MCP 設定は引き続き利用できます。
+
+### Provider 認証と推論強度（上流 v1.9.7）
+
+- カスタム Anthropic 互換エンドポイントでは `ANTHROPIC_AUTH_TOKEN` のみを使用し、競合する `ANTHROPIC_API_KEY` を削除します。空白以外の環境 token を優先し、空白の場合は `provider.json.apiKey` にフォールバックします。公式 Anthropic API キーモードでは古い token を削除し、キー未設定時は OAuth を維持します。
+- `effort` は `low`、`medium`、`high`、`max`、`auto` を指定でき、空文字列は未指定です。環境変数 `CLAUDE_CODE_EFFORT_LEVEL` が優先されます。利用可能な強度はモデルによって異なり、未対応の能力を解除するものではありません。
+- `type: "grok"` / `"openai-compat"` の内蔵プロキシはストリーミング・非ストリーミング双方で `reasoning_effort` を転送します。`max` は `xhigh` に変換し、`auto` はフィールドを省略します。明示設定は effort を送らないカスタムモデル名にも適用されます。プロキシ起動後も `effort` と `timeoutMs` を保持し、`API_TIMEOUT_MS` を優先します。
+
+### Lean と端末互換性（上流 v1.9.5–v1.9.6）
+
+本フォークの新規インストールは引き続き Lean **off** が既定で、既存の拡張機能選択を維持します。`claude --lean-on`、`claude --lean-off`、`claude --lean-max` で切り替えます。
+
+- `on` / `off` では Remote Control を既定で無効にせず、`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` も既定では設定しません。`max` はこれらの制限を維持し、明示的な環境設定を優先します。Remote Control の利用には上流のアカウント、認証、エンドポイント、組織ポリシーの要件が引き続き適用されます。
+- インストール時に `on` を適用するか `--lean-on` を実行すると、旧 Lean の Remote Control 無効化と max 専用の設定・ツール制限を削除します。サードパーティエンドポイントは `max` 制限を自動解除しません。Windows の `True` / `False` にも対応します。
+- 既存の公開 Bun セルレンダラーを維持し、複数リンク、2048 を超えるスタイル、字下げ付きソフト折り返しを回帰検証します。分割 DA1 応答は送信済みプローブの応答待ちに限って未完のエスケープ待機時間を延長し、通常のキー入力や貼り付けは除去しません。
 
 ## 設定可能なコンテキストウィンドウ
 

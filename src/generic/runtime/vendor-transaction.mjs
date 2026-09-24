@@ -85,11 +85,11 @@ function verifyBoundRoots(roots, includeCandidate = true) {
   }
   if (includeCandidate) for (const binding of roots.candidate) verifyBinding(binding);
   if (roots.ripgrepBound) {
-    const ripgrep = status(join(roots.live.path, 'ripgrep'));
-    if (!sameIdentity(ripgrep, roots.ripgrep)) {
-      throw rootConflictError(
-        'vendor transaction: managed ripgrep identity changed',
-        { root: 'ripgrep', reason: 'managed-ripgrep-identity-changed', expected: roots.ripgrep, actual: ripgrep },
+    for (const [name, expected] of [['ripgrep', roots.ripgrep], ['cometix-asr', roots.cometixAsr]]) {
+      const actual = status(join(roots.live.path, name));
+      if (!sameIdentity(actual, expected)) throw rootConflictError(
+        `vendor transaction: managed ${name} identity changed`,
+        { root: name, reason: `managed-${name}-identity-changed`, expected, actual },
       );
     }
   }
@@ -154,16 +154,14 @@ function assessPreMutationRollback(roots, cause) {
     const liveParentTrusted = verify(roots.liveParent);
     const liveTrusted = liveParentTrusted && verify(roots.live);
     if (liveTrusted && roots.ripgrepBound) {
-      try {
-        const actual = status(join(roots.live.path, 'ripgrep'));
-        if (!sameIdentity(actual, roots.ripgrep)) {
-          throw rootConflictError(
-            'vendor transaction: managed ripgrep identity changed',
-            { root: 'ripgrep', reason: 'managed-ripgrep-identity-changed', expected: roots.ripgrep, actual },
+      for (const [name, expected] of [['ripgrep', roots.ripgrep], ['cometix-asr', roots.cometixAsr]]) {
+        try {
+          const actual = status(join(roots.live.path, name));
+          if (!sameIdentity(actual, expected)) throw rootConflictError(
+            `vendor transaction: managed ${name} identity changed`,
+            { root: name, reason: `managed-${name}-identity-changed`, expected, actual },
           );
-        }
-      } catch (error) {
-        record(error, 'ripgrep', false);
+        } catch (error) { record(error, name, false); }
       }
     }
 
@@ -190,10 +188,10 @@ function assessPreMutationRollback(roots, cause) {
   return { rollbackComplete, cleanupAllowed };
 }
 
-function boundEntries(binding, roots, skipRipgrep = false, includeCandidate = true) {
+function boundEntries(binding, roots, skipManaged = false, includeCandidate = true) {
   verifyRoots(roots, includeCandidate);
   if (binding.identity === null) return [];
-  const names = readdirSync(binding.path).filter(name => !skipRipgrep || name !== 'ripgrep').sort();
+  const names = readdirSync(binding.path).filter(name => !skipManaged || (name !== 'ripgrep' && name !== 'cometix-asr')).sort();
   verifyRoots(roots, includeCandidate);
   return names;
 }
@@ -326,6 +324,7 @@ function rollback({ roots, published, oldEntries, cause }) {
       const expectedNames = [
         ...oldEntries.map(entry => entry.name),
         ...(roots.ripgrep === null ? [] : ['ripgrep']),
+        ...(roots.cometixAsr === null ? [] : ['cometix-asr']),
       ].toSorted();
       const actualNames = boundEntries(roots.live, roots, false, false).toSorted();
       if (!actualNames.every((name, index) => name === expectedNames[index]) || actualNames.length !== expectedNames.length) {
@@ -352,6 +351,7 @@ export function publishVendorTransaction({ liveVendor, candidateVendor, transact
     candidate: [],
     old: null,
     ripgrep: undefined,
+    cometixAsr: undefined,
     ripgrepBound: false,
   };
 
@@ -360,6 +360,7 @@ export function publishVendorTransaction({ liveVendor, candidateVendor, transact
     roots.liveParent = bindDirectory(dirname(liveVendor), 'live vendor parent');
     roots.live = bindDirectory(liveVendor, 'live vendor');
     roots.ripgrep = status(join(liveVendor, 'ripgrep'));
+    roots.cometixAsr = status(join(liveVendor, 'cometix-asr'));
     roots.ripgrepBound = true;
     bindDescendant(roots.transaction, candidateVendor, 'candidate vendor', roots.candidate);
     if (status(oldVendor) !== null) throw new Error('vendor transaction: old vendor path must not already exist');
@@ -367,8 +368,8 @@ export function publishVendorTransaction({ liveVendor, candidateVendor, transact
     roots.old = bindDirectory(oldVendor, 'old vendor');
 
     const candidateRoot = roots.candidate.at(-1);
-    if (boundEntries(candidateRoot, roots).includes('ripgrep')) {
-      throw new Error('vendor transaction: candidate must not contain managed ripgrep');
+    for (const name of ['ripgrep', 'cometix-asr']) {
+      if (boundEntries(candidateRoot, roots).includes(name)) throw new Error(`vendor transaction: candidate must not contain managed ${name}`);
     }
     for (const name of boundEntries(roots.live, roots, true)) {
       verifyRoots(roots);

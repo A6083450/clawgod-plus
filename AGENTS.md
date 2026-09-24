@@ -74,9 +74,11 @@ Windows uninstall:
 
 ### Enhancement selection
 
-ClawGod Plus resolves a persisted, optionally interactive choice of 14 enhancements. The stable IDs, in manifest order, are `chrome`, `computer-use`, `design-canvas`, `agents`, `planning`, `voice`, `auto-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding` (patches), then `claude-hud`, `claude-mem`, `superpowers` (plugins). Selection is persisted as strict JSON at `~/.clawgod/enhancements.json` with the schema `{ "schemaVersion": 1, "mode": "all" | "custom", "enabled": [...] }`.
+ClawGod Plus resolves a persisted, optionally interactive choice of 21 enhancements. The stable IDs, in manifest order, are `chrome`, `computer-use`, `design-canvas`, `agents`, `planning`, `voice`, `auto-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding`, `classifier-fail-open`, `cleanup-period`, `disable-collapse-read-search`, `enable-keybindings`, `file-read-limit`, `transcript-dialog-replay`, `unlock-ultracode` (patches), then `claude-hud`, `claude-mem`, `superpowers` (plugins). Selection is persisted as strict JSON at `~/.clawgod/enhancements.json` with the schema `{ "schemaVersion": 1, "mode": "all" | "custom", "enabled": [...] }`.
 
 Direct local installers accept `--enhancements <csv>` / `--choose-enhancements` (Unix) and `-Enhancements <csv>` / `-ChooseEnhancements` (PowerShell). Running the installer directly in a terminal auto-prompts a quick choice (all / core-only / custom menu) via stdin-TTY detection; the menus are key-driven (`↑`/`↓` move, `Space` toggles, `Enter` confirms, `Esc` returns to the parent menu and cancels the install at the top level); piped installs, CI, and `claude update` never prompt (the update patch marks its installer spawn with `CLAWGOD_NONINTERACTIVE=1`) and reuse the saved selection, defaulting to all enhancements. Disabling `claude-hud` or `claude-mem` restores the configuration ClawGod owns, while disabling `superpowers` never deletes the user's installed plugin.
+
+The user restored upstream Cometix ASR under the existing `voice` enhancement. Preserve the original adapter; only adapt ClawGod vendor paths and newer command/transport availability checks. The installer fetches commit-pinned, SHA-256-checked native files on supported platforms and validates Bun loading only. Never record audio or call the native startSession/ensureDid as an installation smoke test. This is network-backed ASR, not offline transcription. `CLAUDE_CODE_ASR=0` or the `voice-asr-backend` runtime switch disables this transport; do not modify unrelated account/compliance checks.
 
 ## Project Architecture
 
@@ -122,7 +124,7 @@ ClawGod Plus is an installer-driven runtime patch project for official Claude Co
 2. It auto-adds `--chrome` for normal interactive starts, but skips that for commands such as `--help`, `--version`, `update`, `auth`, `config`, `mcp`, and `daemon`.
 3. `CLAWGOD_NO_AUTO_CHROME=1` disables default `--chrome` injection.
 4. Bun runs `~/.clawgod/cli.cjs`, which ensures `~/.clawgod/provider.json` exists.
-5. If `provider.json.apiKey` is set, the wrapper exports Anthropic-compatible provider variables. For non-Anthropic `baseURL`, it also disables the attribution/billing header by default to avoid prompt-cache misses with compatible proxies.
+5. If `provider.json.apiKey` is set, custom endpoints use only `ANTHROPIC_AUTH_TOKEN` (nonblank environment token first, otherwise the provider key); the official Anthropic API key path clears stale auth tokens. Built-in Grok/OpenAI proxies also use token-only auth and preserve `effort` and `timeoutMs`. `CLAUDE_CODE_EFFORT_LEVEL` overrides `provider.json.effort`; proxies forward `reasoning_effort`, mapping `max` to `xhigh` and omitting `auto`. For non-Anthropic `baseURL`, it also disables the attribution/billing header by default to avoid prompt-cache misses with compatible proxies.
 6. If `~/.clawgod/features.json` is valid JSON, it is exported through `CLAUDE_INTERNAL_FC_OVERRIDES`. This is distinct from `patches.json`, which supplies sparse ClawGod runtime feature gates.
 7. The wrapper loads `patches.json` plus inherited exact `CLAWGOD_FEATURE_<NAME>=true|false` overrides before loading `./cli.original.cjs`; absent `patches.json` means `{}` (and is created when possible), while changes take effect on the next launch without re-patching.
 
@@ -136,6 +138,7 @@ ClawGod Plus is an installer-driven runtime patch project for official Claude Co
   "baseURL": "https://api.anthropic.com",
   "model": "",
   "smallModel": "",
+  "effort": "",
   "timeoutMs": 3000000
 }
 ```
@@ -147,10 +150,19 @@ Important variables used by the installer or launchers:
 - `CLAUDE_CODE_EXECPATH` - set by launchers to the original Claude binary backup.
 - `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_AUTH_TOKEN` - exported from `provider.json` when configured.
 - `CLAUDE_CODE_ATTRIBUTION_HEADER=0` - set for non-Anthropic `baseURL` providers to preserve third-party prompt-cache behavior.
+- `CLAUDE_CODE_EFFORT_LEVEL` - optional reasoning effort, taking precedence over `provider.json.effort`; available levels depend on the upstream model.
 - `API_TIMEOUT_MS`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_INSTALLATION_CHECKS`, `USE_BUILTIN_RIPGREP` - runtime wrapper controls.
 - `CLAUDE_INTERNAL_FC_OVERRIDES` - populated from `features.json` when present; this is Claude-internal GrowthBook configuration, not the ClawGod runtime switches.
 - `CLAWGOD_FEATURE_<NAME>` - inherited exact lowercase `true` / `false` per-launch override for a `patches.json` feature; hyphens become underscores, and unknown feature names warn.
 - `CLAWGOD_CLASSIFIER_TIMEOUT_MS`, `CLAWGOD_CLASSIFIER_MODEL`, `CLAWGOD_CLASSIFIER_RETRIES` - optional auto-mode classifier tuning values, read at call time (including `~/.claude/settings.json` `env`).
+
+## Upstream v1.9.5–v1.9.7 parity
+
+Pinned upstream release: `v1.9.7`, commit `7bf3b15b10c475c132fe245679c7253792ec74f9`. Keep this fork's Bun-only runtime, public cell renderer, default Lean off, enhancement selection, and existing Cometix patches. Do not replace the renderer with a second `Bun.ant` shim or enable automatic issue closure.
+
+Lean on/off permit Remote Control and do not default to disabling nonessential traffic; only max applies those defaults. Explicit network environment settings win. Installer on-mode migration and `--lean-on` remove legacy Remote Control and max-only settings. Merely launching a third-party provider must not rewrite Remote Control settings or undo max mode. Eligibility checks remain upstream-owned.
+
+Focused tests: `bun tests/wrapper-provider-lean.mjs`, `bun tests/openai-proxy.mjs`, `bun tests/patcher-terminal-replies.mjs`, and `bun tests/runtime-cell-segmenter.mjs`. Provider/proxy checks use isolated homes and loopback mock endpoints, not real credentials or external inference. Terminal fragment handling is a core patch with its helper embedded in the callback, independent of optional enhancements. It bounds incomplete DA1 reply waiting to two seconds without filtering ordinary input.
 
 ## GitHub Workflows
 
