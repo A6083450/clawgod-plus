@@ -79,7 +79,7 @@ try {
   }
   // Exercise the exact embedded installer JS without running a real installer.
   for (const platform of ['unix', 'windows']) {
-    const source = readFileSync(new URL(`../src/template/install.${platform === 'unix' ? 'sh' : 'ps1'}`, import.meta.url), 'utf8');
+    const source = readFileSync(new URL(`../src/template/install.${platform === 'unix' ? 'sh' : 'ps1'}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
     const code = platform === 'unix' ? source.match(/"\$BUN_BIN" -e '\n(const fs = require\("fs"\);\nconst settingsPath[\s\S]*?)\n' "\$CLAUDE_SETTINGS" "\$LEAN_IS_MAX"/)?.[1]
       : source.match(/\$leanApplyScript = @'\n([\s\S]*?)\n'@/)?.[1];
     assert.ok(code, `${platform} lean installer body`);
