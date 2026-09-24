@@ -547,6 +547,54 @@ const CELL_PLATFORM_SHAPES = [
     tabAnchor: 'let fe=gc(oe),ge=F.x2-H',
     tabReplacement: 'let fe=gc(oe);if(fe.indexOf(String.fromCharCode(9))>=0){let q=((H%_Ct)+_Ct)%_Ct;fe=QJ(" ".repeat(q)+fe).slice(q)}let ge=F.x2-H',
   },
+  // 2.1.281 darwin
+  {
+    shape: [
+      { header: 'function Rs(n){', digest: '9a0c2f80ef7f4e227d78ce236f0bae24587e439ac90b03cdbb34db2d149d54f0' },
+      { header: 'class tf{', digest: 'c68ca011843f621bef8a7e74d0323ae9ac0eb5d2a190d3047e084de577786239' },
+      { header: 'function ex(n,d,f,m){', digest: 'c9b4f151ba15d44851e343bf7e9ec52a691e2f200a89b54181cd0d12d5816475' },
+      { header: 'function uC(n,d,f,m,y){', digest: 'b0c5d22aa99966eaea3d4760abfb33306cb5b11bd690aa8d8ce3ec1f587aaf32' },
+      { header: 'function X6r(n,d=Number.POSITIVE_INFINITY){', digest: '5047f9a32564548b7813e7475839874785647ec8017a3086b9afc2ea6a700b3d' },
+      { header: 'function vd(n,d){', digest: '3a300dc65b17c443fbb2485449c4e4faf15a5f14a27659ad0afd9197b0f27cad' },
+      { header: 'function Tc(n){', digest: '6e14ebbea67d98ab0d6a10563da9ecb1a1c520772e11bfc04d81f9b7954a289d' },
+    ],
+    names: { Ns: 'Rs', Dd: 'tf', Cx: 'ex', xC: 'uC', cmr: 'X6r', Kf: 'vd', Dc: 'Tc', bn: 'xn', wo: 'Ll', Xf: 'Md', jn: 'Vn', Rx: 'tx', xx: '$E', hht: 'wIt', C8: 'KQ', MNr: 'Koo', LNr: 'Yoo', bGt: 'Fsn' },
+    oscDeclaration: 'var Ss="\\x1B]8;;"',
+    tabAnchor: 'let me=Tc(re),ge=k.x2-U',
+    tabReplacement: 'let me=Tc(re);if(me.indexOf(String.fromCharCode(9))>=0){let q=((U%wIt)+wIt)%wIt;me=KQ(" ".repeat(q)+me).slice(q)}let ge=k.x2-U',
+  },
+  // 2.1.281 linux
+  {
+    shape: [
+      { header: 'function Cs(n){', digest: '697172aa9a012689dec1039f928cf1cd5555787ed484cd643bb7df1c422c334f' },
+      { header: 'class tf{', digest: '963ec5f0e002f5e92f2be66ed1796b30d6861881c858029b783c9c7836c94702' },
+      { header: 'function ix(n,d,f,m){', digest: '82313b116143d3a00a72b2c6962dd0dd58692901e1e68407b839f6425766cdf8' },
+      { header: 'function fC(n,d,f,m,y){', digest: '321d46c4530acf46bfa4bdaa013e5fe9e0076b3f8a37b59ad30ff53850364d59' },
+      { header: 'function V2r(n,d=Number.POSITIVE_INFINITY){', digest: 'f456f8a2d6ef62003a6fc96bacdd883f883ecea431e1d009225354f75cc88cd7' },
+      { header: 'function vd(n,d){', digest: '62e53b0823f83835e1b9cfc224431d49961bd469c6a480fa61823b95b7eeb1f3' },
+      { header: 'function Tc(n){', digest: 'f68dedcc478ff81e06e5f1c6a65c6f574d770386d989053682137a8b58591ff9' },
+    ],
+    names: { Ns: 'Cs', Dd: 'tf', Cx: 'ix', xC: 'fC', cmr: 'V2r', Kf: 'vd', Dc: 'Tc', bn: 'xn', wo: 'Pl', Xf: 'Md', jn: 'Vn', Rx: 'ox', xx: 'nx', hht: 'aPt', C8: 'FQ', MNr: 'foo', LNr: 'moo', bGt: 'Ssn' },
+    oscDeclaration: 'var Ss="\\x1B]8;;"',
+    tabAnchor: 'let me=Tc(re),ge=k.x2-U',
+    tabReplacement: 'let me=Tc(re);if(me.indexOf(String.fromCharCode(9))>=0){let q=((U%aPt)+aPt)%aPt;me=FQ(" ".repeat(q)+me).slice(q)}let ge=k.x2-U',
+  },
+  // 2.1.281 win32
+  {
+    shape: [
+      { header: 'function Ms(n){', digest: '72f21af750a40d4dcda7fd8b1673694e3f489d934153b35c11f70ae97e0f7b0c' },
+      { header: 'class tf{', digest: '6e58e78427d424277d8ffb34cbe55bf0e46925cd773a890745b6d88e2a1a63df' },
+      { header: 'function nx(n,d,f,m){', digest: '897adb575822f3887bee660507b9a7eb6609d3520d7b48ce0adef47c06ca90b4' },
+      { header: 'function fC(n,d,f,m,y){', digest: '16363df1b5e8f33477b55a969b60aac260188f588682e471a69ef6bfbb6b95ad' },
+      { header: 'function Jzr(n,d=Number.POSITIVE_INFINITY){', digest: 'fdeefec3214acc2e60164bb21cdead6e40daa9e251bf0901eaf29ad0061db6e7' },
+      { header: 'function vd(n,d){', digest: 'f1732946d8f5a8838578ed6ba55acccc632dc105446fda0d92f80bfea6a0596f' },
+      { header: 'function Tc(n){', digest: '407be17e8cb9bc2f7066a130e1debbc8824eee8b27287d5fab48ef1670563c31' },
+    ],
+    names: { Ns: 'Ms', Dd: 'tf', Cx: 'nx', xC: 'fC', cmr: 'Jzr', Kf: 'vd', Dc: 'Tc', bn: 'xn', wo: 'Pl', Xf: 'Md', jn: 'Vn', Rx: 'ix', xx: 'tx', hht: 'sIt', C8: 'W7', MNr: 'hoo', LNr: 'yoo', bGt: 'Tsn' },
+    oscDeclaration: 'var Ss="\\x1B]8;;"',
+    tabAnchor: 'let me=Tc(re),ge=I.x2-U',
+    tabReplacement: 'let me=Tc(re);if(me.indexOf(String.fromCharCode(9))>=0){let q=((U%sIt)+sIt)%sIt;me=W7(" ".repeat(q)+me).slice(q)}let ge=I.x2-U',
+  },
 ];
 
 // Every name the injected source introduces must be free in the target module;

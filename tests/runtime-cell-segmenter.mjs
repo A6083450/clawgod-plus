@@ -318,7 +318,7 @@ check('声明扫描能跨过字符串、模板、正则与注释', () => {
 });
 
 check('三平台真实声明可适配，未知漂移仍被拒绝', () => {
-  for (const platform of ['2.1.274-darwin', '2.1.274-linux', '2.1.274-win32', '2.1.276-darwin', '2.1.276-linux', '2.1.276-win32', '2.1.278-darwin', '2.1.278-linux', '2.1.278-win32', '2.1.280-darwin', '2.1.280-linux', '2.1.280-win32']) {
+  for (const platform of ['2.1.274-darwin', '2.1.274-linux', '2.1.274-win32', '2.1.276-darwin', '2.1.276-linux', '2.1.276-win32', '2.1.278-darwin', '2.1.278-linux', '2.1.278-win32', '2.1.280-darwin', '2.1.280-linux', '2.1.280-win32', '2.1.281-darwin', '2.1.281-linux', '2.1.281-win32']) {
     const source = readFileSync(new URL(`./fixtures/cell-renderer-${platform}.txt`, import.meta.url), 'utf8');
     const adapted = adaptCellRenderer(source);
     assert.notEqual(adapted, null, `${platform}: 官方声明必须可适配`);
@@ -361,6 +361,12 @@ for (const [platform, names, headers] of [
     ['function gs()', 'class Kd ', 'function IE(', 'function Qx(']],
   ['2.1.280-win32', { Ns: 'gs', Dd: 'Kd', Cx: 'IE', xC: 'Zx', cmr: 'ILr', Kf: 'ud', Dc: 'gc', bn: 'gn', wo: 'No', Xf: 'pd', jn: 'Yn', Rx: 'KE', xx: 'kE', hht: '_Ct', C8: 'QJ', MNr: 'dXr', LNr: 'uXr', bGt: 'UZt' },
     ['function gs()', 'class Kd ', 'function IE(', 'function Zx(']],
+  ['2.1.281-darwin', { Ns: 'Rs', Dd: 'tf', Cx: 'ex', xC: 'uC', cmr: 'X6r', Kf: 'vd', Dc: 'Tc', bn: 'xn', wo: 'Ll', Xf: 'Md', jn: 'Vn', Rx: 'tx', xx: '$E', hht: 'wIt', C8: 'KQ', MNr: 'Koo', LNr: 'Yoo', bGt: 'Fsn' },
+    ['function Rs()', 'class tf ', 'function ex(', 'function uC(']],
+  ['2.1.281-linux', { Ns: 'Cs', Dd: 'tf', Cx: 'ix', xC: 'fC', cmr: 'V2r', Kf: 'vd', Dc: 'Tc', bn: 'xn', wo: 'Pl', Xf: 'Md', jn: 'Vn', Rx: 'ox', xx: 'nx', hht: 'aPt', C8: 'FQ', MNr: 'foo', LNr: 'moo', bGt: 'Ssn' },
+    ['function Cs()', 'class tf ', 'function ix(', 'function fC(']],
+  ['2.1.281-win32', { Ns: 'Ms', Dd: 'tf', Cx: 'nx', xC: 'fC', cmr: 'Jzr', Kf: 'vd', Dc: 'Tc', bn: 'xn', wo: 'Pl', Xf: 'Md', jn: 'Vn', Rx: 'ix', xx: 'tx', hht: 'sIt', C8: 'W7', MNr: 'hoo', LNr: 'yoo', bGt: 'Tsn' },
+    ['function Ms()', 'class tf ', 'function nx(', 'function fC(']],
 ]) {
   const source = readFileSync(new URL(`./fixtures/cell-renderer-${platform}.txt`, import.meta.url), 'utf8');
   const adapted = adaptCellRenderer(source);
@@ -391,14 +397,20 @@ for (const [platform, names, headers] of [
   });
 }
 
-check('2.1.280 裁剪制表符时使用上游展开函数', () => {
-  for (const [platform, helper] of [['darwin', 'eJ'], ['linux', 'VJ'], ['win32', 'QJ']]) {
-    const source = readFileSync(new URL(`./fixtures/cell-renderer-2.1.280-${platform}.txt`, import.meta.url), 'utf8');
+check('裁剪制表符时使用上游展开函数', () => {
+  for (const [version, platform, sanitize, tabWidth, helper] of [
+    ['2.1.280', 'darwin', 'gc', 'ITt', 'eJ'],
+    ['2.1.280', 'linux', 'gc', 'yTt', 'VJ'],
+    ['2.1.280', 'win32', 'gc', '_Ct', 'QJ'],
+    ['2.1.281', 'darwin', 'Tc', 'wIt', 'KQ'],
+    ['2.1.281', 'linux', 'Tc', 'aPt', 'FQ'],
+    ['2.1.281', 'win32', 'Tc', 'sIt', 'W7'],
+  ]) {
+    const source = readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}.txt`, import.meta.url), 'utf8');
     const adapted = adaptCellRenderer(source);
     const start = adapted.indexOf('function tabClip(');
     const declaration = adapted.slice(start, findDeclarationEnd(adapted, adapted.indexOf('{', start)) + 1);
-    const tabWidth = { darwin: 'ITt', linux: 'yTt', win32: '_Ct' }[platform];
-    const clip = new Function('gc', helper, tabWidth, 'Bun', `${declaration};return tabClip`)(
+    const clip = new Function(sanitize, helper, tabWidth, 'Bun', `${declaration};return tabClip`)(
       text => text,
       text => {
         assert.equal(text, '   a\tb');
@@ -407,7 +419,7 @@ check('2.1.280 裁剪制表符时使用上游展开函数', () => {
       8,
       { sliceAnsi: text => text },
     );
-    assert.equal(clip('a\tb', 3, 0, { x2: 20 }), 'a    b', platform);
+    assert.equal(clip('a\tb', 3, 0, { x2: 20 }), 'a    b', `${version}-${platform}`);
   }
 });
 
