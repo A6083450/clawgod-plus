@@ -224,7 +224,8 @@ if (existsSync(realBundle)) {
       content += `\n${readFileSync(join(chunksDir, name), 'utf8')}`;
     }
   }
-  for (const patch of designCanvasRegistry.patches) {
+  const canvasEvidence = /isDesignCanvasSkillEnabled|DESIGN_CANVAS_(?:DESCRIPTION|MENU_DESCRIPTION|COMMAND_NAME)|payload\.template\.html\.asset|Create a design canvas/;
+  if (canvasEvidence.test(content)) for (const patch of designCanvasRegistry.patches) {
     if (content.includes(patch.appliedMarker)) {
       assert.equal(
         content.match(new RegExp(patch.appliedMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length,

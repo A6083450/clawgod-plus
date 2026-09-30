@@ -266,6 +266,20 @@ async function applyClaudeApiSkillLazyDocsPatch(source, { dryRun, verify }) {
   return { status: 'applied', count: 1, code: source.slice(0, start) + replacement + source.slice(end) };
 }
 
+async function applyBuiltinHooksPatch(source, { dryRun, verify }) {
+  if (!source.includes('hooks/register.ts')) return { status: 'skipped', detail: 'not present in this version' };
+  const marker = '/*__clawgod_plain_bun_builtin_hooks__*/';
+  if (source.includes(marker)) return { status: 'already', detail: 'already applied' };
+  const pattern = /var ([\w$]+)=\(e,o,r\)=>([\w$]+)\(\)\?([\w$]+)\(o,r\(\),e\):\{module:o,folder:e\}/g;
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1) return { status: 'failed', detail: 'built-in hooks resolver shape not recognized' };
+  const [original, helper, standalone, bundled] = matches[0];
+  if (verify) return { status: 'verify', count: 1 };
+  if (dryRun) return { status: 'applied', count: 1, code: source };
+  const replacement = `var ${helper}=(e,o,r)=>(${standalone}()||process.argv[1]&&/(?:^|[\\\\/])cli\\.cjs$/.test(process.argv[1]))${marker}?${bundled}(o,r(),e):{module:o,folder:e}`;
+  return { status: 'applied', count: 1, code: source.replace(original, () => replacement) };
+}
+
 const customPatches = [{
   order: 61,
   name: 'Context limit configurable',
@@ -274,6 +288,10 @@ const customPatches = [{
   order: 64,
   name: 'Claude API skill lazy docs',
   apply: applyClaudeApiSkillLazyDocsPatch,
+}, {
+  order: 91,
+  name: 'Built-in hooks module for plain Bun cli.cjs',
+  apply: applyBuiltinHooksPatch,
 }];
 
 export const coreRegistry = Object.freeze({

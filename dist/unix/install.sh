@@ -7248,7 +7248,7 @@ cat > "$CLAWGOD_DIR/post-process.mjs" << 'POSTPROC_EOF'
 #!/usr/bin/env bun
 import { readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
-import { dirname, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -7842,6 +7842,48 @@ const CELL_PLATFORM_SHAPES = [
     tabAnchor: 'let me=Tc(re),ge=I.x2-U',
     tabReplacement: 'let me=Tc(re);if(me.indexOf(String.fromCharCode(9))>=0){let q=((U%sIt)+sIt)%sIt;me=W7(" ".repeat(q)+me).slice(q)}let ge=I.x2-U',
   },
+  // 2.1.285 darwin：ANSI 辅助函数已拆到冻结的依赖分块。
+  {
+    shape: [
+      { header: 'function ys(n){', digest: 'cde64cf325e8da5fe5e25b08a745d5e2ebf7afa9a3a13249dc975569d9615629' },
+      { header: 'class Kd{', digest: 'a219f5e963fd90cf05bbf0f05a11baab6fab6345e3b3284560b45756a7f9f273' },
+      { header: 'function N1(n,d,f,m){', digest: 'f11514b07f290a7834dd4d77f3305814c17813418c23df8cf2217b8ec6e9f192' },
+      { header: 'function Lx(n,d,f,m,y){', digest: '4b8fa5266696dab2714759543f4d6e88594a9673e676123ca11aead7f99f9800' },
+      { header: 'function bc(n){', digest: '06f34db54c4db085e25a8abac7041bfd9d10de3346a01e90134d615eae6923f0' },
+    ],
+    names: { Ns: 'ys', Dd: 'Kd', Cx: 'N1', xC: 'Lx', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'A1', xx: 'T1', hht: 'XFt', C8: 'Cne', MNr: 'Ovo', LNr: 'Dvo', bGt: 'qgn' },
+    dependency: { specifier: '/$bunfs/root/chunk-rq9vt4dd.js', digest: '6f57031332df9bc09e5fa53e405715071ea34bfffae53a07e236d808ea0babbc', tokenizer: 'OEo', normalizeStyles: 'Drn' },
+    tabAnchor: 'let Ee=bc(ae),pe=G.x2-U',
+    tabReplacement: 'let Ee=bc(ae);if(Ee.indexOf(String.fromCharCode(9))>=0){let q=((U%XFt)+XFt)%XFt;Ee=Cne(" ".repeat(q)+Ee).slice(q)}let pe=G.x2-U',
+  },
+  // 2.1.285 linux
+  {
+    shape: [
+      { header: 'function ys(n){', digest: '2f07348ed297e7c4af1b937c6d29f5a998eefe51af0af649ebaa0bb708768294' },
+      { header: 'class Id{', digest: '86b8542dd47127b6eecfcdf4a75aa7bddbf87b76d9d7285f32b25916e4f4cb1b' },
+      { header: 'function _1(n,d,f,m){', digest: '256cb0c2d178419fff7701080581159fb31008a2f518f67b5ee3312f4fb7d325' },
+      { header: 'function Px(n,d,f,m,y){', digest: '013cf547bb3ab4351184c79b1ac7a154a9f1c4385cf1235e6d1b5c8e2fb31d92' },
+      { header: 'function bc(n){', digest: '0919440b08ebc48d0416f8efe20b0c71e9f6119ecc13f084a0c45cc2898b16de' },
+    ],
+    names: { Ns: 'ys', Dd: 'Id', Cx: '_1', xC: 'Px', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'D1', xx: 'A1', hht: 'L$t', C8: 'hne', MNr: 'Xvo', LNr: 'Jvo', bGt: 'xgn' },
+    dependency: { specifier: '/$bunfs/root/chunk-63gmfw50.js', digest: '9bb893dfcdb68982c86db1392f92daa7db6f0c8fc15d65c2e9c5b67b6c265ee8', tokenizer: 'Jwo', normalizeStyles: 'hrn' },
+    tabAnchor: 'let Ee=bc(ae),pe=k.x2-F',
+    tabReplacement: 'let Ee=bc(ae);if(Ee.indexOf(String.fromCharCode(9))>=0){let q=((F%L$t)+L$t)%L$t;Ee=hne(" ".repeat(q)+Ee).slice(q)}let pe=k.x2-F',
+  },
+  // 2.1.285 win32
+  {
+    shape: [
+      { header: 'function ys(n){', digest: '47b2cb945d61439d46e90be9286209ae9ce20de5c57c3563fd2305f34c0413a5' },
+      { header: 'class Kd{', digest: '4da4a86fbaf106eee3ca5a9063a469a783cea879cc0a1e678a430ef609a78c08' },
+      { header: 'function D1(n,d,f,m){', digest: 'dd5e791308b46be577475d28ccdc2bd1b9c2c7ccfcc7db33ad616c1c47a80386' },
+      { header: 'function zx(n,d,f,m,y){', digest: '00f7347d22ebd1b5bb33fb313127c234cca04ea49569275c927711c41a371945' },
+      { header: 'function bc(n){', digest: 'b7cd54dd30f7a4cf5a2fa67652f6dd81954d4112318fd54b25e537b653bb4180' },
+    ],
+    names: { Ns: 'ys', Dd: 'Kd', Cx: 'D1', xC: 'zx', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'bc', bn: 'En', wo: 'Ol', Xf: 'dd', jn: 'Vn', Rx: 'w1', xx: '_1', hht: 'FFt', C8: 'Sne', MNr: 'tEo', LNr: 'nEo', bGt: 'Lgn' },
+    dependency: { specifier: 'B:/~BUN/root/chunk-e9tkhk3c.js', digest: '7afc65e2947df22dc031264fe732ec31c0f805896d350dc63ca9ef1432d54981', tokenizer: 'rvo', normalizeStyles: 'Srn' },
+    tabAnchor: 'let Ee=bc(ae),pe=I.x2-U',
+    tabReplacement: 'let Ee=bc(ae);if(Ee.indexOf(String.fromCharCode(9))>=0){let q=((U%FFt)+FFt)%FFt;Ee=Sne(" ".repeat(q)+Ee).slice(q)}let pe=I.x2-U',
+  },
 ];
 
 // Every name the injected source introduces must be free in the target module;
@@ -7850,7 +7892,7 @@ const CELL_RENDERER_NAMES = Object.freeze([
   'clawgodCacheLimit', 'clawgodOsc8Prefix', 'clawgodSgr', 'clawgodAmbiguousNarrow',
   'clawgodSegmenter', 'clawgodGraphemes', 'clawgodCsiEnd', 'clawgodOscEnd',
   'sanitizeControlSequences', 'parseStyledText', 'packCell', 'unionDamage',
-  'writeCell', 'paintCells',
+  'writeCell', 'paintCells', 'clawgodAnsiTokens', 'clawgodNormalizeStyles', 'clawgodMergeStyles',
 ]);
 
 // Locates the closing brace of a declaration. The result is always checked
@@ -7943,20 +7985,30 @@ function startsExpression(previous) {
  * `shape` is a parameter so the guard rails around the rewrite can be
  * exercised offline; production callers always use the frozen table.
  */
-export function adaptCellRenderer(source, shape) {
+export function adaptCellRenderer(source, shape, dependencies = new Map()) {
   const profiles = shape ? [{ ...CELL_PLATFORM_SHAPES[0], shape }] : CELL_PLATFORM_SHAPES;
   for (const profile of profiles) {
-    const adapted = adaptCellRendererShape(source, profile);
+    const adapted = adaptCellRendererShape(source, profile, dependencies);
     if (adapted !== null) return adapted;
   }
   return null;
 }
 
-function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, oscDeclaration = OSC8_DECLARATION }) {
+function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, oscDeclaration = OSC8_DECLARATION }, dependencies) {
   for (const name of CELL_RENDERER_NAMES) {
     if (source.includes(name)) return null;
   }
-  if (!source.includes(oscDeclaration)) return null;
+  let ansiImport = '';
+  if (dependency) {
+    // 2.1.285 把 ANSI 分词和样式合并拆到独立模块；冻结整个依赖，不能只信导出名。
+    const ansi = dependencies.get(basename(dependency.specifier));
+    if (typeof ansi !== 'string' || createHash('sha256').update(ansi).digest('hex') !== dependency.digest) return null;
+    const imports = [...source.matchAll(/import\{[^}]*\}from"([^"]+)";/g)]
+      .filter(match => match[1] === dependency.specifier);
+    if (imports.length !== 1) return null;
+    ansiImport = `import{${dependency.tokenizer} as clawgodAnsiTokens,${dependency.normalizeStyles} as clawgodNormalizeStyles}from${JSON.stringify(dependency.specifier)};\n`
+      + 'function clawgodMergeStyles(styles,codes){return clawgodNormalizeStyles([...styles,...codes])}\n';
+  } else if (!source.includes(oscDeclaration)) return null;
   for (const binding of CELL_SEGMENTER_BINDINGS) {
     const local = names[binding] ?? binding;
     const present = [...source.matchAll(/import\{([^}]*)\}from/g)].some((match) =>
@@ -7985,7 +8037,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
     const mapped = text.replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
     adapted = adapted.slice(0, span.start) + mapped + adapted.slice(span.end);
   }
-  return adapted.replace(tabAnchor, tabReplacement);
+  return ansiImport + adapted.replace(tabAnchor, tabReplacement);
 }
 
 // 2.1.269+ 渲染器硬依赖私有 Bun.ant.CellSegmenter。公开 Bun 给不了，所以在
@@ -7996,8 +8048,10 @@ const CELL_SEGMENTER_REFERENCE = /\bnew\s+Bun\s*\.\s*ant\s*\.\s*CellSegmenter\s*
 function installPublicCellRenderer(modulePaths) {
   if (typeof globalThis.Bun?.ant?.CellSegmenter === 'function') return;
   const targets = [];
+  const dependencies = new Map();
   for (const path of modulePaths) {
     const source = readFileSync(path, 'utf8');
+    dependencies.set(basename(path), source);
     if (CELL_SEGMENTER_REFERENCE.test(source)) targets.push({ path, source });
   }
   if (targets.length === 0) return;
@@ -8005,7 +8059,7 @@ function installPublicCellRenderer(modulePaths) {
     throw new Error(`多个分块都依赖私有 Bun.ant.CellSegmenter，形态无法确认；已拒绝安装（${targets.length} 个）。`);
   }
   const { path, source } = targets[0];
-  const adapted = adaptCellRenderer(source);
+  const adapted = adaptCellRenderer(source, undefined, dependencies);
   if (adapted === null) {
     throw new Error('此 Claude Code 依赖私有 Bun.ant.CellSegmenter，且渲染器形态未被 ClawGod 识别；'
       + '已拒绝安装，避免产生无法进入交互界面的运行时。请用 --version 安装受支持的版本。');
@@ -8499,7 +8553,7 @@ cat > "$CLAWGOD_DIR/feature-gates.cjs" << 'FEATURE_GATES_EOF'
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 
-function loadFeatureGates(directory, metadata = JSON.parse('{"classifier-fail-open":["classifier-fail-open"],"cleanup-period":["cleanup-period"],"disable-collapse-read-search":["disable-collapse-read-search"],"enable-keybindings":["enable-keybindings"],"file-read-limit":["file-read-limit"],"transcript-dialog-replay":["transcript-dialog-replay"],"unlock-ultracode":["unlock-ultracode"],"chrome-local-socket":["chrome-local-socket"],"context-limit":["context-limit"],"computer-use":["computer-use"],"enable-voice-mode":["voice-mode"],"voice-asr-backend":["voice-asr-backend"],"agent-teams":["agent-teams"],"computer-use-sub":["computer-use"],"computer-use-default":["computer-use"],"computer-use-gate":["computer-use"],"ultraplan":["ultraplan"],"ultrareview-gate":["ultrareview"],"ultrareview-direct":["ultrareview"],"voice-mode":["voice-mode"],"auto-mode-helper-gate":["auto-mode"],"auto-mode-inline-gate":["auto-mode"],"auto-mode-provider-opt-in":["auto-mode"],"classifier-timeout":["classifier-tuning"],"classifier-model":["classifier-tuning"],"classifier-retries":["classifier-tuning"],"theme-logo-rgb":["theme"],"theme-logo-ansi":["theme"],"theme-claude-rgb-dark":["theme"],"theme-claude-rgb-light":["theme"],"theme-shimmer-rgb":["theme"],"theme-shimmer-rgb-light":["theme"],"theme-hex":["theme"],"theme-claude-ansi":["theme"],"theme-shimmer-ansi":["theme"],"theme-brief-rgb-dark":["theme"],"theme-brief-rgb-light":["theme"],"theme-brief-ansi":["theme"],"geo-stego-date":["geo-neutralize"],"geo-detect-probe":["geo-neutralize"],"geo-apostrophe-stego":["geo-neutralize"],"remove-cyber-risk":["cyber-risk"],"remove-url-restriction":["url-restriction"],"remove-cautious-actions":["cautious-actions"],"remove-not-logged-in":["not-logged-in"],"attachment-filter-bypass":["message-filter"],"message-filter-legacy":["message-filter"],"message-filter-s8":["message-filter"]}'), env = process.env, warn = text => process.stderr.write(text)) {
+function loadFeatureGates(directory, metadata = JSON.parse('{"classifier-fail-open":["classifier-fail-open"],"cleanup-period":["cleanup-period"],"disable-collapse-read-search":["disable-collapse-read-search"],"enable-keybindings":["enable-keybindings"],"file-read-limit":["file-read-limit"],"transcript-dialog-replay":["transcript-dialog-replay"],"unlock-ultracode":["unlock-ultracode"],"chrome-local-socket":["chrome-local-socket"],"context-limit":["context-limit"],"computer-use":["computer-use"],"enable-voice-mode":["voice-mode"],"voice-asr-backend":["voice-asr-backend"],"agent-teams":["agent-teams"],"computer-use-sub":["computer-use"],"computer-use-default":["computer-use"],"computer-use-gate":["computer-use"],"ultraplan":["ultraplan"],"ultrareview-gate":["ultrareview"],"ultrareview-direct":["ultrareview"],"voice-mode":["voice-mode"],"voice-hold-input":["voice-mode"],"auto-mode-helper-gate":["auto-mode"],"auto-mode-inline-gate":["auto-mode"],"auto-mode-provider-opt-in":["auto-mode"],"classifier-timeout":["classifier-tuning"],"classifier-model":["classifier-tuning"],"classifier-retries":["classifier-tuning"],"theme-logo-rgb":["theme"],"theme-logo-ansi":["theme"],"theme-claude-rgb-dark":["theme"],"theme-claude-rgb-light":["theme"],"theme-shimmer-rgb":["theme"],"theme-shimmer-rgb-light":["theme"],"theme-hex":["theme"],"theme-claude-ansi":["theme"],"theme-shimmer-ansi":["theme"],"theme-brief-rgb-dark":["theme"],"theme-brief-rgb-light":["theme"],"theme-brief-ansi":["theme"],"geo-stego-date":["geo-neutralize"],"geo-detect-probe":["geo-neutralize"],"geo-apostrophe-stego":["geo-neutralize"],"remove-cyber-risk":["cyber-risk"],"remove-url-restriction":["url-restriction"],"remove-cautious-actions":["cautious-actions"],"remove-not-logged-in":["not-logged-in"],"attachment-filter-bypass":["message-filter"],"message-filter-legacy":["message-filter"],"message-filter-s8":["message-filter"]}'), env = process.env, warn = text => process.stderr.write(text)) {
   const configFile = join(directory, 'patches.json');
   let config = Object.create(null);
   try {
@@ -9947,6 +10001,24 @@ async function applyClaudeApiSkillLazyDocsPatch(source, { dryRun, verify }) {
   const end = start + endMatch.index + endMatch[0].length;
   return { status: "applied", count: 1, code: source.slice(0, start) + replacement + source.slice(end) };
 }
+async function applyBuiltinHooksPatch(source, { dryRun, verify }) {
+  if (!source.includes("hooks/register.ts"))
+    return { status: "skipped", detail: "not present in this version" };
+  const marker = "/*__clawgod_plain_bun_builtin_hooks__*/";
+  if (source.includes(marker))
+    return { status: "already", detail: "already applied" };
+  const pattern = /var ([\w$]+)=\(e,o,r\)=>([\w$]+)\(\)\?([\w$]+)\(o,r\(\),e\):\{module:o,folder:e\}/g;
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1)
+    return { status: "failed", detail: "built-in hooks resolver shape not recognized" };
+  const [original, helper, standalone, bundled] = matches[0];
+  if (verify)
+    return { status: "verify", count: 1 };
+  if (dryRun)
+    return { status: "applied", count: 1, code: source };
+  const replacement = `var ${helper}=(e,o,r)=>(${standalone}()||process.argv[1]&&/(?:^|[\\\\/])cli\\.cjs$/.test(process.argv[1]))${marker}?${bundled}(o,r(),e):{module:o,folder:e}`;
+  return { status: "applied", count: 1, code: source.replace(original, () => replacement) };
+}
 var customPatches = [{
   order: 61,
   name: "Context limit configurable",
@@ -9955,6 +10027,10 @@ var customPatches = [{
   order: 64,
   name: "Claude API skill lazy docs",
   apply: applyClaudeApiSkillLazyDocsPatch
+}, {
+  order: 91,
+  name: "Built-in hooks module for plain Bun cli.cjs",
+  apply: applyBuiltinHooksPatch
 }];
 var coreRegistry = Object.freeze({
   id: "core",
@@ -10011,6 +10087,7 @@ var runtimeFeatureMetadata = Object.freeze({
   "ultrareview-gate": ["ultrareview"],
   "ultrareview-direct": ["ultrareview"],
   "voice-mode": ["voice-mode"],
+  "voice-hold-input": ["voice-mode"],
   "auto-mode-helper-gate": ["auto-mode"],
   "auto-mode-inline-gate": ["auto-mode"],
   "auto-mode-provider-opt-in": ["auto-mode"],
@@ -10460,7 +10537,15 @@ function transform(id, source, ast) {
     if (!bindings.length)
       return edits;
     const name = one([...new Set(bindings)], "default binding");
-    const declaration = one(nodes("VariableDeclarator", (n) => n.id.name === name && n.init?.type === "Literal" && typeof n.init.value === "number"), "default declaration");
+    const declarations = nodes("VariableDeclarator", (n) => n.id.name === name && n.init?.type === "Literal" && typeof n.init.value === "number");
+    if (id === "cleanup-period" && !declarations.length) {
+      one(nodes("ImportSpecifier", (n) => n.local.name === name), "default import");
+      for (const fallback of nodes("LogicalExpression", (n) => n.operator === "??" && n.right?.type === "Identifier" && n.right.name === name)) {
+        replace(fallback.right, choose("9999", fallback.right));
+      }
+      return edits;
+    }
+    const declaration = one(declarations, "default declaration");
     if (declaration.init.value <= 0 || id === "cleanup-period" && declaration.init.value > 365)
       throw new Error("unexpected default value");
     replace(declaration.init, choose(id === "cleanup-period" ? "9999" : "100000", declaration.init));
@@ -11386,10 +11471,124 @@ var patches11 = [{
   replacer: (match, fn) => `function ${fn}(){return ${gate("voice-mode")}?!0:(${match.slice(`function ${fn}(){return`.length, -1)})}`,
   optional: true
 }];
+var voiceHoldInput = Object.freeze({
+  id: "voice-hold-input",
+  order: 99,
+  name: "Voice hold input: clean warmup once, consume recording repeats",
+  async apply(source, { rootDir, dryRun = false, verify = false } = {}) {
+    const marker = "/*__clawgod_voice_hold_input_v2__*/";
+    if (source.includes("/*__clawgod_voice_hold_input__*/"))
+      return { status: "failed", detail: "old voice input patch; re-extract before patching; no writes" };
+    const separator = `
+/*__CLAWGOD_MODULE_BOUNDARY__*/
+`;
+    const modules = source.split(separator), enabled = `(${gate("voice-hold-input")}&&${gate("voice-mode")})`;
+    if (!modules.some((code) => code.includes("voice:pushToTalk") && !code.includes(marker))) {
+      return { status: source.includes(marker) ? "already" : "skipped", detail: "no unpatched voice input" };
+    }
+    const acorn = await loadAcorn(rootDir);
+    if (!acorn)
+      return { status: "failed", detail: "Acorn unavailable; no writes" };
+    let count = 0;
+    try {
+      for (const [index, code] of modules.entries()) {
+        if (!code.includes("voice:pushToTalk") || code.includes(marker))
+          continue;
+        const ast = acorn.parse(code, { ecmaVersion: "latest", sourceType: "module", allowReturnOutsideFunction: true });
+        const text = (n) => code.slice(n.start, n.end);
+        const nodes = (root, type, test) => findNodes(root, (n) => n.type === type && test(n));
+        const one = (items, label) => {
+          if (items.length !== 1)
+            throw Error(`voice input ${label}: expected one site, found ${items.length}`);
+          return items[0];
+        };
+        const hooks = nodes(ast, "FunctionDeclaration", (n) => text(n).includes("voice:pushToTalk") && text(n).includes("stripTrailing"));
+        if (!hooks.length)
+          continue;
+        const hook = one(hooks, "hook"), edits = [];
+        const replace = (node, value) => edits.push({ start: node.start, end: node.end, value });
+        const insert = (at, value) => edits.push({ start: at, end: at, value });
+        const binding = one(nodes(hook, "Property", (n) => n.key?.name === "stripTrailing" && n.value.type === "Identifier"), "strip binding").value.name;
+        const strips = nodes(hook, "CallExpression", (n) => n.callee.name === binding && n.arguments.length === 2);
+        const holdAnchor = one(strips.filter((n) => n.arguments[0].type === "BinaryExpression" && n.arguments[0].operator === "+"), "warmup anchor");
+        const pending = holdAnchor.arguments[0].left;
+        if (pending.type !== "MemberExpression" || pending.property.name !== "current")
+          throw Error("voice input pending count changed");
+        const composer = one(nodes(hook, "Property", (n) => n.key?.name === "composer" && n.value.type === "Identifier"), "composer").value.name;
+        const ref = one(nodes(hook, "VariableDeclarator", (n) => n.id.name === pending.object.name && n.init?.type === "CallExpression"), "pending ref").init.callee;
+        if (ref.type !== "Identifier")
+          throw Error("voice input ref factory changed");
+        const warmup = one(nodes(hook, "IfStatement", (n) => n.alternate?.type === "ExpressionStatement" && n.alternate.expression.type === "AssignmentExpression" && text(n.alternate.expression.left) === text(pending)), "warmup branch");
+        const increment = warmup.alternate.expression.right;
+        if (increment.type !== "BinaryExpression" || increment.operator !== "+" || text(increment.left) !== text(pending) || increment.right.type !== "Identifier")
+          throw Error("voice input warmup increment changed");
+        const key = one(holdAnchor.arguments[1].properties.filter((p) => p.key?.name === "char"), "hold key").value;
+        const quiet = one(nodes(hook, "FunctionExpression", (n) => nodes(n.body, "AssignmentExpression", (a) => text(a.left) === text(pending) && a.right.value === 0).length > 0), "quiet reset");
+        insert(hook.body.start + 1, `let __clawgodPending=${ref.name}(null);`);
+        insert(quiet.body.start + 1, `if(__clawgodPending.current){let {composer:__m,char:__k,value:__v,cursor:__c}=__clawgodPending.current;__clawgodPending.current=null;if(__m.value===__v&&__m.cursorOffset===__c&&${text(pending)}>0)__m.setValueWithCursor(__v.slice(0,__c)+__k.repeat(${text(pending)})+__v.slice(__c),__c+${text(pending)});}`);
+        const stripFunctions = nodes(ast, "FunctionDeclaration", (n) => nodes(n, "Property", (p) => p.key?.name === "stripTrailing" && p.value.type === "Identifier").length > 0 && text(n).includes("setValueWithCursor"));
+        const stripFunction = one(stripFunctions, "composer hook");
+        const stripName = one(nodes(stripFunction, "Property", (p) => p.key?.name === "stripTrailing"), "strip callback").value.name;
+        const strip = one(nodes(stripFunction, "VariableDeclarator", (n) => n.id.name === stripName && n.init?.type === "CallExpression"), "strip closure").init.arguments[0];
+        if (strip.type !== "ArrowFunctionExpression" || strip.params[0]?.type !== "Identifier" || strip.params[1]?.type !== "AssignmentPattern")
+          throw Error("voice input strip closure changed");
+        const anchorName = one(strip.params[1].left.properties.filter((p) => p.key?.name === "anchor"), "anchor option").value.left?.name;
+        const anchorBlock = one(nodes(strip, "IfStatement", (n) => n.test.name === anchorName && n.consequent.type === "BlockStatement"), "anchor snapshot").consequent;
+        const anchors = nodes(anchorBlock, "AssignmentExpression", (n) => n.left.type === "MemberExpression" && n.left.property.name === "current");
+        if (anchors.length !== 2)
+          throw Error("voice input anchor refs changed");
+        const expected = one(nodes(strip, "IfStatement", (n) => n.test.name === anchorName && n.consequent.type === "ExpressionStatement" && n.consequent.expression.type === "AssignmentExpression"), "expected snapshot").consequent.expression.left;
+        const stripComposer = one(stripFunction.params[0].properties.filter((p) => p.key?.name === "composer"), "strip composer").value.name;
+        insert(strip.body.start + 1, `if(${enabled}&&${strip.params[0].name}===0&&${anchorName}){let {value:__v,cursorOffset:__c}=${stripComposer};${text(anchors[0].left)}=__v.slice(0,__c);${text(anchors[1].left)}=__v.slice(__c);${text(expected)}=__v;return 0;}`);
+        const event = one(nodes(warmup.consequent, "CallExpression", (n) => n.callee.property?.name === "stopImmediatePropagation"), "warmup event").callee.object;
+        replace(warmup, `if(${enabled}){if(!__clawgodPending.current)__clawgodPending.current={composer:${composer},char:${text(key)},value:${composer}.value,cursor:${composer}.cursorOffset};${text(pending)}=${text(increment)};${text(event)}.preventDefault();${text(event)}.stopImmediatePropagation()}else ${text(warmup)}`);
+        const timer = one(nodes(hook, "CallExpression", (n) => n.callee.property?.name === "setTimeout" && n.start > warmup.end), "hold quiet timer");
+        replace(timer.arguments[1], `(${enabled}&&${text(pending)}===${text(increment.right)}?Math.max(800,${text(timer.arguments[1])}):${text(timer.arguments[1])})`);
+        for (const call of strips) {
+          if (call.start >= warmup.start && call.end <= warmup.end)
+            continue;
+          const options = call.arguments[1];
+          if (options.type !== "ObjectExpression")
+            throw Error("voice input strip options changed");
+          if (options.properties.some((p) => p.key?.name === "floor")) {
+            replace(call, `(${enabled}?void 0:${text(call)})`);
+          } else if (options.properties.some((p) => p.key?.name === "anchor") && call.arguments[0].type !== "Literal") {
+            if (call === holdAnchor)
+              insert(call.start, `(${enabled}&&(__clawgodPending.current=null),`);
+            replace(call.arguments[0], `(${enabled}?0:${text(call.arguments[0])})`);
+            if (call === holdAnchor)
+              insert(call.end, ")");
+          }
+        }
+        const owned = one(nodes(hook, "IfStatement", (n) => n.test?.type === "LogicalExpression" && n.test.operator === "&&" && n.test.left.type === "MemberExpression" && n.test.left.property.name === "current" && n.test.right.type === "BinaryExpression" && n.test.right.operator === "!==" && n.test.right.right.value === "idle"), "owned hold").test.left;
+        const reset = one(nodes(hook, "IfStatement", (n) => n.test?.type === "BinaryExpression" && n.test.operator === "!==" && n.test.right.value === "recording" && nodes(n.consequent, "AssignmentExpression", (a) => text(a.left) === text(owned)).length > 0), "hold reset");
+        const assignment = one(nodes(reset.consequent, "AssignmentExpression", (n) => text(n.left) === text(owned)), "ownership reset");
+        replace(assignment.right, `(${enabled}&&${text(reset.test.left)}==="processing"?${text(owned)}:${text(assignment.right)})`);
+        for (const call of nodes(hook, "CallExpression", (n) => n.callee.type === "MemberExpression" && n.callee.property.name === "stopImmediatePropagation")) {
+          if (call.start >= warmup.start && call.end <= warmup.end)
+            continue;
+          replace(call, `(${enabled}&&${text(call.callee.object)}.preventDefault(),${text(call)})`);
+        }
+        let next = code;
+        for (const edit of edits.sort((a, b) => b.start - a.start))
+          next = next.slice(0, edit.start) + edit.value + next.slice(edit.end);
+        acorn.parse(next, { ecmaVersion: "latest", sourceType: "module", allowReturnOutsideFunction: true });
+        modules[index] = next + `
+` + marker;
+        count += edits.length;
+      }
+    } catch (error) {
+      return { status: "failed", detail: `${error.message}; no writes` };
+    }
+    if (!count)
+      return { status: "skipped", detail: "voice input shape not present" };
+    return { status: verify ? "verify" : "applied", count, code: dryRun || verify ? source : modules.join(separator) };
+  }
+});
 var voiceRegistry = Object.freeze({
   id: "voice",
   patches: Object.freeze(patches11),
-  customPatches: Object.freeze([])
+  customPatches: Object.freeze([voiceHoldInput])
 });
 
 // src/generic/patcher/registry.mjs

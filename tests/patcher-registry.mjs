@@ -134,8 +134,8 @@ const ownedDescriptors = patchRegistries.flatMap(registry => [
   ...registry.patches.map(descriptor => ({ descriptor, owner: registry.id })),
   ...registry.customPatches.map(descriptor => ({ descriptor, owner: registry.id })),
 ]);
-assert.equal(ownedDescriptors.length, 79, 'every regex and custom patch descriptor must retain exactly one owner');
-assert.equal(Object.keys(runtimeFeatureMetadata).length, 48, 'all upstream runtime feature patch IDs must be exported');
+assert.equal(ownedDescriptors.length, 81, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(Object.keys(runtimeFeatureMetadata).length, 49, 'all upstream runtime feature patch IDs must be exported');
 assert.equal(
   new Set(ownedDescriptors.map(({ descriptor }) => descriptor)).size,
   ownedDescriptors.length,
@@ -169,6 +169,8 @@ assert.deepEqual(
     { name: 'Auto-mode classifier model override (CLAWGOD_CLASSIFIER_MODEL)', type: 'regex', order: 69 },
     { name: 'Auto-mode classifier retries override (CLAWGOD_CLASSIFIER_RETRIES)', type: 'regex', order: 70 },
     { name: 'Preserve split terminal replies while a DA1 probe is pending', type: 'regex', order: 90 },
+    { name: 'Built-in hooks module for plain Bun cli.cjs', type: 'custom', order: 91 },
+    { name: 'Voice hold input: clean warmup once, consume recording repeats', type: 'custom', order: 99 },
   ],
   'runtime and terminal descriptors must have stable post-canonical order values',
 );
@@ -251,7 +253,7 @@ assert.throws(
 
 assert.deepEqual(patches.filter(descriptor => descriptor.order < 68).map(descriptor => descriptor.name), expectedRegexOrder, 'pre-runtime-feature regex order must remain canonical');
 assert.deepEqual(
-  customPatches.filter(descriptor => descriptor.order < 100).map(descriptor => descriptor.name),
+  customPatches.filter(descriptor => descriptor.order < 68).map(descriptor => descriptor.name),
   ['Claude in Chrome local socket fallback', 'Context limit configurable', 'Claude API skill lazy docs'],
   'custom patches must retain their canonical post-regex order',
 );
@@ -266,6 +268,7 @@ const expectedCore = [
   'Preserve split terminal replies while a DA1 probe is pending',
   'Context limit configurable',
   'Claude API skill lazy docs',
+  'Built-in hooks module for plain Bun cli.cjs',
   'Cometix parity: context-limit',
 ];
 const core = patchRegistries.find(registry => registry.id === 'core');
