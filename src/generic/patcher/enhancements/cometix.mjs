@@ -73,7 +73,16 @@ function transform(id, source, ast) {
       : nodes('Property', n => n.key?.name === 'maxTokens' && n.value.operator === '??' && n.value.right.type === 'Identifier').map(n => n.value.right.name);
     if (!bindings.length) return edits;
     const name = one([...new Set(bindings)], 'default binding');
-    const declaration = one(nodes('VariableDeclarator', n => n.id.name === name && n.init?.type === 'Literal' && typeof n.init.value === 'number'), 'default declaration');
+    const declarations = nodes('VariableDeclarator', n => n.id.name === name && n.init?.type === 'Literal' && typeof n.init.value === 'number');
+    if (id === 'cleanup-period' && !declarations.length) {
+      // 2.1.285 imports the default from another chunk; patch its caller-side fallbacks.
+      one(nodes('ImportSpecifier', n => n.local.name === name), 'default import');
+      for (const fallback of nodes('LogicalExpression', n => n.operator === '??' && n.right?.type === 'Identifier' && n.right.name === name)) {
+        replace(fallback.right, choose('9999', fallback.right));
+      }
+      return edits;
+    }
+    const declaration = one(declarations, 'default declaration');
     if (declaration.init.value <= 0 || (id === 'cleanup-period' && declaration.init.value > 365)) throw new Error('unexpected default value');
     replace(declaration.init, choose(id === 'cleanup-period' ? '9999' : '100000', declaration.init));
   } else if (id === 'context-limit') {

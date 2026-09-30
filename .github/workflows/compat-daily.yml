@@ -1,11 +1,9 @@
 name: Compat Daily
 
 # Runs the Bun-only installer end-to-end against the current Claude Code release.
-# Linux and macOS run daily and on source changes; Windows is change-driven only.
+# Linux and macOS run on source changes or manual dispatch; Windows is change-driven only.
 
 on:
-  schedule:
-    - cron: '17 7 * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -276,7 +274,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($test in @('wrapper-provider-lean', 'openai-proxy', 'patcher-terminal-replies', 'runtime-cell-segmenter')) {
+          foreach ($test in @('wrapper-provider-lean', 'openai-proxy', 'patcher-terminal-replies', 'patcher-voice-input', 'runtime-cell-segmenter')) {
             & bun "$env:GITHUB_WORKSPACE\tests\$test.mjs"
             if ($LASTEXITCODE -ne 0) { throw "$test failed" }
           }

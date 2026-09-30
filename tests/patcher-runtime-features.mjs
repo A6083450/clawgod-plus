@@ -30,6 +30,7 @@ assert.deepEqual(runtimeFeatureMetadata, {
   'ultrareview-gate': ['ultrareview'],
   'ultrareview-direct': ['ultrareview'],
   'voice-mode': ['voice-mode'],
+  'voice-hold-input': ['voice-mode'],
   'auto-mode-helper-gate': ['auto-mode'],
   'auto-mode-inline-gate': ['auto-mode'],
   'auto-mode-provider-opt-in': ['auto-mode'],

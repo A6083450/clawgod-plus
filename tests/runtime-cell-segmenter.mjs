@@ -445,6 +445,56 @@ check('裁剪制表符时使用上游展开函数', () => {
   }
 });
 
+for (const [platform, chunk, tokenizer, normalize, names] of [
+  ['darwin', 'chunk-rq9vt4dd.js', 'OEo', 'Drn', { Ns: 'ys', Dd: 'Kd', Cx: 'N1', xC: 'Lx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'A1', xx: 'T1', hht: 'XFt', C8: 'Cne', MNr: 'Ovo', LNr: 'Dvo', bGt: 'qgn' }],
+  ['linux', 'chunk-63gmfw50.js', 'Jwo', 'hrn', { Ns: 'ys', Dd: 'Id', Cx: '_1', xC: 'Px', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'D1', xx: 'A1', hht: 'L$t', C8: 'hne', MNr: 'Xvo', LNr: 'Jvo', bGt: 'xgn' }],
+  ['win32', 'chunk-e9tkhk3c.js', 'rvo', 'Srn', { Ns: 'ys', Dd: 'Kd', Cx: 'D1', xC: 'zx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Ol', Xf: 'dd', jn: 'Vn', Rx: 'w1', xx: '_1', hht: 'FFt', C8: 'Sne', MNr: 'tEo', LNr: 'nEo', bGt: 'Lgn' }],
+]) {
+  check(`2.1.285 ${platform} 跨分块 ANSI 校验及真实绘制`, () => {
+    const source = readFileSync(new URL(`./fixtures/cell-renderer-2.1.285-${platform}.txt`, import.meta.url), 'utf8');
+    const ansi = readFileSync(new URL(`./fixtures/cell-renderer-2.1.285-${platform}-ansi.txt`, import.meta.url), 'utf8');
+    const dependencies = new Map([[chunk, ansi]]);
+    assert.equal(adaptCellRenderer(source), null, '缺少 ANSI 分块必须拒绝');
+    assert.equal(adaptCellRenderer(source, undefined, new Map([[chunk, `${ansi}\n// drift`]])), null);
+    assert.equal(adaptCellRenderer(source.replaceAll(chunk, 'missing.js'), undefined, dependencies), null);
+    assert.equal(adaptCellRenderer(source.replace('ambiguousIsNarrow:!0', 'ambiguousIsNarrow:!1'), undefined, dependencies), null);
+    assert.equal(adaptCellRenderer(`${source}\nvar clawgodMergeStyles;`, undefined, dependencies), null);
+    const originalAst = parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+    for (const binding of originalAst.body.filter(node => node.type === 'ImportDeclaration').flatMap(node => node.specifiers)) {
+      if (!Object.values(names).includes(binding.local.name)) continue;
+      const broken = source.slice(0, binding.local.start) + `missing_${binding.local.name}` + source.slice(binding.local.end);
+      assert.equal(adaptCellRenderer(broken, undefined, dependencies), null, `${platform}: 缺少上游依赖必须拒绝`);
+    }
+    const adapted = adaptCellRenderer(source, undefined, dependencies);
+    assert.notEqual(adapted, null, '2.1.285 官方跨分块声明必须可适配');
+    assert.doesNotMatch(adapted, /new Bun\.ant\.CellSegmenter/);
+    const ast = parse(adapted, { ecmaVersion: 'latest', sourceType: 'module' });
+    const upstream = new Function(ansi.replace(/export\{[^}]+\};/, `return {tokenize:${tokenizer},normalize:${normalize}};`))();
+    const helpers = RENDERER_MODULE.slice(0, RENDERER_MODULE.indexOf(CELL_RENDERER_SOURCE))
+      .replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
+    const declarations = ast.body.filter(node => ['FunctionDeclaration', 'ClassDeclaration', 'VariableDeclaration'].includes(node.type) && node.id?.name !== 'bc' && node.id?.name !== 'tabClip')
+      .map(node => adapted.slice(node.start, node.end)).join('\n');
+    const actual = new Function('clawgodAnsiTokens', 'clawgodNormalizeStyles', `${helpers}\n${declarations}\nreturn {Line:${names.Dd},paint:${names.xC}};`)(upstream.tokenize, upstream.normalize);
+    const styles = createStylePool();
+    const screen = createScreen(styles, 20);
+    const line = new actual.Line(styles, screen.charPool);
+    assert.equal(actual.paint(screen, '\x1b[31m中\x1b[0m\t\x1b]8;;https://example.com\x07A\x1b]8;;\x07', 0, 0, line), 9);
+    assert.equal(screen.char(0), '中');
+    assert.deepEqual(screen.stylesAt(0), ['\x1b[31m']);
+    assert.deepEqual(screen.stylesAt(8), []);
+    assert.equal(screen.hyperlinkAt(8), 'https://example.com');
+    assert.equal(line.width('中\tA', 0), 9);
+    const tab = ast.body.find(node => node.id?.name === 'tabClip');
+    const clip = new Function(names.Dc, names.C8, names.hht, 'Bun', `${adapted.slice(tab.start, tab.end)};return tabClip`)(
+      text => text,
+      text => { assert.equal(text, '   a\tb'); return '   a    b'; },
+      8,
+      { sliceAnsi: text => text },
+    );
+    assert.equal(clip('a\tb', 3, 0, { x2: 20 }), 'a    b');
+  });
+}
+
 check('未知渲染器形态一律拒绝', () => {
   assert.equal(adaptCellRenderer('function render(){return new Bun.ant.CellSegmenter({});}'), null);
   assert.equal(adaptCellRenderer(''), null);

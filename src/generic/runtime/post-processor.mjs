@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
-import { dirname, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -595,6 +595,48 @@ const CELL_PLATFORM_SHAPES = [
     tabAnchor: 'let me=Tc(re),ge=I.x2-U',
     tabReplacement: 'let me=Tc(re);if(me.indexOf(String.fromCharCode(9))>=0){let q=((U%sIt)+sIt)%sIt;me=W7(" ".repeat(q)+me).slice(q)}let ge=I.x2-U',
   },
+  // 2.1.285 darwin：ANSI 辅助函数已拆到冻结的依赖分块。
+  {
+    shape: [
+      { header: 'function ys(n){', digest: 'cde64cf325e8da5fe5e25b08a745d5e2ebf7afa9a3a13249dc975569d9615629' },
+      { header: 'class Kd{', digest: 'a219f5e963fd90cf05bbf0f05a11baab6fab6345e3b3284560b45756a7f9f273' },
+      { header: 'function N1(n,d,f,m){', digest: 'f11514b07f290a7834dd4d77f3305814c17813418c23df8cf2217b8ec6e9f192' },
+      { header: 'function Lx(n,d,f,m,y){', digest: '4b8fa5266696dab2714759543f4d6e88594a9673e676123ca11aead7f99f9800' },
+      { header: 'function bc(n){', digest: '06f34db54c4db085e25a8abac7041bfd9d10de3346a01e90134d615eae6923f0' },
+    ],
+    names: { Ns: 'ys', Dd: 'Kd', Cx: 'N1', xC: 'Lx', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'A1', xx: 'T1', hht: 'XFt', C8: 'Cne', MNr: 'Ovo', LNr: 'Dvo', bGt: 'qgn' },
+    dependency: { specifier: '/$bunfs/root/chunk-rq9vt4dd.js', digest: '6f57031332df9bc09e5fa53e405715071ea34bfffae53a07e236d808ea0babbc', tokenizer: 'OEo', normalizeStyles: 'Drn' },
+    tabAnchor: 'let Ee=bc(ae),pe=G.x2-U',
+    tabReplacement: 'let Ee=bc(ae);if(Ee.indexOf(String.fromCharCode(9))>=0){let q=((U%XFt)+XFt)%XFt;Ee=Cne(" ".repeat(q)+Ee).slice(q)}let pe=G.x2-U',
+  },
+  // 2.1.285 linux
+  {
+    shape: [
+      { header: 'function ys(n){', digest: '2f07348ed297e7c4af1b937c6d29f5a998eefe51af0af649ebaa0bb708768294' },
+      { header: 'class Id{', digest: '86b8542dd47127b6eecfcdf4a75aa7bddbf87b76d9d7285f32b25916e4f4cb1b' },
+      { header: 'function _1(n,d,f,m){', digest: '256cb0c2d178419fff7701080581159fb31008a2f518f67b5ee3312f4fb7d325' },
+      { header: 'function Px(n,d,f,m,y){', digest: '013cf547bb3ab4351184c79b1ac7a154a9f1c4385cf1235e6d1b5c8e2fb31d92' },
+      { header: 'function bc(n){', digest: '0919440b08ebc48d0416f8efe20b0c71e9f6119ecc13f084a0c45cc2898b16de' },
+    ],
+    names: { Ns: 'ys', Dd: 'Id', Cx: '_1', xC: 'Px', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'D1', xx: 'A1', hht: 'L$t', C8: 'hne', MNr: 'Xvo', LNr: 'Jvo', bGt: 'xgn' },
+    dependency: { specifier: '/$bunfs/root/chunk-63gmfw50.js', digest: '9bb893dfcdb68982c86db1392f92daa7db6f0c8fc15d65c2e9c5b67b6c265ee8', tokenizer: 'Jwo', normalizeStyles: 'hrn' },
+    tabAnchor: 'let Ee=bc(ae),pe=k.x2-F',
+    tabReplacement: 'let Ee=bc(ae);if(Ee.indexOf(String.fromCharCode(9))>=0){let q=((F%L$t)+L$t)%L$t;Ee=hne(" ".repeat(q)+Ee).slice(q)}let pe=k.x2-F',
+  },
+  // 2.1.285 win32
+  {
+    shape: [
+      { header: 'function ys(n){', digest: '47b2cb945d61439d46e90be9286209ae9ce20de5c57c3563fd2305f34c0413a5' },
+      { header: 'class Kd{', digest: '4da4a86fbaf106eee3ca5a9063a469a783cea879cc0a1e678a430ef609a78c08' },
+      { header: 'function D1(n,d,f,m){', digest: 'dd5e791308b46be577475d28ccdc2bd1b9c2c7ccfcc7db33ad616c1c47a80386' },
+      { header: 'function zx(n,d,f,m,y){', digest: '00f7347d22ebd1b5bb33fb313127c234cca04ea49569275c927711c41a371945' },
+      { header: 'function bc(n){', digest: 'b7cd54dd30f7a4cf5a2fa67652f6dd81954d4112318fd54b25e537b653bb4180' },
+    ],
+    names: { Ns: 'ys', Dd: 'Kd', Cx: 'D1', xC: 'zx', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'bc', bn: 'En', wo: 'Ol', Xf: 'dd', jn: 'Vn', Rx: 'w1', xx: '_1', hht: 'FFt', C8: 'Sne', MNr: 'tEo', LNr: 'nEo', bGt: 'Lgn' },
+    dependency: { specifier: 'B:/~BUN/root/chunk-e9tkhk3c.js', digest: '7afc65e2947df22dc031264fe732ec31c0f805896d350dc63ca9ef1432d54981', tokenizer: 'rvo', normalizeStyles: 'Srn' },
+    tabAnchor: 'let Ee=bc(ae),pe=I.x2-U',
+    tabReplacement: 'let Ee=bc(ae);if(Ee.indexOf(String.fromCharCode(9))>=0){let q=((U%FFt)+FFt)%FFt;Ee=Sne(" ".repeat(q)+Ee).slice(q)}let pe=I.x2-U',
+  },
 ];
 
 // Every name the injected source introduces must be free in the target module;
@@ -603,7 +645,7 @@ const CELL_RENDERER_NAMES = Object.freeze([
   'clawgodCacheLimit', 'clawgodOsc8Prefix', 'clawgodSgr', 'clawgodAmbiguousNarrow',
   'clawgodSegmenter', 'clawgodGraphemes', 'clawgodCsiEnd', 'clawgodOscEnd',
   'sanitizeControlSequences', 'parseStyledText', 'packCell', 'unionDamage',
-  'writeCell', 'paintCells',
+  'writeCell', 'paintCells', 'clawgodAnsiTokens', 'clawgodNormalizeStyles', 'clawgodMergeStyles',
 ]);
 
 // Locates the closing brace of a declaration. The result is always checked
@@ -696,20 +738,30 @@ function startsExpression(previous) {
  * `shape` is a parameter so the guard rails around the rewrite can be
  * exercised offline; production callers always use the frozen table.
  */
-export function adaptCellRenderer(source, shape) {
+export function adaptCellRenderer(source, shape, dependencies = new Map()) {
   const profiles = shape ? [{ ...CELL_PLATFORM_SHAPES[0], shape }] : CELL_PLATFORM_SHAPES;
   for (const profile of profiles) {
-    const adapted = adaptCellRendererShape(source, profile);
+    const adapted = adaptCellRendererShape(source, profile, dependencies);
     if (adapted !== null) return adapted;
   }
   return null;
 }
 
-function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, oscDeclaration = OSC8_DECLARATION }) {
+function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, oscDeclaration = OSC8_DECLARATION }, dependencies) {
   for (const name of CELL_RENDERER_NAMES) {
     if (source.includes(name)) return null;
   }
-  if (!source.includes(oscDeclaration)) return null;
+  let ansiImport = '';
+  if (dependency) {
+    // 2.1.285 把 ANSI 分词和样式合并拆到独立模块；冻结整个依赖，不能只信导出名。
+    const ansi = dependencies.get(basename(dependency.specifier));
+    if (typeof ansi !== 'string' || createHash('sha256').update(ansi).digest('hex') !== dependency.digest) return null;
+    const imports = [...source.matchAll(/import\{[^}]*\}from"([^"]+)";/g)]
+      .filter(match => match[1] === dependency.specifier);
+    if (imports.length !== 1) return null;
+    ansiImport = `import{${dependency.tokenizer} as clawgodAnsiTokens,${dependency.normalizeStyles} as clawgodNormalizeStyles}from${JSON.stringify(dependency.specifier)};\n`
+      + 'function clawgodMergeStyles(styles,codes){return clawgodNormalizeStyles([...styles,...codes])}\n';
+  } else if (!source.includes(oscDeclaration)) return null;
   for (const binding of CELL_SEGMENTER_BINDINGS) {
     const local = names[binding] ?? binding;
     const present = [...source.matchAll(/import\{([^}]*)\}from/g)].some((match) =>
@@ -738,7 +790,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
     const mapped = text.replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
     adapted = adapted.slice(0, span.start) + mapped + adapted.slice(span.end);
   }
-  return adapted.replace(tabAnchor, tabReplacement);
+  return ansiImport + adapted.replace(tabAnchor, tabReplacement);
 }
 
 // 2.1.269+ 渲染器硬依赖私有 Bun.ant.CellSegmenter。公开 Bun 给不了，所以在
@@ -749,8 +801,10 @@ const CELL_SEGMENTER_REFERENCE = /\bnew\s+Bun\s*\.\s*ant\s*\.\s*CellSegmenter\s*
 function installPublicCellRenderer(modulePaths) {
   if (typeof globalThis.Bun?.ant?.CellSegmenter === 'function') return;
   const targets = [];
+  const dependencies = new Map();
   for (const path of modulePaths) {
     const source = readFileSync(path, 'utf8');
+    dependencies.set(basename(path), source);
     if (CELL_SEGMENTER_REFERENCE.test(source)) targets.push({ path, source });
   }
   if (targets.length === 0) return;
@@ -758,7 +812,7 @@ function installPublicCellRenderer(modulePaths) {
     throw new Error(`多个分块都依赖私有 Bun.ant.CellSegmenter，形态无法确认；已拒绝安装（${targets.length} 个）。`);
   }
   const { path, source } = targets[0];
-  const adapted = adaptCellRenderer(source);
+  const adapted = adaptCellRenderer(source, undefined, dependencies);
   if (adapted === null) {
     throw new Error('此 Claude Code 依赖私有 Bun.ant.CellSegmenter，且渲染器形态未被 ClawGod 识别；'
       + '已拒绝安装，避免产生无法进入交互界面的运行时。请用 --version 安装受支持的版本。');

@@ -42,6 +42,14 @@ try {
   assert.equal(evaluate(cleanup).retention({}), 9999);
   assert.equal(evaluate(cleanup).retention({cleanupPeriodDays: 7}), 7);
   assert.equal(evaluate(cleanup, {}, {'cleanup-period':false}).retention({}), 30);
+  // 2.1.285 moved the 30-day default to another chunk; the retention caller imports it.
+  const importedCleanup = await patch('cleanup-period', 'import{hin}from"./chunk-vsn32y7b.js";function Jy(e){let n=(e||{}).cleanupPeriodDays??hin;return n}function Ddr(e){let n=e?.cleanupPeriodDays;return n??hin}');
+  const importedCaller = importedCleanup.replace('import{hin}from"./chunk-vsn32y7b.js";', 'var hin=30;');
+  assert.equal(evaluate(importedCaller).Jy({}), 9999);
+  assert.equal(evaluate(importedCaller).Ddr({}), 9999);
+  assert.equal(evaluate(importedCaller).Jy({cleanupPeriodDays: 7}), 7);
+  assert.equal(evaluate(importedCaller, {}, {'cleanup-period':false}).Jy({}), 30);
+  assert.equal(evaluate(importedCaller, {}, {'cleanup-period':false}).Ddr({}), 30);
   const read = await patch('file-read-limit', 'var cap=25000;function defaultFileReadingLimits(s){return {maxTokens:s.maxTokens??cap}}');
   assert.equal(evaluate(read).defaultFileReadingLimits({}).maxTokens, 100000);
   assert.equal(evaluate(read, {}, {'file-read-limit':false}).defaultFileReadingLimits({}).maxTokens, 25000);

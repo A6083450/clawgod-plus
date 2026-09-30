@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
+import { coreRegistry } from '../src/generic/patcher/core.mjs';
 
 const unixLauncher = readFileSync(new URL('../src/unix/launcher.sh', import.meta.url), 'utf8');
 const compatWorkflow = readFileSync(new URL('../.github/workflows/compat-daily.yml', import.meta.url), 'utf8');
@@ -195,6 +196,67 @@ for (const [name, patcherSource] of patcherSources) {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  }
+}
+
+const hooksPatch = coreRegistry.customPatches.find(patch => patch.name === 'Built-in hooks module for plain Bun cli.cjs');
+assert.ok(hooksPatch, 'the core patcher must repair the shared built-in hooks resolver');
+for (const { version, helper } of [
+  { version: '2.1.281', helper: 'var Rq=(e,o,r)=>ku()?ut(o,r(),e):{module:o,folder:e}' },
+  { version: '2.1.285', helper: 'var E6=(e,o,r)=>tu()?Pt(o,r(),e):{module:o,folder:e}' },
+]) {
+  const [, name, standalone, bundled] = helper.match(/var (\w+)=\(e,o,r\)=>(\w+)\(\)\?(\w+)\(o,r\(\),e\)/);
+  const original = `var hookFile="hooks/register.ts";function ${standalone}(){return Bun.isStandaloneExecutable===!0}var ${bundled}=(module,build,folder)=>({module,scan:build.scan,files:build.files});${helper};globalThis.standalone=${standalone};globalThis.hooks=${name};`;
+  const result = await hooksPatch.apply(original, { dryRun: false, verify: false });
+  assert.equal(result.status, 'applied', `${version}: recognized helper must be patched`);
+  const context = {
+    Bun: { isStandaloneExecutable: false },
+    process: { argv: ['/runtime/bun', '/install/cli.cjs'] },
+  };
+  runInNewContext(result.code, context);
+  const build = () => ({ scan: { hooks: ['on'], calls: ['call'] }, files: { 'hooks/register.ts': 'source' } });
+  const plainBun = context.hooks('/missing/source', { register: true }, build);
+  assert.deepEqual(JSON.parse(JSON.stringify(plainBun)), {
+    module: { register: true }, scan: { hooks: ['on'], calls: ['call'] }, files: { 'hooks/register.ts': 'source' },
+  }, `${version}: all built-in callers must load their bundled hook scan`);
+  context.process.argv[1] = String.raw`C:\install\cli.cjs`;
+  assert.ok('scan' in context.hooks('/missing/source', { register: true }, build), `${version}: Windows cli.cjs path must use bundled hooks`);
+  assert.equal(context.standalone(), false, `${version}: unrelated standalone callers keep original behavior`);
+  context.process.argv[1] = '/other/entry.js';
+  assert.deepEqual(JSON.parse(JSON.stringify(context.hooks('/source', { register: true }, build))), {
+    module: { register: true }, folder: '/source',
+  }, `${version}: unrelated source-mode starts keep the folder fallback`);
+  context.Bun.isStandaloneExecutable = true;
+  assert.ok('scan' in context.hooks('/source', { register: true }, build), `${version}: standalone builds still use the bundled scan`);
+  assert.equal((await hooksPatch.apply(result.code, { dryRun: false, verify: false })).status, 'already', `${version}: repeat patch is idempotent`);
+  assert.equal((await hooksPatch.apply(original, { dryRun: true, verify: false })).code, original, `${version}: dry run leaves source untouched`);
+}
+for (const helper of [
+  'var E6=(e,o,r)=>tu()?Pt(o,r(),e):{module:o,folder:e,changed:true}',
+  'var E6=(e,o,r)=>tu()?Pt(o,r(),e):{folder:e,module:o}',
+]) {
+  const original = `var hookFile="hooks/register.ts";${helper}`;
+  const result = await hooksPatch.apply(original, { dryRun: false, verify: false });
+  assert.equal(result.status, 'failed', 'unknown hooks resolver shapes must fail closed');
+  assert.equal(result.code, undefined, 'failed patches must not write partial changes');
+}
+assert.equal((await hooksPatch.apply('var oldCli=1;', { dryRun: false, verify: false })).status, 'skipped', 'older versions without built-in hooks are unaffected');
+
+for (const [name, patcherSource] of patcherSources) {
+  const dir = mkdtempSync(join(tmpdir(), 'clawgod-hooks-chunk-'));
+  try {
+    const chunks = join(dir, 'chunks');
+    mkdirSync(chunks);
+    seedPatcherAcorn(dir);
+    writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
+    writeFileSync(join(dir, 'cli.original.cjs'), '/* Version: 2.1.285 */\n', 'utf8');
+    const chunk = join(chunks, 'chunk-hooks.js');
+    writeFileSync(chunk, 'var ue="hooks/register.ts";var E6=(e,o,r)=>tu()?Pt(o,r(),e):{module:o,folder:e};', 'utf8');
+    const run = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(run.status, 0, `${name}: ${run.stdout}${run.stderr}`);
+    assert.match(readFileSync(chunk, 'utf8'), /__clawgod_plain_bun_builtin_hooks__/, `${name}: the chunk must be patched through the normal bundle flow`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
