@@ -1,11 +1,9 @@
 name: Compat Daily
 
 # Runs the Bun-only installer end-to-end against the current Claude Code release.
-# Linux and macOS run daily and on source changes; Windows is change-driven only.
+# Linux and macOS run on source changes or manual dispatch; Windows is change-driven only.
 
 on:
-  schedule:
-    - cron: '17 7 * * *'
   workflow_dispatch:
   push:
     branches: [main]
