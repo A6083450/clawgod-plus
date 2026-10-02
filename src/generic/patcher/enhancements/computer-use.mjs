@@ -26,7 +26,7 @@ const patches = [
   {
     order: 24,
     name: 'Computer Use in noninteractive sessions',
-    pattern: /if\((?:([\w$]+)\(\)==="macos"&&)?!([\w$]+)\(\)((?:&&![\w$]+)?)&&([\w$]+)\(\)\)try\{let\{setupComputerUseMCP:/g,
+    pattern: /if\((?:([\w$]+)\(\)==="macos"&&)?!([\w$]+)\(\)((?:&&![\w$]+(?:\(\))?)*)&&([\w$]+)\(\)\)try\{let\{setupComputerUseMCP:/g,
     replacer: (match, platform, isNonInteractive, safetyCondition, gateFn) => {
       const retainedConditions = [
         platform ? `${platform}()==="macos"` : '',

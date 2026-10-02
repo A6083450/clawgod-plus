@@ -445,14 +445,17 @@ check('裁剪制表符时使用上游展开函数', () => {
   }
 });
 
-for (const [platform, chunk, tokenizer, normalize, names] of [
-  ['darwin', 'chunk-rq9vt4dd.js', 'OEo', 'Drn', { Ns: 'ys', Dd: 'Kd', Cx: 'N1', xC: 'Lx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'A1', xx: 'T1', hht: 'XFt', C8: 'Cne', MNr: 'Ovo', LNr: 'Dvo', bGt: 'qgn' }],
-  ['linux', 'chunk-63gmfw50.js', 'Jwo', 'hrn', { Ns: 'ys', Dd: 'Id', Cx: '_1', xC: 'Px', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'D1', xx: 'A1', hht: 'L$t', C8: 'hne', MNr: 'Xvo', LNr: 'Jvo', bGt: 'xgn' }],
-  ['win32', 'chunk-e9tkhk3c.js', 'rvo', 'Srn', { Ns: 'ys', Dd: 'Kd', Cx: 'D1', xC: 'zx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Ol', Xf: 'dd', jn: 'Vn', Rx: 'w1', xx: '_1', hht: 'FFt', C8: 'Sne', MNr: 'tEo', LNr: 'nEo', bGt: 'Lgn' }],
+for (const [version, platform, chunk, tokenizer, normalize, names] of [
+  ['2.1.285', 'darwin', 'chunk-rq9vt4dd.js', 'OEo', 'Drn', { Ns: 'ys', Dd: 'Kd', Cx: 'N1', xC: 'Lx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'A1', xx: 'T1', hht: 'XFt', C8: 'Cne', MNr: 'Ovo', LNr: 'Dvo', bGt: 'qgn' }],
+  ['2.1.285', 'linux', 'chunk-63gmfw50.js', 'Jwo', 'hrn', { Ns: 'ys', Dd: 'Id', Cx: '_1', xC: 'Px', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'D1', xx: 'A1', hht: 'L$t', C8: 'hne', MNr: 'Xvo', LNr: 'Jvo', bGt: 'xgn' }],
+  ['2.1.285', 'win32', 'chunk-e9tkhk3c.js', 'rvo', 'Srn', { Ns: 'ys', Dd: 'Kd', Cx: 'D1', xC: 'zx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Ol', Xf: 'dd', jn: 'Vn', Rx: 'w1', xx: '_1', hht: 'FFt', C8: 'Sne', MNr: 'tEo', LNr: 'nEo', bGt: 'Lgn' }],
+  ['2.1.287', 'darwin', 'chunk-e8ww06j7.js', 'BLo', 'ppn', { Ns: 'ms', Dd: 'Wd', Cx: 'A1', xC: 'zx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Cc', bn: 'En', wo: 'Ll', Xf: 'yd', jn: 'Vn', Rx: '_1', xx: 'N1', hht: 'D6t', C8: 'v8', MNr: 'tFo', LNr: 'nFo', bGt: 'tCn' }],
+  ['2.1.287', 'linux', 'chunk-xm85yzmk.js', 'sLo', 'qun', { Ns: 'ms', Dd: 'Wd', Cx: 'w1', xC: 'Ux', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Cc', bn: 'En', wo: 'Ll', Xf: 'yd', jn: 'Vn', Rx: 'D1', xx: '_1', hht: '_Gt', C8: 'h8', MNr: 'SNo', LNr: 'bNo', bGt: 'OEn' }],
+  ['2.1.287', 'win32', 'chunk-7wywdnvg.js', 'dNo', 'epn', { Ns: 'ms', Dd: 'Wd', Cx: 'w1', xC: 'Ux', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'xc', bn: 'En', wo: 'Ll', Xf: 'yd', jn: 'Vn', Rx: 'D1', xx: '_1', hht: 'S2t', C8: '_8', MNr: 'kHo', LNr: 'EHo', bGt: 'UEn' }],
 ]) {
-  check(`2.1.285 ${platform} 跨分块 ANSI 校验及真实绘制`, () => {
-    const source = readFileSync(new URL(`./fixtures/cell-renderer-2.1.285-${platform}.txt`, import.meta.url), 'utf8');
-    const ansi = readFileSync(new URL(`./fixtures/cell-renderer-2.1.285-${platform}-ansi.txt`, import.meta.url), 'utf8');
+  check(`${version} ${platform} 跨分块 ANSI 校验及真实绘制`, () => {
+    const source = readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}.txt`, import.meta.url), 'utf8');
+    const ansi = readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}-ansi.txt`, import.meta.url), 'utf8');
     const dependencies = new Map([[chunk, ansi]]);
     assert.equal(adaptCellRenderer(source), null, '缺少 ANSI 分块必须拒绝');
     assert.equal(adaptCellRenderer(source, undefined, new Map([[chunk, `${ansi}\n// drift`]])), null);
@@ -466,13 +469,13 @@ for (const [platform, chunk, tokenizer, normalize, names] of [
       assert.equal(adaptCellRenderer(broken, undefined, dependencies), null, `${platform}: 缺少上游依赖必须拒绝`);
     }
     const adapted = adaptCellRenderer(source, undefined, dependencies);
-    assert.notEqual(adapted, null, '2.1.285 官方跨分块声明必须可适配');
+    assert.notEqual(adapted, null, `${version} 官方跨分块声明必须可适配`);
     assert.doesNotMatch(adapted, /new Bun\.ant\.CellSegmenter/);
     const ast = parse(adapted, { ecmaVersion: 'latest', sourceType: 'module' });
     const upstream = new Function(ansi.replace(/export\{[^}]+\};/, `return {tokenize:${tokenizer},normalize:${normalize}};`))();
     const helpers = RENDERER_MODULE.slice(0, RENDERER_MODULE.indexOf(CELL_RENDERER_SOURCE))
       .replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
-    const declarations = ast.body.filter(node => ['FunctionDeclaration', 'ClassDeclaration', 'VariableDeclaration'].includes(node.type) && node.id?.name !== 'bc' && node.id?.name !== 'tabClip')
+    const declarations = ast.body.filter(node => ['FunctionDeclaration', 'ClassDeclaration', 'VariableDeclaration'].includes(node.type) && node.id?.name !== names.Dc && node.id?.name !== 'tabClip')
       .map(node => adapted.slice(node.start, node.end)).join('\n');
     const actual = new Function('clawgodAnsiTokens', 'clawgodNormalizeStyles', `${helpers}\n${declarations}\nreturn {Line:${names.Dd},paint:${names.xC}};`)(upstream.tokenize, upstream.normalize);
     const styles = createStylePool();

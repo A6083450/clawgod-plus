@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 import { coreRegistry } from '../src/generic/patcher/core.mjs';
+import { computerUseRegistry } from '../src/generic/patcher/enhancements/computer-use.mjs';
 
 const unixLauncher = readFileSync(new URL('../src/unix/launcher.sh', import.meta.url), 'utf8');
 const compatWorkflow = readFileSync(new URL('../.github/workflows/compat-daily.yml', import.meta.url), 'utf8');
@@ -43,7 +44,35 @@ const fixtures = [
     plainBunResult: { cmd: '/runtime/bun', prefixArgs: ['/install/cli.cjs'] },
     standaloneResult: { cmd: '/native/claude', prefixArgs: [] },
   },
+  {
+    version: '2.1.287',
+    workerResolver: 'function W1t(e={}){if(!e.pinToCurrentBinary&&yRo()){let r=Xon();return{cmd:r,prefixArgs:[]}}if(WE())return{cmd:process.execPath,prefixArgs:[]};let t=process.argv[1];if(!t)return{cmd:process.execPath,prefixArgs:[]};return{cmd:process.execPath,prefixArgs:[t]}}',
+    computerUseStartup: 'async function computerUseStartup(){if(!Ce()&&!ce&&!xr()&&atn())try{let{setupComputerUseMCP:g}=await loadComputerUse();g()}catch(g){}}',
+    computerUseGate: /if\(!ce&&!xr\(\)&&atn\(\)\)\/\*__clawgod_computer_use_noninteractive__\*\//,
+    plainBunResult: { cmd: '/runtime/bun', prefixArgs: ['/install/cli.cjs'] },
+    standaloneResult: { cmd: '/native/claude', prefixArgs: [] },
+  },
 ];
+
+const noninteractivePatch = computerUseRegistry.patches.find(patch => patch.order === 24);
+const startup287 = 'async function startup(){if(!Ce()&&!ce&&!xr()&&atn())try{let{setupComputerUseMCP:g}=await loadComputerUse();g()}catch(g){}}';
+const patchedStartup287 = startup287.replace(noninteractivePatch.pattern, noninteractivePatch.replacer);
+for (const blocked of [false, true]) {
+  for (const gateEnabled of [false, true]) {
+    let calls = 0;
+    const context = {
+      Ce: () => true, ce: false, xr: () => blocked, atn: () => gateEnabled,
+      loadComputerUse: async () => ({ setupComputerUseMCP: () => { calls += 1; } }),
+    };
+    runInNewContext(patchedStartup287, context);
+    await context.startup();
+    assert.equal(calls, !blocked && gateEnabled ? 1 : 0, '2.1.287：非交互启动仍须保留上游安全条件和功能门控');
+    context.ce = true;
+    calls = 0;
+    await context.startup();
+    assert.equal(calls, 0, '2.1.287：原有布尔安全条件仍须生效');
+  }
+}
 
 for (const [installerName, patcherSource] of patcherSources) {
   for (const {

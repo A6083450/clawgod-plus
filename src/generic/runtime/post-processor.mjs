@@ -637,6 +637,48 @@ const CELL_PLATFORM_SHAPES = [
     tabAnchor: 'let Ee=bc(ae),pe=I.x2-U',
     tabReplacement: 'let Ee=bc(ae);if(Ee.indexOf(String.fromCharCode(9))>=0){let q=((U%FFt)+FFt)%FFt;Ee=Sne(" ".repeat(q)+Ee).slice(q)}let pe=I.x2-U',
   },
+  // 2.1.287 darwin
+  {
+    shape: [
+      { header: 'function ms(n){', digest: '2e5738134455a51222b83a73e6a0eb8e28afd921b10b8bea100da2923355aef6' },
+      { header: 'class Wd{', digest: '4782b232c1318c7de2bca9c008ef5c792323d4b830dd7e4a9475ddf91a206041' },
+      { header: 'function A1(n,u,f,m){', digest: '27ca9965ee1ffb9e5886a1b1c7598ae68fccc6e65f8b66ff859556b2273c08ed' },
+      { header: 'function zx(n,u,f,m,y){', digest: 'c6e50c879cdec717e94d7b6faec2ed91744ea55204728f5376e2bf5a6088a300' },
+      { header: 'function Cc(n){', digest: '4c9f180a6f959383310b9299d40e876f62f32972d459c9ba0c3214107d53ef8b' },
+    ],
+    names: { Ns: 'ms', Dd: 'Wd', Cx: 'A1', xC: 'zx', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Cc', bn: 'En', wo: 'Ll', Xf: 'yd', jn: 'Vn', Rx: '_1', xx: 'N1', hht: 'D6t', C8: 'v8', MNr: 'tFo', LNr: 'nFo', bGt: 'tCn' },
+    dependency: { specifier: '/$bunfs/root/chunk-e8ww06j7.js', digest: '26c20c59c750bf8bd3b5f318173d231cd83287e77994b6f07f7260785206cd24', tokenizer: 'BLo', normalizeStyles: 'ppn' },
+    tabAnchor: 'let ge=Cc(le),me=K.x2-L',
+    tabReplacement: 'let ge=Cc(le);if(ge.indexOf(String.fromCharCode(9))>=0){let q=((L%D6t)+D6t)%D6t;ge=v8(" ".repeat(q)+ge).slice(q)}let me=K.x2-L',
+  },
+  // 2.1.287 linux
+  {
+    shape: [
+      { header: 'function ms(n){', digest: '7ae771af98437550783f7e1fbef588f2a7611ddcf77d836477ef0836bb44eff5' },
+      { header: 'class Wd{', digest: 'e29e595ba621965960baadf575cdfb7533c7c07cb757ec7b7f000b7b9851ddd3' },
+      { header: 'function w1(n,u,f,m){', digest: 'd551441ff7fadf2ad8dda9a8ab9f4e509c35c8746a6b534f6fbdf23082908e70' },
+      { header: 'function Ux(n,u,f,m,y){', digest: 'f22eb89c891aba31a05ef51550aa663a99e2b1fdad41e235fd7e2121e09f4bf6' },
+      { header: 'function Cc(n){', digest: '4dd03f284a9635eac0af4adfc7bea1787879aa8fb203bee16beaaba31a522337' },
+    ],
+    names: { Ns: 'ms', Dd: 'Wd', Cx: 'w1', xC: 'Ux', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Cc', bn: 'En', wo: 'Ll', Xf: 'yd', jn: 'Vn', Rx: 'D1', xx: '_1', hht: '_Gt', C8: 'h8', MNr: 'SNo', LNr: 'bNo', bGt: 'OEn' },
+    dependency: { specifier: '/$bunfs/root/chunk-xm85yzmk.js', digest: 'c3a9632a58e060d50e2161534e0e124c0175141bae4ccdf73bc088796a61f0dc', tokenizer: 'sLo', normalizeStyles: 'qun' },
+    tabAnchor: 'let ge=Cc(le),me=K.x2-B',
+    tabReplacement: 'let ge=Cc(le);if(ge.indexOf(String.fromCharCode(9))>=0){let q=((B%_Gt)+_Gt)%_Gt;ge=h8(" ".repeat(q)+ge).slice(q)}let me=K.x2-B',
+  },
+  // 2.1.287 win32
+  {
+    shape: [
+      { header: 'function ms(n){', digest: '210a40e1a396208fbaf523a1032a73116d35b15504bdd175e937ffe58ba5d061' },
+      { header: 'class Wd{', digest: 'eafcfebd00770e4802e5f4de6e50357f01f1d88605bc134bf8576e9c5a507954' },
+      { header: 'function w1(n,u,f,m){', digest: '611c770cc8121a5f8f5b1b89870cd21b831f9c7854642e8356825d3b4d6ba300' },
+      { header: 'function Ux(n,u,f,m,y){', digest: '0dc7db9e7b7c04738eb456511434285740bceeb67a12e0cbaed9568c84c01cd5' },
+      { header: 'function xc(n){', digest: 'dc4582fad33ff5b03de83fe7f7b6326fe017e2f154d5abf18c336cf289279105' },
+    ],
+    names: { Ns: 'ms', Dd: 'Wd', Cx: 'w1', xC: 'Ux', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'xc', bn: 'En', wo: 'Ll', Xf: 'yd', jn: 'Vn', Rx: 'D1', xx: '_1', hht: 'S2t', C8: '_8', MNr: 'kHo', LNr: 'EHo', bGt: 'UEn' },
+    dependency: { specifier: 'B:/~BUN/root/chunk-7wywdnvg.js', digest: 'f2053904c1d113f1aa435e61268c37aa495309d327125d1065754b0e506e400a', tokenizer: 'dNo', normalizeStyles: 'epn' },
+    tabAnchor: 'let ge=xc(le),me=K.x2-B',
+    tabReplacement: 'let ge=xc(le);if(ge.indexOf(String.fromCharCode(9))>=0){let q=((B%S2t)+S2t)%S2t;ge=_8(" ".repeat(q)+ge).slice(q)}let me=K.x2-B',
+  },
 ];
 
 // Every name the injected source introduces must be free in the target module;

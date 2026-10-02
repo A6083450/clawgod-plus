@@ -190,6 +190,7 @@ const runtimePatchedDescriptorNames = new Set([
   'Ultrareview enable (direct literal, <=2.1.213)',
   'Ultrareview enable (v2.1.215+ gate)',
   'Computer Use gate bypass',
+  'Computer Use in noninteractive sessions',
   'Voice Mode enable (bypass GrowthBook kill)',
   'Auto-mode unlock for third-party API (provider helper gate)',
   'Auto-mode unlock for third-party API (inline gate)',
