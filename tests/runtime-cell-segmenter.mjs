@@ -445,10 +445,13 @@ check('裁剪制表符时使用上游展开函数', () => {
   }
 });
 
-for (const [version, platform, chunk, tokenizer, normalize, names] of [
+for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = false] of [
   ['2.1.285', 'darwin', 'chunk-rq9vt4dd.js', 'OEo', 'Drn', { Ns: 'ys', Dd: 'Kd', Cx: 'N1', xC: 'Lx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'A1', xx: 'T1', hht: 'XFt', C8: 'Cne', MNr: 'Ovo', LNr: 'Dvo', bGt: 'qgn' }],
   ['2.1.285', 'linux', 'chunk-63gmfw50.js', 'Jwo', 'hrn', { Ns: 'ys', Dd: 'Id', Cx: '_1', xC: 'Px', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'D1', xx: 'A1', hht: 'L$t', C8: 'hne', MNr: 'Xvo', LNr: 'Jvo', bGt: 'xgn' }],
   ['2.1.285', 'win32', 'chunk-e9tkhk3c.js', 'rvo', 'Srn', { Ns: 'ys', Dd: 'Kd', Cx: 'D1', xC: 'zx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Ol', Xf: 'dd', jn: 'Vn', Rx: 'w1', xx: '_1', hht: 'FFt', C8: 'Sne', MNr: 'tEo', LNr: 'nEo', bGt: 'Lgn' }],
+  ['2.1.291', 'linux', 'chunk-ftptxc63.js', 'IGo', 'P_n', { Ns: 'Es', Dd: 'tf', Cx: 'Gx', xC: 'Z1', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Ka', bn: 'Cn', wo: 'Lr', Xf: 'Md', jn: 'Jn', Rx: 'Yx', xx: 'Ix', hht: 'Gkt', C8: 'Qdr', MNr: 'i3o', LNr: 's3o', bGt: 'uMn' }, true],
+  ['2.1.291', 'win32', 'chunk-1dws3qtz.js', 'F2o', 'H_n', { Ns: 'Es', Dd: 'tf', Cx: 'Fx', xC: 'V1', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Ya', bn: 'Cn', wo: 'Lr', Xf: 'Md', jn: 'Jn', Rx: 'Ux', xx: 'zx', hht: 'Ykt', C8: 'iur', MNr: 'tYo', LNr: 'eYo', bGt: 'bMn' }, true],
+  ['2.1.291', 'darwin', 'chunk-byc0q3za.js', 'g6o', 'Y_n', { Ns: 'Es', Dd: 'tf', Cx: 'Ix', xC: 'Z1', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Ka', bn: 'Cn', wo: 'Lr', Xf: 'Md', jn: 'Jn', Rx: 'Gx', xx: 'kx', hht: 'nkt', C8: 'Sur', MNr: 'G3o', LNr: 'z3o', bGt: 'x0n' }, true],
   ['2.1.287', 'darwin', 'chunk-e8ww06j7.js', 'BLo', 'ppn', { Ns: 'ms', Dd: 'Wd', Cx: 'A1', xC: 'zx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Cc', bn: 'En', wo: 'Ll', Xf: 'yd', jn: 'Vn', Rx: '_1', xx: 'N1', hht: 'D6t', C8: 'v8', MNr: 'tFo', LNr: 'nFo', bGt: 'tCn' }],
   ['2.1.287', 'linux', 'chunk-xm85yzmk.js', 'sLo', 'qun', { Ns: 'ms', Dd: 'Wd', Cx: 'w1', xC: 'Ux', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Cc', bn: 'En', wo: 'Ll', Xf: 'yd', jn: 'Vn', Rx: 'D1', xx: '_1', hht: '_Gt', C8: 'h8', MNr: 'SNo', LNr: 'bNo', bGt: 'OEn' }],
   ['2.1.287', 'win32', 'chunk-7wywdnvg.js', 'dNo', 'epn', { Ns: 'ms', Dd: 'Wd', Cx: 'w1', xC: 'Ux', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'xc', bn: 'En', wo: 'Ll', Xf: 'yd', jn: 'Vn', Rx: 'D1', xx: '_1', hht: 'S2t', C8: '_8', MNr: 'kHo', LNr: 'EHo', bGt: 'UEn' }],
@@ -490,7 +493,7 @@ for (const [version, platform, chunk, tokenizer, normalize, names] of [
     const tab = ast.body.find(node => node.id?.name === 'tabClip');
     const clip = new Function(names.Dc, names.C8, names.hht, 'Bun', `${adapted.slice(tab.start, tab.end)};return tabClip`)(
       text => text,
-      text => { assert.equal(text, '   a\tb'); return '   a    b'; },
+      text => { assert.deepEqual(text, arrayTabs ? ['   a\tb'] : '   a\tb'); return arrayTabs ? ['   a    b'] : '   a    b'; },
       8,
       { sliceAnsi: text => text },
     );

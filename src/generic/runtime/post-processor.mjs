@@ -637,6 +637,48 @@ const CELL_PLATFORM_SHAPES = [
     tabAnchor: 'let Ee=bc(ae),pe=I.x2-U',
     tabReplacement: 'let Ee=bc(ae);if(Ee.indexOf(String.fromCharCode(9))>=0){let q=((U%FFt)+FFt)%FFt;Ee=Sne(" ".repeat(q)+Ee).slice(q)}let pe=I.x2-U',
   },
+  // 2.1.291 linux
+  {
+    shape: [
+      { header: 'function Es(n){', digest: 'a32a7137022622acc46eb9378bb835df31699cd8c74300e90c4e6b3de6ea694b' },
+      { header: 'class tf{', digest: '727d5c0a49ca31a7947dd049045268150523465aa2ffbf186981d2538f4972e7' },
+      { header: 'function Gx(n,u,f,m){', digest: 'a9b91dc61ba7ae6fe04ed1cae75681a0cacba6947074d17c6f7326c711c4a00f' },
+      { header: 'function Z1(n,u,f,m,y){', digest: '99781d2c0f3a53b3d82ac3d6033a9ab330ee98f93d55650ea90f3d79d330d092' },
+      { header: 'function Ka(n){', digest: 'e4560bf3a51adfb3391e4368fac331beb89f2a7fb54f969df9853165aab9cab2' },
+    ],
+    names: { Ns: 'Es', Dd: 'tf', Cx: 'Gx', xC: 'Z1', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Ka', bn: 'Cn', wo: 'Lr', Xf: 'Md', jn: 'Jn', Rx: 'Yx', xx: 'Ix', hht: 'Gkt', C8: 'Qdr', MNr: 'i3o', LNr: 's3o', bGt: 'uMn' },
+    dependency: { specifier: '/$bunfs/root/chunk-ftptxc63.js', digest: '63aa66862c7747246fbfc88c322829913144d759725428da8e8491ec295de73f', tokenizer: 'IGo', normalizeStyles: 'P_n' },
+    tabAnchor: 'let se=Ka(me),ue=K.x2-B',
+    tabReplacement: 'let se=Ka(me);if(se.indexOf(String.fromCharCode(9))>=0){let q=((B%Gkt)+Gkt)%Gkt;se=Qdr([" ".repeat(q)+se]).join("").slice(q)}let ue=K.x2-B',
+  },
+  // 2.1.291 win32
+  {
+    shape: [
+      { header: 'function Es(n){', digest: '469b58f79e65664849a5d4509bc649fb1949e1d9fd8f70f447897a62224689be' },
+      { header: 'class tf{', digest: '49c80d3e5ca1400182aa3f449d95fd0808ee720081870904cc0d44b430238d66' },
+      { header: 'function Fx(n,u,f,m){', digest: 'ee252a4e0b3a10c87a86483d27d4723cfdfd4ca36a498437c0331a8c4b50005f' },
+      { header: 'function V1(n,u,f,m,y){', digest: '4c61c92e9a77b5435bcc9583ed5f4a9bd49fc63fa36ec2e7ff8f11ef5996e9f6' },
+      { header: 'function Ya(n){', digest: '88282e0b191770af4e254185c98f6612b3e35761ded6d91d749cefef76363e06' },
+    ],
+    names: { Ns: 'Es', Dd: 'tf', Cx: 'Fx', xC: 'V1', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Ya', bn: 'Cn', wo: 'Lr', Xf: 'Md', jn: 'Jn', Rx: 'Ux', xx: 'zx', hht: 'Ykt', C8: 'iur', MNr: 'tYo', LNr: 'eYo', bGt: 'bMn' },
+    dependency: { specifier: 'B:/~BUN/root/chunk-1dws3qtz.js', digest: 'e263e43718cbb1e2f25310a355862a6e7fe7ce1bf66f181c14f96b03c538556f', tokenizer: 'F2o', normalizeStyles: 'H_n' },
+    tabAnchor: 'let se=Ya(me),ue=K.x2-B',
+    tabReplacement: 'let se=Ya(me);if(se.indexOf(String.fromCharCode(9))>=0){let q=((B%Ykt)+Ykt)%Ykt;se=iur([" ".repeat(q)+se]).join("").slice(q)}let ue=K.x2-B',
+  },
+  // 2.1.291 darwin：制表符展开改用上游数组接口。
+  {
+    shape: [
+      { header: 'function Es(n){', digest: '476aa6ef7fe9eaa699e0bd3e85f4d4c14ce7c1bbe41d10d47b3088d15b882aaa' },
+      { header: 'class tf{', digest: 'cbe12c7e89d7d31465b51e8ff428edf2fc9a3a41aa5f359b7952b255e893a161' },
+      { header: 'function Ix(n,u,f,m){', digest: '357638962a695be54a90d989dcfca49184e809631b38639ebe4d112783465403' },
+      { header: 'function Z1(n,u,f,m,y){', digest: '99781d2c0f3a53b3d82ac3d6033a9ab330ee98f93d55650ea90f3d79d330d092' },
+      { header: 'function Ka(n){', digest: 'd16c8cfcef18134c0d1a7a253d97388508941dfe947ee26069d3cabf0f05e0e9' },
+    ],
+    names: { Ns: 'Es', Dd: 'tf', Cx: 'Ix', xC: 'Z1', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Ka', bn: 'Cn', wo: 'Lr', Xf: 'Md', jn: 'Jn', Rx: 'Gx', xx: 'kx', hht: 'nkt', C8: 'Sur', MNr: 'G3o', LNr: 'z3o', bGt: 'x0n' },
+    dependency: { specifier: '/$bunfs/root/chunk-byc0q3za.js', digest: '0ce4df7ad6e277579f445d4a8764fac5eb3d7263bde3b7c383059303d775e9ac', tokenizer: 'g6o', normalizeStyles: 'Y_n' },
+    tabAnchor: 'let se=Ka(me),ue=K.x2-U',
+    tabReplacement: 'let se=Ka(me);if(se.indexOf(String.fromCharCode(9))>=0){let q=((U%nkt)+nkt)%nkt;se=Sur([" ".repeat(q)+se]).join("").slice(q)}let ue=K.x2-U',
+  },
   // 2.1.287 darwin
   {
     shape: [
