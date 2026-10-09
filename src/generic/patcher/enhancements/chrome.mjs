@@ -55,95 +55,116 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify, rootDir })
   const acorn = Object.values(needs).some(Boolean) ? await loadAcorn(rootDir) : null;
   if (acorn) {
     try {
-      const ast = acorn.parse(parseSource, { ecmaVersion: 'latest', sourceType: 'module' });
-      const nodeSource = (node) => parseSource.slice(node.start, node.end);
-      const absolute = (position) => position + offset;
+      const separator = '\n/*__CLAWGOD_MODULE_BOUNDARY__*/\n';
+      let moduleOffset = offset;
+      const modules = parseSource.split(separator).map(code => {
+        const module = { code, offset: moduleOffset, ast: acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' }) };
+        moduleOffset += code.length + separator.length;
+        return module;
+      });
+      const chromeEnablers = modules.flatMap(module => findNodes(module.ast, node =>
+        node.type === 'FunctionDeclaration' && module.code.slice(node.start, node.end).includes('claudeInChromeDefaultEnabled')));
+      for (const { code: moduleSource, ast, offset: base } of modules) {
+        const nodeSource = (node) => moduleSource.slice(node.start, node.end);
+        const absolute = (position) => position + base;
 
-      if (needs.clientFactory) {
-        const functions = [
-          ...findNodes(ast, (node) => node.type === 'FunctionDeclaration'),
-          ...findNodes(ast, (node) =>
-            node.type === 'VariableDeclarator' &&
-            node.init &&
-            (node.init.type === 'ArrowFunctionExpression' || node.init.type === 'FunctionExpression')
-          ),
-        ];
-        for (const node of functions) {
-          const functionNode = node.type === 'VariableDeclarator' ? node.init : node;
-          if (!isChromeClientFactory(functionNode)) continue;
-          const parameter = functionNode.params[0].name;
-          const conditional = functionNode.body.body[0].argument;
-          const bridgeCall = nodeSource(conditional.consequent);
-          const socketCall = nodeSource(conditional.alternate.consequent);
-          const nativeCall = nodeSource(conditional.alternate.alternate);
-          add(
-            'clientFactory',
-            absolute(functionNode.body.start),
-            absolute(functionNode.body.end),
-            `{return ${parameter}.getSocketPaths?${socketCall}:${parameter}.bridgeConfig?${bridgeCall}:${nativeCall}}/*__ccpp_bridge_fallback_v2*/`,
-          );
-          break;
-        }
-      }
-
-      if (needs.subscriptionGate) {
-        for (const declaration of findNodes(ast, (node) => node.type === 'VariableDeclarator')) {
-          if (!declaration.init || declaration.init.type !== 'LogicalExpression' || declaration.init.operator !== '&&') continue;
-          const left = declaration.init.left;
-          const right = declaration.init.right;
-          if (left.type !== 'CallExpression' || !left.arguments?.length) continue;
-          const argument = left.arguments[0];
-          if (!argument || argument.type !== 'MemberExpression' || argument.property?.name !== 'chrome') continue;
-          if (right.type !== 'CallExpression' || right.arguments?.length !== 0) continue;
-          const calleeName = left.callee?.name || left.callee?.property?.name;
-          if (!calleeName) continue;
-          const definitions = findNodes(ast, (node) =>
-            (node.type === 'FunctionDeclaration' && node.id?.name === calleeName) ||
-            (node.type === 'VariableDeclarator' && node.id?.name === calleeName)
-          );
-          if (!definitions.some((definition) => nodeSource(definition).includes('claudeInChromeDefaultEnabled'))) continue;
-          add('subscriptionGate', absolute(declaration.init.start), absolute(declaration.init.end), `${nodeSource(left)}/*__ccpp_sub_bypass*/`);
-          break;
-        }
-      }
-
-      if (needs.subscriptionMsg) {
-        const messageAnchor = 'Claude in Chrome requires a claude.ai subscription.';
-        const messagePosition = parseSource.indexOf(messageAnchor);
-        if (messagePosition >= 0) {
-          const before = parseSource.slice(Math.max(0, messagePosition - 200), messagePosition);
-          if (!before.includes('false&&')) {
-            const logicals = findNodes(ast, (node) =>
-              node.type === 'LogicalExpression' &&
-              node.operator === '&&' &&
-              node.start <= messagePosition &&
-              node.end >= messagePosition &&
-              node.left?.type === 'UnaryExpression' &&
-              node.left.operator === '!'
+        if (needs.clientFactory) {
+          const functions = [
+            ...findNodes(ast, (node) => node.type === 'FunctionDeclaration'),
+            ...findNodes(ast, (node) =>
+              node.type === 'VariableDeclarator' &&
+              node.init &&
+              (node.init.type === 'ArrowFunctionExpression' || node.init.type === 'FunctionExpression')
+            ),
+          ];
+          for (const node of functions) {
+            const functionNode = node.type === 'VariableDeclarator' ? node.init : node;
+            if (!isChromeClientFactory(functionNode)) continue;
+            const parameter = functionNode.params[0].name;
+            const conditional = functionNode.body.body[0].argument;
+            const bridgeCall = nodeSource(conditional.consequent);
+            const socketCall = nodeSource(conditional.alternate.consequent);
+            const nativeCall = nodeSource(conditional.alternate.alternate);
+            add(
+              'clientFactory',
+              absolute(functionNode.body.start),
+              absolute(functionNode.body.end),
+              `{return ${parameter}.getSocketPaths?${socketCall}:${parameter}.bridgeConfig?${bridgeCall}:${nativeCall}}/*__ccpp_bridge_fallback_v2*/`,
             );
-            if (logicals.length > 0) {
-              const target = logicals.reduce((left, right) => (right.end - right.start) < (left.end - left.start) ? right : left);
-              add('subscriptionMsg', absolute(target.left.start), absolute(target.left.end), 'false/*__ccpp_sub_msg_bypass*/');
+            break;
+          }
+        }
+
+        if (needs.subscriptionGate) {
+          for (const declaration of findNodes(ast, (node) => node.type === 'VariableDeclarator')) {
+            if (!declaration.init || declaration.init.type !== 'LogicalExpression' || declaration.init.operator !== '&&') continue;
+            const left = declaration.init.left;
+            const right = declaration.init.right;
+            const calls = findNodes(left, node => node.type === 'CallExpression'
+              && node.arguments?.[0]?.type === 'MemberExpression' && node.arguments[0].property?.name === 'chrome');
+            if (calls.length !== 1 || right.type !== 'CallExpression' || right.arguments?.length !== 0) continue;
+            const calleeName = calls[0].callee?.name;
+            if (!calleeName) continue;
+            const definitions = findNodes(ast, (node) =>
+              (node.type === 'FunctionDeclaration' && node.id?.name === calleeName) ||
+              (node.type === 'VariableDeclarator' && node.id?.name === calleeName)
+            );
+            const imported = ast.body.filter(node => node.type === 'ImportDeclaration')
+              .flatMap(node => node.specifiers).find(node => node.local.name === calleeName);
+            const localEnabler = definitions.some(definition => nodeSource(definition).includes('claudeInChromeDefaultEnabled'));
+            if (!localEnabler && !(imported?.type === 'ImportSpecifier'
+              && chromeEnablers.filter(node => node.id.name === imported.imported.name).length === 1)) continue;
+            add('subscriptionGate', absolute(declaration.init.start), absolute(declaration.init.end), `${nodeSource(left)}/*__ccpp_sub_bypass*/`);
+            break;
+          }
+        }
+
+        if (needs.subscriptionMsg) {
+          const messageAnchor = 'Claude in Chrome requires a claude.ai subscription.';
+          const messagePosition = moduleSource.indexOf(messageAnchor);
+          if (messagePosition >= 0) {
+            const subscriberProps = findNodes(ast, node => node.type === 'ObjectExpression'
+              && ['onDone', 'isExtensionInstalled', 'isClaudeAISubscriber'].every(name =>
+                node.properties.some(property => property.key?.name === name)))
+              .flatMap(node => node.properties.filter(property => property.key?.name === 'isClaudeAISubscriber'));
+            if (subscriberProps.length === 1) {
+              const value = subscriberProps[0].value;
+              add('subscriptionMsg', absolute(value.start), absolute(value.end), 'true/*__ccpp_sub_msg_bypass*/');
+            }
+            const before = moduleSource.slice(Math.max(0, messagePosition - 200), messagePosition);
+            if (!seen.has('subscriptionMsg') && !before.includes('false&&')) {
+              const logicals = findNodes(ast, (node) =>
+                node.type === 'LogicalExpression' &&
+                node.operator === '&&' &&
+                node.start <= messagePosition &&
+                node.end >= messagePosition &&
+                node.left?.type === 'UnaryExpression' &&
+                node.left.operator === '!'
+              );
+              if (logicals.length > 0) {
+                const target = logicals.reduce((left, right) => (right.end - right.start) < (left.end - left.start) ? right : left);
+                add('subscriptionMsg', absolute(target.left.start), absolute(target.left.end), 'false/*__ccpp_sub_msg_bypass*/');
+              }
             }
           }
         }
-      }
 
-      if (needs.selectBrowserHide) {
-        const selectBrowserNodes = findNodes(ast, (node) => {
-          if (node.type !== 'ObjectExpression') return false;
-          return node.properties?.some((property) => property.key?.name === 'value' && property.value?.value === 'select-browser');
-        });
-        if (selectBrowserNodes.length > 0) {
-          const selectBrowserNode = selectBrowserNodes[0];
-          const pushCalls = findNodes(ast, (node) =>
-            node.type === 'CallExpression' &&
-            node.callee?.property?.name === 'push' &&
-            node.start >= selectBrowserNode.start &&
-            node.start - selectBrowserNode.end <= 200
-          );
-          if (pushCalls.length > 0) {
-            add('selectBrowserHide', absolute(pushCalls[0].start), absolute(pushCalls[0].end), 'void 0/*__ccpp_no_select_browser*/');
+        if (needs.selectBrowserHide) {
+          const selectBrowserNodes = findNodes(ast, (node) => {
+            if (node.type !== 'ObjectExpression') return false;
+            return node.properties?.some((property) => property.key?.name === 'value' && property.value?.value === 'select-browser');
+          });
+          if (selectBrowserNodes.length > 0) {
+            const selectBrowserNode = selectBrowserNodes[0];
+            const pushCalls = findNodes(ast, (node) =>
+              node.type === 'CallExpression' &&
+              node.callee?.property?.name === 'push' &&
+              (node.arguments?.includes(selectBrowserNode) || node.start >= selectBrowserNode.start
+                && node.start - selectBrowserNode.end <= 200)
+            );
+            if (pushCalls.length > 0) {
+              add('selectBrowserHide', absolute(pushCalls[0].start), absolute(pushCalls[0].end), 'void 0/*__ccpp_no_select_browser*/');
+            }
           }
         }
       }

@@ -28,7 +28,13 @@ function transform(id, source, ast) {
   if (id === 'voice-asr-backend') {
     const asrEnabled = `(${enabled}&&(${gate('enable-voice-mode')})&&(${gate('voice-mode')})&&process.env.CLAUDE_CODE_ASR!=="0")`;
     const previousTransport = source.includes('/*__clawgod_cometix_voice-asr-backend__*/');
-    const connectors = previousTransport ? [] : functions(['No OAuth token available', 'VOICE_STREAM_BASE_URL'], 3);
+    const connectors = previousTransport ? [] : functions(['No OAuth token available'], 3).filter(fn =>
+      text(fn).includes('VOICE_STREAM_BASE_URL') || (
+        fn.async && text(fn).includes('BASE_API_URL') && text(fn).includes('use_conversation_engine') &&
+        text(fn).includes('TranscriptInterim') && text(fn).includes('TranscriptEndpoint')));
+    if (!previousTransport && source.includes('[voice_stream] No OAuth token available') && !connectors.length) {
+      throw new Error('voice connector shape not recognized');
+    }
     if (connectors.length) {
       const fn = one(connectors, 'voice connector');
       if (!fn.params.every(p => p.type === 'Identifier')) throw new Error('unexpected voice connector parameters');
@@ -218,7 +224,7 @@ const definitions = [
   ['file-read-limit', 'file-read-limit', 'defaultFileReadingLimits'],
   ['transcript-dialog-replay', 'transcript-dialog-replay', 'dialog-'],
   ['unlock-ultracode', 'unlock-ultracode', 'xhigh_effort'],
-  ['voice-asr-backend', 'voice', 'VOICE_STREAM_BASE_URL', 'name:"voice"', 'allow_voice_mode'],
+  ['voice-asr-backend', 'voice', 'VOICE_STREAM_BASE_URL', '[voice_stream] No OAuth token available', 'name:"voice"', 'allow_voice_mode'],
 ];
 
 export const cometixPatches = Object.freeze(definitions.map(([id, enhancement, ...anchors], i) => Object.freeze({

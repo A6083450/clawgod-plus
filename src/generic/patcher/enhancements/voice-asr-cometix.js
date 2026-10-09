@@ -1,11 +1,10 @@
 // Upstream: CometixSpace/claude-code @ 68fd5465eb631ff8180631f37ca0046a2b38c85a
-// patcher/payloads/voice-asr-cometix.js; only the ClawGod vendor search path differs.
+// patcher/payloads/voice-asr-cometix.js; ClawGod adapts vendor lookup and display snapshots.
 async function __ccppAsrConnect(e, t) {
 // cometix-asr voice transport.
 //
-// The adapter body below is the 2.1.241 one, unchanged: its handling of
-// cumulative previews and the single session_final commit came from running
-// against the real host, and rewriting it would throw that away.
+// Preserve the 2.1.241 cumulative previews and single session_final commit;
+// explicit display snapshots replace previews instead of accumulating prefixes.
 //
 // What did have to change is how it reaches Node. On 2.1.241 this was spliced
 // into one CommonJS bundle, so require and __dirname were simply in scope.
@@ -113,7 +112,15 @@ function __cumulativePreview(full,piece,stage){
 
   let decision="",next=previous,accepted=false;
   const live=piece||incoming;
-  if(!previous){
+  if(full){
+    // display is the complete cumulative snapshot, including whole-text rewrites.
+    // Phrase-reset and parallel-projection heuristics apply only without display.
+    decision=stage+".accept_cumulative_display";
+    next=full;
+    accepted=true;
+    __previewBase="";
+    __livePiece="";
+  }else if(!previous){
     decision=stage+".first";
     next=incoming;
     accepted=true;
@@ -299,7 +306,7 @@ function __startLive(){
         // Therefore both interim and stable must carry a cumulative Preview.
         const normalizedStage=stage==="stable"?"stable":"interim";
         const previousPreview=__previewText;
-        const preview=__cumulativePreview(full,piece,normalizedStage);
+        const preview=__cumulativePreview(display,piece,normalizedStage);
         if(!preview){
           __trace("transcript.skip",{reason:"normalized_empty",stage,state:__previewState()});
           return;

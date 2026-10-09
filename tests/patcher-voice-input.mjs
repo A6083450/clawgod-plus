@@ -13,16 +13,23 @@ const fixture = readFileSync(new URL('./fixtures/voice-composer-2.1.281.txt', im
 // recording controller substituted. No microphone, native ASR or network calls.
 function session(source, { text = '', cursor = text.length, mode = 'hold', gates = {}, active = true, typedKeys = true, canRecord = true } = {}) {
   let state = { voiceState: 'idle', voiceInterimTranscript: '' }, effects, component, hi, ei, now = 0, timers = [], voice, keys, options;
-  const refs = [[], []], deps = [[], []], history = [];
+  const refs = [[], []], deps = [[], []], cleanups = [[], []], history = [];
   const composer = { value: text, cursorOffset: cursor, setValueWithCursor(value, offset) {
     history.push({ phase: state.voiceState, value, cursor: offset }); this.value = value; this.cursorOffset = offset;
   } };
   const get = () => state, set = fn => { state = fn(state); };
   const context = {
-    __clawgodPatches: gates, w: n => Array(n).fill(Symbol.for('memo')), _: Symbol.for('memo'),
+    setTimeout(fn, ms) { const id = { fn, at: now + ms }; timers.push(id); return id; },
+    clearTimeout(id) { timers = timers.filter(t => t !== id); },
+    __clawgodPatches: gates,
+    w: n => Array(n).fill(Symbol.for('memo')), _: Symbol.for('memo'),
     A: value => refs[component][hi++] ??= { current: value }, oe: fn => fn, J: fn => fn(), cn: () => {},
     k: (fn, values) => { const index = ei++, old = deps[component][index];
-      if (!old || values.some((value, i) => value !== old[i])) effects.push(fn); deps[component][index] = values;
+      if (!old || values.some((value, i) => value !== old[i])) {
+        const owner = component;
+        effects.push(() => { cleanups[owner][index]?.(); cleanups[owner][index] = fn(); });
+      }
+      deps[component][index] = values;
     },
     UBt: () => set, Jhe: () => get, Ym: selector => selector(state), U: selector => selector({ settings: { voice: { mode } } }),
     IO: () => true, Yr: () => ({ addNotification() {} }), Da: () => null, pW: () => false,
@@ -67,17 +74,24 @@ function session(source, { text = '', cursor = text.length, mode = 'hold', gates
   };
 }
 function checks(source, label) {
-  for (const delay of [0, 500]) for (const text of ['', '前缀  ']) {
-    const s = session(source, { text });
-    s.press(' ', 0);
-    if (delay) s.press(' ', delay);
-    while (s.get().voiceState === 'idle') {
-      assert.equal(s.composer.value, text, `${label}: warmup must not insert spaces`);
-      assert.equal(s.composer.cursorOffset, text.length, 'warmup must not move the cursor');
-      assert(s.history.length < 15, 'hold starts'); s.press();
+  assert.equal(source.includes('forceRedraw'), false, 'hold input must not depend on terminal refresh workarounds');
+  // 普通空格及首次重复与原生逐事件一致，不能等待长按判定后才显示。
+  for (const sequence of [[[' ', 0]], [[' ', 0], ['x', 30]], [[' ', 0], [' ', 500]], [[' ', 0], [' ', 30]], [['  ', 0]], [['    ', 0]]]) {
+    const baseline = session(fixture, { text: '原文  后缀', cursor: 4 });
+    const patched = session(source, { text: '原文  后缀', cursor: 4 });
+    for (const [key, delay] of sequence) {
+      baseline.press(key, delay); patched.press(key, delay);
+      assert.equal(patched.composer.value, baseline.composer.value, `${label}: space appears immediately like upstream`);
+      assert.equal(patched.composer.cursorOffset, baseline.composer.cursorOffset, 'space cursor matches upstream');
     }
+    baseline.advance(150); patched.advance(150);
+    assert.deepEqual(patched.history, baseline.history, 'quiet timeout must not insert delayed spaces');
+  }
+  for (const text of ['', '前缀  ']) {
+    const s = session(source, { text });
+    for (let i = 0; i < 5; i++) s.press();
+    assert.equal(s.get().voiceState, 'recording', 'hold starts');
     assert.equal(s.composer.value, text, `${label}: holding preserves existing text`);
-    assert.equal(s.history.length, 0, 'no insert-then-delete updates before recording');
     const started = s.history.length;
     for (let i = 0; i < 15; i++) assert.equal(s.press().defaultPrevented, true, 'recording consumes repeat without editing');
     assert.equal(s.history.length, started, 'no deletion or cursor updates during recording');
@@ -110,17 +124,9 @@ function checks(source, label) {
   cancel.preview('取消'); cancel.press('escape'); assert.equal(cancel.composer.value, '原文  ');
   const tap = session(source, { mode: 'tap' }); tap.press(); assert.equal(tap.get().voiceState, 'recording'); assert.equal(tap.composer.value, '');
   const short = session(source, { text: '短按' }); short.press();
-  assert.equal(short.composer.value, '短按', 'space is pending while distinguishing hold');
-  short.advance(1000); assert.equal(short.composer.value, '短按 ', 'short press is committed after quiet timeout');
-  short.press('x'); short.press(); short.advance(1000); assert.equal(short.composer.value, '短按 x ');
-  const ordered = session(source); ordered.press(); ordered.press('x');
-  assert.equal(ordered.composer.value, ' x', 'pending space is committed before next typed key');
-  ordered.advance(1000); assert.equal(ordered.composer.value, ' x', 'pending is never committed twice');
-  for (const batchKey of ['  ', '    ']) {
-    const s = session(source, { text: '保留  ' }); s.press(batchKey);
-    assert.equal(s.composer.value, '保留  ', 'batched warmup is also deferred');
-    s.advance(1000); assert.equal(s.composer.value, '保留  ' + batchKey, 'quiet batch is committed intact');
-  }
+  assert.equal(short.composer.value, '短按 ', 'short press is immediately visible');
+  short.advance(1000); assert.equal(short.composer.value, '短按 ', 'quiet timeout does not duplicate space');
+  short.press('x'); short.press(); assert.equal(short.composer.value, '短按 x ');
   const failed = session(source, { text: '原文  ', canRecord: false });
   for (let i = 0; i < 5; i++) failed.press();
   assert.equal(failed.composer.value, '原文  ', 'failed recording start cannot erase original spaces');
@@ -134,11 +140,16 @@ try {
   seedPatcherAcorn(root);
   const descriptor = voiceRegistry.customPatches.find(p => p.id === 'voice-hold-input');
   assert.ok(descriptor);
+  const legacy = await descriptor.apply(fixture + '\n/*__clawgod_voice_hold_input_v2__*/', { rootDir: root });
+  assert.equal(legacy.status, 'failed'); assert.equal(legacy.code, undefined, 'old delayed patch requires clean source');
   for (const source of [fixture, new Bun.Transpiler({ loader: 'js' }).transformSync(fixture)]) {
     const result = await descriptor.apply(source, { rootDir: root }); assert.equal(result.status, 'applied', result.detail);
     checks(result.code, 'direct/minified-or-formatted');
     for (const mode of ['dryRun', 'verify']) assert.equal((await descriptor.apply(source, { rootDir: root, [mode]: true })).code, source);
   }
+  const split = await descriptor.apply(fixture + '\n/*__CLAWGOD_MODULE_BOUNDARY__*/\nexport const unrelated=1;', { rootDir: root });
+  assert.equal(split.status, 'applied', split.detail);
+  checks(split.code.split('\n/*__CLAWGOD_MODULE_BOUNDARY__*/\n')[0], 'split modules');
   const drifted = fixture.replace('v(te.current+Fe,', 'v(unknownCount(),');
   const rejected = await descriptor.apply(drifted, { rootDir: root });
   assert.equal(rejected.status, 'failed'); assert.equal(rejected.code, undefined, 'unknown warmup shape fails without partial writes');

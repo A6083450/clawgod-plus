@@ -223,4 +223,40 @@ for (const [name, patcher] of [
   }
 }
 
+// 分块顶层重名不能让 AST 路径失效；宿主条件和完整设置对话框必须保留。
+{
+  const { chromeRegistry } = await import('../src/generic/patcher/enhancements/chrome.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'clawgod-chrome-split-'));
+  try {
+    seedPatcherAcorn(dir);
+    const separator = '\n/*__CLAWGOD_MODULE_BOUNDARY__*/\n';
+    const modules = [
+      `var duplicate=1;function enableChrome(requested){if(requested!==void 0)return requested;return config().claudeInChromeDefaultEnabled}export{enableChrome};`,
+      `import{enableChrome}from"./enable.js";var duplicate=2;function register(options,host){let enabled=!host&&enableChrome(options.chrome)&&subscriber();return enabled}globalThis.register=register;`,
+      `var duplicate=3;function dialog(props){let{isClaudeAISubscriber:o}=props;return !o&&jsx("error",{children:"Claude in Chrome requires a claude.ai subscription."}),!o?"blocked":"menu"}function openDialog(){return jsx(dialog,{onDone:()=>{},isExtensionInstalled:true,isClaudeAISubscriber:subscriber()})}function browserOptions(connected){let options=[];if(connected)options.push({label:"Select browser\\u2026",value:"select-browser"});return options}globalThis.openDialog=openDialog;globalThis.browserOptions=browserOptions;`,
+      `function createChromeClient(config){return config.bridgeConfig?bridgeClient(config):config.getSocketPaths?socketClient(config):nativeClient(config)}`,
+    ];
+    const source = modules.join(separator);
+    const apply = chromeRegistry.customPatches[0].apply;
+    const dry = await apply(source, { dryRun: true, rootDir: dir });
+    assert.equal(dry.status, 'applied');
+    assert.deepEqual(dry.warnings, [], '新版四个子项都应识别，不能只有 socket 成功');
+    assert.equal(dry.code, source, 'dry-run 不改写');
+    const patched = await apply(source, { rootDir: dir });
+    assert.deepEqual(patched.warnings, []);
+    const actualModules = patched.code.split(separator);
+    const context = { globalThis: {}, subscriber: () => false, jsx: (component, props) => typeof component === 'function' ? component(props) : component };
+    context.globalThis = context;
+    for (const module of actualModules) runInNewContext(module.replace(/import\{[^}]+\}from"[^"]+";|export\{[^}]+\};/g, ''), context);
+    assert.equal(context.register({ chrome: true }, false), true, '无订阅时本地 Chrome 应注册');
+    assert.equal(context.register({ chrome: true }, true), false, '远程 host 排除条件不能被删除');
+    assert.equal(context.register({ chrome: false }, false), false, '显式禁用必须保留');
+    assert.equal(context.openDialog(), 'menu', '设置页不应继续被订阅状态阻挡');
+    assert.deepEqual(Array.from(context.browserOptions(true)), [], '隐藏未支持的浏览器选择项');
+    assert.equal((await apply(patched.code, { rootDir: dir })).status, 'already', '再次应用必须幂等');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 console.log('patcher Chrome async socket checks passed');

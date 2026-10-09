@@ -445,7 +445,16 @@ check('裁剪制表符时使用上游展开函数', () => {
   }
 });
 
-for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = false] of [
+for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = false, sharedChunk] of [
+  ['2.1.295', 'darwin', 'chunk-bjcznv89.js', 'dns', 'hRn', { Ns: 'vs', Dd: 'ef', Cx: 'k1', xC: 'Xx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Nc', bn: 'Cn', wo: 'Pr', Xf: 'Md', jn: '$n', Rx: 'I1', xx: 'U1', hht: 'Axe', C8: 'AAo', MNr: 'Aas', LNr: 'Tas', bGt: '_jn' }, true, 'chunk-2v0x57v3.js'],
+  ['2.1.295', 'linux', 'chunk-ch6xv8ya.js', 'Tts', 'JCn', { Ns: 'vs', Dd: 'ef', Cx: 'k1', xC: 'Qx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Nc', bn: 'Rn', wo: 'Pr', Xf: 'Rd', jn: '$n', Rx: 'G1', xx: 'U1', hht: 'bxe', C8: 'YTo', MNr: 'Bis', LNr: 'jis', bGt: 'ejn' }, true, 'chunk-7stz4g07.js'],
+  ['2.1.295', 'win32', 'chunk-zwq6ady6.js', 'Mts', 'lAn', { Ns: 'vs', Dd: 'ef', Cx: 'K1', xC: 'Zx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Nc', bn: 'Cn', wo: 'Pr', Xf: 'Rd', jn: '$n', Rx: 'Y1', xx: 'G1', hht: 'bxe', C8: 'rCo', MNr: 'Kis', LNr: 'Yis', bGt: 'wjn' }, true, 'chunk-v3xrx1m7.js'],
+  ['2.1.293', 'darwin', 'chunk-zy1atq7h.js', 'c8o', '_vn', { Ns: 'Es', Dd: 'tf', Cx: 'Ix', xC: 'X1', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Ya', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'Gx', xx: 'kx', hht: 'OTe', C8: 'Hwr', MNr: 'iZo', LNr: 'aZo', bGt: 'YNn' }, true, 'chunk-y1vajssn.js'],
+  ['2.1.293', 'linux', 'chunk-jf5janxj.js', 'T5o', 'Zvn', { Ns: 'Es', Dd: 'tf', Cx: 'zx', xC: 'W1', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Ya', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'Fx', xx: 'Bx', hht: 'TCe', C8: 'dwr', MNr: 'w7o', LNr: 'v7o', bGt: 'INn' }, true, 'chunk-pxa7nhh6.js'],
+  ['2.1.293', 'win32', 'chunk-9zg6kjjc.js', 'M5o', 'lkn', { Ns: 'Es', Dd: 'tf', Cx: 'zx', xC: 'W1', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'ja', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'Fx', xx: 'Bx', hht: 'TRe', C8: 'vwr', MNr: 'yZo', LNr: '_Zo', bGt: 'UFn' }, true, 'chunk-pvgfk8na.js'],
+  ['2.1.292', 'linux', 'chunk-y4a70sha.js', 's3o', 'Twn', { Ns: 'Es', Dd: 'nf', Cx: 'Ux', xC: 'V1', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'ja', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'kx', xx: 'Fx', hht: 'GAe', C8: '$_r', MNr: 'Z9o', LNr: 'Q9o', bGt: 'H0n' }, true],
+  ['2.1.292', 'win32', 'chunk-eya2x6wc.js', 'p3o', 'Mwn', { Ns: 'Es', Dd: 'nf', Cx: 'Ux', xC: 'V1', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Ya', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'kx', xx: 'Fx', hht: 'GCe', C8: 'Y_r', MNr: 'KXo', LNr: 'qXo', bGt: 'WLn' }, true],
+  ['2.1.292', 'darwin', 'chunk-wsc1qqhv.js', 'W3o', 'Gwn', { Ns: 'Es', Dd: 'nf', Cx: 'Ix', xC: 'Q1', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Ya', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'Gx', xx: 'kx', hht: 'QAe', C8: 'aSr', MNr: 'NXo', LNr: 'FXo', bGt: 'QDn' }, true],
   ['2.1.285', 'darwin', 'chunk-rq9vt4dd.js', 'OEo', 'Drn', { Ns: 'ys', Dd: 'Kd', Cx: 'N1', xC: 'Lx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'A1', xx: 'T1', hht: 'XFt', C8: 'Cne', MNr: 'Ovo', LNr: 'Dvo', bGt: 'qgn' }],
   ['2.1.285', 'linux', 'chunk-63gmfw50.js', 'Jwo', 'hrn', { Ns: 'ys', Dd: 'Id', Cx: '_1', xC: 'Px', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Hl', Xf: 'dd', jn: 'Vn', Rx: 'D1', xx: 'A1', hht: 'L$t', C8: 'hne', MNr: 'Xvo', LNr: 'Jvo', bGt: 'xgn' }],
   ['2.1.285', 'win32', 'chunk-e9tkhk3c.js', 'rvo', 'Srn', { Ns: 'ys', Dd: 'Kd', Cx: 'D1', xC: 'zx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'bc', bn: 'En', wo: 'Ol', Xf: 'dd', jn: 'Vn', Rx: 'w1', xx: '_1', hht: 'FFt', C8: 'Sne', MNr: 'tEo', LNr: 'nEo', bGt: 'Lgn' }],
@@ -460,10 +469,21 @@ for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = f
     const source = readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}.txt`, import.meta.url), 'utf8');
     const ansi = readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}-ansi.txt`, import.meta.url), 'utf8');
     const dependencies = new Map([[chunk, ansi]]);
+    if (sharedChunk) {
+      const shared = readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}-shared.txt`, import.meta.url), 'utf8');
+      assert.equal(adaptCellRenderer(source, undefined, dependencies), null, '缺少共享工厂必须拒绝');
+      dependencies.set(sharedChunk, `${shared}\n// drift`);
+      assert.equal(adaptCellRenderer(source, undefined, dependencies), null, '共享工厂漂移必须拒绝');
+      dependencies.set(sharedChunk, shared);
+      assert.equal(adaptCellRenderer(source.replaceAll(sharedChunk, 'missing-shared.js'), undefined, dependencies), null, '共享导入漂移必须拒绝');
+    }
     assert.equal(adaptCellRenderer(source), null, '缺少 ANSI 分块必须拒绝');
-    assert.equal(adaptCellRenderer(source, undefined, new Map([[chunk, `${ansi}\n// drift`]])), null);
+    const driftedAnsi = new Map(dependencies);
+    driftedAnsi.set(chunk, `${ansi}\n// drift`);
+    assert.equal(adaptCellRenderer(source, undefined, driftedAnsi), null, 'ANSI 漂移必须独立拒绝');
     assert.equal(adaptCellRenderer(source.replaceAll(chunk, 'missing.js'), undefined, dependencies), null);
-    assert.equal(adaptCellRenderer(source.replace('ambiguousIsNarrow:!0', 'ambiguousIsNarrow:!1'), undefined, dependencies), null);
+    const drifted = sharedChunk ? source.replace(`widthMask:${names.bn}`, 'widthMask:unknown') : source.replace('ambiguousIsNarrow:!0', 'ambiguousIsNarrow:!1');
+    assert.equal(adaptCellRenderer(drifted, undefined, dependencies), null);
     assert.equal(adaptCellRenderer(`${source}\nvar clawgodMergeStyles;`, undefined, dependencies), null);
     const originalAst = parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
     for (const binding of originalAst.body.filter(node => node.type === 'ImportDeclaration').flatMap(node => node.specifiers)) {
@@ -498,6 +518,67 @@ for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = f
       { sliceAnsi: text => text },
     );
     assert.equal(clip('a\tb', 3, 0, { x2: 20 }), 'a    b');
+  });
+}
+
+for (const [version, platform, sharedChunk, ansiChunk, textChunk, factory, textFunction, normalize, reserved] of [
+  ['2.1.295', 'darwin', 'chunk-2v0x57v3.js', 'chunk-bjcznv89.js', 'chunk-nve3vbhq.js', 'xIn', 'A', 'cb', 'NTe'],
+  ['2.1.295', 'linux', 'chunk-7stz4g07.js', 'chunk-ch6xv8ya.js', 'chunk-ha9h2ky5.js', 'uIn', 'A', 'cS', 'PCe'],
+  ['2.1.295', 'win32', 'chunk-v3xrx1m7.js', 'chunk-zwq6ady6.js', 'chunk-m6rh6mh9.js', 'kIn', 'A', 'dS', 'PRe'],
+  ['2.1.293', 'darwin', 'chunk-y1vajssn.js', 'chunk-zy1atq7h.js', 'chunk-f7dwnabf.js', 'WAn', 'E', 'Yb', 'GCe'],
+  ['2.1.293', 'linux', 'chunk-pxa7nhh6.js', 'chunk-jf5janxj.js', 'chunk-5tfk4bjh.js', 'TAn', 'E', 'KS', 'NTe'],
+  ['2.1.293', 'win32', 'chunk-pvgfk8na.js', 'chunk-9zg6kjjc.js', 'chunk-q1s4dte4.js', 'NCn', 'A', 'JS', 'FTe'],
+]) {
+  check(`${version} ${platform} 共享工厂安装保持名称防冒充且拒绝未知调用者`, () => {
+    const fixture = kind => readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}${kind}.txt`, import.meta.url), 'utf8');
+    for (const drift of ['', 'text', 'consumer', 'namespace', 'reexport', 'single-quote', 'renderer-call']) {
+      const dir = join(root, `shared-${version}-${platform}-${drift || 'valid'}`);
+      mkdirSync(dir);
+      mkdirSync(join(dir, 'chunks'));
+      copyFileSync(new URL('../src/generic/runtime/post-processor.mjs', import.meta.url), join(dir, 'post-process.mjs'));
+      writeFileSync(join(dir, 'cli.original.js'), `import "/$bunfs/root/chunk-render.js";`);
+      const renderer = fixture('') + (drift === 'renderer-call' ? `\n${factory}([]);` : '');
+      const text = fixture('-text') + (drift === 'text' ? '\n// drift' : '');
+      writeFileSync(join(dir, 'chunks', 'chunk-render.js'), renderer);
+      writeFileSync(join(dir, 'chunks', sharedChunk), fixture('-shared'));
+      writeFileSync(join(dir, 'chunks', ansiChunk), fixture('-ansi'));
+      writeFileSync(join(dir, 'chunks', textChunk), text);
+      const specifier = platform === 'win32' ? `B:/~BUN/root/${sharedChunk}` : `/$bunfs/root/${sharedChunk}`;
+      if (['consumer', 'namespace', 'reexport', 'single-quote'].includes(drift)) {
+        const unknown = drift === 'single-quote' ? `import{${factory}}from'${specifier}';${factory}([]);`
+          : drift === 'consumer' ? `import{${factory} as alias}from"${specifier}";alias([]);`
+          : drift === 'namespace' ? `import*as native from"${specifier}";native.${factory}([]);`
+          : `export{${factory}}from"${specifier}";`;
+        writeFileSync(join(dir, 'chunks', 'chunk-unknown.js'), unknown);
+      }
+      const result = spawnSync(process.execPath, [join(dir, 'post-process.mjs')], { encoding: 'utf8', timeout: 10000 });
+      assert.ifError(result.error);
+      if (drift) {
+        assert.notEqual(result.status, 0, `${drift}: 必须拒绝整个候选`);
+        assert.equal(readFileSync(join(dir, 'chunks', 'chunk-render.js'), 'utf8'), renderer, '失败时不能部分改写');
+        continue;
+      }
+      assert.equal(result.status, 0, result.stderr);
+      const adapted = readFileSync(join(dir, 'chunks', textChunk), 'utf8');
+      const ast = parse(adapted, { ecmaVersion: 'latest', sourceType: 'module' });
+      const checkName = ast.body.find(node => node.id?.name === textFunction);
+      const evaluate = new Function(normalize, reserved, `${adapted.slice(checkName.start, checkName.end)};return ${textFunction}`)(
+        value => value.normalize('NFKC').toLowerCase().replace(/[\s\p{Cc}\p{Cf}]/gu, ''), ['anthropic-skills'],
+      );
+      assert.equal(evaluate('anthropic-skills'), 'anthropic-skills');
+      assert.equal(evaluate('ａｎｔｈｒｏｐｉｃ-skills'), 'anthropic-skills');
+      assert.equal(evaluate('anthro\u200Bpic-skills'), 'anthropic-skills');
+      assert.equal(evaluate('anthro\x00pic-skills'), 'anthropic-skills');
+      assert.equal(evaluate('💡anthropic-x-skills'), 'anthropic-skills', '保守子序列判定不放行冒充名称');
+      assert.equal(evaluate('正常技能'), undefined);
+      assert.equal(evaluate('café-tools'), undefined);
+      const shared = readFileSync(join(dir, 'chunks', sharedChunk), 'utf8');
+      assert.doesNotMatch(shared, /new Bun\.ant\.CellSegmenter/);
+      const sharedAst = parse(shared, { ecmaVersion: 'latest', sourceType: 'module' });
+      const declaration = sharedAst.body.find(node => node.id?.name === factory);
+      const create = new Function(`${shared.slice(declaration.start, declaration.end)};return ${factory}`)();
+      assert.throws(() => create([], {}), /ClawGod/);
+    }
   });
 }
 

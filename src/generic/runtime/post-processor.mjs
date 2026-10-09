@@ -665,6 +665,134 @@ const CELL_PLATFORM_SHAPES = [
     tabAnchor: 'let se=Ya(me),ue=K.x2-B',
     tabReplacement: 'let se=Ya(me);if(se.indexOf(String.fromCharCode(9))>=0){let q=((B%Ykt)+Ykt)%Ykt;se=iur([" ".repeat(q)+se]).join("").slice(q)}let ue=K.x2-B',
   },
+  // 2.1.292 linux
+  {
+    shape: [
+      { header: 'function Es(n){', digest: 'fe4ca7f27a3ebd1d01381e3c995ceca1cf6a3ac5dc2d003cd0594c86464dfa41' },
+      { header: 'class nf{', digest: '81d9d65fbbf54f5107689b62dc09267401b4f7533db7d8f388cdc9952f30461e' },
+      { header: 'function Ux(n,u,f,m){', digest: '04e4977e3cd31208566109716851bcd5c89a6284e8fa88cf7bccf4f97da3a4ec' },
+      { header: 'function V1(n,u,f,m,y){', digest: 'fae50fac8d73a94331fedd083f76119a2165e797ab83dbe17d3871a4e4ec0491' },
+      { header: 'function ja(n){', digest: 'f9718bb0776413ab6fa13cbd5a82d111ef20178964a66e9fdf0fbcbaf1cc6ab2' },
+    ],
+    names: { Ns: 'Es', Dd: 'nf', Cx: 'Ux', xC: 'V1', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'ja', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'kx', xx: 'Fx', hht: 'GAe', C8: '$_r', MNr: 'Z9o', LNr: 'Q9o', bGt: 'H0n' },
+    dependency: { specifier: '/$bunfs/root/chunk-y4a70sha.js', digest: '29670ade86173894e52907b34a5925877c37c2146331b61d7b12d44736d05d71', tokenizer: 's3o', normalizeStyles: 'Twn' },
+    tabAnchor: 'let se=ja(me),ue=G.x2-B',
+    tabReplacement: 'let se=ja(me);if(se.indexOf(String.fromCharCode(9))>=0){let q=((B%GAe)+GAe)%GAe;se=$_r([" ".repeat(q)+se]).join("").slice(q)}let ue=G.x2-B',
+  },
+  // 2.1.292 win32
+  {
+    shape: [
+      { header: 'function Es(n){', digest: '6f7d80edd90a31f2cf3c0dc01974190ee964253e1263aca2e5c5bdb8cc566dee' },
+      { header: 'class nf{', digest: 'ac8d649c33a345a12da667ed30cd802e0c85fa0d2fb021408373b01a61c57128' },
+      { header: 'function Ux(n,u,f,m){', digest: '93dc6f7ab7c23024a7847f7247d1ba81a40d8280dca83c606575d6794f1a2149' },
+      { header: 'function V1(n,u,f,m,y){', digest: 'fae50fac8d73a94331fedd083f76119a2165e797ab83dbe17d3871a4e4ec0491' },
+      { header: 'function Ya(n){', digest: '7888f8eeadceda95a2bbf6133b6b2b182644ebfd1399795a49ca0229e0e3ee0e' },
+    ],
+    names: { Ns: 'Es', Dd: 'nf', Cx: 'Ux', xC: 'V1', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Ya', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'kx', xx: 'Fx', hht: 'GCe', C8: 'Y_r', MNr: 'KXo', LNr: 'qXo', bGt: 'WLn' },
+    dependency: { specifier: 'B:/~BUN/root/chunk-eya2x6wc.js', digest: '77715bd017f885a84758ea411e639c28268ac82225e0e8ab1935141c811ffb4a', tokenizer: 'p3o', normalizeStyles: 'Mwn' },
+    tabAnchor: 'let se=Ya(me),ue=G.x2-z',
+    tabReplacement: 'let se=Ya(me);if(se.indexOf(String.fromCharCode(9))>=0){let q=((z%GCe)+GCe)%GCe;se=Y_r([" ".repeat(q)+se]).join("").slice(q)}let ue=G.x2-z',
+  },
+  // 2.1.292 darwin
+  {
+    shape: [
+      { header: 'function Es(n){', digest: 'e75b78d3c1e0b0bcd57b4af4e7e9c5e17fd6ee6b9f9258d37ba278bcdeb46681' },
+      { header: 'class nf{', digest: '681d119f33fe5caf2ae4104987610e9f270d2ae157204ddf76ff62c67e965503' },
+      { header: 'function Ix(n,u,f,m){', digest: 'd5bf73d68abd1c541fd882741caabaadaa49b21764a66868dd1c436b2df639c4' },
+      { header: 'function Q1(n,u,f,m,y){', digest: 'd73889c55bcc3fc73fcf6bc09735b8534faf335abfc1bee9688d4f7cf6e52b42' },
+      { header: 'function Ya(n){', digest: '06cc2a8c1597f053dfead458403cdf3e8824f1fb7cf978eaae807e90610dbfeb' },
+    ],
+    names: { Ns: 'Es', Dd: 'nf', Cx: 'Ix', xC: 'Q1', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Ya', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'Gx', xx: 'kx', hht: 'QAe', C8: 'aSr', MNr: 'NXo', LNr: 'FXo', bGt: 'QDn' },
+    dependency: { specifier: '/$bunfs/root/chunk-wsc1qqhv.js', digest: 'df830446dc1a91768a02957b0e5c7c01d46974963793634eac48db7c1c33bdfb', tokenizer: 'W3o', normalizeStyles: 'Gwn' },
+    tabAnchor: 'let se=Ya(me),ue=G.x2-B',
+    tabReplacement: 'let se=Ya(me);if(se.indexOf(String.fromCharCode(9))>=0){let q=((B%QAe)+QAe)%QAe;se=aSr([" ".repeat(q)+se]).join("").slice(q)}let ue=G.x2-B',
+  },
+  // 2.1.295：共享工厂和 ANSI 分块重新压缩，继续冻结渲染及名称校验。
+  {
+    shape: [
+      { header: 'function vs(n){', digest: '532ff22019d6005e3857308e514519e2945a4df8728e8e485ed232d4346f5da2' },
+      { header: 'class ef{', digest: 'bdf6488a3baeb5e9593953fad917f29e89d67485768bd1abb1221cd09ac15a21' },
+      { header: 'function k1(n,u,f,m){', digest: 'f4a9cc24679c791f85134cf87854338c495c067975732d2ff8d6873dbaa3feb1' },
+      { header: 'function Xx(n,u,f,m,y){', digest: 'd28ce25a4b14e53e4fb90311192de4fdcad95fcc88bd794663c5cd355eace398' },
+      { header: 'function Nc(n){', digest: '315d0c5a38f5932dbf123e09bfb31ab00256534eae4ca39f9c4f811b1764b23c' },
+    ],
+    names: { Ns: 'vs', Dd: 'ef', Cx: 'k1', xC: 'Xx', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Nc', bn: 'Cn', wo: 'Pr', Xf: 'Md', jn: '$n', Rx: 'I1', xx: 'U1', hht: 'Axe', C8: 'AAo', MNr: 'Aas', LNr: 'Tas', bGt: '_jn' },
+    dependency: { specifier: '/$bunfs/root/chunk-bjcznv89.js', digest: 'fe6454a7120901eb212f2c216fdaff4558ea8f371bd427196b3ca63ab1cc77ee', tokenizer: 'dns', normalizeStyles: 'hRn' },
+    shared: { specifier: '/$bunfs/root/chunk-2v0x57v3.js', digest: '28b6d2f6ce3b8222020d2e6386244a1b6c3bed2e09a4f024ef3004e9b5310a55', factory: 'xIn', renderer: 'chunk-fg8psmve.js', text: 'chunk-nve3vbhq.js', textDigest: '29eeaf1a67f96c164d40199ff7a09cd843d18e4c15caae282bec619fef9c288d', textBranch: 'if(!B.test(n))return b(M(n));' },
+    tabAnchor: 'let ue=Nc(he),se=K.x2-z',
+    tabReplacement: 'let ue=Nc(he);if(ue.indexOf(String.fromCharCode(9))>=0){let q=((z%Axe)+Axe)%Axe;ue=AAo([" ".repeat(q)+ue]).join("").slice(q)}let se=K.x2-z',
+  },
+  {
+    shape: [
+      { header: 'function vs(n){', digest: 'b0edfaea0c238cf172fa0c418f835a0833de6f7c8fd089fefbc5f9b02b7be27d' },
+      { header: 'class ef{', digest: '0218a1127d4c2aa7e375bea4046529015c353fcfe0e7076145663ac42fef2478' },
+      { header: 'function k1(n,u,f,m){', digest: 'affd2baa17a78b1b4556231441ee182133cc1418a578702afa541f650b72f25b' },
+      { header: 'function Qx(n,u,f,m,y){', digest: 'fddad497696c9991a165b374a3a4b46122d04dce0c3377f5568cecd6979ae7a0' },
+      { header: 'function Nc(n){', digest: 'abd722f2874aac5cb74ef3627ebd226a1ed6e1f353d7020e1b822aaa24cb7a7a' },
+    ],
+    names: { Ns: 'vs', Dd: 'ef', Cx: 'k1', xC: 'Qx', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Nc', bn: 'Rn', wo: 'Pr', Xf: 'Rd', jn: '$n', Rx: 'G1', xx: 'U1', hht: 'bxe', C8: 'YTo', MNr: 'Bis', LNr: 'jis', bGt: 'ejn' },
+    dependency: { specifier: '/$bunfs/root/chunk-ch6xv8ya.js', digest: '109dbce5fcc6f1a73a9d496c2f6dc3f46bd116092126824d46d8abe336d47ec9', tokenizer: 'Tts', normalizeStyles: 'JCn' },
+    shared: { specifier: '/$bunfs/root/chunk-7stz4g07.js', digest: '965478bef3b3b9d546801b3b832bb61ef66756289f5417be68cc4b97328c489c', factory: 'uIn', renderer: 'chunk-x31wb8sb.js', text: 'chunk-ha9h2ky5.js', textDigest: '738e6c85c861e781dff13a6aff30ca78d6c17d761d18b5c952ae1250eb596e24', textBranch: 'if(!B.test(n))return x(M(n));' },
+    tabAnchor: 'let ue=Nc(he),se=K.x2-U',
+    tabReplacement: 'let ue=Nc(he);if(ue.indexOf(String.fromCharCode(9))>=0){let q=((U%bxe)+bxe)%bxe;ue=YTo([" ".repeat(q)+ue]).join("").slice(q)}let se=K.x2-U',
+  },
+  {
+    shape: [
+      { header: 'function vs(n){', digest: '7d5402e152b2ec82851a45ccf3492fa79dccb0ac00261d5d285ec5a4de78192c' },
+      { header: 'class ef{', digest: 'c89d809cdec1e9e2595f825951d16cb4b9c4232a46edf5f32bc6062352c76b5e' },
+      { header: 'function K1(n,u,f,m){', digest: '17dee4ca5f3c38c189129a97dcef2838cdda8dfd98377b09fd7065f68551a410' },
+      { header: 'function Zx(n,u,f,m,y){', digest: '2d66a862dfaa473fe800dc127fe200119914b4a28cc5b0f99fdfe81626ac22ad' },
+      { header: 'function Nc(n){', digest: 'd20b9222ee25d17314607cc7babc8b5772e5c08882b40dbabda7ba185d0b8111' },
+    ],
+    names: { Ns: 'vs', Dd: 'ef', Cx: 'K1', xC: 'Zx', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Nc', bn: 'Cn', wo: 'Pr', Xf: 'Rd', jn: '$n', Rx: 'Y1', xx: 'G1', hht: 'bxe', C8: 'rCo', MNr: 'Kis', LNr: 'Yis', bGt: 'wjn' },
+    dependency: { specifier: 'B:/~BUN/root/chunk-zwq6ady6.js', digest: '32bb4b7b5a5f154fbf834c73c6859f1f0355934409ba8b2e54a90dec1a4fa401', tokenizer: 'Mts', normalizeStyles: 'lAn' },
+    shared: { specifier: 'B:/~BUN/root/chunk-v3xrx1m7.js', digest: '2808d1f22b13620fd4aa558595181555e80491da88ce6e19466142391210e239', factory: 'kIn', renderer: 'chunk-x7q5npp7.js', text: 'chunk-m6rh6mh9.js', textDigest: 'a6ac77a5eb46310d55b99d90e09771f6ac2e298ccebb2190a387ff279d60e798', textBranch: 'if(!B.test(n))return k(R(n));' },
+    tabAnchor: 'let ue=Nc(he),se=K.x2-k',
+    tabReplacement: 'let ue=Nc(he);if(ue.indexOf(String.fromCharCode(9))>=0){let q=((k%bxe)+bxe)%bxe;ue=rCo([" ".repeat(q)+ue]).join("").slice(q)}let se=K.x2-k',
+  },
+  // 2.1.293：私有工厂拆成共享分块，渲染和技能名称校验分别冻结。
+  {
+    shape: [
+      { header: 'function Es(n){', digest: '41de312730741d27988f7e5719459a32b95bb063a1c1c1d989bfe4d59dcd3d17' },
+      { header: 'class tf{', digest: 'e286c9d0872021b22f6dd5a20afc9b9da998c69fa896da1892ccc10ee693fda1' },
+      { header: 'function Ix(n,u,f,m){', digest: '470613d5099aa5afd9532960b174543e2f956089fd435dea9192d858556512f7' },
+      { header: 'function X1(n,u,f,m,y){', digest: '33a0924b43d9ff7cc2f9608e070a90efbf8d80a151089895d5dcf0a7fe444fc9' },
+      { header: 'function Ya(n){', digest: '86889c0ce5efce9cd73e96554e0691db0e4ecef8a67f80d2115ef95f0733381a' },
+    ],
+    names: { Ns: 'Es', Dd: 'tf', Cx: 'Ix', xC: 'X1', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Ya', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'Gx', xx: 'kx', hht: 'OTe', C8: 'Hwr', MNr: 'iZo', LNr: 'aZo', bGt: 'YNn' },
+    dependency: { specifier: '/$bunfs/root/chunk-zy1atq7h.js', digest: '4c92442e56932318cf556da27822f5237302e3f7e923bfbc24b55de1347f0e13', tokenizer: 'c8o', normalizeStyles: '_vn' },
+    shared: { specifier: '/$bunfs/root/chunk-y1vajssn.js', digest: '5827d42c03d63ef37aa3ef11d63602fbf0235ff15a78ebaa2348156955a66578', factory: 'WAn', renderer: 'chunk-5a58rh2c.js', text: 'chunk-f7dwnabf.js', textDigest: '8f5df74b5b0d2b91f77b9794a6cc68234384f7be5577c4ad9d796a5547cf0cf5', textBranch: 'if(!F.test(n))return b(M(n));' },
+    tabAnchor: 'let se=Ya(me),ue=K.x2-B',
+    tabReplacement: 'let se=Ya(me);if(se.indexOf(String.fromCharCode(9))>=0){let q=((B%OTe)+OTe)%OTe;se=Hwr([" ".repeat(q)+se]).join("").slice(q)}let ue=K.x2-B',
+  },
+  {
+    shape: [
+      { header: 'function Es(n){', digest: '32b6bdc25d9ef2457819ede122a5d60401e21706c218c94eb2ab799e107bc364' },
+      { header: 'class tf{', digest: '70955c89453b7fed4e809d482ba43028fe2864d62ccbbfdfafa6459c84b4498a' },
+      { header: 'function zx(n,u,f,m){', digest: '8ac68fa1c2a90a6b043726e9d0b02f8a5c5a273d02d550cc82543cf6b4f2a42c' },
+      { header: 'function W1(n,u,f,m,y){', digest: 'fd4c0c75a6d3744210ead3e03c6579f1c1ee7337e8598a82a6c35aa9c0f0f200' },
+      { header: 'function Ya(n){', digest: '31cd1e73058f9146e7ac88163fddaa6b91c5eb3d64adaf034c81a398f6ed0563' },
+    ],
+    names: { Ns: 'Es', Dd: 'tf', Cx: 'zx', xC: 'W1', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'Ya', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'Fx', xx: 'Bx', hht: 'TCe', C8: 'dwr', MNr: 'w7o', LNr: 'v7o', bGt: 'INn' },
+    dependency: { specifier: '/$bunfs/root/chunk-jf5janxj.js', digest: '81c5382396e6636438956e9ffe5e19ec63fcc0c0a1ccb6c15177d6240c5d8e3f', tokenizer: 'T5o', normalizeStyles: 'Zvn' },
+    shared: { specifier: '/$bunfs/root/chunk-pxa7nhh6.js', digest: '3a6b334ec4b4da0a9e98e0ed704a8ee34c8f34af6608eb71c4b59a8db091fa1d', factory: 'TAn', renderer: 'chunk-c47fp7vb.js', text: 'chunk-5tfk4bjh.js', textDigest: '8860223dde0477ed095b13bf15957d22413241e92672e7711fbee669bd4e9843', textBranch: 'if(!F.test(n))return k(M(n));' },
+    tabAnchor: 'let se=Ya(me),ue=K.x2-B',
+    tabReplacement: 'let se=Ya(me);if(se.indexOf(String.fromCharCode(9))>=0){let q=((B%TCe)+TCe)%TCe;se=dwr([" ".repeat(q)+se]).join("").slice(q)}let ue=K.x2-B',
+  },
+  {
+    shape: [
+      { header: 'function Es(n){', digest: '7c9f88f31a22d56d095584087a3baccc99aed457bc6830c25709f004a050b597' },
+      { header: 'class tf{', digest: '2be013d46b8110134803ea26d40210e5551d320d75ebf59ac771fa7560515839' },
+      { header: 'function zx(n,u,f,m){', digest: 'dc0605f6d38771de60d9ba11769271c10cc9446b53e9add42b7d94506ac18194' },
+      { header: 'function W1(n,u,f,m,y){', digest: 'fd4c0c75a6d3744210ead3e03c6579f1c1ee7337e8598a82a6c35aa9c0f0f200' },
+      { header: 'function ja(n){', digest: '41936c76938dcb1d24839b0e0b41955c1f73ccaa75a62f6ccac2d7362b642789' },
+    ],
+    names: { Ns: 'Es', Dd: 'tf', Cx: 'zx', xC: 'W1', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'ja', bn: 'Cn', wo: 'Lr', Xf: 'Td', jn: 'Jn', Rx: 'Fx', xx: 'Bx', hht: 'TRe', C8: 'vwr', MNr: 'yZo', LNr: '_Zo', bGt: 'UFn' },
+    dependency: { specifier: 'B:/~BUN/root/chunk-9zg6kjjc.js', digest: '48c10018bef18377f19847e55712cfcb4148a84109718de5bcef9e3621d33726', tokenizer: 'M5o', normalizeStyles: 'lkn' },
+    shared: { specifier: 'B:/~BUN/root/chunk-pvgfk8na.js', digest: 'dadd6baa3126841ad76f6f81fed7ec7395b0570cff8fa58bf7756cb5086a3d72', factory: 'NCn', renderer: 'chunk-7725e2h3.js', text: 'chunk-q1s4dte4.js', textDigest: 'd385cdddaa0e83bab6ea07351cf1ca61e6f5e47f6425e7b648d51b12a9d1a494', textBranch: 'if(!F.test(n))return b(R(n));' },
+    tabAnchor: 'let se=ja(me),ue=K.x2-z',
+    tabReplacement: 'let se=ja(me);if(se.indexOf(String.fromCharCode(9))>=0){let q=((z%TRe)+TRe)%TRe;se=vwr([" ".repeat(q)+se]).join("").slice(q)}let ue=K.x2-z',
+  },
   // 2.1.291 darwin：制表符展开改用上游数组接口。
   {
     shape: [
@@ -831,7 +959,15 @@ export function adaptCellRenderer(source, shape, dependencies = new Map()) {
   return null;
 }
 
-function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, oscDeclaration = OSC8_DECLARATION }, dependencies) {
+function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, oscDeclaration = OSC8_DECLARATION }, dependencies) {
+  if (shared) {
+    const factory = dependencies.get(basename(shared.specifier));
+    if (typeof factory !== 'string' || createHash('sha256').update(factory).digest('hex') !== shared.digest) return null;
+    const imports = [...source.matchAll(/import\{([^}]*)\}from"([^"]+)";/g)]
+      .filter(match => match[2] === shared.specifier);
+    if (imports.length !== 1 || !imports[0][1].split(',').includes(shared.factory)
+      || [...source.matchAll(new RegExp(`\\b${shared.factory}\\b`, 'g'))].length !== 2) return null;
+  }
   for (const name of CELL_RENDERER_NAMES) {
     if (source.includes(name)) return null;
   }
@@ -894,6 +1030,47 @@ function installPublicCellRenderer(modulePaths) {
   if (targets.length === 0) return;
   if (targets.length > 1) {
     throw new Error(`多个分块都依赖私有 Bun.ant.CellSegmenter，形态无法确认；已拒绝安装（${targets.length} 个）。`);
+  }
+  const sharedProfile = CELL_PLATFORM_SHAPES.find(profile => profile.shared
+    && basename(profile.shared.specifier) === basename(targets[0].path));
+  if (sharedProfile) {
+    const { shared } = sharedProfile;
+    const renderer = modulePaths.map(path => ({ path, source: dependencies.get(basename(path)) }))
+      .filter(({ source }) => adaptCellRendererShape(source, sharedProfile, dependencies) !== null);
+    const text = dependencies.get(shared.text);
+    if (renderer.length !== 1 || typeof text !== 'string'
+      || createHash('sha256').update(text).digest('hex') !== shared.textDigest) {
+      throw new Error('共享 CellSegmenter 的渲染器或名称校验分块发生漂移；已拒绝安装。');
+    }
+    const factorySource = targets[0].source;
+    const factoryHeader = `function ${shared.factory}(`;
+    const factoryStart = factorySource.indexOf(factoryHeader);
+    const factoryEnd = findDeclarationEnd(factorySource, factorySource.indexOf('{', factoryStart));
+    const exports = factorySource.match(/export\{([^}]+)\};/)[1].split(',');
+    for (const path of modulePaths) {
+      const source = dependencies.get(basename(path));
+      if (!source.includes(shared.specifier)) continue;
+      const imports = [...source.matchAll(/import(?:\{([^}]*)\}from)?"([^"]+)";/g)]
+        .filter(match => match[2] === shared.specifier);
+      const references = source.split(shared.specifier).length - 1;
+      if (imports.length !== references || imports.some(match => match[1]?.split(',').some(binding =>
+        !exports.includes(binding) || binding === shared.factory
+        && path !== renderer[0].path && basename(path) !== shared.text))) {
+        throw new Error('共享 CellSegmenter 出现未知调用者；已拒绝安装。');
+      }
+    }
+    // ponytail: 非 ASCII 技能名沿用上游保守子序列校验，可能多拒绝名称；
+    // 原生文本 ABI 可公开验证等价后再恢复精确判断，不能为兼容跳过防冒充。
+    const updates = new Map([
+      [renderer[0].path, adaptCellRendererShape(renderer[0].source, sharedProfile, dependencies)],
+      [modulePaths.find(path => basename(path) === shared.text), text.replace(shared.textBranch, '')],
+      [targets[0].path, factorySource.slice(0, factoryStart)
+        + `function ${shared.factory}(){throw Error("ClawGod 已替换私有 CellSegmenter；不支持新增的原生调用路径。")}`
+        + factorySource.slice(factoryEnd + 1)],
+    ]);
+    for (const [path, source] of updates) writeFileSync(path, source);
+    console.log('已用公开 Bun 字符格渲染器替换共享私有实现，并保留技能名称防冒充校验。');
+    return;
   }
   const { path, source } = targets[0];
   const adapted = adaptCellRenderer(source, undefined, dependencies);
