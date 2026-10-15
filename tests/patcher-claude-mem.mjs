@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+// Authentication must come from fixtures, not the invoking session.
+const testEnv = { ...process.env };
+delete testEnv.ANTHROPIC_AUTH_TOKEN;
+delete testEnv.ANTHROPIC_API_KEY;
+
 const unixLauncher = readFileSync(new URL('../src/unix/launcher.sh', import.meta.url), 'utf8');
 const powerShellInstaller = readFileSync(new URL('../src/template/install.ps1', import.meta.url), 'utf8');
 const canonicalHelper = readFileSync(new URL('../src/generic/runtime/claude-mem-compat.cjs', import.meta.url), 'utf8');
@@ -25,7 +30,7 @@ function runHelper(home, command = 'install', extraEnv = {}) {
   return spawnSync(process.execPath, [join(home, '.clawgod', 'claude-mem-compat.cjs'), command], {
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...testEnv,
       HOME: home,
       USERPROFILE: home,
       CLAWGOD_CLAUDE_BIN: join(home, '.local', 'bin', process.platform === 'win32' ? 'claude.cmd' : 'claude'),
@@ -269,7 +274,7 @@ for (const [installerName, helper] of [['canonical source', canonicalHelper]]) {
     const assignment = unixLauncher;
     const rendered = spawnSync('bash', ['-c', `${assignment}\nprintf '%s' "$LAUNCHER_CONTENT"`], {
       encoding: 'utf8',
-      env: { ...process.env, HOME: home, CLAWGOD_DIR: join(home, '.clawgod'), BUN_BIN: fakeBun, CLAUDE_BIN: launcher },
+      env: { ...testEnv, HOME: home, CLAWGOD_DIR: join(home, '.clawgod'), BUN_BIN: fakeBun, CLAUDE_BIN: launcher },
     });
     assert.equal(rendered.status, 0, rendered.stderr);
     writeFileSync(launcher, rendered.stdout, 'utf8');
@@ -288,7 +293,7 @@ for (const [installerName, helper] of [['canonical source', canonicalHelper]]) {
     chmodSync(fakeBun, 0o755);
     const run = spawnSync(launcher, ['--input-format', 'stream-json'], {
       encoding: 'utf8',
-      env: { ...process.env, HOME: home, CAPTURE_FILE: capture, CLAWGOD_CLAUDE_MEM: '1' },
+      env: { ...testEnv, HOME: home, CAPTURE_FILE: capture, CLAWGOD_CLAUDE_MEM: '1' },
     });
     assert.equal(run.status, 0, run.stderr);
     assert.deepEqual(JSON.parse(readFileSync(capture, 'utf8')), {
@@ -300,7 +305,7 @@ for (const [installerName, helper] of [['canonical source', canonicalHelper]]) {
 
     const probe = spawnSync(launcher, ['--permission-mode', 'dontAsk', '--version'], {
       encoding: 'utf8',
-      env: { ...process.env, HOME: home, CAPTURE_FILE: capture, CLAWGOD_CLAUDE_MEM: '1' },
+      env: { ...testEnv, HOME: home, CAPTURE_FILE: capture, CLAWGOD_CLAUDE_MEM: '1' },
     });
     assert.equal(probe.status, 0, probe.stderr);
     assert.deepEqual(

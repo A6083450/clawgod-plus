@@ -795,6 +795,8 @@ function assertPowerShellFallbackTransaction(source, label) {
   return block;
 }
 
+// Vendored parser variables are not shell commands; keep scanning surrounding installer code.
+const nodePolicySource = source => source.replace(/\/\/ BEGIN VENDORED ACORN[\s\S]*?\/\/ END VENDORED ACORN/g, '');
 const executableNode = /(?:^|[;\r\n])\s*(?:&\s*)?(?:node(?:\.exe)?|\$NodeBin)\b(?:\s|$)|\bStart-Process\s+(?:-FilePath\s+)?(?:node(?:\.exe)?)\b/i;
 const forbiddenNodeFixtures = [
   'node ./helper.mjs',
@@ -810,17 +812,21 @@ const allowedNodeReferences = [
   'vendor/native-addon.node',
 ];
 
+const vendoredAcornFixture = '// BEGIN VENDORED ACORN\nnode = this.startNode();\n// END VENDORED ACORN';
+assert.doesNotMatch(nodePolicySource(vendoredAcornFixture), executableNode, 'vendored Acorn variables must not count as Node execution');
 for (const fixture of forbiddenNodeFixtures) {
-  assert.match(fixture, executableNode, `Node execution policy must reject: ${fixture}`);
+  for (const source of [fixture, `${fixture}\n${vendoredAcornFixture}`, `${vendoredAcornFixture}\n${fixture}`]) {
+    assert.match(nodePolicySource(source), executableNode, `Node execution policy must reject: ${fixture}`);
+  }
 }
 
 for (const fixture of allowedNodeReferences) {
-  assert.doesNotMatch(fixture, executableNode, `Node execution policy must allow: ${fixture}`);
+  assert.doesNotMatch(nodePolicySource(fixture), executableNode, `Node execution policy must allow: ${fixture}`);
 }
 
 for (const [name, source] of [['install.sh', unix], ['install.ps1', windows]]) {
   assert.doesNotMatch(source, /#!\/usr\/bin\/env node/, `${name}: generated scripts must use Bun shebangs`);
-  assert.doesNotMatch(source, executableNode, `${name}: must not execute Node`);
+  assert.doesNotMatch(nodePolicySource(source), executableNode, `${name}: must not execute Node`);
   assert.match(source, /claude-mem-compat\.cjs["']?\s+uninstall/, `${name}: uninstall must still restore claude-mem`);
   assert.match(source, /Bun:|Bun version/, `${name}: Bun preflight must remain visible`);
 }

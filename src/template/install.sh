@@ -707,7 +707,7 @@ if [ -n "$_self_src" ] && [ -f "$_self_src" ]; then
   _self_abs="$(cd "$(dirname "$_self_src")" 2>/dev/null && pwd)/$(basename "$_self_src")"
   if [ -n "$_self_abs" ] && [ -f "$_self_abs" ] && [ "$_self_abs" != "$CLAWGOD_DIR/install.sh" ]; then
     cp "$_self_abs" "$CLAWGOD_DIR/install.sh" && chmod +x "$CLAWGOD_DIR/install.sh"
-    info "Local installer copied → ~/.clawgod/install.sh ('claude update' will use it)"
+    info "Local installer copied → ~/.clawgod/install.sh (plain 'claude update' fetches the latest release)"
   fi
 fi
 

@@ -223,6 +223,36 @@ check('负起始列按列裁剪', () => {
   assert.equal(screen.char(1), 'd');
 });
 
+check('2.1.300 keepColumns 保留完整字素并沿用原始列的制表位', () => {
+  const { screen, line } = paint('', { width: 20 });
+  line.segment('A中B\tC');
+  assert.equal(line.keepColumns(0, 2, 9), 3);
+  assert.deepEqual(line.cells.slice(0, line.count).map(cell => cell.value), ['B', '\t', 'C']);
+  line.segment('A中B');
+  assert.equal(line.keepColumns(0, 2, 3), 2);
+  assert.equal(line.count, 0, '不能画被裁断的宽字素');
+  line.segment('ab');
+  assert.equal(line.keepColumns(5, 0, 3), 5);
+  assert.equal(line.count, 0);
+  line.segment('A中B\tC');
+  assert.equal(line.keepColumns(0, 0, 7), 0);
+  assert.deepEqual(line.cells.slice(0, line.count).map(cell => cell.value), ['A', '中', 'B']);
+  line.segment('A中B\tC');
+  assert.equal(line.count, 5, '裁剪不能污染缓存中的完整行');
+});
+
+check('2.1.300 trailingSpaces 只统计当前保留的尾部空格', () => {
+  const { line } = paint('');
+  line.segment('A  \t ');
+  assert.equal(line.trailingSpaces(), 1);
+  line.segment('A  ');
+  assert.equal(line.trailingSpaces(), 2);
+  line.keepColumns(0, 0, 2);
+  assert.equal(line.trailingSpaces(), 1);
+  line.segment('');
+  assert.equal(line.trailingSpaces(), 0);
+});
+
 check('SGR 样式写入样式池并在 reset 后清除', () => {
   const { screen, styles } = paint('[31m红[0mA');
   assert.deepEqual(screen.stylesAt(0), ['[31m']);
@@ -446,6 +476,15 @@ check('裁剪制表符时使用上游展开函数', () => {
 });
 
 for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = false, sharedChunk] of [
+  ["2.1.300","darwin","chunk-qva6rjg9.js","Ums","BDn",{"Ns":"ms","Dd":"rf","Cx":"Vx","xC":"aC","cmr":"clawgodAnsiTokens","Kf":"clawgodMergeStyles","Dc":"ud","bn":"vn","wo":"Mo","Xf":"Td","jn":"jn","hht":"_ge","Rx":"Xx","xx":"qx","bGt":"xOe","LNr":"vys","MNr":"Eys","C8":"oNo"},true,"chunk-jb09nhqp.js"],
+  ["2.1.300","linux","chunk-6r27kmjr.js","tms","v0n",{"Ns":"ms","Dd":"rf","Cx":"Vx","xC":"lC","cmr":"clawgodAnsiTokens","Kf":"clawgodMergeStyles","Dc":"ud","bn":"bn","wo":"Mo","Xf":"Td","jn":"jn","hht":"pge","Rx":"Xx","xx":"qx","bGt":"vOe","LNr":"Rys","MNr":"Cys","C8":"CLo"},true,"chunk-zytv259w.js"],
+  ["2.1.300","win32","chunk-zejrn9cc.js","lms","xLn",{"Ns":"ms","Dd":"rf","Cx":"Xx","xC":"sC","cmr":"clawgodAnsiTokens","Kf":"clawgodMergeStyles","Dc":"ud","bn":"bn","wo":"Mo","Xf":"Td","jn":"jn","hht":"yge","Rx":"Qx","xx":"Vx","bGt":"vIe","LNr":"Dys","MNr":"Mys","C8":"DNo"},true,"chunk-6gc6gzex.js"],
+  ["2.1.299","darwin","chunk-eeansh1q.js","mcs","$0n",{"Ns":"fs","Dd":"$d","Cx":"k1","xC":"tC","cmr":"clawgodAnsiTokens","Kf":"clawgodMergeStyles","Dc":"rd","bn":"vn","wo":"Ar","Xf":"Ed","jn":"Wn","hht":"wOe","Rx":"U1","xx":"F1","bGt":"MIe","LNr":"Ffs","MNr":"Nfs","C8":"A0o"},true,"chunk-b970rh6w.js"],
+  ["2.1.299","linux","chunk-x5aep75e.js","xds","_Mn",{"Ns":"fs","Dd":"Jd","Cx":"F1","xC":"eC","cmr":"clawgodAnsiTokens","Kf":"clawgodMergeStyles","Dc":"rd","bn":"vn","wo":"Ar","Xf":"Ed","jn":"Wn","hht":"mOe","Rx":"k1","xx":"z1","bGt":"CIe","LNr":"pps","MNr":"ups","C8":"qOo"},true,"chunk-c2wcysqr.js"],
+  ["2.1.299","win32","chunk-szw2h651.js","Nds","RMn",{"Ns":"fs","Dd":"$d","Cx":"z1","xC":"$x","cmr":"clawgodAnsiTokens","Kf":"clawgodMergeStyles","Dc":"rd","bn":"vn","wo":"Ar","Xf":"Ed","jn":"Wn","hht":"mIe","Rx":"F1","xx":"B1","bGt":"ROe","LNr":"yps","MNr":"hps","C8":"tMo"},true,"chunk-78t79vjt.js"],
+  ['2.1.296', 'darwin', 'chunk-q4ya5hp8.js', '_ns', 'nxn', { Ns: 'bs', Dd: 'nf', Cx: 'K1', xC: '$x', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'wc', bn: 'Cn', wo: 'Fr', Xf: 'Md', jn: '$n', hht: 'nPe', Rx: 'Y1', xx: 'G1', bGt: 'Idt', LNr: 'Gas', MNr: 'Was', C8: 'mCo' }, true, 'chunk-t58kj6z7.js'],
+  ['2.1.296', 'linux', 'chunk-9kgj8k7e.js', 'Mts', 'NRn', { Ns: 'Ss', Dd: 'nf', Cx: 'Y1', xC: 'eC', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'wc', bn: 'Cn', wo: 'Fr', Xf: 'Td', jn: '$n', hht: 'Yxe', Rx: 'W1', xx: 'K1', bGt: 'vdt', LNr: 'sas', MNr: 'oas', C8: 'NTo' }, true, 'chunk-0ev62b0n.js'],
+  ['2.1.296', 'win32', 'chunk-7s4gkxzj.js', 'Bts', 'KAn', { Ns: 'Ss', Dd: 'nf', Cx: 'j1', xC: 'tC', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'wc', bn: 'Cn', wo: 'Fr', Xf: 'Md', jn: '$n', hht: 'Yxe', Rx: 'q1', xx: 'W1', bGt: 'Odt', LNr: 'pas', MNr: 'uas', C8: 'GTo' }, true, 'chunk-vzfwnjmg.js'],
   ['2.1.295', 'darwin', 'chunk-bjcznv89.js', 'dns', 'hRn', { Ns: 'vs', Dd: 'ef', Cx: 'k1', xC: 'Xx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Nc', bn: 'Cn', wo: 'Pr', Xf: 'Md', jn: '$n', Rx: 'I1', xx: 'U1', hht: 'Axe', C8: 'AAo', MNr: 'Aas', LNr: 'Tas', bGt: '_jn' }, true, 'chunk-2v0x57v3.js'],
   ['2.1.295', 'linux', 'chunk-ch6xv8ya.js', 'Tts', 'JCn', { Ns: 'vs', Dd: 'ef', Cx: 'k1', xC: 'Qx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Nc', bn: 'Rn', wo: 'Pr', Xf: 'Rd', jn: '$n', Rx: 'G1', xx: 'U1', hht: 'bxe', C8: 'YTo', MNr: 'Bis', LNr: 'jis', bGt: 'ejn' }, true, 'chunk-7stz4g07.js'],
   ['2.1.295', 'win32', 'chunk-zwq6ady6.js', 'Mts', 'lAn', { Ns: 'vs', Dd: 'ef', Cx: 'K1', xC: 'Zx', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'Nc', bn: 'Cn', wo: 'Pr', Xf: 'Rd', jn: '$n', Rx: 'Y1', xx: 'G1', hht: 'bxe', C8: 'rCo', MNr: 'Kis', LNr: 'Yis', bGt: 'wjn' }, true, 'chunk-v3xrx1m7.js'],
@@ -466,20 +505,28 @@ for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = f
   ['2.1.287', 'win32', 'chunk-7wywdnvg.js', 'dNo', 'epn', { Ns: 'ms', Dd: 'Wd', Cx: 'w1', xC: 'Ux', cmr: 'unusedTokens', Kf: 'unusedMerge', Dc: 'xc', bn: 'En', wo: 'Ll', Xf: 'yd', jn: 'Vn', Rx: 'D1', xx: '_1', hht: 'S2t', C8: '_8', MNr: 'kHo', LNr: 'EHo', bGt: 'UEn' }],
 ]) {
   check(`${version} ${platform} 跨分块 ANSI 校验及真实绘制`, () => {
-    const source = readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}.txt`, import.meta.url), 'utf8');
+    const source = readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}${version === '2.1.299' ? '-full' : ''}.txt`, import.meta.url), 'utf8');
     const ansi = readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}-ansi.txt`, import.meta.url), 'utf8');
     const dependencies = new Map([[chunk, ansi]]);
+    if (version === '2.1.299') {
+      const imports = parse(source, { ecmaVersion: 'latest', sourceType: 'module' }).body.filter(node => node.type === 'ImportDeclaration');
+      for (const [kind, name] of [['tabs', names.hht], ['styles', names.MNr], ['chalk', names.bGt]]) {
+        const binding = imports.find(node => node.specifiers.some(item => item.local.name === name));
+        dependencies.set(binding.source.value.split('/').at(-1), readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}-${kind}.txt`, import.meta.url), 'utf8'));
+      }
+      dependencies.set('chunk-text.js', readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}-text.txt`, import.meta.url), 'utf8'));
+    }
     if (sharedChunk) {
       const shared = readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}-shared.txt`, import.meta.url), 'utf8');
       assert.equal(adaptCellRenderer(source, undefined, dependencies), null, '缺少共享工厂必须拒绝');
-      dependencies.set(sharedChunk, `${shared}\n// drift`);
+      dependencies.set(sharedChunk, version === '2.1.299' ? shared.replace('ambiguousIsNarrow:!0', 'ambiguousIsNarrow:!1') : `${shared}\n// drift`);
       assert.equal(adaptCellRenderer(source, undefined, dependencies), null, '共享工厂漂移必须拒绝');
       dependencies.set(sharedChunk, shared);
       assert.equal(adaptCellRenderer(source.replaceAll(sharedChunk, 'missing-shared.js'), undefined, dependencies), null, '共享导入漂移必须拒绝');
     }
     assert.equal(adaptCellRenderer(source), null, '缺少 ANSI 分块必须拒绝');
     const driftedAnsi = new Map(dependencies);
-    driftedAnsi.set(chunk, `${ansi}\n// drift`);
+    driftedAnsi.set(chunk, version === '2.1.299' ? ansi.replace('Number.POSITIVE_INFINITY', '0') : `${ansi}\n// drift`);
     assert.equal(adaptCellRenderer(source, undefined, driftedAnsi), null, 'ANSI 漂移必须独立拒绝');
     assert.equal(adaptCellRenderer(source.replaceAll(chunk, 'missing.js'), undefined, dependencies), null);
     const drifted = sharedChunk ? source.replace(`widthMask:${names.bn}`, 'widthMask:unknown') : source.replace('ambiguousIsNarrow:!0', 'ambiguousIsNarrow:!1');
@@ -498,9 +545,11 @@ for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = f
     const upstream = new Function(ansi.replace(/export\{[^}]+\};/, `return {tokenize:${tokenizer},normalize:${normalize}};`))();
     const helpers = RENDERER_MODULE.slice(0, RENDERER_MODULE.indexOf(CELL_RENDERER_SOURCE))
       .replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
-    const declarations = ast.body.filter(node => ['FunctionDeclaration', 'ClassDeclaration', 'VariableDeclaration'].includes(node.type) && node.id?.name !== names.Dc && node.id?.name !== 'tabClip')
+    const declarations = ast.body.filter(node => ['FunctionDeclaration', 'ClassDeclaration', 'VariableDeclaration'].includes(node.type)
+      && (version === '2.1.299' ? [names.Ns, names.Dd, names.Cx, names.xC, 'clawgodMergeStyles'].includes(node.id?.name) || node.id?.name?.startsWith('clawgod') || node.declarations?.some(item => item.id?.name?.startsWith('clawgod')) || ['sanitizeControlSequences', 'parseStyledText', 'packCell', 'unionDamage', 'writeCell', 'paintCells'].includes(node.id?.name) : node.id?.name !== names.Dc && node.id?.name !== 'tabClip'))
       .map(node => adapted.slice(node.start, node.end)).join('\n');
-    const actual = new Function('clawgodAnsiTokens', 'clawgodNormalizeStyles', `${helpers}\n${declarations}\nreturn {Line:${names.Dd},paint:${names.xC}};`)(upstream.tokenize, upstream.normalize);
+    const directionHelpers = version === '2.1.300' ? 'function of(value){return value!==undefined}function kl(){return false}const Ab={ltr:"\\u200e",rtl:"\\u200f"},Tb=Ab;' : '';
+    const actual = new Function('clawgodAnsiTokens', 'clawgodNormalizeStyles', `${helpers}\n${directionHelpers}\n${declarations}\nreturn {Line:${names.Dd},paint:${names.xC}};`)(upstream.tokenize, upstream.normalize);
     const styles = createStylePool();
     const screen = createScreen(styles, 20);
     const line = new actual.Line(styles, screen.charPool);
@@ -510,8 +559,24 @@ for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = f
     assert.deepEqual(screen.stylesAt(8), []);
     assert.equal(screen.hyperlinkAt(8), 'https://example.com');
     assert.equal(line.width('中\tA', 0), 9);
-    const tab = ast.body.find(node => node.id?.name === 'tabClip');
-    const clip = new Function(names.Dc, names.C8, names.hht, 'Bun', `${adapted.slice(tab.start, tab.end)};return tabClip`)(
+    if (version === '2.1.300') {
+      const clipped = createScreen(styles, 20);
+      assert.equal(actual.paint(clipped, 'A中B\tC', 0, 0, line, undefined, { x1: 2, x2: 9 }), 9);
+      assert.equal(clipped.char(2), ' ', '左边界不能留下半个宽字素');
+      assert.equal(clipped.char(3), 'B');
+      assert.equal(clipped.char(8), 'C');
+      assert.equal(actual.paint(clipped, 'A中B', 0, 0, line, undefined, { x1: 2, x2: 3 }), 2);
+      assert.equal(line.count, 0);
+      line.segment('A中B\tC');
+      assert.equal(line.count, 5);
+    }
+    const clipSource = version === '2.1.299'
+      ? readFileSync(new URL(`./fixtures/cell-renderer-${version}-${platform}.txt`, import.meta.url), 'utf8')
+        .replace(/let [\w$]+=[\w$]+\([\w$]+\),[\w$]+=[\w$]+\.x2-[\w$]+/,
+          adapted.match(new RegExp(`let [\\w$]+=${names.Dc}\\([\\w$]+\\);if\\([\\s\\S]*?let [\\w$]+=[\\w$]+\\.x2-[\\w$]+`))[0])
+      : adapted;
+    const tab = parse(clipSource, { ecmaVersion: 'latest', sourceType: 'module' }).body.find(node => node.id?.name === 'tabClip');
+    const clip = new Function(names.Dc, names.C8, names.hht, 'Bun', `${clipSource.slice(tab.start, tab.end)};return tabClip`)(
       text => text,
       text => { assert.deepEqual(text, arrayTabs ? ['   a\tb'] : '   a\tb'); return arrayTabs ? ['   a    b'] : '   a    b'; },
       8,
@@ -522,6 +587,12 @@ for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = f
 }
 
 for (const [version, platform, sharedChunk, ansiChunk, textChunk, factory, textFunction, normalize, reserved] of [
+  ["2.1.300","darwin","chunk-jb09nhqp.js","chunk-qva6rjg9.js","chunk-76bn3rwk.js","eNn","N","OS","PIe"],
+  ["2.1.300","linux","chunk-zytv259w.js","chunk-6r27kmjr.js","chunk-kxsypegk.js","LLn","N","Ib","EIe"],
+  ["2.1.300","win32","chunk-6gc6gzex.js","chunk-zejrn9cc.js","chunk-68247c5r.js","WNn","N","Ib","kOe"],
+  ['2.1.296', 'darwin', 'chunk-t58kj6z7.js', 'chunk-q4ya5hp8.js', 'chunk-xrjhyksm.js', '_On', 'E', 'ub', 'uRe'],
+  ['2.1.296', 'linux', 'chunk-0ev62b0n.js', 'chunk-9kgj8k7e.js', 'chunk-rhjwzamj.js', 'eOn', 'E', 'uS', 'oRe'],
+  ['2.1.296', 'win32', 'chunk-vzfwnjmg.js', 'chunk-7s4gkxzj.js', 'chunk-vehsqt79.js', 'pOn', 'A', 'pS', 'oAe'],
   ['2.1.295', 'darwin', 'chunk-2v0x57v3.js', 'chunk-bjcznv89.js', 'chunk-nve3vbhq.js', 'xIn', 'A', 'cb', 'NTe'],
   ['2.1.295', 'linux', 'chunk-7stz4g07.js', 'chunk-ch6xv8ya.js', 'chunk-ha9h2ky5.js', 'uIn', 'A', 'cS', 'PCe'],
   ['2.1.295', 'win32', 'chunk-v3xrx1m7.js', 'chunk-zwq6ady6.js', 'chunk-m6rh6mh9.js', 'kIn', 'A', 'dS', 'PRe'],

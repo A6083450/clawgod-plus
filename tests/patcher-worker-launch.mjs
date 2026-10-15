@@ -233,8 +233,10 @@ assert.ok(hooksPatch, 'the core patcher must repair the shared built-in hooks re
 for (const { version, helper } of [
   { version: '2.1.281', helper: 'var Rq=(e,o,r)=>ku()?ut(o,r(),e):{module:o,folder:e}' },
   { version: '2.1.285', helper: 'var E6=(e,o,r)=>tu()?Pt(o,r(),e):{module:o,folder:e}' },
+  // Verbatim resolver from 2.1.299 darwin chunk-g0anntqp.js (raw and post-processed).
+  { version: '2.1.299', helper: 'var W2=(e,o,t)=>Ap()?Fn(o,t(),e):{module:o,folder:e}' },
 ]) {
-  const [, name, standalone, bundled] = helper.match(/var (\w+)=\(e,o,r\)=>(\w+)\(\)\?(\w+)\(o,r\(\),e\)/);
+  const [, name, standalone, bundled] = helper.match(/var (\w+)=\(e,o,\w+\)=>(\w+)\(\)\?(\w+)\(o,\w+\(\),e\)/);
   const original = `var hookFile="hooks/register.ts";function ${standalone}(){return Bun.isStandaloneExecutable===!0}var ${bundled}=(module,build,folder)=>({module,scan:build.scan,files:build.files});${helper};globalThis.standalone=${standalone};globalThis.hooks=${name};`;
   const result = await hooksPatch.apply(original, { dryRun: false, verify: false });
   assert.equal(result.status, 'applied', `${version}: recognized helper must be patched`);
@@ -259,15 +261,22 @@ for (const { version, helper } of [
   assert.ok('scan' in context.hooks('/source', { register: true }, build), `${version}: standalone builds still use the bundled scan`);
   assert.equal((await hooksPatch.apply(result.code, { dryRun: false, verify: false })).status, 'already', `${version}: repeat patch is idempotent`);
   assert.equal((await hooksPatch.apply(original, { dryRun: true, verify: false })).code, original, `${version}: dry run leaves source untouched`);
+  assert.equal((await hooksPatch.apply(original, { dryRun: false, verify: true })).status, 'verify', `${version}: verify recognizes the helper without writing`);
 }
 for (const helper of [
   'var E6=(e,o,r)=>tu()?Pt(o,r(),e):{module:o,folder:e,changed:true}',
   'var E6=(e,o,r)=>tu()?Pt(o,r(),e):{folder:e,module:o}',
+  'var W2=(e,o,t)=>Ap()?Fn(o,r(),e):{module:o,folder:e}',
+  'var W2=(e,o,t)=>Ap()?Fn(o,t(),e):{module:o,folder:e,changed:true}',
+  'var W2=(e,o,t)=>Ap()?Fn(o,t(),e):{folder:e,module:o}',
+  'var E6=(e,o,r)=>tu()?Pt(o,r(),e):{module:o,folder:e};var W2=(e,o,t)=>Ap()?Fn(o,t(),e):{module:o,folder:e}',
 ]) {
   const original = `var hookFile="hooks/register.ts";${helper}`;
-  const result = await hooksPatch.apply(original, { dryRun: false, verify: false });
-  assert.equal(result.status, 'failed', 'unknown hooks resolver shapes must fail closed');
-  assert.equal(result.code, undefined, 'failed patches must not write partial changes');
+  for (const options of [{ dryRun: false, verify: false }, { dryRun: true, verify: false }, { dryRun: false, verify: true }]) {
+    const result = await hooksPatch.apply(original, options);
+    assert.equal(result.status, 'failed', 'unknown or ambiguous hooks resolver shapes must fail closed in every mode');
+    assert.equal(result.code, undefined, 'failed patches must not write partial changes');
+  }
 }
 assert.equal((await hooksPatch.apply('var oldCli=1;', { dryRun: false, verify: false })).status, 'skipped', 'older versions without built-in hooks are unaffected');
 
@@ -278,9 +287,9 @@ for (const [name, patcherSource] of patcherSources) {
     mkdirSync(chunks);
     seedPatcherAcorn(dir);
     writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
-    writeFileSync(join(dir, 'cli.original.cjs'), '/* Version: 2.1.285 */\n', 'utf8');
+    writeFileSync(join(dir, 'cli.original.cjs'), '/* Version: 2.1.299 */\n', 'utf8');
     const chunk = join(chunks, 'chunk-hooks.js');
-    writeFileSync(chunk, 'var ue="hooks/register.ts";var E6=(e,o,r)=>tu()?Pt(o,r(),e):{module:o,folder:e};', 'utf8');
+    writeFileSync(chunk, 'var Ne="hooks/register.ts";var W2=(e,o,t)=>Ap()?Fn(o,t(),e):{module:o,folder:e};', 'utf8');
     const run = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
     assert.equal(run.status, 0, `${name}: ${run.stdout}${run.stderr}`);
     assert.match(readFileSync(chunk, 'utf8'), /__clawgod_plain_bun_builtin_hooks__/, `${name}: the chunk must be patched through the normal bundle flow`);

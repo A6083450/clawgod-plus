@@ -81,6 +81,8 @@ const allowedBadgePublishGitCommands = new Set([
 ]);
 
 function findForbiddenDependencies(source, options = {}) {
+  // Vendored parser variables are not shell commands; retain diagnostic line numbers.
+  source = source.replace(/\/\/ BEGIN VENDORED ACORN[\s\S]*?\/\/ END VENDORED ACORN/g, block => block.replace(/[^\r\n]/g, ''));
   const matches = [];
   let inPowerShellBlockComment = false;
   let badgeStepIndent = null;
@@ -298,6 +300,16 @@ const allowedDependencyFixtures = [
   '@anthropic-ai/claude-code-linux-x64 from the npm Registry',
   'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24',
 ];
+const vendoredAcornFixture = '// BEGIN VENDORED ACORN\nnode = this.startNode();\n// END VENDORED ACORN';
+assert.deepEqual(findForbiddenDependencies(vendoredAcornFixture), [], 'vendored Acorn variables must not count as executable dependencies');
+assert.deepEqual(
+  findForbiddenDependencies(`node before.mjs\n${vendoredAcornFixture}\nnode after.mjs`),
+  [
+    { kind: 'node', lineNumber: 1, line: 'node before.mjs' },
+    { kind: 'node', lineNumber: 5, line: 'node after.mjs' },
+  ],
+  'real commands around vendored Acorn must remain detectable with original line numbers',
+);
 const heredocFixtures = [
   ['quoted heredoc body', "cat <<'EOF'\ngit status --short\nEOF", []],
   ['unquoted heredoc body', 'cat <<EOF\ngit status --short\nEOF', []],
