@@ -274,7 +274,7 @@ for (const helper of [
   const original = `var hookFile="hooks/register.ts";${helper}`;
   for (const options of [{ dryRun: false, verify: false }, { dryRun: true, verify: false }, { dryRun: false, verify: true }]) {
     const result = await hooksPatch.apply(original, options);
-    assert.equal(result.status, 'failed', 'unknown or ambiguous hooks resolver shapes must fail closed in every mode');
+    assert.equal(result.status, helper.includes(';var W2') ? 'failed' : 'stale', '漂移标记可显式容错，歧义始终失败');
     assert.equal(result.code, undefined, 'failed patches must not write partial changes');
   }
 }

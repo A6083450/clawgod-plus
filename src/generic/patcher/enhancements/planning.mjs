@@ -4,6 +4,7 @@ const patches = [
   {
     order: 19,
     name: 'Ultraplan enable',
+    semanticId: 'ultraplan',
     // Undefined availability follows the upstream command-list's unrestricted
     // branch; false preserves the original availability value.
     pattern: /(name:"ultraplan",[\s\S]{1,500}?)(?:availability:(\[[^\]]*\]),)?(isEnabled:\(\)=>)(!1|[\w$]+\(\))/g,

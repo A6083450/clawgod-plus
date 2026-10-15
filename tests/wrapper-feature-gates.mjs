@@ -22,7 +22,7 @@ try {
   const before = statSync(configFile);
   writeFileSync(join(directory, 'cli.original.cjs'), 'console.log(JSON.stringify(globalThis.__clawgodPatches ?? null));');
   for (const [env, expected] of [[{}, { teams: false }], [{ CLAWGOD_FEATURE_AGENT_TEAMS: 'true' }, { teams: true }]]) {
-    const result = spawnSync(process.execPath, [join(directory, 'cli.cjs'), '--version'], {
+    const result = spawnSync(process.execPath, [join(directory, 'cli.cjs'), '--help'], {
       encoding: 'utf8', timeout: 10000,
       env: { HOME: root, USERPROFILE: root, PATH: `${ripgrepBin}${delimiter}${process.env.PATH || ''}`, CLAWGOD_INTERNAL_RIPGREP_PATH_READY: ripgrepBin, ...env },
     });

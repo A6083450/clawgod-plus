@@ -156,9 +156,11 @@ Important variables used by the installer or launchers:
 - `CLAWGOD_FEATURE_<NAME>` - inherited exact lowercase `true` / `false` per-launch override for a `patches.json` feature; hyphens become underscores, and unknown feature names warn.
 - `CLAWGOD_CLASSIFIER_TIMEOUT_MS`, `CLAWGOD_CLASSIFIER_MODEL`, `CLAWGOD_CLASSIFIER_RETRIES` - optional auto-mode classifier tuning values, read at call time (including `~/.claude/settings.json` `env`).
 
-## Upstream v1.9.5–v1.9.7 parity
+## Upstream v2.2.0 parity
 
-Pinned upstream release: `v1.9.7`, commit `7bf3b15b10c475c132fe245679c7253792ec74f9`. Keep this fork's Bun-only runtime, public cell renderer, default Lean off, enhancement selection, and existing Cometix patches. Do not replace the renderer with a second `Bun.ant` shim or enable automatic issue closure.
+同步基准：`v2.2.0`，实际提交 `4038ca932c3539911dfc8b97fcce3ab788185f96`。`remote-settings` 运行时开关归属 `privacy`，默认忽略企业远程策略；false 恢复上游行为，不删除用户缓存或修改本地策略。`protocol: anthropic | openai-chat` 优先于旧 provider type；独立版本查询无配置/网络副作用。`--tolerate-stale` 只跳过 recognizer 漂移，原有 update 自动整包 clean-runtime 回退保持不变；语法、歧义和启动失败不可容忍。`startup-check.cjs` 以 Bun 执行，默认 30000 ms，`runtime-state.cjs` 只备份受管运行时而非用户配置。文本资源必须以源字符串加载，不能破坏工具参数中的同名协议字段。
+
+Historical v1.9.7 parity base: `7bf3b15b10c475c132fe245679c7253792ec74f9`. Keep this fork's Bun-only runtime, public cell renderer, default Lean off, enhancement selection, and existing Cometix patches. Do not replace the renderer with a second `Bun.ant` shim or enable automatic issue closure.
 
 Lean on/off permit Remote Control and do not default to disabling nonessential traffic; only max applies those defaults. Explicit network environment settings win. Installer on-mode migration and `--lean-on` remove legacy Remote Control and max-only settings. Merely launching a third-party provider must not rewrite Remote Control settings or undo max mode. Eligibility checks remain upstream-owned.
 

@@ -18,6 +18,8 @@
 $ClaudeMemCompatBytes = [Convert]::FromBase64String('@@CLAWGOD_CLAUDE_MEM_COMPAT_CJS_BASE64@@')
 $SelfUpdateBytes = [Convert]::FromBase64String('@@CLAWGOD_SELF_UPDATE_CJS_BASE64@@')
 $PatchFallbackBytes = [Convert]::FromBase64String('@@CLAWGOD_PATCH_FALLBACK_CJS_BASE64@@')
+$StartupCheckBytes = [Convert]::FromBase64String('@@CLAWGOD_STARTUP_CHECK_CJS_BASE64@@')
+$RuntimeStateBytes = [Convert]::FromBase64String('@@CLAWGOD_RUNTIME_STATE_CJS_BASE64@@')
 
 function Install-ClaudeMemCompatHelper {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
@@ -29,6 +31,7 @@ function Install-UpdateRuntimeHelpers {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
     [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "self-update.cjs"), $SelfUpdateBytes)
     [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "patch-fallback.cjs"), $PatchFallbackBytes)
+    [System.IO.File]::WriteAllBytes((Join-Path $ClawDir "startup-check.cjs"), $StartupCheckBytes)
 }
 
 $ProxyFetchBytes = [Convert]::FromBase64String('@@CLAWGOD_PROXY_FETCH_MJS_BASE64@@')
@@ -323,7 +326,7 @@ if ($Uninstall) {
         Write-OK "Removed clawgod alias"
     }
 
-    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","self-update.cjs","patch-fallback.cjs","feature-gates.cjs","patch-fallback.json","openai-proxy.cjs","proxy-fetch.mjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","install-voice-asr.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging","assets","chunks","chunks.bak",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
+    foreach ($f in @("cli.js","cli.cjs","cli.original.js","cli.original.cjs","cli.original.js.bak","cli.original.cjs.bak","patch.js","patch.mjs","extract-natives.mjs","post-process.mjs","repatch.mjs","vendor-transaction.mjs","runtime-state.cjs","startup-check.cjs","startup-check.log",".clean-source.json","self-update.cjs","patch-fallback.cjs","feature-gates.cjs","patch-fallback.json","openai-proxy.cjs","proxy-fetch.mjs","fetch-file.mjs","enhancement-config.mjs","enhancement-manifest.json","install-ripgrep.mjs","install-voice-asr.mjs","enhancement-selection.mjs","lean-remove.mjs","lean-apply.mjs","clawgod-import.exe","apply-claude-code-chrome-fix.ps1","claude-mem-compat.cjs","claude-mem.cmd","plugin-dependencies.mjs","claude-hud-statusline.mjs","plugin-dependencies-state.json","cache","staging","assets","chunks","chunks.bak",".source-version",".clawgod-version",".update-check","node_modules","bun-runtime","vendor")) {
         $p = Join-Path $ClawDir $f
         if (Test-Path $p) { Remove-Item -Recurse -Force $p }
     }
@@ -387,6 +390,31 @@ if (-not $BunVersionOk) {
     exit 1
 }
 
+# --- Handle -NoUpgrade (skip download, re-patch only) ----------------
+New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
+$RuntimeTarget = Join-Path $ClawDir "cli.original.cjs"
+$RuntimeSourceVersion = Join-Path $ClawDir ".source-version"
+$RuntimeRollbackDir = Join-Path $ClawDir (".runtime-rollback." + [Guid]::NewGuid().ToString("N"))
+$RuntimeCandidateDir = Join-Path $RuntimeRollbackDir "candidate"
+$RuntimeCandidateVendor = Join-Path $RuntimeCandidateDir "vendor"
+$RuntimeVendorDir = Join-Path $ClawDir "vendor"
+$RuntimeHasCandidateVendor = $false
+$RuntimePatchFallback = Join-Path $ClawDir "patch-fallback.json"
+$RuntimeHadTarget = Test-Path -LiteralPath $RuntimeTarget -PathType Leaf
+$RuntimeHadSourceVersion = Test-Path -LiteralPath $RuntimeSourceVersion -PathType Leaf
+$RuntimeHadPatchFallback = Test-Path -LiteralPath $RuntimePatchFallback -PathType Leaf
+$RuntimeTransactionCommitted = $false
+$RuntimeVendorPublishStarted = $false
+$VendorRollbackComplete = $false
+$RuntimeTransactionCleanupSafe = $true
+New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
+$RuntimeStateHelper = Join-Path $RuntimeRollbackDir 'runtime-state.cjs'
+[System.IO.File]::WriteAllBytes($RuntimeStateHelper, $RuntimeStateBytes)
+& $BunBin $RuntimeStateHelper snapshot $ClawDir $RuntimeRollbackDir
+if ($LASTEXITCODE -ne 0) { throw 'Failed to snapshot managed runtime.' }
+try {
+[System.IO.File]::WriteAllBytes((Join-Path $ClawDir 'runtime-state.cjs'), $RuntimeStateBytes)
+
 Install-FetchFileHelper
 
 $EnhancementConfigBytes = [Convert]::FromBase64String('@@CLAWGOD_ENHANCEMENT_CONFIG_MJS_BASE64@@')
@@ -418,39 +446,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 $ripgrepOutput | ForEach-Object { Write-OK "$_" }
 
-# --- Handle -NoUpgrade (skip download, re-patch only) ----------------
-New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
-$RuntimeTarget = Join-Path $ClawDir "cli.original.cjs"
-$RuntimeSourceVersion = Join-Path $ClawDir ".source-version"
-$RuntimeRollbackDir = Join-Path $ClawDir (".runtime-rollback." + [Guid]::NewGuid().ToString("N"))
-$RuntimeCandidateDir = Join-Path $RuntimeRollbackDir "candidate"
-$RuntimeCandidateVendor = Join-Path $RuntimeCandidateDir "vendor"
-$RuntimeVendorDir = Join-Path $ClawDir "vendor"
-$RuntimeHasCandidateVendor = $false
-$RuntimePatchFallback = Join-Path $ClawDir "patch-fallback.json"
-$RuntimeHadTarget = Test-Path -LiteralPath $RuntimeTarget -PathType Leaf
-$RuntimeHadSourceVersion = Test-Path -LiteralPath $RuntimeSourceVersion -PathType Leaf
-$RuntimeHadPatchFallback = Test-Path -LiteralPath $RuntimePatchFallback -PathType Leaf
-$RuntimeTransactionCommitted = $false
-$RuntimeVendorPublishStarted = $false
-$VendorRollbackComplete = $false
-$RuntimeTransactionCleanupSafe = $true
-try {
-    New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
-    if ($RuntimeHadTarget) {
-        Copy-Item -LiteralPath $RuntimeTarget -Destination (Join-Path $RuntimeRollbackDir "cli.original.cjs")
-    }
-    if ($RuntimeHadSourceVersion) {
-        Copy-Item -LiteralPath $RuntimeSourceVersion -Destination (Join-Path $RuntimeRollbackDir ".source-version")
-    }
-    if ($RuntimeHadPatchFallback) {
-        Copy-Item -LiteralPath $RuntimePatchFallback -Destination (Join-Path $RuntimeRollbackDir "patch-fallback.json")
-    }
-    $RuntimeChunksTarget = Join-Path $ClawDir "chunks"
-    $RuntimeHadChunks = Test-Path -LiteralPath $RuntimeChunksTarget -PathType Container
-    if ($RuntimeHadChunks) {
-        Move-Item -LiteralPath $RuntimeChunksTarget -Destination (Join-Path $RuntimeRollbackDir "chunks")
-    }
 if ($NoUpgrade) {
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
     New-Item -ItemType Directory -Force -Path $BinDir  | Out-Null
@@ -461,17 +456,25 @@ if ($NoUpgrade) {
         Write-Err "Run a full install first (without -NoUpgrade)."
         exit 1
     }
-    if (Test-Path $existingBak) {
-        Copy-Item $existingBak $existingCjs -Force
-        Write-OK "Restored clean cli.original.cjs from backup"
+    $CurrentSourceVersion = ([System.IO.File]::ReadAllText($RuntimeSourceVersion)).Trim()
+    if ($CurrentSourceVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$') { throw 'Exact installed source version is required for -NoUpgrade.' }
+    $cleanPreference = $ErrorActionPreference
+    $cleanNativePreference = $PSNativeCommandUseErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $PSNativeCommandUseErrorActionPreference = $false
+        & $BunBin $RuntimeStateHelper clean-restore $ClawDir $CurrentSourceVersion
+        $CleanSourceReady = $LASTEXITCODE -eq 0
+    } finally {
+        $ErrorActionPreference = $cleanPreference
+        $PSNativeCommandUseErrorActionPreference = $cleanNativePreference
     }
-    $chunksTarget = Join-Path $ClawDir "chunks"
-    $chunksBak = Join-Path $ClawDir "chunks.bak"
-    if (Test-Path $chunksBak) {
-        if (Test-Path $chunksTarget) { Remove-Item -Recurse -Force $chunksTarget }
-        Copy-Item -Recurse $chunksBak $chunksTarget
-        Write-OK "Restored clean chunks from backup"
+    if (-not $CleanSourceReady) {
+        $Version = $CurrentSourceVersion
+        Write-Dim "Clean backup unavailable; recovering exact installed source $Version ..."
     }
+}
+if ($NoUpgrade -and $CleanSourceReady) {
     Write-OK "Skipping download (-NoUpgrade)"
 } else {
 
@@ -581,8 +584,10 @@ $dstCli = Join-Path $RuntimeCandidateDir "cli.original.js"
 if (Test-Path $dstCli) { Remove-Item -Force $dstCli }
 
 Write-Dim "Extracting cli.js + napi modules from $NativeBinLabel ..."
-& $BunBin $extractorPath $NativeBin $RuntimeCandidateDir 2>&1 | ForEach-Object { Write-Host "  $_" }
-if (-not (Test-Path $dstCli)) {
+$extractOutput = & $BunBin $extractorPath $NativeBin $RuntimeCandidateDir 2>&1
+$extractStatus = $LASTEXITCODE
+$extractOutput | ForEach-Object { Write-Host "  $_" }
+if ($extractStatus -ne 0 -or -not (Test-Path -LiteralPath $dstCli -PathType Leaf)) {
     Write-Err "Failed to extract cli.js from native binary"
     exit 1
 }
@@ -597,9 +602,11 @@ $PostProcessorBytes = [Convert]::FromBase64String('@@CLAWGOD_POST_PROCESSOR_MJS_
 [System.IO.File]::WriteAllBytes($postProc, $PostProcessorBytes)
 $candidatePostProc = Join-Path $RuntimeCandidateDir "post-process.mjs"
 Copy-Item -LiteralPath $postProc -Destination $candidatePostProc
-& $BunBin $candidatePostProc $ClawDir 2>&1 | ForEach-Object { Write-Host "  $_" }
+$postProcessOutput = & $BunBin $candidatePostProc $ClawDir 2>&1
+$postProcessStatus = $LASTEXITCODE
+$postProcessOutput | ForEach-Object { Write-Host "  $_" }
 $candidateCli = Join-Path $RuntimeCandidateDir "cli.original.cjs"
-if (-not (Test-Path $candidateCli)) {
+if ($postProcessStatus -ne 0 -or -not (Test-Path -LiteralPath $candidateCli -PathType Leaf)) {
     Write-Err "Post-process failed"
     exit 1
 }
@@ -609,6 +616,9 @@ Move-Item -LiteralPath $candidateCli -Destination $RuntimeTarget -Force
 # extract-natives.mjs into candidate/chunks/. Move it into place alongside
 # cli.original.cjs so the patcher and runtime can resolve the rewritten
 # relative import specifiers.
+foreach ($name in @('chunks', 'assets')) {
+    Remove-Item -LiteralPath (Join-Path $ClawDir $name) -Recurse -Force -ErrorAction SilentlyContinue
+}
 $candidateChunks = Join-Path $RuntimeCandidateDir "chunks"
 if (Test-Path $candidateChunks) {
     $chunksTarget = Join-Path $ClawDir "chunks"
@@ -630,6 +640,9 @@ if (Test-Path $candidateAssets) {
 }
 $RuntimeHasCandidateVendor = $true
 
+if ($NoUpgrade -and $NativeBinLabel -cne $CurrentSourceVersion) { throw "Recovered source version does not match installed version $CurrentSourceVersion" }
+& $BunBin $RuntimeStateHelper clean-save $ClawDir $NativeBinLabel
+if ($LASTEXITCODE -ne 0) { throw 'Failed to save complete clean source.' }
 # Stamp source version so wrapper can detect drift on next launch
 Set-Content -Path (Join-Path $ClawDir ".source-version") -Value $NativeBinLabel -Encoding ASCII
 
@@ -678,6 +691,7 @@ Write-OK "Patcher created (patch.mjs)"
 
 Write-Dim "Applying patches ..."
 $patchArgs = @('--enhancements-file', (Join-Path $ClawDir 'enhancements.json'))
+if ($TolerateStale) { $patchArgs += '--tolerate-stale' }
 $PatchFallbackAuthorized = ($env:CLAWGOD_UPDATE_PATCH_FAIL_OPEN -ceq '1') -and (-not $NoUpgrade) -and $RuntimeHadTarget
 if ($PatchFallbackAuthorized) { $patchArgs += '--allow-compatibility-fallback' }
 $patchOutput = & $BunBin (Join-Path $ClawDir 'patch.mjs') @patchArgs 2>&1
@@ -729,7 +743,7 @@ if ($RuntimeHasCandidateVendor) {
     try {
         $prevEAP = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        $sanityOut = (& $BunBin $sanityCli --version 2>&1 | Out-String)
+        $sanityOut = (& $BunBin (Join-Path $ClawDir 'startup-check.cjs') $BunBin $sanityCli 2>&1 | Out-String)
         $sanityStatus = $LASTEXITCODE
     } catch {
         $sanityOut = "$_"
@@ -755,27 +769,10 @@ if (Test-Path -LiteralPath $RuntimeRollbackDir) {
     if (-not $RuntimeTransactionCommitted) {
         if (-not $RuntimeVendorPublishStarted) { $VendorRollbackComplete = $true }
         if ($VendorRollbackComplete) {
-            if ($RuntimeHadTarget) {
-                Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir "cli.original.cjs") -Destination $RuntimeTarget -Force
-            } else {
-                Remove-Item -LiteralPath $RuntimeTarget -Force -ErrorAction SilentlyContinue
-            }
-            if ($RuntimeHadSourceVersion) {
-                Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir ".source-version") -Destination $RuntimeSourceVersion -Force
-            } else {
-                Remove-Item -LiteralPath $RuntimeSourceVersion -Force -ErrorAction SilentlyContinue
-            }
-            if ($RuntimeHadPatchFallback) {
-                Copy-Item -LiteralPath (Join-Path $RuntimeRollbackDir "patch-fallback.json") -Destination $RuntimePatchFallback -Force
-            } else {
-                Remove-Item -LiteralPath $RuntimePatchFallback -Force -ErrorAction SilentlyContinue
-            }
-            $chunksTarget = Join-Path $ClawDir "chunks"
-            if ($RuntimeHadChunks) {
-                if (Test-Path $chunksTarget) { Remove-Item -Recurse -Force $chunksTarget -ErrorAction SilentlyContinue }
-                Move-Item -LiteralPath (Join-Path $RuntimeRollbackDir "chunks") -Destination $chunksTarget -Force -ErrorAction SilentlyContinue
-            } else {
-                Remove-Item -Recurse -Force $chunksTarget -ErrorAction SilentlyContinue
+            & $BunBin $RuntimeStateHelper restore $ClawDir $RuntimeRollbackDir
+            if ($LASTEXITCODE -ne 0) {
+                $RuntimeTransactionCleanupSafe = $false
+                throw "Runtime rollback failed; recovery data retained at $RuntimeRollbackDir"
             }
         } else {
             Write-Err "Vendor rollback conflict; prior CLI was not restored; recovery data retained at $RuntimeRollbackDir"

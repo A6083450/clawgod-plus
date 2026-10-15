@@ -1,103 +1,75 @@
 #!/usr/bin/env bun
-// Re-extract + post-process + patch the user's currently-installed
-// native Claude binary. Invoked by cli.cjs when it detects that
-// .source-version no longer matches the latest binary in versions/.
-import { spawnSync } from 'child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
-import { dirname, join, basename } from 'path';
-import { fileURLToPath } from 'url';
-import { publishVendorTransaction } from './vendor-transaction.mjs';
+// Re-extract + post-process + patch the user's currently-installed native binary.
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { publishVendorTransaction, validateRuntime } from './vendor-transaction.mjs';
+import state from './runtime-state.cjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const nativeBin = process.argv[2];
-
-if (!nativeBin || !existsSync(nativeBin)) {
-  console.error('repatch: native binary path required and must exist');
+if (!nativeBin || !existsSync(nativeBin) || !/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(basename(nativeBin))) {
+  console.error('repatch: native binary path must exist and its basename must identify the exact source version');
   process.exit(1);
 }
-
+const version = basename(nativeBin);
 const runtime = process.execPath;
-
 function run(label, args) {
-  const r = spawnSync(runtime, args, { cwd: here, stdio: 'inherit' });
-  if (r.status !== 0) {
-    throw new Error(`repatch: ${label} failed (exit ${r.status})`);
-  }
+  const result = spawnSync(runtime, args, { cwd: here, stdio: 'inherit' });
+  if (result.error || result.status !== 0) throw new Error(`repatch: ${label} failed (${result.error?.message || `exit ${result.status}`})`);
 }
-
-function snapshotFile(path) {
-  if (!existsSync(path)) return null;
-  const status = statSync(path);
-  return { bytes: readFileSync(path), mode: status.mode & 0o7777 };
-}
-
-function restoreFile(path, snapshot) {
-  if (snapshot === null) {
-    rmSync(path, { force: true });
-    return;
-  }
-  writeFileSync(path, snapshot.bytes);
-  chmodSync(path, snapshot.mode);
-}
-
-const extractor = join(here, 'extract-natives.mjs');
-const postProc = join(here, 'post-process.mjs');
-const patcher = join(here, 'patch.mjs');
-const target = join(here, 'cli.original.cjs');
-const sourceVersion = join(here, '.source-version');
-const chunksDir = join(here, 'chunks');
-const enhancementsFile = join(here, 'enhancements.json');
-const targetSnapshot = snapshotFile(target);
-const sourceVersionSnapshot = snapshotFile(sourceVersion);
-const chunksSnapshot = existsSync(chunksDir)
-  ? Object.fromEntries(readdirSync(chunksDir).map((name) => [name, snapshotFile(join(chunksDir, name))]))
-  : null;
 const transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
 const candidateDir = join(transactionDir, 'candidate');
 const candidateVendor = join(candidateDir, 'vendor');
-const vendorDir = join(here, 'vendor');
 let vendorPublishAttempted = false;
-
+let snapshotted = false;
 try {
-  mkdirSync(candidateDir);
-  rmSync(join(here, 'cli.original.js'), { force: true });
-
-  run('extract', [extractor, nativeBin, candidateDir]);
-  const candidatePostProc = join(candidateDir, 'post-process.mjs');
-  copyFileSync(postProc, candidatePostProc);
-  run('post-process', [candidatePostProc, here]);
-  rmSync(target, { force: true });
-  renameSync(join(candidateDir, 'cli.original.cjs'), target);
-  const candidateChunks = join(candidateDir, 'chunks');
-  if (existsSync(candidateChunks)) {
-    rmSync(chunksDir, { recursive: true, force: true });
-    renameSync(candidateChunks, chunksDir);
+  state.snapshot(here, transactionDir);
+  snapshotted = true;
+  let cleanReady = false;
+  if (existsSync(join(here, '.source-version')) && readFileSync(join(here, '.source-version'), 'utf8').trim() === version) {
+    try { state.restoreClean(here, version); cleanReady = true; } catch {}
   }
-  const candidateAssets = join(candidateDir, 'assets');
-  const assetsDir = join(here, 'assets');
-  if (existsSync(candidateAssets)) {
-    rmSync(assetsDir, { recursive: true, force: true });
-    renameSync(candidateAssets, assetsDir);
+  if (!cleanReady) {
+    mkdirSync(candidateDir);
+    run('extract', [join(here, 'extract-natives.mjs'), nativeBin, candidateDir]);
+    const candidatePostProc = join(candidateDir, 'post-process.mjs');
+    copyFileSync(join(here, 'post-process.mjs'), candidatePostProc);
+    run('post-process', [candidatePostProc, here]);
+    rmSync(join(here, 'cli.original.cjs'), { force: true });
+    renameSync(join(candidateDir, 'cli.original.cjs'), join(here, 'cli.original.cjs'));
+    for (const name of ['chunks', 'assets']) {
+      rmSync(join(here, name), { recursive: true, force: true });
+      if (existsSync(join(candidateDir, name))) renameSync(join(candidateDir, name), join(here, name));
+    }
+    state.saveClean(here, version);
   }
-  run('patcher', [patcher, '--enhancements-file', enhancementsFile]);
-
-  writeFileSync(sourceVersion, basename(nativeBin) + '\n');
-  vendorPublishAttempted = true;
-  publishVendorTransaction({ liveVendor: vendorDir, candidateVendor, transactionDir });
+  const patchArgs = [join(here, 'patch.mjs'), '--enhancements-file', join(here, 'enhancements.json')];
+  if (process.env.CLAWGOD_TOLERATE_STALE === '1' || process.argv.includes('--tolerate-stale')) patchArgs.push('--tolerate-stale');
+  run('patcher', patchArgs);
+  writeFileSync(join(here, '.source-version'), version + '\n');
+  if (!cleanReady) {
+    vendorPublishAttempted = true;
+    publishVendorTransaction({
+      liveVendor: join(here, 'vendor'), candidateVendor, transactionDir,
+      validatePublished: () => validateRuntime(runtime, join(here, 'cli.cjs')),
+    });
+  } else {
+    validateRuntime(runtime, join(here, 'cli.cjs'));
+  }
   rmSync(transactionDir, { recursive: true, force: true });
-  console.log(`[clawgod] re-patched to ${basename(nativeBin)}`);
+  console.log(`[clawgod] re-patched to ${version}`);
 } catch (error) {
   const vendorRestored = !vendorPublishAttempted || error?.rollbackComplete === true;
   if (vendorRestored) {
-    restoreFile(target, targetSnapshot);
-    restoreFile(sourceVersion, sourceVersionSnapshot);
-    rmSync(chunksDir, { recursive: true, force: true });
-    if (chunksSnapshot) {
-      mkdirSync(chunksDir, { recursive: true });
-      for (const [name, file] of Object.entries(chunksSnapshot)) restoreFile(join(chunksDir, name), file);
+    try {
+      if (snapshotted) state.restore(here, transactionDir);
+      if (!vendorPublishAttempted || error?.cleanupSafe !== false) rmSync(transactionDir, { recursive: true, force: true });
+      else console.error(`repatch: prior CLI restored; untrusted transaction data retained at ${transactionDir}`);
+    } catch (rollbackError) {
+      console.error(`repatch: runtime rollback failed; recovery data retained at ${transactionDir}: ${rollbackError.message}`);
     }
-    if (!vendorPublishAttempted || error?.cleanupSafe !== false) rmSync(transactionDir, { recursive: true, force: true });
-    else console.error(`repatch: prior CLI restored; untrusted transaction data retained at ${transactionDir}`);
   } else {
     console.error(`repatch: vendor rollback conflict; prior CLI was not restored; recovery data retained at ${transactionDir}`);
   }

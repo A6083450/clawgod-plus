@@ -207,7 +207,7 @@ async function applyClaudeChromeSocketPatch(source, { dryRun, verify, rootDir })
       (source.includes('__ccpp_no_select_browser') || !source.includes('select-browser'));
     if (allApplied) return { status: 'already', detail: 'already applied' };
     if (!hasChrome) return { status: 'skipped', detail: 'not present in this version' };
-    return { status: 'failed', detail: 'Chrome socket patterns not found' };
+    return { status: 'stale', detail: 'Chrome socket patterns not found' };
   }
 
   // A custom patch reports one aggregate status, so a sub-patch that silently

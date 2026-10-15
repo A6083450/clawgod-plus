@@ -25,11 +25,13 @@ try {
   mkdirSync(fixtureBin);
   mkdirSync(clawDir, { recursive: true });
   symlinkSync('/usr/bin/grep', join(fixtureBin, 'grep'));
+  writeFileSync(join(clawDir, 'startup-check.cjs'), readFileSync(new URL('../src/generic/runtime/startup-check.cjs', import.meta.url)));
   writeFileSync(join(clawDir, 'cli.cjs'), 'fixture\n', 'utf8');
   writeFileSync(fakeBun, `#!/bin/sh
 if [ "$1" = "--version" ]; then printf '1.3.14\\n'; exit 0; fi
+case "$1" in */startup-check.cjs) exec "${process.execPath}" "$@" ;; esac
 case "$SMOKE_MODE" in
-  success) printf '2.1.224\\n'; exit 0 ;;
+  success) printf '2.1.224 (Claude Code)\\n'; exit 0 ;;
   generic) printf 'generic load failure\\n' >&2; exit 17 ;;
   panic) printf 'Expected CommonJS module to have a function wrapper\\n' >&2; exit 134 ;;
 esac

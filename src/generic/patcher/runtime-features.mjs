@@ -41,6 +41,7 @@ export const runtimeFeatureMetadata = Object.freeze({
   'theme-brief-rgb-dark': ['theme'],
   'theme-brief-rgb-light': ['theme'],
   'theme-brief-ansi': ['theme'],
+  'remote-settings-off': ['remote-settings'],
   'geo-stego-date': ['geo-neutralize'],
   'geo-detect-probe': ['geo-neutralize'],
   'geo-apostrophe-stego': ['geo-neutralize'],

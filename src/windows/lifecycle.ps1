@@ -1,6 +1,7 @@
 param(
     [string]$Version = "",
     [switch]$NoUpgrade,
+    [switch]$TolerateStale,
     [switch]$Uninstall,
     [switch]$LeanOff,
     [switch]$LeanOn,
@@ -14,6 +15,7 @@ $EnhancementsSpecified = $PSBoundParameters.ContainsKey('Enhancements')
 
 if ($env:CLAWGOD_VERSION -and -not $Version) { $Version = $env:CLAWGOD_VERSION }
 if ($env:CLAWGOD_NO_UPGRADE -eq "1") { $NoUpgrade = [switch]$true }
+if ($env:CLAWGOD_TOLERATE_STALE -eq "1") { $TolerateStale = [switch]$true }
 if ($env:CLAWGOD_LEAN_OFF -eq "1") { $LeanOff = [switch]$true }
 if ($env:CLAWGOD_LEAN_ON -eq "1") { $LeanOn = [switch]$true }
 if ($env:CLAWGOD_LEAN_MAX -eq "1") { $LeanMax = [switch]$true }

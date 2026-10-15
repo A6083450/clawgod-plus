@@ -79,12 +79,12 @@ function assertWindowsFallbackParity(source, label) {
   for (const needle of [authorization, argument, patch, strict42, write, clear, chromeSkip, checkedPublish]) {
     assert.ok(source.includes(needle), `${label} must include ${needle}`);
   }
-  assert.ok(source.indexOf("Copy-Item -LiteralPath $RuntimePatchFallback -Destination (Join-Path $RuntimeRollbackDir \"patch-fallback.json\")") < source.indexOf('Move-Item -LiteralPath $RuntimeChunksTarget -Destination (Join-Path $RuntimeRollbackDir "chunks")'), `${label} must snapshot fallback state before chunks move`);
+  assert.ok(source.indexOf('$RuntimeStateHelper snapshot $ClawDir $RuntimeRollbackDir') < source.indexOf('Install-FetchFileHelper\n'), `${label} must snapshot the complete managed runtime before helper writes`);
   assert.ok(source.indexOf(chromeSkip) < source.indexOf(checkedPublish), `${label} must complete fallback Chrome skip before checked publication`);
   assert.equal((source.match(/publish-checked/g) || []).length, 1, `${label} must invoke publish-checked exactly once`);
   assert.match(source, /\$VendorRollbackComplete\s*=\s*\$vendorStatus\s*-eq\s*20\s*-or\s*\$vendorStatus\s*-eq\s*22/, `${label} must retain statuses 20/22 rollback mapping`);
   assert.match(source, /if \(\$vendorStatus -eq 22\) \{ \$RuntimeTransactionCleanupSafe = \$false \}/, `${label} must retain status 22 recovery-data mapping`);
-  assert.match(source, /if \(\$RuntimeHadPatchFallback\) \{[\s\S]*?Copy-Item -LiteralPath \(Join-Path \$RuntimeRollbackDir "patch-fallback\.json"\) -Destination \$RuntimePatchFallback -Force[\s\S]*?\} else \{[\s\S]*?Remove-Item -LiteralPath \$RuntimePatchFallback -Force -ErrorAction SilentlyContinue/, `${label} must restore or remove fallback state during rollback`);
+  assert.ok(source.includes('$RuntimeStateHelper restore $ClawDir $RuntimeRollbackDir'), `${label} must restore complete managed runtime during rollback`);
 }
 
 assertWindowsFallbackParity(windowsTemplate, 'src/template/install.ps1');
@@ -197,7 +197,7 @@ if (name === 'install-ripgrep.mjs') {
   mkdirSync(join(output, 'package'), { recursive: true });
   writeFileSync(join(output, 'package', 'claude'), new Uint8Array((10 * 1024 * 1024) + 1));
   writeFileSync(process.env.CLAUDE_RESOLVER_MARKER, spec + '\\n');
-  console.log('VERSION=' + version);
+  console.log('VERSION=' + (version === 'latest' ? '2.1.999' : version));
 } else if (name === 'extract-natives.mjs') {
   const output = args[1];
   const native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');
@@ -216,7 +216,8 @@ if (name === 'install-ripgrep.mjs') {
     mkdirSync(dirname(blocked), { recursive: true });
     writeFileSync(blocked, Buffer.from([0xba, 0xdd, 0xca, 0xfe]));
   }
-} else if (name === 'patch-fallback.cjs') {
+} else if (name === 'runtime-state.cjs' || name === 'startup-check.cjs' || name === 'patch-fallback.cjs') {
+  if (name === 'runtime-state.cjs' && args[0] === 'snapshot' && process.env.PATCH_FALLBACK_SNAPSHOT_FAULT === '1') process.exit(74);
   const child = spawnSync(process.execPath, [target, ...args], { env: process.env, stdio: 'inherit' });
   process.exit(child.status ?? 1);
 } else if (name === 'vendor-transaction.mjs') {
@@ -278,7 +279,7 @@ if (name === 'install-ripgrep.mjs') {
 } else if (name === 'cli.cjs' && args[0] === '--version') {
   appendFileSync(process.env.RUNTIME_CHECK_CALLS, 'check\\n');
   if (process.env.SANITY_PANIC === '1') process.stderr.write('Expected CommonJS module to have a function wrapper\\n');
-  else console.log('2.1.999');
+  else console.log('2.1.999 (Claude Code)');
   process.exit(Number(process.env.SANITY_EXIT || 0));
 } else if (name === 'plugin-dependencies.mjs' && args[0] === 'ensure') {
   writeFileSync(process.env.PLUGIN_HEALTH_MARKER, JSON.stringify({ args, clawgodVersion: process.env.CLAWGOD_VERSION || null }) + '\\n');
@@ -324,6 +325,10 @@ if (name === 'install-ripgrep.mjs') {
     assertTemporaryPath(home, root, `${label} HOME`);
     assertTemporaryPath(temp, root, `${label} TMPDIR`);
     writeFileSync(configPath, savedConfig, { mode: 0o600 });
+    const oldManaged = { 'cli.cjs': 'old wrapper', 'post-process.mjs': 'old postprocessor', '.clawgod-version': 'old release', 'cli.original.cjs.bak': 'old clean' };
+    for (const [name, content] of Object.entries(oldManaged)) writeFileSync(join(dirname(target), name), content);
+    mkdirSync(join(dirname(target), 'assets'));
+    writeFileSync(join(dirname(target), 'assets', 'prior.txt'), 'prior asset');
     mkdirSync(dirname(oldNative), { recursive: true });
     mkdirSync(dirname(oldOnly), { recursive: true });
     mkdirSync(dirname(ripgrep), { recursive: true });
@@ -349,6 +354,10 @@ if (name === 'install-ripgrep.mjs') {
     } else if (options.priorRuntime) {
       writeFileSync(target, options.priorRuntime, 'utf8');
       writeFileSync(sourceVersion, '2.1.225\n', 'utf8');
+    }
+    if (args.includes('--no-upgrade') && !options.missingClean) {
+      const clean = spawnSync(process.execPath, [new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url).pathname, 'clean-save', dirname(target), '2.1.225'], { encoding: 'utf8' });
+      assert.equal(clean.status, 0, clean.stdout + clean.stderr);
     }
     if (options.priorChunks) {
       mkdirSync(chunks, { recursive: true });
@@ -406,6 +415,8 @@ if (name === 'install-ripgrep.mjs') {
     const observedExternalSentinel = join(observedExternalRoot, 'sentinel.bin');
     return {
       run,
+      managed: Object.fromEntries(Object.keys(oldManaged).map(name => [name, existsSync(join(dirname(target), name)) ? readFileSync(join(dirname(target), name), 'utf8') : null])),
+      asset: existsSync(join(dirname(target), 'assets', 'prior.txt')) ? readFileSync(join(dirname(target), 'assets', 'prior.txt'), 'utf8') : null,
       pluginHealth,
       claudeResolver,
       patchArgs: existsSync(patchArgs) ? JSON.parse(readFileSync(patchArgs, 'utf8')) : null,
@@ -479,8 +490,19 @@ if (name === 'install-ripgrep.mjs') {
     assert.equal(result.vendor.ripgrep.ino, result.vendor.ripgrepBefore.ino, `${fixture.label}: managed ripgrep identity must remain unchanged`);
   }
 
+  const stale = runLifecycleCase('explicit-stale', ['--tolerate-stale'], {});
+  assert.equal(stale.run.status, 0, stale.run.stdout + stale.run.stderr);
+  assert.deepEqual(stale.patchArgs, ['--enhancements-file', stale.configPath, '--tolerate-stale']);
+  const recovered = runLifecycleCase('no-upgrade-missing-clean', ['--no-upgrade', '--version', '9.9.9'], { missingClean: true });
+  assert.equal(recovered.run.status, 0, recovered.run.stdout + recovered.run.stderr);
+  assert.equal(readFileSync(recovered.claudeResolver, 'utf8'), '@anthropic-ai/claude-code-darwin-arm64@2.1.225\n', 'missing clean recovery must fetch exact installed version, ignoring requested upgrade version');
+
   const assertPriorRuntimeRestored = (result, label, { fallback = null } = {}) => {
     assert.equal(result.runtime, 'prior installed runtime\n', `${label}: failed transaction must restore the prior runtime`);
+    assert.equal(result.managed['cli.cjs'], 'old wrapper', `${label}: failed transaction must restore prior wrapper`);
+    assert.equal(result.managed['post-process.mjs'], 'old postprocessor', `${label}: failed transaction must restore prior helper`);
+    assert.equal(result.managed['.clawgod-version'], 'old release', `${label}: failed transaction must restore prior release marker`);
+    assert.equal(result.asset, 'prior asset', `${label}: failed transaction must restore prior assets`);
     assert.equal(result.sourceVersion, '2.1.225\n', `${label}: failed transaction must restore the prior source marker`);
     assert.deepEqual(result.vendor.oldNative?.bytes, Buffer.from([0x00, 0x11, 0x80, 0xff]), `${label}: failed transaction must restore prior native bytes`);
     assert.deepEqual(result.vendor.oldOnly?.bytes, Buffer.from([0xde, 0xad, 0xbe, 0xef]), `${label}: failed transaction must restore old-only vendor bytes`);

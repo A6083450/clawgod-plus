@@ -11,7 +11,7 @@ const patches = [
   {
     order: 27,
     name: 'Auto-mode unlock for third-party API (inline gate)',
-    pattern: /if\(([\w$]+)!=="firstParty"&&(?:\1!=="anthropicAws"|![\w$]+\(\1\))[^;]*\)return!1;/g,
+    pattern: /if\((?:([\w$]+)!=="firstParty"&&(?:\1!=="anthropicAws"|![\w$]+\(\1\))[^;]*|[\w$]+\(\)&&\([\w$]+==="claude-opus-4-6"\|\|[\w$]+==="claude-sonnet-4-6"\|\|[\w$]+\.includes\("haiku"\)[^;]*?\))\)return!1;/g,
     replacer: (match) => `if(${gate('auto-mode-inline-gate')}===!1&&` + match.slice(3, -10) + ')return!1;',
     optional: true,
   },

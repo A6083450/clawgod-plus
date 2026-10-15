@@ -42,6 +42,10 @@ SELF_UPDATE_EOF
 @@CLAWGOD_PATCH_FALLBACK_CJS@@
 PATCH_FALLBACK_EOF
   chmod 700 "$CLAWGOD_DIR/patch-fallback.cjs"
+  cat > "$CLAWGOD_DIR/startup-check.cjs" << 'STARTUP_CHECK_EOF'
+@@CLAWGOD_STARTUP_CHECK_CJS@@
+STARTUP_CHECK_EOF
+  chmod 700 "$CLAWGOD_DIR/startup-check.cjs"
 }
 
 resolve_bun() {
@@ -182,7 +186,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/runtime-state.cjs" "$CLAWGOD_DIR/startup-check.cjs" "$CLAWGOD_DIR/startup-check.log" "$CLAWGOD_DIR/.clean-source.json" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -229,6 +233,39 @@ if [ -z "$BUN_VERSION_NUM" ] \
 fi
 
 prepare_enhancement_config_directory
+RUNTIME_TRANSACTION_DIR=$(mktemp -d "$CLAWGOD_DIR/.runtime-rollback.XXXXXX")
+chmod 700 "$RUNTIME_TRANSACTION_DIR"
+cat > "$RUNTIME_TRANSACTION_DIR/runtime-state.cjs" << 'RUNTIME_STATE_EOF'
+@@CLAWGOD_RUNTIME_STATE_CJS@@
+RUNTIME_STATE_EOF
+RUNTIME_STATE_HELPER="$RUNTIME_TRANSACTION_DIR/runtime-state.cjs"
+"$BUN_BIN" "$RUNTIME_STATE_HELPER" snapshot "$CLAWGOD_DIR" "$RUNTIME_TRANSACTION_DIR"
+RUNTIME_TRANSACTION_ACTIVE=1
+RUNTIME_HAD_TARGET=0
+[ ! -f "$CLAWGOD_DIR/cli.original.cjs" ] || RUNTIME_HAD_TARGET=1
+RUNTIME_HAS_CANDIDATE_VENDOR=0
+RUNTIME_VENDOR_PUBLISH_STARTED=0
+RUNTIME_VENDOR_ROLLBACK_COMPLETE=0
+RUNTIME_TRANSACTION_CLEANUP_SAFE=1
+rollback_runtime_transaction() {
+  [ "$RUNTIME_TRANSACTION_ACTIVE" = "1" ] || return 0
+  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ] && [ "$RUNTIME_VENDOR_ROLLBACK_COMPLETE" != "1" ]; then
+    printf '%s\n' "clawgod: vendor rollback conflict; prior CLI was not restored; recovery data retained at $RUNTIME_TRANSACTION_DIR" >&2
+    return 0
+  fi
+  if ! "$BUN_BIN" "$RUNTIME_STATE_HELPER" restore "$CLAWGOD_DIR" "$RUNTIME_TRANSACTION_DIR"; then
+    printf '%s\n' "clawgod: runtime rollback failed; recovery data retained at $RUNTIME_TRANSACTION_DIR" >&2
+    return 0
+  fi
+  if [ "$RUNTIME_TRANSACTION_CLEANUP_SAFE" = "1" ]; then
+    rm -rf "$RUNTIME_TRANSACTION_DIR"
+  else
+    printf '%s\n' "clawgod: prior CLI restored; untrusted transaction data retained at $RUNTIME_TRANSACTION_DIR" >&2
+  fi
+  RUNTIME_TRANSACTION_ACTIVE=0
+}
+trap 'rollback_runtime_transaction' EXIT
+cp "$RUNTIME_STATE_HELPER" "$CLAWGOD_DIR/runtime-state.cjs"
 cat > "$CLAWGOD_DIR/enhancement-config.mjs" << 'ENHANCEMENT_CONFIG_EOF'
 @@CLAWGOD_ENHANCEMENT_CONFIG_MJS@@
 ENHANCEMENT_CONFIG_EOF
@@ -337,53 +374,6 @@ run_claude_code_chrome_fix() {
 # ─── Handle --no-upgrade (skip download, re-patch only) ──────────────
 mkdir -p "$CLAWGOD_DIR" "$BIN_DIR"
 
-RUNTIME_TRANSACTION_DIR=""
-RUNTIME_TRANSACTION_ACTIVE=0
-RUNTIME_HAD_TARGET=0
-RUNTIME_HAD_SOURCE_VERSION=0
-RUNTIME_HAD_CHUNKS=0
-RUNTIME_HAD_PATCH_FALLBACK=0
-RUNTIME_HAS_CANDIDATE_VENDOR=0
-RUNTIME_VENDOR_PUBLISH_STARTED=0
-RUNTIME_VENDOR_ROLLBACK_COMPLETE=0
-RUNTIME_TRANSACTION_CLEANUP_SAFE=1
-
-rollback_runtime_transaction() {
-  [ "$RUNTIME_TRANSACTION_ACTIVE" = "1" ] || return 0
-  if [ "$RUNTIME_VENDOR_PUBLISH_STARTED" = "1" ] && [ "$RUNTIME_VENDOR_ROLLBACK_COMPLETE" != "1" ]; then
-    RUNTIME_TRANSACTION_ACTIVE=0
-    printf '%s\n' "clawgod: vendor rollback conflict; prior CLI was not restored; recovery data retained at $RUNTIME_TRANSACTION_DIR" >&2
-    return 0
-  fi
-  if [ "$RUNTIME_HAD_TARGET" = "1" ]; then
-    cp -p "$RUNTIME_TRANSACTION_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs" 2>/dev/null || true
-  else
-    rm -f "$CLAWGOD_DIR/cli.original.cjs" 2>/dev/null || true
-  fi
-  if [ "$RUNTIME_HAD_SOURCE_VERSION" = "1" ]; then
-    cp -p "$RUNTIME_TRANSACTION_DIR/.source-version" "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
-  else
-    rm -f "$CLAWGOD_DIR/.source-version" 2>/dev/null || true
-  fi
-  if [ "$RUNTIME_HAD_CHUNKS" = "1" ]; then
-    rm -rf "$CLAWGOD_DIR/chunks" 2>/dev/null || true
-    mv "$RUNTIME_TRANSACTION_DIR/chunks" "$CLAWGOD_DIR/chunks" 2>/dev/null || true
-  else
-    rm -rf "$CLAWGOD_DIR/chunks" 2>/dev/null || true
-  fi
-  if [ "$RUNTIME_HAD_PATCH_FALLBACK" = "1" ]; then
-    cp -p "$RUNTIME_TRANSACTION_DIR/patch-fallback.json" "$CLAWGOD_DIR/patch-fallback.json" 2>/dev/null || true
-  else
-    rm -f "$CLAWGOD_DIR/patch-fallback.json" 2>/dev/null || true
-  fi
-  RUNTIME_TRANSACTION_ACTIVE=0
-  if [ "$RUNTIME_TRANSACTION_CLEANUP_SAFE" = "1" ]; then
-    rm -rf "$RUNTIME_TRANSACTION_DIR" 2>/dev/null || true
-  else
-    printf '%s\n' "clawgod: prior CLI restored; untrusted transaction data retained at $RUNTIME_TRANSACTION_DIR" >&2
-  fi
-}
-
 warn_bun_canary_guidance() {
   echo ""
   warn "Bun $("$BUN_BIN" --version) cannot load Anthropic's cli.original.cjs."
@@ -410,7 +400,7 @@ verify_runtime() {
   dim "Verifying Bun can load patched cli.original.cjs ..."
   sanity_status=0
   set +e
-  sanity_out=$("$BUN_BIN" "$CLAWGOD_DIR/cli.cjs" --version 2>&1)
+  sanity_out=$("$BUN_BIN" "$CLAWGOD_DIR/startup-check.cjs" "$BUN_BIN" "$CLAWGOD_DIR/cli.cjs" 2>&1)
   sanity_status=$?
   set -e
   if echo "$sanity_out" | grep -q "Expected CommonJS module to have a function wrapper"; then
@@ -450,26 +440,6 @@ commit_runtime_transaction() {
   trap - EXIT
 }
 
-RUNTIME_TRANSACTION_DIR=$(mktemp -d "$CLAWGOD_DIR/.runtime-rollback.XXXXXX")
-chmod 700 "$RUNTIME_TRANSACTION_DIR"
-if [ -f "$CLAWGOD_DIR/cli.original.cjs" ]; then
-  cp -p "$CLAWGOD_DIR/cli.original.cjs" "$RUNTIME_TRANSACTION_DIR/cli.original.cjs"
-  RUNTIME_HAD_TARGET=1
-fi
-if [ -f "$CLAWGOD_DIR/.source-version" ]; then
-  cp -p "$CLAWGOD_DIR/.source-version" "$RUNTIME_TRANSACTION_DIR/.source-version"
-  RUNTIME_HAD_SOURCE_VERSION=1
-fi
-if [ -f "$CLAWGOD_DIR/patch-fallback.json" ]; then
-  cp -p "$CLAWGOD_DIR/patch-fallback.json" "$RUNTIME_TRANSACTION_DIR/patch-fallback.json"
-  RUNTIME_HAD_PATCH_FALLBACK=1
-fi
-RUNTIME_TRANSACTION_ACTIVE=1
-trap 'rollback_runtime_transaction' EXIT
-if [ -d "$CLAWGOD_DIR/chunks" ]; then
-  mv "$CLAWGOD_DIR/chunks" "$RUNTIME_TRANSACTION_DIR/chunks"
-  RUNTIME_HAD_CHUNKS=1
-fi
 
 if [ "$NO_UPGRADE" = "1" ]; then
   if [ ! -f "$CLAWGOD_DIR/cli.original.cjs" ]; then
@@ -477,15 +447,21 @@ if [ "$NO_UPGRADE" = "1" ]; then
     warn "Run a full install first (without --no-upgrade)."
     exit 1
   fi
-  if [ -f "$CLAWGOD_DIR/cli.original.cjs.bak" ]; then
-    cp "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.original.cjs"
-    info "Restored clean cli.original.cjs from backup"
+  CURRENT_SOURCE_VERSION=$(tr -d '\r\n' < "$CLAWGOD_DIR/.source-version")
+  if ! printf '%s\n' "$CURRENT_SOURCE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.-]+)?$'; then
+    err "Exact installed source version is required for --no-upgrade"
+    exit 1
   fi
-  if [ -d "$CLAWGOD_DIR/chunks.bak" ]; then
-    rm -rf "$CLAWGOD_DIR/chunks"
-    cp -R "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/chunks"
-    info "Restored clean chunks from backup"
+  if "$BUN_BIN" "$RUNTIME_STATE_HELPER" clean-restore "$CLAWGOD_DIR" "$CURRENT_SOURCE_VERSION"; then
+    CLEAN_SOURCE_READY=1
+    info "Restored complete clean source ($CURRENT_SOURCE_VERSION)"
+  else
+    VERSION="$CURRENT_SOURCE_VERSION"
+    dim "Clean backup unavailable; recovering exact installed source $VERSION ..."
+    CLEAN_SOURCE_READY=0
   fi
+fi
+if [ "$NO_UPGRADE" = "1" ] && [ "$CLEAN_SOURCE_READY" = "1" ]; then
   info "Skipping download (--no-upgrade)"
 else
 
@@ -609,7 +585,10 @@ RUNTIME_CANDIDATE_DIR="$RUNTIME_TRANSACTION_DIR/candidate"
 mkdir -p "$RUNTIME_CANDIDATE_DIR"
 
 dim "Extracting cli.js + napi modules from $(echo "$NATIVE_BIN_LABEL") ..."
-if ! "$BUN_BIN" "$CLAWGOD_DIR/extract-natives.mjs" "$NATIVE_BIN" "$RUNTIME_CANDIDATE_DIR" 2>&1 | while IFS= read -r line; do echo "  $line"; done; then
+if extract_output=$("$BUN_BIN" "$CLAWGOD_DIR/extract-natives.mjs" "$NATIVE_BIN" "$RUNTIME_CANDIDATE_DIR" 2>&1); then
+  printf '%s\n' "$extract_output"
+else
+  printf '%s\n' "$extract_output" >&2
   err "Failed to extract from native binary"
   exit 1
 fi
@@ -634,15 +613,21 @@ cat > "$CLAWGOD_DIR/post-process.mjs" << 'POSTPROC_EOF'
 @@CLAWGOD_POST_PROCESSOR_MJS@@
 POSTPROC_EOF
 cp "$CLAWGOD_DIR/post-process.mjs" "$RUNTIME_CANDIDATE_DIR/post-process.mjs"
-"$BUN_BIN" "$RUNTIME_CANDIDATE_DIR/post-process.mjs" "$CLAWGOD_DIR" 2>&1 | while IFS= read -r line; do echo "  $line"; done
+if postprocess_output=$("$BUN_BIN" "$RUNTIME_CANDIDATE_DIR/post-process.mjs" "$CLAWGOD_DIR" 2>&1); then
+  printf '%s\n' "$postprocess_output"
+else
+  printf '%s\n' "$postprocess_output" >&2
+  err "Post-process failed"
+  exit 1
+fi
 [ -f "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" ] || { err "Post-process failed"; exit 1; }
 mv "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs"
 # Code-split chunk graph (v2.1.245+): every non-entry js module extracted by
 # extract-natives.mjs into candidate/chunks/. Move it into place alongside
 # cli.original.cjs so the patcher and runtime can resolve the rewritten
 # relative import specifiers.
+rm -rf "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/assets"
 if [ -d "$RUNTIME_CANDIDATE_DIR/chunks" ]; then
-  rm -rf "$CLAWGOD_DIR/chunks"
   mv "$RUNTIME_CANDIDATE_DIR/chunks" "$CLAWGOD_DIR/chunks"
 fi
 # Design canvas editor payload (loader=file asset from the binary) — see
@@ -653,6 +638,11 @@ if [ -d "$RUNTIME_CANDIDATE_DIR/assets" ]; then
 fi
 RUNTIME_HAS_CANDIDATE_VENDOR=1
 
+if [ "$NO_UPGRADE" = "1" ] && [ "$NATIVE_BIN_LABEL" != "$CURRENT_SOURCE_VERSION" ]; then
+  err "Recovered source version does not match installed version $CURRENT_SOURCE_VERSION"
+  exit 1
+fi
+"$BUN_BIN" "$RUNTIME_STATE_HELPER" clean-save "$CLAWGOD_DIR" "$NATIVE_BIN_LABEL"
 # Stamp the source version so the wrapper can detect drift on next launch
 echo "$NATIVE_BIN_LABEL" > "$CLAWGOD_DIR/.source-version"
 
@@ -722,6 +712,7 @@ info "Patcher created (patch.mjs)"
 
 dim "Applying patches ..."
 patch_args=(--enhancements-file "$CLAWGOD_DIR/enhancements.json")
+if [ "$TOLERATE_STALE" = "1" ]; then patch_args+=(--tolerate-stale); fi
 patch_fallback_authorized=0
 if [ "${CLAWGOD_UPDATE_PATCH_FAIL_OPEN:-}" = "1" ] \
   && [ "$NO_UPGRADE" != "1" ] \

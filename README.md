@@ -51,18 +51,18 @@ macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行�
 
 ## 安装 ClawGod Plus
 
-安装命令下载固定版本（v2026.8.13-claude.2.1.231）的 ClawGod Plus Release 资产。
+安装命令下载固定版本（v2026.10.15-claude.2.1.300.1）的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.8.13-claude.2.1.231/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.15-claude.2.1.300.1/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.8.13-claude.2.1.231/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.15-claude.2.1.300.1/install.ps1 | iex
 ```
 
 常用安装参数（不传版本时默认保持当前已安装的 Claude Code 版本，全新安装才拉取最新版）：
@@ -154,6 +154,14 @@ Windows PowerShell 对应参数：
 
 新补丁按模块解析并验证生成语法，歧义和缺少解析器会阻止写入；不适用的版本形态会跳过。`--dry-run` 不写入，现有 `--revert` 恢复机制不变。源码和本地生成安装器包含这些改动，但未发布的改动不会自动出现在上方固定版本的 Release 下载中。
 
+
+### 上游 v2.2.0 功能同步
+
+本分支同步至 [上游 v2.2.0](https://github.com/0Chencc/clawgod/releases/tag/v2.2.0)（`4038ca9`），保留 Bun-only、公共字符格渲染器、2.1.300 ABI 与现有增强选择，不引入全局 standalone 伪装或原生 execPath 重写。
+
+- 核心补丁增加按模块 AST 语义识别，修复 GrowthBook 提前返回，并随补丁器交付离线解析器；提取的文本资源按源字符串加载。
+- `privacy` 增强新增默认开启的 `remote-settings`：忽略企业远程设置及其缓存，不删除 `~/.claude/remote-settings.json`。**这会使组织远程下发的权限规则、远程控制限制和版本锁定不再生效**；需要这些策略时，设置 `CLAWGOD_FEATURE_REMOTE_SETTINGS=false` 或在 `patches.json` 中写入 `"remote-settings": false`。它不修改本地 settings 或系统管理策略。
+- 独立的 `claude --version` / `claude -v` 不初始化 Provider、不迁移或创建配置，也不查询 Release。安装启动探测默认限时 30 秒，必须在 stdout 输出有效版本；`CLAWGOD_STARTUP_TIMEOUT_MS` 可设置正整数毫秒，失败详情保存在 `startup-check.log`。
 
 ### 运行时补丁开关
 
@@ -295,6 +303,22 @@ CLAWGOD_NO_AUTO_CHROME=1 claude
 - `effort` 可设置为 `low`、`medium`、`high`、`max` 或 `auto`，空字符串表示不指定；`CLAUDE_CODE_EFFORT_LEVEL` 环境变量优先。实际支持的档位取决于模型，不会解锁模型不支持的能力。
 - `type: "grok"` / `"openai-compat"` 的内置代理对流式、非流式请求均转发 `reasoning_effort`：`max` 映射到 `xhigh`，`auto` 不发送该字段；显式配置也适用于未携带 effort 的自定义模型别名。代理启动后保留 `effort` 和 `timeoutMs`；`API_TIMEOUT_MS` 环境变量仍优先。
 
+### OpenAI Chat Completions
+
+`provider.json` 的可选 `protocol` 明确选择 `"anthropic"` 或 `"openai-chat"`，优先于旧的 `type: "grok"` / `"openai-compat"`。省略时保持原行为；不支持 `auto` 或 Responses API。Chat Completions 必须配置独立的 `baseURL` 和密钥，例如：
+
+```json
+{
+  "protocol": "openai-chat",
+  "baseURL": "https://gateway.example/v1",
+  "apiKey": "your-provider-key",
+  "model": "your-model",
+  "timeoutMs": 3000000
+}
+```
+
+代理转换工具调用与选择、图片和文本/PDF 文档，保留会话内 system 消息、工具参数和 schema 中的用户数据；不能表达的内容或 structured output 明确报错，不静默丢弃。流式处理保留 usage，校验分片工具 JSON，并传播取消、超时及 HTTP 错误。`count_tokens` 是本地估算，不等于供应商的计费 tokenizer；模型自身仍须支持相应模态和工具能力。
+
 ### Lean 与终端兼容（同步上游 v1.9.5–v1.9.6）
 
 本分支新安装仍默认 Lean **off**，不改变现有的功能选择。用 `claude --lean-on`、`claude --lean-off`、`claude --lean-max` 切换：
@@ -370,7 +394,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 8. 备份原始 Launcher，并写入 `claude` 和 `clawgod` Launcher。
 9. 使用生成的 `plugin-dependencies.mjs` 确保三个可选插件基线，再应用托管的 HUD 与 claude-mem 集成。
 
-`~/.clawgod/.source-version` 记录被修改的原生版本。后续启动时，Wrapper 会检测官方 Claude Code 升级并对新二进制重新打补丁。
+`~/.clawgod/.source-version` 记录被修改的原生版本。升级由 `claude update` 显式执行，Wrapper 不扫描旧原生安装自动重打，也不会让原生后台更新覆盖 ClawGod Launcher。
 
 安装器脚本是确定性生成产物：`src/` 是唯一事实来源，`dist/unix/install.sh` 与 `dist/win/install.ps1` 由 `bun build.mjs` 生成，请勿手工编辑。
 
@@ -384,9 +408,13 @@ claude update
 
 `claude update` 由 wrapper 直接交给 ClawGod updater，不再依赖上游 bundle 的 update action 形状。若新版只有 mandatory bundle recognizer 兼容性漂移，更新会提交 clean post-processed Claude Code runtime，并显示 fallback warning；下载、提取、vendor 发布或 Bun load 失败仍回滚。直接运行 installer、首次安装和 `--no-upgrade` 不启用该降级。插件基线独立管理：更新不会把 Claude Code 固定到插件版本。
 
+另可显式使用 `claude update --tolerate-stale`、`bash install.sh --tolerate-stale`、PowerShell `-TolerateStale`，或环境变量 `CLAWGOD_TOLERATE_STALE=1`：只跳过失配的补丁，保留其上游行为，继续应用其他成功补丁并列出跳过项。该选项不忽略语法错误、歧义或运行时失败，也不改变默认的整包兼容回退策略。
+
+升级失败会恢复上一套 CLI、wrapper、资源与 clean-source 备份；Provider、运行时开关和插件用户配置不属于回滚范围。`--no-upgrade` 校验并恢复当前版本的完整 clean-source 后重新打补丁，缺失或损坏的备份不得与其他版本混用。
+
 ```bash
 claude update --version 2.1.220  # 锁定已知 Claude Code 版本
-claude update --no-upgrade      # 不下载，只重新应用补丁
+claude update --no-upgrade      # 复用当前版本重打；clean 备份缺失时恢复精确当前版本
 ```
 
 ## 卸载

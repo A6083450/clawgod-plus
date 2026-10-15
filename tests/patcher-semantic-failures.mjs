@@ -1,0 +1,21 @@
+#!/usr/bin/env bun
+import assert from 'node:assert/strict';
+import { applySemanticPatches } from '../src/generic/patcher/semantic-runner.mjs';
+import { createPatchSelection, runtimeFeatureMetadata } from '../src/generic/patcher/registry.mjs';
+const realCommand = 'const command={type:"local-jsx",name:"ultraplan",get description(){return`Draft an editable plan in a cloud session (${xHn().timeEstimate}) · See ${iue}`},argumentHint:"<prompt>",availability:["claude-ai"],isEnabled:()=>q6(),load:()=>Promise.resolve({call:U4o})};const metadata={name:"ultraplan",description:"A cloud session drafts a plan you can edit and approve"};';
+const descriptor = { semanticId: 'ultraplan' };
+const run = source => applySemanticPatches(source, [descriptor]).results.get(descriptor);
+assert.equal(run(realCommand).status, 'applied', '2.1.300 展示 metadata 不是命令门控漂移');
+assert.equal(run('const metadata={name:"ultraplan",description:"A cloud session drafts a plan you can edit and approve"}').status, 'skipped');
+assert.equal(run("const a={name:'ultraplan',isEnabled:()=>false};const b={name:'ultraplan',isEnabled:unknown}").status, 'stale', '同模块已有匹配不能隐藏另一处识别漂移');
+assert.equal(run("const a={name:'ultraplan',isEnabled:()=>false,isEnabled:other}").status, 'failed', '重复键是歧义而非可跳过的 stale');
+const remote = { semanticId: 'remote-settings-off' };
+const helper = "function details(){log('Remote settings: checking eligibility');return {eligible:true}}";
+const result = applySemanticPatches(helper + "function changed(){let{eligible}=details();return eligible}function known(){let cached=read();if(cached!==void 0)return cached;let{eligible}=details();return eligible}", [remote]);
+assert.equal(result.results.get(remote).status, 'stale', '已知 remote gate 不能覆盖另一处漂移');
+const shadowed = applySemanticPatches(helper + "function gate(){let cached=read();if(cached!==void 0)return cached;function details(){return{eligible:true}}let{eligible}=details();return eligible}", [remote]);
+assert.equal(shadowed.results.get(remote).status, 'skipped', '同模块局部声明不能绑定到顶层同名诊断 helper');
+assert.deepEqual(runtimeFeatureMetadata['remote-settings-off'], ['remote-settings']);
+assert.ok(createPatchSelection(['privacy']).customPatches.some(p => p.semanticId === 'remote-settings-off'));
+assert.ok(!createPatchSelection([]).customPatches.some(p => p.semanticId === 'remote-settings-off'));
+console.log('semantic mixed drift, ambiguity and privacy selection checks passed');

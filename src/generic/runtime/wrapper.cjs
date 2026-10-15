@@ -27,6 +27,7 @@ if (!ripgrepPathWasReady) {
   process.exit(reexec.status ?? 1);
 }
 
+const versionOnly = process.argv.length === 3 && ['--version', '-v'].includes(process.argv[2]);
 const topLevelCommand = process.argv[2];
 if (topLevelCommand === 'update' || topLevelCommand === 'upgrade') {
   const { exitWithOutcome, runSelfUpdate } = require('./self-update.cjs');
@@ -61,7 +62,7 @@ if (patchFallback) {
 // index). Move it back transparently on first run after upgrade.
 const nativeClaudeJson = join(homedir(), '.claude.json');
 const strayClaudeJson = join(clawgodDir, '.claude.json');
-if (existsSync(strayClaudeJson) && !existsSync(nativeClaudeJson)) {
+if (!versionOnly && existsSync(strayClaudeJson) && !existsSync(nativeClaudeJson)) {
   try { renameSync(strayClaudeJson, nativeClaudeJson); } catch {}
 }
 
@@ -78,20 +79,24 @@ const defaultConfig = {
 };
 
 let config = { ...defaultConfig };
-if (existsSync(configFile)) {
+if (!versionOnly && existsSync(configFile)) {
   try {
     const raw = JSON.parse(readFileSync(configFile, 'utf8'));
     config = { ...defaultConfig, ...raw };
   } catch {}
-} else {
+} else if (!versionOnly) {
   mkdirSync(providerDir, { recursive: true });
   writeFileSync(configFile, JSON.stringify(defaultConfig, null, 2) + '\n');
 }
 
-// OpenAI-compatible provider proxy (grok, openai-compat, etc.)
-const _proxyTypes = { grok: 1, 'openai-compat': 1 };
+// 显式协议优先于旧 provider type，不能把不完整配置静默转发到 Anthropic。
+if (config.protocol !== undefined && !['anthropic', 'openai-chat'].includes(config.protocol)) {
+  throw new Error('[clawgod] Unsupported provider protocol: ' + config.protocol + '. Use anthropic or openai-chat.');
+}
+const _useProxy = config.protocol === 'openai-chat' ||
+  (config.protocol === undefined && ['grok', 'openai-compat'].includes(config.type));
 let _proxyActive = false;
-if (_proxyTypes[config.type]) {
+if (_useProxy) {
   let _proxyKey = config.apiKey || '';
   if (!_proxyKey && config.type === 'grok') {
     try {
@@ -100,6 +105,10 @@ if (_proxyTypes[config.type]) {
     } catch {}
     if (!_proxyKey) _proxyKey = process.env.GROK_API_KEY || '';
   }
+  if (!config.baseURL || config.baseURL === defaultConfig.baseURL) {
+    if (config.type === 'grok') config.baseURL = 'https://api.x.ai/v1';
+    else throw new Error('[clawgod] openai-chat requires an explicit baseURL.');
+  }
   if (_proxyKey) {
     const { startProxy } = require('./openai-proxy.cjs');
     const _proxy = startProxy({
@@ -107,6 +116,7 @@ if (_proxyTypes[config.type]) {
       baseURL: config.baseURL || (config.type === 'grok' ? 'https://api.x.ai/v1' : ''),
       model: config.model || '',
       effort: process.env.CLAUDE_CODE_EFFORT_LEVEL ?? config.effort,
+      timeoutMs: process.env.API_TIMEOUT_MS ?? config.timeoutMs,
     });
     _proxyActive = true;
     delete process.env.ANTHROPIC_API_KEY;
@@ -120,7 +130,7 @@ if (_proxyTypes[config.type]) {
     process.stderr.write('[clawgod] OpenAI-compat proxy on port ' + _proxy.port + ' (type: ' + config.type + ')\n');
     config = { ...config, apiKey: '', baseURL: '', model: '', smallModel: '' };  // prevent fallthrough to apiKey/baseURL injection below
   } else {
-    process.stderr.write('[clawgod] Warning: type=' + config.type + ' but no API key found\n');
+    throw new Error('[clawgod] openai-chat requires an API key (grok also accepts GROK_API_KEY).');
   }
 }
 
@@ -145,7 +155,7 @@ if (hasProviderApiKey) {
 // inherited auth. Its ClawGod Plus-specific launcher marks those subprocesses so the
 // wrapper can resolve the same provider and Haiku mapping at spawn time without
 // copying credentials into ~/.claude-mem/.env.
-if (process.env.CLAWGOD_CLAUDE_MEM === '1') {
+if (!versionOnly && process.env.CLAWGOD_CLAUDE_MEM === '1') {
   let _cmEnv = {};
   try {
     const _cmSettings = JSON.parse(readFileSync(join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'settings.json'), 'utf8'));
@@ -191,6 +201,8 @@ if (existsSync(join(clawgodDir, '.lean-max')) && !existsSync(join(clawgodDir, '.
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ??= '1';
 }
 process.env.DISABLE_INSTALLATION_CHECKS ??= '1';
+// 更新只走 ClawGod，防止原生后台更新重新遮蔽 Windows launcher。
+process.env.DISABLE_AUTOUPDATER = '1';
 // "Built-in" ripgrep resolves through the ClawGod-managed PATH above.
 process.env.USE_BUILTIN_RIPGREP ??= '1';
 
@@ -279,7 +291,7 @@ if (process.argv.includes('--lean-off') || process.argv.includes('--lean-on') ||
 try {
   const _ucFile = join(clawgodDir, '.update-check');
   const _verFile = join(clawgodDir, '.clawgod-version');
-  if (existsSync(_verFile)) {
+  if (!versionOnly && existsSync(_verFile)) {
     const _localVer = readFileSync(_verFile, 'utf8').trim();
     let _uc = null;
     try { if (existsSync(_ucFile)) _uc = JSON.parse(readFileSync(_ucFile, 'utf8')); } catch {}
@@ -299,8 +311,10 @@ try {
   }
 } catch {}
 
-try {
-  globalThis.__clawgodPatches = require('./feature-gates.cjs').loadFeatureGates(clawgodDir);
-} catch {}
+if (!versionOnly) {
+  try {
+    globalThis.__clawgodPatches = require('./feature-gates.cjs').loadFeatureGates(clawgodDir);
+  } catch {}
+}
 
 require('./cli.original.cjs');

@@ -11,6 +11,7 @@ const patches = [
   {
     order: 18,
     name: 'Computer Use default enabled',
+    semanticId: 'computer-use-default',
     pattern: /([\w$]+=)\{enabled:!1,pixelValidation/g,
     replacer: (match, prefix) => `${prefix}{enabled:${gate('computer-use-default')}?!0:!1,pixelValidation`,
     sentinel: '{enabled:!1,pixelValidation',

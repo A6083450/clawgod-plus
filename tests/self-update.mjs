@@ -28,6 +28,7 @@ const UPDATE_ENV_KEYS = [
   'CLAWGOD_UPDATE_PATCH_FAIL_OPEN',
   'CLAWGOD_VERSION',
   'CLAWGOD_NO_UPGRADE',
+  'CLAWGOD_TOLERATE_STALE',
   'CLAWGOD_LEAN_OFF',
   'CLAWGOD_LEAN_ON',
   'CLAWGOD_LEAN_MAX',
@@ -168,6 +169,7 @@ assert.deepEqual(
     explicitVersion: true,
     version: '2.1.220',
     noUpgrade: true,
+    tolerateStale: false,
     leanOff: true,
     leanOn: true,
     leanMax: true,
@@ -181,6 +183,7 @@ assert.deepEqual(
     explicitVersion: false,
     version: 'latest',
     noUpgrade: false,
+    tolerateStale: false,
     leanOff: false,
     leanOn: false,
     leanMax: false,
@@ -365,6 +368,20 @@ withUpdateFixture('Windows remote update flags', { windows: true }, fixture => {
   );
   assert.deepEqual(fixture.temporaryEntries(), [], 'Windows refresh must clean its temporary directory');
 });
+
+for (const windows of [false, true]) {
+  withUpdateFixture('explicit stale opt-in', { windows }, fixture => {
+    const outcome = runSelfUpdate(['update', '--tolerate-stale'], fixture.options);
+    assert.equal(outcome.status, 0);
+    assert.equal(fixture.invoked().updateEnv.CLAWGOD_TOLERATE_STALE, '1', 'explicit stale opt-in must reach either installer');
+    assert.equal(fixture.invoked().updateEnv.CLAWGOD_UPDATE_PATCH_FAIL_OPEN, '1', 'stale opt-in must not remove the existing update fallback');
+  });
+  withUpdateFixture('environment stale opt-in', { windows }, fixture => {
+    fixture.options.env.CLAWGOD_TOLERATE_STALE = '1';
+    assert.equal(runSelfUpdate(['update'], fixture.options).status, 0);
+    assert.equal(fixture.invoked().updateEnv.CLAWGOD_TOLERATE_STALE, '1');
+  });
+}
 
 withUpdateFixture('download nonzero', { fetchExit: 29 }, fixture => {
   const outcome = runSelfUpdate(['update'], fixture.options);

@@ -44,7 +44,14 @@ try {
   writeFileSync(native, 'fixture native', 'utf8');
   writeFileSync(repatcher, repatcherSource, 'utf8');
   writeFileSync(join(fixtureRoot, 'vendor-transaction.mjs'), vendorTransactionSource, 'utf8');
-  writeFileSync(join(fixtureRoot, 'extract-natives.mjs'), `import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nconst output = process.argv.at(-1);\nconst native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');\nwriteFileSync(join(output, 'cli.original.js'), 'candidate source');\nif (process.env.CANDIDATE_VENDOR_MISSING !== '1') {\n  mkdirSync(join(output, 'vendor', 'candidate-addon', 'arm64-darwin'), { recursive: true });\n  writeFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));\n  chmodSync(native, 0o751);\n}\n`, 'utf8');
+  writeFileSync(join(fixtureRoot, 'runtime-state.cjs'), readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)));
+  writeFileSync(join(fixtureRoot, 'startup-check.cjs'), readFileSync(new URL('../src/generic/runtime/startup-check.cjs', import.meta.url)));
+  writeFileSync(join(fixtureRoot, 'cli.cjs'), 'if (process.env.STARTUP_FAIL === "1") process.exit(37); console.log("2.1.226 (Claude Code)");');
+  mkdirSync(join(fixtureRoot, 'assets'));
+  writeFileSync(join(fixtureRoot, 'assets', 'prior.txt'), 'prior asset');
+  writeFileSync(join(fixtureRoot, 'cli.original.cjs.bak'), 'prior clean');
+  writeFileSync(join(fixtureRoot, '.clean-source.json'), 'prior clean manifest');
+  writeFileSync(join(fixtureRoot, 'extract-natives.mjs'), `import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nconst output = process.argv.at(-1);\nconst native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');\nwriteFileSync(join(output, 'cli.original.js'), 'candidate source');\nmkdirSync(join(output, 'assets'));\nwriteFileSync(join(output, 'assets', 'new.txt'), 'candidate asset');\nif (process.env.CANDIDATE_VENDOR_MISSING !== '1') {\n  mkdirSync(join(output, 'vendor', 'candidate-addon', 'arm64-darwin'), { recursive: true });\n  writeFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));\n  chmodSync(native, 0o751);\n}\n`, 'utf8');
   writeFileSync(join(fixtureRoot, 'post-process.mjs'), `import { writeFileSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\nwriteFileSync(join(dirname(import.meta.path), 'cli.original.cjs'), ${JSON.stringify(candidateRuntime)}, 'utf8');\n`, 'utf8');
   writeFileSync(join(fixtureRoot, 'patch.mjs'), `import { mkdirSync, writeFileSync } from 'node:fs';\nimport { dirname } from 'node:path';\nwriteFileSync(process.env.PATCH_ARGS, JSON.stringify(process.argv.slice(2)), 'utf8');\nif (process.env.PATCH_EXIT !== '0') { mkdirSync(dirname(process.env.EXTERNAL_REPLACEMENT), { recursive: true }); writeFileSync(process.env.EXTERNAL_REPLACEMENT, Buffer.from([0x55, 0xaa])); }\nprocess.exit(Number(process.env.PATCH_EXIT || 0));\n`, 'utf8');
   writeFileSync(target, priorRuntime, 'utf8');
@@ -84,6 +91,10 @@ try {
   assert.notEqual(failed.status, 0, 'repatch must propagate mandatory patch failure');
   assert.deepEqual(JSON.parse(readFileSync(patchArgs, 'utf8')), ['--enhancements-file', enhancementsFile], 'repatch must pass exact saved config argv');
   assert.equal(readFileSync(target, 'utf8'), priorRuntime, 'repatch must restore prior runtime after mandatory patch failure');
+  assert.equal(existsSync(join(fixtureRoot, 'assets', 'prior.txt')), true, 'failed repatch must restore prior assets');
+  assert.equal(existsSync(join(fixtureRoot, 'assets', 'new.txt')), false, 'failed repatch must remove candidate assets');
+  assert.equal(readFileSync(join(fixtureRoot, 'cli.original.cjs.bak'), 'utf8'), 'prior clean', 'failed repatch must restore prior clean backup');
+  assert.equal(readFileSync(join(fixtureRoot, '.clean-source.json'), 'utf8'), 'prior clean manifest');
   assert.equal(readFileSync(sourceVersion, 'utf8'), '2.1.225\n', 'repatch must preserve prior source marker after mandatory patch failure');
   assert.equal(readFileSync(patchesFile, 'utf8'), savedPatches, 'failed repatch must preserve runtime patch config bytes');
   assert.equal(statSync(patchesFile).mode & 0o7777, patchesBefore.mode & 0o7777, 'failed repatch must preserve runtime patch config mode');
@@ -108,6 +119,11 @@ try {
   assert.deepEqual(readFileSync(ripgrep), ripgrepBytes, 'vendor preflight failure must preserve managed ripgrep bytes');
   assert.deepEqual(readdirSync(fixtureRoot).filter(name => name.startsWith('.runtime-rollback.')), [], 'verified vendor preflight rollback must clean transaction data');
 
+  const startupFailed = run(0, { STARTUP_FAIL: '1' });
+  assert.notEqual(startupFailed.status, 0, 'repatch must reject an unlaunchable candidate');
+  assert.equal(readFileSync(target, 'utf8'), priorRuntime, 'startup failure must restore prior runtime');
+  assert.equal(readFileSync(join(fixtureRoot, 'assets', 'prior.txt'), 'utf8'), 'prior asset', 'startup failure must restore prior assets');
+  assert.deepEqual(readFileSync(oldNative), oldNativeBytes, 'startup failure must restore vendor before prior runtime');
   const passed = run(0);
   assert.equal(passed.status, 0, `${passed.stdout}${passed.stderr}`);
   assert.deepEqual(JSON.parse(readFileSync(patchArgs, 'utf8')), ['--enhancements-file', enhancementsFile], 'successful repatch must reuse exact saved config argv');
@@ -121,6 +137,12 @@ try {
   assert.deepEqual(readFileSync(ripgrep), ripgrepBytes, 'successful repatch must preserve managed ripgrep bytes');
   assert.equal(lstatSync(ripgrep).ino, ripgrepBefore.ino, 'successful repatch must not replace managed ripgrep');
   assert.deepEqual(readdirSync(fixtureRoot).filter(name => name.startsWith('.runtime-rollback.')), [], 'successful repatch must remove committed transaction data');
+  writeFileSync(join(fixtureRoot, 'extract-natives.mjs'), 'throw new Error("clean same-version repatch must not extract");');
+  writeFileSync(target, 'previously patched source');
+  const repeated = run(0, { CLAWGOD_TOLERATE_STALE: '1' });
+  assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr);
+  assert.equal(readFileSync(target, 'utf8'), candidateRuntime, 'same-version repatch must recompute from verified clean source');
+  assert.deepEqual(JSON.parse(readFileSync(patchArgs, 'utf8')), ['--enhancements-file', enhancementsFile, '--tolerate-stale']);
   const configAfter = statSync(enhancementsFile);
   const patchesAfter = statSync(patchesFile);
   assert.equal(readFileSync(enhancementsFile, 'utf8'), savedConfig, 'repatch must preserve saved config bytes');

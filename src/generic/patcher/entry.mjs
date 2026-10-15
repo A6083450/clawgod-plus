@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * ClawGod Plus Universal Patcher — 正则模式匹配, 跨版本兼容
+ * ClawGod Plus Universal Patcher — AST 语义识别与兼容正则补丁
  */
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { dirname, isAbsolute, join } from 'path';
@@ -13,6 +13,7 @@ import {
 } from '../enhancement-config.mjs';
 import { inspectPatcherSource } from './core.mjs';
 import { createPatchSelection, enhancementManifest } from './registry.mjs';
+import { applySemanticPatches } from './semantic-runner.mjs';
 
 export const PATCH_COMPATIBILITY_EXIT_CODE = 42;
 
@@ -84,6 +85,7 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   const dryRun = args.includes('--dry-run');
   const verify = args.includes('--verify');
   const revert = args.includes('--revert');
+  const tolerateStale = args.includes('--tolerate-stale');
   const allowCompatibilityFallback = args.includes('--allow-compatibility-fallback')
     && !dryRun
     && !verify
@@ -140,8 +142,33 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   let skipped = 0;
   let failed = 0;
   let warnings = 0;
+  const tolerated = [];
+  const stale = (name, detail) => {
+    console.log(`  ${tolerateStale ? 'WARNING' : 'FAILED'} ${name} — ${detail}${tolerateStale ? ' (tolerated)' : ''}`);
+    if (tolerateStale) tolerated.push(name);
+    else failed++;
+  };
+  try {
+    const semanticDescriptors = [...patches, ...customPatches].filter(descriptor => descriptor.semanticId);
+    const semantic = applySemanticPatches(code, semanticDescriptors, { dryRun, verify });
+    code = semantic.code;
+    for (const descriptor of semanticDescriptors) {
+      const result = semantic.results.get(descriptor);
+      if (result.status === 'stale') stale(descriptor.name, result.detail);
+      else if (result.status === 'failed') {
+        console.log(`  FAILED ${descriptor.name} — ${result.detail}`);
+        failed++;
+      } else if (result.status === 'applied' || result.status === 'already') {
+        console.log(`  OK ${descriptor.name} (${result.count ?? 'already applied'}${result.count ? ' replacements' : ''})`);
+        applied++;
+      } else skipped++;
+    }
+  } catch (error) {
+    console.error(`AST scan/rewrite failed: ${error.message}. Source files were not changed.`);
+    process.exit(1);
+  }
 
-  for (const patch of patches) {
+  for (const patch of patches.filter(descriptor => !descriptor.semanticId)) {
     const matches = [...code.matchAll(patch.pattern)];
     let relevant = matches;
 
@@ -161,8 +188,7 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
 
     if (relevant.length === 0) {
       if (patch.knownShape?.test(code)) {
-        console.log(`  ❌ ${patch.name} — known resolver shape did not match exactly`);
-        failed++;
+        stale(patch.name, 'known resolver shape did not match exactly');
         continue;
       }
       if (patch.appliedMarker !== undefined && (patch.appliedMarker instanceof RegExp ? patch.appliedMarker.test(code) : code.includes(patch.appliedMarker))) {
@@ -178,8 +204,7 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
         const sentinels = Array.isArray(patch.sentinel) ? patch.sentinel : [patch.sentinel];
         const stillPresent = sentinels.filter(sentinel => code.includes(sentinel));
         if (stillPresent.length > 0) {
-          console.log(`  ❌ ${patch.name} — regex stale, sentinel still in source: ${stillPresent.map(sentinel => JSON.stringify(sentinel)).join(', ')}`);
-          failed++;
+          stale(patch.name, `regex stale, sentinel still in source: ${stillPresent.map(sentinel => JSON.stringify(sentinel)).join(', ')}`);
           continue;
         }
         console.log(`  ✅ ${patch.name} (already applied, sentinel absent)`);
@@ -212,7 +237,7 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
     }
   }
 
-  for (const descriptor of customPatches) {
+  for (const descriptor of customPatches.filter(descriptor => !descriptor.semanticId)) {
     const result = await descriptor.apply(code, { dryRun, verify, rootDir });
     if (result.status === 'applied') {
       if (!dryRun) code = result.code;
@@ -229,6 +254,8 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
       applied++;
     } else if (result.status === 'skipped') {
       skipped++;
+    } else if (result.status === 'stale') {
+      stale(descriptor.name, result.detail);
     } else {
       console.log(`  ❌ ${descriptor.name} — ${result.detail}`);
       failed++;
@@ -236,6 +263,7 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
   }
 
   console.log(`\n${'─'.repeat(55)}`);
+  if (tolerated.length) console.log(`  Tolerated (skipped, upstream behavior kept): ${tolerated.join('; ')}`);
   console.log(`  Result: ${applied} applied, ${skipped} skipped, ${failed} failed${warnings > 0 ? `, ${warnings} warning${warnings > 1 ? 's' : ''}` : ''}`);
 
   if (failed === 0 && !dryRun && !verify && applied > 0) {
@@ -247,7 +275,7 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
     }
     for (let i = 0; i < modules.length; i++) modules[i].code = resultModules[i];
     writeBundle(rootDir, modules);
-    const difference = code.length - originalSize;
+    const difference = resultModules.reduce((sum, module) => sum + module.length, 0) - originalSize;
     console.log(`  📝 Written: cli.original.cjs${hasChunks ? ` + ${modules.length - 1} chunks` : ''} (${difference >= 0 ? '+' : ''}${difference} bytes)`);
   }
 

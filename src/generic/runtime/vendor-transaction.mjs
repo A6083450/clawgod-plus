@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { lstatSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const VENDOR_PUBLISH_ROLLED_BACK = 20;
 export const VENDOR_PUBLISH_CONFLICT = 21;
@@ -427,8 +428,11 @@ function boundedDiagnostic(stdout, stderr) {
   return output.slice(0, chars);
 }
 
-function validateRuntime(bun, cli) {
-  const result = spawnSync(bun, [cli, '--version'], { encoding: 'utf8', env: process.env });
+export function validateRuntime(bun, cli) {
+  const checker = fileURLToPath(new URL('./startup-check.cjs', import.meta.url));
+  const deadline = Number(process.env.CLAWGOD_STARTUP_TIMEOUT_MS || 30000);
+  const timeout = Number.isInteger(deadline) && deadline > 0 ? Math.min(deadline + 5000, 2147483647) : 5000;
+  const result = spawnSync(process.execPath, [checker, bun, cli], { encoding: 'utf8', env: process.env, timeout, maxBuffer: 3 * 1024 * 1024 });
   const diagnostic = boundedDiagnostic(result.stdout, result.stderr);
   let reason;
   if (result.error) reason = result.error.message;

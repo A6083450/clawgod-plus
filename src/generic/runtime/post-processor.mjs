@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync, realpathSync } from 'fs';
 import { createHash } from 'crypto';
 import { basename, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -6399,7 +6399,7 @@ export function structuralModule(source) {
     topBindings: Object.fromEntries([...root.names].map(([name, id]) => [name, Number(id.slice(8))])) };
 }
 
-const here = dirname(fileURLToPath(import.meta.url));
+const here = realpathSync.native(dirname(fileURLToPath(import.meta.url)));
 const src = `${here}/cli.original.js`;
 const dst = `${here}/cli.original.cjs`;
 
@@ -6408,7 +6408,7 @@ const dst = `${here}/cli.original.cjs`;
 // Normalise backslashes (Windows argv) to forward slashes: the baked paths
 // are spliced into JS string literals, where a raw `\` would be parsed as an
 // escape sequence, and Windows filesystem APIs accept forward slashes.
-const clawgodDir = (process.argv[2] || here).replace(/\\/g, '/');
+const clawgodDir = realpathSync.native(process.argv[2] || here).replace(/\\/g, '/');
 
 const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
 const os = process.platform === 'darwin' ? 'darwin' : process.platform === 'linux' ? 'linux' : 'win32';
@@ -6418,6 +6418,27 @@ const archOs = `${arch}-${os}`;
 // B:/~BUN/root/... (Windows). Match both prefixes so every reference is
 // rewritten regardless of which build produced the binary.
 const BUNFS = String.raw`(?:[A-Za-z]:)?\/(?:\$bunfs|~BUN)\/root\/`;
+
+// 提取的文本在原生 bundle 中是字符串，Bun 的磁盘 loader 却返回模块 namespace。
+function fixTextRequires(code) {
+  const textRoot = JSON.stringify(join(clawgodDir, 'assets'));
+  return code.replace(/\b([\w$]+)=import\.meta\.require(?=[,;])/g, (_match, name) =>
+    `${name} = (id) => {
+      if (/\\.(?:txt|md)$/.test(id)) {
+        const fs = import.meta.require('node:fs');
+        const path = import.meta.require('node:path');
+        if (fs.existsSync(${textRoot})) {
+          const target = fs.realpathSync.native(path.isAbsolute(id) ? id : import.meta.require.resolve(id));
+          const relative = path.relative(fs.realpathSync.native(${textRoot}), target);
+          if (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)) {
+            return fs.readFileSync(target, 'utf8');
+          }
+        }
+      }
+      return import.meta.require(id);
+    }`,
+  );
+}
 
 function rewrite(code, { chunkPrefix }) {
   // (1) code-split chunk import specifiers → local relative path.
@@ -6442,7 +6463,7 @@ function rewrite(code, { chunkPrefix }) {
     new RegExp(`${BUNFS}src/plugins/functionHooks/hooks-worker/hooks-worker\\.js`, 'g'),
     `${clawgodDir}/chunks/hooks-worker.js`,
   );
-  return code;
+  return fixTextRequires(code);
 }
 
 // ── 公开 Bun 的字符格渲染器 ────────────────────────────────────────────────

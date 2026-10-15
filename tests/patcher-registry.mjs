@@ -134,8 +134,8 @@ const ownedDescriptors = patchRegistries.flatMap(registry => [
   ...registry.patches.map(descriptor => ({ descriptor, owner: registry.id })),
   ...registry.customPatches.map(descriptor => ({ descriptor, owner: registry.id })),
 ]);
-assert.equal(ownedDescriptors.length, 81, 'every regex and custom patch descriptor must retain exactly one owner');
-assert.equal(Object.keys(runtimeFeatureMetadata).length, 49, 'all upstream runtime feature patch IDs must be exported');
+assert.equal(ownedDescriptors.length, 83, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(Object.keys(runtimeFeatureMetadata).length, 50, 'all upstream runtime feature patch IDs must be exported');
 assert.equal(
   new Set(ownedDescriptors.map(({ descriptor }) => descriptor)).size,
   ownedDescriptors.length,
@@ -170,6 +170,8 @@ assert.deepEqual(
     { name: 'Auto-mode classifier retries override (CLAWGOD_CLASSIFIER_RETRIES)', type: 'regex', order: 70 },
     { name: 'Preserve split terminal replies while a DA1 probe is pending', type: 'regex', order: 90 },
     { name: 'Built-in hooks module for plain Bun cli.cjs', type: 'custom', order: 91 },
+    { name: 'GrowthBook env overrides (graph dead-code fix)', type: 'custom', order: 92 },
+    { name: 'Disable enterprise remote settings', type: 'custom', order: 93 },
     { name: 'Voice hold input: clean warmup once, consume recording repeats', type: 'custom', order: 99 },
   ],
   'runtime and terminal descriptors must have stable post-canonical order values',
@@ -270,6 +272,7 @@ const expectedCore = [
   'Context limit configurable',
   'Claude API skill lazy docs',
   'Built-in hooks module for plain Bun cli.cjs',
+  'GrowthBook env overrides (graph dead-code fix)',
   'Cometix parity: context-limit',
 ];
 const core = patchRegistries.find(registry => registry.id === 'core');

@@ -38,13 +38,13 @@ const generatedUnix = generated.find(pair => pair.output === 'dist/unix/install.
 const generatedWindows = generated.find(pair => pair.output === 'dist/win/install.ps1').content;
 const manifest = JSON.parse(readFileSync(join(root, 'src/generic/enhancements.json'), 'utf8'));
 const generatedConfigWriteStart = generatedUnix.indexOf('cat > "$CLAWGOD_DIR/enhancement-config.mjs"');
-const generatedBootstrapStart = generatedUnix.lastIndexOf('\n', generatedConfigWriteStart - 2) + 1;
+const generatedBootstrapStart = generatedConfigWriteStart;
 const generatedBootstrapEnd = generatedUnix.indexOf('\n\ncat > "$CLAWGOD_DIR/proxy-fetch.mjs"', generatedBootstrapStart);
 assert.ok(
   generatedConfigWriteStart >= 0 && generatedBootstrapStart >= 0 && generatedBootstrapEnd > generatedBootstrapStart,
   'install.sh must retain the generated selection bootstrap',
 );
-const generatedSelectionBootstrap = generatedUnix.slice(generatedBootstrapStart, generatedBootstrapEnd);
+const generatedSelectionBootstrap = `prepare_enhancement_config_directory\n${generatedUnix.slice(generatedBootstrapStart, generatedBootstrapEnd)}`;
 
 assert.ok(generatedUnix.includes(unixLauncher), 'install.sh must embed the canonical Unix launcher source exactly');
 assert.ok(generatedWindows.includes(windowsLauncher), 'install.ps1 must embed the canonical Windows launcher source exactly');

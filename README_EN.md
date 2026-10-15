@@ -51,18 +51,18 @@ The installer fetches the current platform-specific official `@anthropic-ai/clau
 
 ## Install ClawGod Plus
 
-These commands download the pinned ClawGod Plus release assets (v2026.8.13-claude.2.1.231).
+These commands download the pinned ClawGod Plus release assets (v2026.10.15-claude.2.1.300.1).
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.8.13-claude.2.1.231/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.15-claude.2.1.300.1/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.8.13-claude.2.1.231/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.15-claude.2.1.300.1/install.ps1 | iex
 ```
 
 Useful installer options (with no version specified, the installer keeps the currently installed Claude Code version; a fresh install pulls the latest):
@@ -154,6 +154,14 @@ The seven new installation options also have same-named `patches.json` switches.
 
 New patches parse individual modules and validate generated syntax; ambiguity or a missing parser prevents writes. Inapplicable version shapes are skipped. `--dry-run` is non-mutating; existing `--revert` behavior is retained. These changes are in source and locally generated installers, not automatically in the pinned Release downloads above before publication.
 
+
+### Upstream v2.2.0 parity
+
+Synced against [upstream v2.2.0](https://github.com/0Chencc/clawgod/releases/tag/v2.2.0) (`4038ca9`), preserving Bun-only operation, this fork's renderer/2.1.300 ABI and enhancement selection. Core patches use per-module semantic AST matching with an offline parser; extracted text assets load as source strings.
+
+The `privacy` enhancement adds `remote-settings`, enabled by default. It ignores enterprise remote policies and their cache without deleting `~/.claude/remote-settings.json`. **Organization-supplied permission rules, Remote Control restrictions and version pins will not apply.** Set `CLAWGOD_FEATURE_REMOTE_SETTINGS=false` or `"remote-settings": false` in `patches.json` to restore upstream behavior. Local settings and OS-managed policy are not changed.
+
+Standalone `claude --version` / `claude -v` skip provider initialization, configuration writes/migrations and release checks. Installer startup probes require a version on stdout and time out after 30 seconds; set positive-integer `CLAWGOD_STARTUP_TIMEOUT_MS` to adjust. Diagnostics go to `startup-check.log`.
 
 ### Runtime patch switches
 
@@ -295,6 +303,12 @@ The first launch creates `~/.clawgod/provider.json`:
 - Set `effort` to `low`, `medium`, `high`, `max`, or `auto`; an empty string leaves it unspecified. The `CLAUDE_CODE_EFFORT_LEVEL` environment variable takes priority. Supported levels depend on the model; this does not unlock unsupported model capabilities.
 - For `type: "grok"` / `"openai-compat"`, the bundled proxy forwards `reasoning_effort` for streaming and non-streaming requests: `max` becomes `xhigh`, and `auto` omits the field. Explicit configuration also covers custom model aliases whose requests omit effort. Proxy startup preserves `effort` and `timeoutMs`; `API_TIMEOUT_MS` still takes priority.
 
+### OpenAI Chat Completions
+
+Optional `protocol` in `provider.json` accepts `"anthropic"` or `"openai-chat"` and overrides legacy `type: "grok"` / `"openai-compat"`. Omitting it retains legacy behavior; `auto` and Responses API are unsupported. Chat Completions requires an explicit `baseURL` (for example `https://gateway.example/v1`) and `apiKey`.
+
+The proxy translates tool calls/selection, images and text/PDF documents, preserves inline system messages and user fields inside tool input/schema, and rejects unsupported content/structured output rather than dropping it. Streaming preserves usage, validates fragmented tool JSON and propagates cancellation, timeout and HTTP errors. `count_tokens` is a local estimate, not the provider's billing tokenizer; model capability remains provider-dependent.
+
 ### Lean and terminal compatibility (upstream v1.9.5–v1.9.6)
 
 New installs of this fork still default to Lean **off**, preserving the existing enhancement selection. Switch with `claude --lean-on`, `claude --lean-off`, or `claude --lean-max`:
@@ -370,7 +384,7 @@ These scripts create backups before applying changes. Use their `--restore` opti
 8. Backs up the original launcher and writes `claude` plus `clawgod` launchers.
 9. Uses the generated `plugin-dependencies.mjs` to ensure the three optional plugin baselines, then applies their managed HUD and claude-mem integrations.
 
-`~/.clawgod/.source-version` records the patched native version. On later starts, the wrapper detects official Claude Code upgrades and re-patches the new binary.
+`~/.clawgod/.source-version` records the patched native version. Upgrades run explicitly through `claude update`; the wrapper does not scan older native installations for drift. Native background updates are disabled to protect the ClawGod launcher.
 
 The installer scripts are deterministic generated artifacts: `src/` is the single source of truth, and `dist/unix/install.sh` plus `dist/win/install.ps1` are generated by `bun build.mjs` — do not edit them by hand.
 
@@ -384,9 +398,13 @@ claude update
 
 `claude update` is handed directly to the ClawGod updater by the wrapper and no longer depends on the upstream bundle's update action shape. If a new release only drifts on a mandatory bundle recognizer, the update commits a clean post-processed Claude Code runtime and shows a fallback warning; download, extract, vendor-publication, or Bun-load failures still roll back. Running the installer directly, first install, and `--no-upgrade` do not enable that degradation. Plugin baselines are managed separately: the update does not pin Claude Code to plugin versions.
 
+Explicit `claude update --tolerate-stale`, `bash install.sh --tolerate-stale`, PowerShell `-TolerateStale`, or `CLAWGOD_TOLERATE_STALE=1` skips only stale matchers, retains upstream behavior at those sites, and applies the remaining patches with a skipped-item report. It does not tolerate syntax errors, ambiguity or startup failures, and does not change the existing automatic whole-bundle fallback.
+
+Failed upgrades restore the previous CLI, wrapper, assets and clean-source backups, not user Provider/runtime-switch/plugin configuration. `--no-upgrade` validates the complete current-version clean source before re-patching; missing or damaged backups must not mix versions.
+
 ```bash
 claude update --version 2.1.220  # pin a known Claude Code version
-claude update --no-upgrade      # reapply patches without downloading
+claude update --no-upgrade      # reuse current source; recover that exact version if clean backup is missing
 ```
 
 ## Uninstall

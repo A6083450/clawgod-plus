@@ -51,18 +51,18 @@ macOS/Linux では Shell、Windows では PowerShell を OS のコマンド入�
 
 ## ClawGod Plus をインストール
 
-以下のコマンドは、固定バージョン（v2026.8.13-claude.2.1.231）の ClawGod Plus Release アセットをダウンロードします。
+以下のコマンドは、固定バージョン（v2026.10.15-claude.2.1.300.1）の ClawGod Plus Release アセットをダウンロードします。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.8.13-claude.2.1.231/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.15-claude.2.1.300.1/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.8.13-claude.2.1.231/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.15-claude.2.1.300.1/install.ps1 | iex
 ```
 
 主なインストーラオプション（バージョン未指定時は現在インストール済みの Claude Code バージョンを維持し、新規インストール時のみ最新を取得）：
@@ -154,6 +154,14 @@ Windows PowerShell では次の引数になります。
 
 追加パッチはモジュール単位で構文解析と生成コードの検証を行い、曖昧な形態やパーサー欠落時は書き込みません。対象外のバージョン形態はスキップします。`--dry-run` は変更せず、既存の `--revert` を維持します。変更はソースとローカル生成インストーラに含まれ、未公開の間は上記固定 Release のダウンロードには含まれません。
 
+
+### 上流 v2.2.0 との機能同期
+
+[上流 v2.2.0](https://github.com/0Chencc/clawgod/releases/tag/v2.2.0)（`4038ca9`）に同期し、Bun-only、独自レンダラーと 2.1.300 ABI、拡張選択を維持します。主要パッチはモジュール単位の AST 意味解析と同梱オフラインパーサーを使用し、抽出テキストはソース文字列として読み込みます。
+
+`privacy` 拡張には既定で有効な `remote-settings` が追加されます。企業のリモートポリシーとキャッシュを無視しますが、`~/.claude/remote-settings.json` は削除しません。**組織が配布する権限ルール、Remote Control 制限、バージョン固定は適用されなくなります。** `CLAWGOD_FEATURE_REMOTE_SETTINGS=false` または `patches.json` の `"remote-settings": false` で上流の動作に戻せます。ローカル設定と OS 管理ポリシーは変更しません。
+
+単独の `claude --version` / `claude -v` は Provider 初期化、設定作成・移行、Release 確認を行いません。インストール時の起動確認は stdout のバージョン出力を検証し、既定で 30 秒後に終了します。正の整数ミリ秒の `CLAWGOD_STARTUP_TIMEOUT_MS` で調整でき、診断は `startup-check.log` に保存されます。
 
 ### 実行時パッチスイッチ
 
@@ -295,6 +303,12 @@ HUD では、インストーラが以下の正確な profile を維持し、`~/.
 - `effort` は `low`、`medium`、`high`、`max`、`auto` を指定でき、空文字列は未指定です。環境変数 `CLAUDE_CODE_EFFORT_LEVEL` が優先されます。利用可能な強度はモデルによって異なり、未対応の能力を解除するものではありません。
 - `type: "grok"` / `"openai-compat"` の内蔵プロキシはストリーミング・非ストリーミング双方で `reasoning_effort` を転送します。`max` は `xhigh` に変換し、`auto` はフィールドを省略します。明示設定は effort を送らないカスタムモデル名にも適用されます。プロキシ起動後も `effort` と `timeoutMs` を保持し、`API_TIMEOUT_MS` を優先します。
 
+### OpenAI Chat Completions
+
+`provider.json` の任意項目 `protocol` は `"anthropic"` または `"openai-chat"` を指定でき、旧 `type: "grok"` / `"openai-compat"` より優先されます。省略時は従来動作を維持し、`auto` と Responses API は未対応です。Chat Completions には明示的な `baseURL`（例：`https://gateway.example/v1`）と `apiKey` が必要です。
+
+プロキシはツール呼び出し・選択、画像、テキスト/PDF 文書を変換し、会話内 system メッセージやツール入力・schema 内のユーザーフィールドを保持します。表現できないコンテンツや structured output は黙って破棄せずエラーにします。ストリームの usage と分割ツール JSON を処理し、キャンセル・タイムアウト・HTTP エラーを伝達します。`count_tokens` はローカル推定値であり、課金用 tokenizer とは異なります。実際のモデル能力は Provider に依存します。
+
 ### Lean と端末互換性（上流 v1.9.5–v1.9.6）
 
 本フォークの新規インストールは引き続き Lean **off** が既定で、既存の拡張機能選択を維持します。`claude --lean-on`、`claude --lean-off`、`claude --lean-max` で切り替えます。
@@ -370,7 +384,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 8. 元の Launcher をバックアップし、`claude` と `clawgod` Launcher を作成します。
 9. 生成した `plugin-dependencies.mjs` で 3 つの任意プラグインのベースラインを確保し、管理対象の HUD と claude-mem 統合を適用します。
 
-`~/.clawgod/.source-version` はパッチ対象のネイティブ版を記録します。その後の起動で Wrapper が公式 Claude Code の更新を検出し、新しいバイナリへ再パッチします。
+`~/.clawgod/.source-version` はパッチ対象のネイティブ版を記録します。更新は `claude update` で明示的に実行し、Wrapper は古いネイティブ版を走査して再パッチしません。ClawGod Launcher を保護するため、ネイティブのバックグラウンド更新は無効です。
 
 インストーラスクリプトは決定的に生成される成果物です。`src/` が唯一の正規ソースであり、`dist/unix/install.sh` と `dist/win/install.ps1` は `bun build.mjs` によって生成されます。手動で編集しないでください。
 
@@ -384,9 +398,13 @@ claude update
 
 `claude update` は wrapper から ClawGod updater に直接渡され、上流 bundle の update action 形状には依存しません。新バージョンが mandatory bundle recognizer の互換性ドリフトだけなら、更新は clean な post-process 済み Claude Code runtime をコミットして fallback warning を表示します。ダウンロード、抽出、vendor 公開、Bun load の失敗は引き続きロールバックされます。インストーラを直接実行、初回インストール、`--no-upgrade` ではこのフォールバックは有効になりません。プラグインのベースラインは独立して管理され、Claude Code をプラグインのバージョンに固定しません。
 
+明示的な `claude update --tolerate-stale`、`bash install.sh --tolerate-stale`、PowerShell `-TolerateStale`、または `CLAWGOD_TOLERATE_STALE=1` は、古くなったマッチャーだけをスキップし、その箇所の上流動作を維持したまま他のパッチを適用して一覧を表示します。構文エラー、曖昧な一致、起動失敗は許容せず、従来の全体フォールバックも変更しません。
+
+更新失敗時は以前の CLI、Wrapper、assets、clean-source バックアップを復元し、ユーザーの Provider・実行時スイッチ・プラグイン設定は巻き戻しません。`--no-upgrade` は現在バージョンの完全な clean source を検証して再パッチし、欠損したバックアップと他バージョンを混在させません。
+
 ```bash
 claude update --version 2.1.220  # 既知の Claude Code バージョンに固定
-claude update --no-upgrade      # ダウンロードせずパッチだけ再適用
+claude update --no-upgrade      # 現行ソースで再適用、clean バックアップ欠損時は同一版を復元
 ```
 
 ## アンインストール

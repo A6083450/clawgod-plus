@@ -32,6 +32,7 @@ function parseUpdateArgs(argv) {
     explicitVersion,
     version: explicitVersion ? args[versionIndex + 1] : 'latest',
     noUpgrade: args.includes('--no-upgrade'),
+    tolerateStale: args.includes('--tolerate-stale'),
     leanOff: args.includes('--lean-off'),
     leanOn: args.includes('--lean-on'),
     leanMax: args.includes('--lean-max'),
@@ -69,6 +70,8 @@ function childEnvironment(env, parsed) {
     if (parsed[argumentKey]) childEnv[environmentKey] = '1';
     else delete childEnv[environmentKey];
   }
+  if (parsed.tolerateStale || env.CLAWGOD_TOLERATE_STALE === '1') childEnv.CLAWGOD_TOLERATE_STALE = '1';
+  else delete childEnv.CLAWGOD_TOLERATE_STALE;
   return childEnv;
 }
 

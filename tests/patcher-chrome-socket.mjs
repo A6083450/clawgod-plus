@@ -101,7 +101,7 @@ let helperAcornSource;
 for (const [name, patcherSource] of await getPatcherSources()) {
   for (const noAcorn of [false, true]) {
     for (const [fixtureName, fixture] of fixtures) {
-      const mode = noAcorn ? 'regex fallback' : 'AST';
+      const mode = noAcorn ? 'offline embedded AST' : 'AST';
       const label = `${name} ${mode} ${fixtureName}`;
       const dir = mkdtempSync(join(tmpdir(), 'clawgod-chrome-socket-'));
       try {
@@ -114,12 +114,6 @@ for (const [name, patcherSource] of await getPatcherSources()) {
         const args = noAcorn ? ['no-fetch.cjs', './patch.mjs'] : ['patch.mjs'];
         const run = spawnSync(process.execPath, args, { cwd: dir, encoding: 'utf8' });
         const output = run.stdout + run.stderr;
-        if (noAcorn) {
-          assert.notEqual(run.status, 0, `${label}: AST-only parity must fail closed without Acorn`);
-          assert.match(output, /Acorn unavailable; no writes/);
-          assert.equal(readFileSync(join(dir, 'cli.original.cjs'), 'utf8'), fixture, 'no partial bundle writes');
-          continue;
-        }
         assert.equal(run.status, 0, `${label}: ${output}`);
         assert.match(
           output,
@@ -128,7 +122,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
         );
 
         const patched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
-        helperAcornSource ??= readFileSync(join(dir, 'vendor', 'acorn.cjs'), 'utf8');
+        helperAcornSource ??= readFileSync(new URL('./fixtures/acorn-8.16.0.cjs', import.meta.url), 'utf8');
         assert.match(helperAcornSource, /acorn\.version|exports\.parse/);
         new Function(patched);
         assert.match(patched, /__ccpp_bridge_fallback/, `${label}: Chrome factory must be patched`);

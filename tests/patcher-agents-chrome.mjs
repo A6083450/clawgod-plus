@@ -12,9 +12,9 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     seedPatcherAcorn(dir);
     writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
     writeFileSync(join(dir, 'cli.original.cjs'), `
-Version: 2.1.202
+// Version: 2.1.202
 function Iur(e){let t=!1,r,n={addDir:[],pluginDir:[],pluginDirNoMcp:[],settings:void 0,mcpConfig:[],strictMcpConfig:!1},o=[],i={"--cwd":(s)=>{r=s}};for(let s=0;s<e.length;s++){let a=e[s];if(a==="agents"&&!t){t=!0;continue}if(a==="--strict-mcp-config"){n.strictMcpConfig=!0;continue}o.push(a)}return{config:n,rest:o}}
-function Get(e,t){return{settings:e.settings,pluginDir:e.pluginDir,pluginDirNoMcp:e.pluginDirNoMcp,addDir:e.addDir,mcpConfig:e.mcpConfig,strictMcpConfig:e.strictMcpConfig}}function Vet(e){return[...e.settings?["--settings",e.settings]:[],...e.strictMcpConfig?["--strict-mcp-config"]:[]]}}
+function Get(e,t){return{settings:e.settings,pluginDir:e.pluginDir,pluginDirNoMcp:e.pluginDirNoMcp,addDir:e.addDir,mcpConfig:e.mcpConfig,strictMcpConfig:e.strictMcpConfig}}function Vet(e){return[...e.settings?["--settings",e.settings]:[],...e.strictMcpConfig?["--strict-mcp-config"]:[]]}
 program.command("update").alias("upgrade").description("Check for updates and install if available").action(async()=>{let{update:s}=await import("updater");await s()})
 `, 'utf8');
 

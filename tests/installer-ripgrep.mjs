@@ -587,7 +587,7 @@ for (const [name, source] of [['install.sh', unix], ['install.ps1', windows]]) {
   assert.doesNotMatch(source, name === 'install.sh' ? /command -v rg/ : /Get-Command rg/, `${name} must not require a system ripgrep`);
   assert.match(source, /install-ripgrep\.mjs/, `${name} cleanup and lifecycle must reference the generated module`);
   const modulePosition = source.indexOf('install-ripgrep.mjs');
-  const noUpgradePosition = source.indexOf(name === 'install.sh' ? '# ─── Handle --no-upgrade' : '# --- Handle -NoUpgrade');
+  const noUpgradePosition = source.indexOf(name === 'install.sh' ? 'if [ "$NO_UPGRADE" = "1" ]; then' : 'if ($NoUpgrade) {');
   const ensurePosition = source.indexOf(name === 'install.sh' ? '"$BUN_BIN" "$CLAWGOD_DIR/install-ripgrep.mjs"' : '& $BunBin (Join-Path $ClawDir "install-ripgrep.mjs")');
   assert.ok(modulePosition >= 0 && ensurePosition > modulePosition && ensurePosition < noUpgradePosition, `${name} must install managed ripgrep before both normal and no-upgrade branches`);
 }
@@ -606,13 +606,16 @@ try {
     mkdirSync(join(fixture, 'vendor', 'ripgrep', 'bin'), { recursive: true });
     writeFileSync(managed, 'managed ripgrep');
     writeFileSync(staleVendor, 'stale native');
-    writeFileSync(join(fixture, 'native'), 'native fixture');
+    writeFileSync(join(fixture, '2.1.226'), 'native fixture');
+    writeFileSync(join(fixture, 'runtime-state.cjs'), readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)));
+    writeFileSync(join(fixture, 'startup-check.cjs'), readFileSync(new URL('../src/generic/runtime/startup-check.cjs', import.meta.url)));
+    writeFileSync(join(fixture, 'cli.cjs'), 'console.log("2.1.226 (Claude Code)");');
     writeFileSync(join(fixture, 'extract-natives.mjs'), '#!/usr/bin/env bun\nimport { mkdirSync, writeFileSync } from "node:fs";import { join } from "node:path";const output=process.argv.at(-1);mkdirSync(join(output, "vendor"));writeFileSync(join(output, "cli.original.js"), "fixture");\n');
     writeFileSync(join(fixture, 'post-process.mjs'), '#!/usr/bin/env bun\nimport { writeFileSync } from "node:fs";import { dirname, join } from "node:path";writeFileSync(join(dirname(import.meta.path), "cli.original.cjs"), "fixture");\n');
     writeFileSync(join(fixture, 'patch.mjs'), '#!/usr/bin/env bun\n');
     writeFileSync(join(fixture, 'repatch.mjs'), repatch);
     writeFileSync(join(fixture, 'vendor-transaction.mjs'), canonicalVendorTransaction);
-    const child = Bun.spawn([process.execPath, join(fixture, 'repatch.mjs'), join(fixture, 'native')], {
+    const child = Bun.spawn([process.execPath, join(fixture, 'repatch.mjs'), join(fixture, '2.1.226')], {
       stdout: 'pipe',
       stderr: 'pipe',
       env: { HOME: fixture, PATH: fixture },

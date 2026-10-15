@@ -1,27 +1,8 @@
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
+import acorn from './vendor/acorn.cjs';
+import { applySemanticPatch } from './semantic-runner.mjs';
 
-const PATCHER_DIR = dirname(fileURLToPath(import.meta.url));
-const ACORN_URL = 'https://unpkg.com/acorn@8.16.0/dist/acorn.js';
-
-export async function loadAcorn(rootDir = PATCHER_DIR) {
-  const acornCache = join(rootDir, 'vendor', 'acorn.cjs');
-  try {
-    if (!existsSync(acornCache)) {
-      mkdirSync(dirname(acornCache), { recursive: true });
-      const response = await fetch(ACORN_URL);
-      if (!response.ok) return null;
-      const temp = `${acornCache}.${process.pid}.tmp`;
-      writeFileSync(temp, await response.text(), 'utf8');
-      renameSync(temp, acornCache);
-    }
-    const module = await import(pathToFileURL(acornCache).href);
-    const acorn = typeof module.parse === 'function' ? module : module.default;
-    return acorn && typeof acorn.parse === 'function' ? acorn : null;
-  } catch {
-    return null;
-  }
+export async function loadAcorn() {
+  return acorn;
 }
 
 export function findNodes(node, predicate, results = []) {
@@ -56,7 +37,7 @@ async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   const alreadyMatch = alreadyRe.exec(source);
   if (!dualMatch && !alreadyMatch) {
     if (!source.includes('200000')) return { status: 'skipped', detail: 'not present in this version' };
-    return { status: 'failed', detail: 'context default constants not found' };
+    return { status: 'stale', detail: 'context default constants not found' };
   }
 
   const match = dualMatch || alreadyMatch;
@@ -169,6 +150,7 @@ const patches = [
   {
     order: 0,
     name: 'USER_TYPE → ant',
+    semanticId: 'user-type-ant',
     pattern: /function ([\w$]+)\(\)\{return"external"\}/g,
     replacer: (match, fn) => `function ${fn}(){return"ant"}`,
     sentinel: 'return"external"',
@@ -242,7 +224,7 @@ async function applyClaudeApiSkillLazyDocsPatch(source, { dryRun, verify }) {
   if (guide === -1) return { status: 'skipped', detail: 'not present in this version' };
   const beforeGuide = source.slice(Math.max(0, guide - 300), guide);
   const startMatch = [...beforeGuide.matchAll(/function ([\w$]+)\(e,t,r\)\{let n=([\w$]+)\(r\.SKILL_PROMPT,r\),o=$/g)].at(-1);
-  if (!startMatch) return { status: 'failed', detail: 'prompt builder start marker not found' };
+  if (!startMatch) return { status: 'stale', detail: 'prompt builder start marker not found' };
   const start = guide - beforeGuide.length + startMatch.index;
 
   const body = source.slice(start, start + 5000);
@@ -251,7 +233,7 @@ async function applyClaudeApiSkillLazyDocsPatch(source, { dryRun, verify }) {
   const docsMatch = body.match(/\+([\w$]+)\([^,]+,r\.SKILL_FILES,r\)\)/);
   const endMatch = body.match(/;return s\.join\(`(?:\\n\\n|\n\n)`\)\}/);
   if (!referenceMatch || !subcommandMatch || !docsMatch || !endMatch) {
-    return { status: 'failed', detail: 'prompt builder structure not recognized' };
+    return { status: 'stale', detail: 'prompt builder structure not recognized' };
   }
 
   const functionName = startMatch[1];
@@ -272,7 +254,7 @@ async function applyBuiltinHooksPatch(source, { dryRun, verify }) {
   if (source.includes(marker)) return { status: 'already', detail: 'already applied' };
   const pattern = /var ([\w$]+)=\(e,o,([\w$]+)\)=>([\w$]+)\(\)\?([\w$]+)\(o,\2\(\),e\):\{module:o,folder:e\}/g;
   const matches = [...source.matchAll(pattern)];
-  if (matches.length !== 1) return { status: 'failed', detail: 'built-in hooks resolver shape not recognized' };
+  if (matches.length !== 1) return { status: matches.length ? 'failed' : 'stale', detail: 'built-in hooks resolver shape not recognized' };
   const [original, helper, build, standalone, bundled] = matches[0];
   if (verify) return { status: 'verify', count: 1 };
   if (dryRun) return { status: 'applied', count: 1, code: source };
@@ -292,6 +274,11 @@ const customPatches = [{
   order: 91,
   name: 'Built-in hooks module for plain Bun cli.cjs',
   apply: applyBuiltinHooksPatch,
+}, {
+  order: 92,
+  name: 'GrowthBook env overrides (graph dead-code fix)',
+  semanticId: 'growthbook-env-overrides-graph',
+  apply: (source, options) => applySemanticPatch(source, { ...options, semanticId: 'growthbook-env-overrides-graph' }),
 }];
 
 export const coreRegistry = Object.freeze({

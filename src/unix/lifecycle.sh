@@ -2,6 +2,7 @@ CLAWGOD_DIR="$HOME/.clawgod"
 BIN_DIR="$HOME/.local/bin"
 VERSION="${CLAWGOD_VERSION:-}"
 NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
+TOLERATE_STALE="${CLAWGOD_TOLERATE_STALE:-}"
 LEAN_OFF="${CLAWGOD_LEAN_OFF:-}"
 LEAN_ON="${CLAWGOD_LEAN_ON:-}"
 LEAN_MAX="${CLAWGOD_LEAN_MAX:-}"
@@ -14,6 +15,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --version) VERSION="$2"; shift 2 ;;
     --no-upgrade) NO_UPGRADE=1; shift ;;
+    --tolerate-stale) TOLERATE_STALE=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
     --lean-off) LEAN_OFF=1; shift ;;
     --lean-on) LEAN_ON=1; shift ;;

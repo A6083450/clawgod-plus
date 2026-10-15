@@ -1,9 +1,11 @@
 import { gate } from '../runtime-features.mjs';
+import { applySemanticPatch } from '../semantic-runner.mjs';
 
 const patches = [
   {
     order: 47,
     name: 'Neutralize geo-steganography in date string (qla)',
+    semanticId: 'geo-stego-date',
     pattern: /function ([\w$]+)\(([\w$]+)\)\{let [\w$]+=[\w$]+\(\),[\w$]+=[\w$]+\([\w$]+\?\.[\w$]+\?\?!1,[\w$]+\?\.[\w$]+\?\?!1\),[\w$]+=[\w$]+\?\.[\w$]+\?[\w$]+\.replaceAll\("-","\/"\):[\w$]+;return`Today\$\{[\w$]+\}s date is \$\{[\w$]+\}\.`\}/g,
     replacer: (match, fn, parameter) => `function ${fn}(${parameter}){if(${gate('geo-stego-date')})return\`Today's date is \${${parameter}}.\`;${match.slice(match.indexOf('{') + 1, -1)}}`,
     sentinel: 'replaceAll("-","/")',
@@ -36,5 +38,10 @@ const patches = [
 export const privacyRegistry = Object.freeze({
   id: 'privacy',
   patches: Object.freeze(patches),
-  customPatches: Object.freeze([]),
+  customPatches: Object.freeze([{
+    order: 93,
+    name: 'Disable enterprise remote settings',
+    semanticId: 'remote-settings-off',
+    apply: (source, options) => applySemanticPatch(source, { ...options, semanticId: 'remote-settings-off' }),
+  }]),
 });

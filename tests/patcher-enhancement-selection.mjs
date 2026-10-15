@@ -116,7 +116,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       assert.equal(result.run.status, 0, `${name}: subset must patch cleanly: ${result.output}`);
       assert.match(result.output, /Enhancements: 3 enabled, 18 disabled/, `${name}: subset summary must be exact`);
       assert.match(result.patched, /function Sub\(\)\{if\(globalThis\.__clawgodPatches\?\.\["computer-use-sub"\]!==!1\)return!0;/, `${name}: subset must runtime-gate computer-use`);
-      assert.match(result.patched, /argumentHint:"<prompt>",isEnabled:\(\)=>globalThis\.__clawgodPatches\?\.\["ultraplan"\]/, `${name}: subset must runtime-gate planning`);
+      assert.match(result.patched, /argumentHint:"<prompt>",isEnabled:\(\)=>\(globalThis\.__clawgodPatches\?\.\["ultraplan"\]/, `${name}: subset must runtime-gate planning`);
       assert.match(result.patched, /clawd_body:globalThis\.__clawgodPatches\?\.\["theme-logo-rgb"\]/, `${name}: subset must runtime-gate branding`);
       assert.match(result.patched, /function teams\(\)\{if\(!enabled/, `${name}: disabled agents must not be patched`);
       assert.match(result.patched, /function voice\(\)\{return!flag/, `${name}: disabled voice must not be patched`);

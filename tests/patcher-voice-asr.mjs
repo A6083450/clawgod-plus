@@ -47,10 +47,12 @@ export {connect,command,other,call,voiceAuthProbe,voiceFlag};`;
   const vendor = join(fixtureRoot,'vendor','cometix-asr');
   mkdirSync(vendor,{recursive:true});
   writeFileSync(join(vendor,'index.js'), `exports.startSession=(config,cb)=>{globalThis.asrCallback=cb;globalThis.asrConfig=config;return 7};exports.feedPcm=(id,pcm)=>{globalThis.asrPcm=pcm};exports.finalizeSession=()=>{};exports.closeSession=()=>{globalThis.asrClosed=true};`);
+  // Bun 缓存已导入目录的文件列表，先创建后续动态导入的夹具。
+  for (const name of ['disabled', 'voice-disabled', 'stock']) writeFileSync(join(fixtureRoot, name + '.mjs'), result.code);
+  mkdirSync(join(fixtureRoot, 'missing'));
   for (const [index,subdir] of ['', 'chunks'].entries()) {
     const dir=join(fixtureRoot,subdir);mkdirSync(dir,{recursive:true});
     const file=join(dir,'voice.mjs');writeFileSync(file,result.code);
-    const mod=await import(pathToFileURL(file).href);
     // 执行真实新版连接闭包，原生依赖由本测试的 vendor 替代；不能只检查注入字符串。
     const patched292 = await descriptor.apply(transport292, { rootDir });
     const acorn = await loadAcorn(rootDir);
@@ -61,6 +63,7 @@ export {connect,command,other,call,voiceAuthProbe,voiceFlag};`;
     const file292=join(dir,'voice292.mjs');
     writeFileSync(file292,'function Gl(){return false}function mn(){return null}function B(){return false}async function sa(){}function t(){}\n'
       +[availability292,adapter292,connector292].map(n=>patched292.code.slice(n.start,n.end)).join('\n')+'\nexport {sDr,oDr};');
+    const mod=await import(pathToFileURL(file).href);
     const mod292=await import(pathToFileURL(file292).href);
     const preview292=[];
     const api292=await mod292.sDr({onTranscript:(...value)=>preview292.push(value),onError:msg=>assert.fail(msg)},{});
@@ -138,7 +141,7 @@ export {connect,command,other,call,voiceAuthProbe,voiceFlag};`;
   delete globalThis.__clawgodPatches;delete process.env.CLAUDE_CODE_ASR;
   rmSync(vendor,{recursive:true});
   // A fresh location bypasses require's module cache and must not silently use stock ASR.
-  const absent=join(fixtureRoot,'missing');mkdirSync(absent);writeFileSync(join(absent,'voice.mjs'),result.code);
+  const absent=join(fixtureRoot,'missing');writeFileSync(join(absent,'voice.mjs'),result.code);
   const mod=await import(pathToFileURL(join(absent,'voice.mjs')).href);let error;
   assert.equal(await mod.connect({onError:(msg,detail)=>{error=detail}},{}),null);
   assert.equal(error.connectFailureCode,'cometix_asr_missing');

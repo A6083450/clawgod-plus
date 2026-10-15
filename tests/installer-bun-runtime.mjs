@@ -20,7 +20,7 @@ const canonicalPlatform = Object.fromEntries(
   ]),
 );
 const canonicalRuntime = Object.fromEntries(
-  ['proxy-fetch.mjs', 'fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'vendor-transaction.mjs', 'self-update.cjs', 'patch-fallback.cjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
+  ['proxy-fetch.mjs', 'fetch-file.mjs', 'fetch-package.mjs', 'install-ripgrep.mjs', 'extractor.mjs', 'post-processor.mjs', 'repatcher.mjs', 'vendor-transaction.mjs', 'startup-check.cjs', 'self-update.cjs', 'patch-fallback.cjs', 'wrapper.cjs', 'openai-proxy.cjs', 'claude-mem-compat.cjs', 'plugin-dependencies.mjs', 'claude-hud-statusline.mjs'].map(name => [
     name,
     readFileSync(new URL(`../src/generic/runtime/${name}`, import.meta.url), 'utf8'),
   ]),
@@ -226,7 +226,7 @@ try {
   writeFileSync(checkedCliPrior, Buffer.from([0x00, 0x11, 0x80, 0xff]), { mode: 0o640 });
   writeFileSync(join(checkedCliLive, 'ripgrep'), Buffer.from([0x72, 0x67, 0x00, 0xff]), { mode: 0o711 });
   writeFileSync(join(checkedCliCandidate, 'candidate-native.node'), Buffer.from([0xca, 0xfe]), { mode: 0o600 });
-  writeFileSync(checkedCliRuntime, 'console.log("runtime version 1.2.3");\n', 'utf8');
+  writeFileSync(checkedCliRuntime, 'console.log("1.2.3 (Claude Code)");\n', 'utf8');
   writeFileSync(checkedCliBun, `#!${process.execPath}\nimport { spawnSync } from 'node:child_process';\nconst child = spawnSync(process.execPath, process.argv.slice(2), { stdio: 'inherit' });\nif (child.error) throw child.error;\nprocess.exit(child.status ?? 1);\n`, 'utf8');
   chmodSync(checkedCliBun, 0o700);
   const checkedCliSuccess = spawnSync(process.execPath, [
@@ -787,16 +787,18 @@ function assertPowerShellFallbackTransaction(source, label) {
   assert.ok(block.indexOf(chromeCall) > block.indexOf(chromeSkip), `${label} must skip Chrome during compatibility fallback`);
   assert.ok(block.indexOf(chromeCall) < block.indexOf(checkedPublish), `${label} must run Chrome before checked vendor sanity on full patches`);
   assert.match(source, /\$RuntimeHadPatchFallback\s*=\s*Test-Path\s+-LiteralPath\s+\$RuntimePatchFallback\s+-PathType\s+Leaf/, `${label} must snapshot whether fallback state existed`);
-  const transactionTry = source.indexOf('try {', source.indexOf('$RuntimeTransactionCleanupSafe = $true'));
-  const fallbackSnapshot = source.indexOf('Copy-Item -LiteralPath $RuntimePatchFallback -Destination (Join-Path $RuntimeRollbackDir "patch-fallback.json")');
-  const chunksMove = source.indexOf('Move-Item -LiteralPath $RuntimeChunksTarget -Destination (Join-Path $RuntimeRollbackDir "chunks")');
-  assert.ok(transactionTry >= 0 && transactionTry < fallbackSnapshot && fallbackSnapshot < chunksMove, `${label} must activate rollback before snapshots and destructive chunk movement`);
-  assert.match(source, /if \(\$RuntimeHadPatchFallback\) \{[\s\S]*?Copy-Item -LiteralPath \(Join-Path \$RuntimeRollbackDir "patch-fallback\.json"\) -Destination \$RuntimePatchFallback -Force[\s\S]*?\} else \{[\s\S]*?Remove-Item -LiteralPath \$RuntimePatchFallback -Force -ErrorAction SilentlyContinue/, `${label} must roll back fallback state`);
+  const snapshot = source.indexOf('$RuntimeStateHelper snapshot $ClawDir $RuntimeRollbackDir');
+  const transactionTry = source.indexOf('try {', snapshot);
+  const helperWrite = source.indexOf('Install-FetchFileHelper\n');
+  assert.ok(snapshot >= 0 && snapshot < transactionTry && transactionTry < helperWrite, `${label} must snapshot and activate rollback before managed helper writes`);
+  assert.ok(source.includes('$RuntimeStateHelper restore $ClawDir $RuntimeRollbackDir'), `${label} must roll back the complete managed runtime including fallback state`);
   return block;
 }
 
-// Vendored parser variables are not shell commands; keep scanning surrounding installer code.
-const nodePolicySource = source => source.replace(/\/\/ BEGIN VENDORED ACORN[\s\S]*?\/\/ END VENDORED ACORN/g, '');
+// 仅排除解析器源码，仍扫描其余内嵌 JS 和安装器命令。
+const nodePolicySource = source => source
+  .replace(/\/\/ BEGIN VENDORED ACORN[\s\S]*?\/\/ END VENDORED ACORN/g, '')
+  .replace(/(?:^|\r?\n)\/\/ src\/generic\/patcher\/vendor\/acorn\.cjs\r?\n[\s\S]*?(?=\r?\n\/\/ src\/)/g, '');
 const executableNode = /(?:^|[;\r\n])\s*(?:&\s*)?(?:node(?:\.exe)?|\$NodeBin)\b(?:\s|$)|\bStart-Process\s+(?:-FilePath\s+)?(?:node(?:\.exe)?)\b/i;
 const forbiddenNodeFixtures = [
   'node ./helper.mjs',
@@ -814,6 +816,14 @@ const allowedNodeReferences = [
 
 const vendoredAcornFixture = '// BEGIN VENDORED ACORN\nnode = this.startNode();\n// END VENDORED ACORN';
 assert.doesNotMatch(nodePolicySource(vendoredAcornFixture), executableNode, 'vendored Acorn variables must not count as Node execution');
+const bundledAcornFixture = '// src/generic/patcher/vendor/acorn.cjs\nnode = this.startNode();\n// src/generic/patcher/entry.mjs\nconst ordinary = true;';
+assert.doesNotMatch(nodePolicySource(bundledAcornFixture), executableNode, 'Bun 打包的 Acorn 模块内部变量不是 Node 命令');
+for (const command of ['node before.mjs', 'node after.mjs']) {
+  assert.match(nodePolicySource(`${command}\n${bundledAcornFixture}`), executableNode);
+  assert.match(nodePolicySource(`${bundledAcornFixture}\n${command}`), executableNode);
+  assert.match(nodePolicySource(`cat << 'PATCHER_EOF'\n${command}\nPATCHER_EOF`), executableNode, '不能免审整个 patcher heredoc');
+  assert.match(nodePolicySource(`$Patcher = @'\n${command}\n'@`), executableNode, '不能免审整个 PowerShell patcher here-string');
+}
 for (const fixture of forbiddenNodeFixtures) {
   for (const source of [fixture, `${fixture}\n${vendoredAcornFixture}`, `${vendoredAcornFixture}\n${fixture}`]) {
     assert.match(nodePolicySource(source), executableNode, `Node execution policy must reject: ${fixture}`);
@@ -2192,6 +2202,9 @@ try {
   writeFileSync(native, 'fixture native', 'utf8');
   writeFileSync(repatch, canonicalRuntime['repatcher.mjs'], 'utf8');
   writeFileSync(join(repatchRoot, 'vendor-transaction.mjs'), canonicalRuntime['vendor-transaction.mjs'], 'utf8');
+  writeFileSync(join(repatchRoot, 'runtime-state.cjs'), readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)));
+  writeFileSync(join(repatchRoot, 'startup-check.cjs'), canonicalRuntime['startup-check.cjs']);
+  writeFileSync(join(repatchRoot, 'cli.cjs'), 'console.log("2.1.226 (Claude Code)");');
   writeFileSync(join(repatchRoot, 'extract-natives.mjs'), `import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nconst output = process.argv.at(-1);\nconst native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');\nmkdirSync(join(output, 'vendor', 'candidate-addon', 'arm64-darwin'), { recursive: true });\nwriteFileSync(join(output, 'cli.original.js'), 'candidate source');\nwriteFileSync(native, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));\nchmodSync(native, 0o751);\n`, 'utf8');
   writeFileSync(join(repatchRoot, 'post-process.mjs'), `import { writeFileSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\nwriteFileSync(join(dirname(import.meta.path), 'cli.original.cjs'), ${JSON.stringify(candidateRuntime)}, 'utf8');\n`, 'utf8');
   writeFileSync(join(repatchRoot, 'patch.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.PATCH_ARGS, JSON.stringify(process.argv.slice(2)), 'utf8');\nprocess.exit(Number(process.env.PATCH_EXIT||0));\n`, 'utf8');

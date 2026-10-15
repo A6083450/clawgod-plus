@@ -26,7 +26,7 @@ assert.match(powerShellInstaller, /Move-Item -LiteralPath \$candidateAssets -Des
 assert.match(wrapper, /CLAWGOD_DESIGN_PAYLOAD/, 'wrapper must export CLAWGOD_DESIGN_PAYLOAD');
 assert.match(wrapper, /payload\.template\.html\.asset/, 'wrapper must point the design payload env at the extracted asset');
 assert.match(extractor, /m\.loader === 'file' \|\| m\.loader === 'text' \|\| m\.name\.endsWith\('\.asset'\)/, 'extractor must keep loader=file and loader=text assets');
-assert.match(repatcher, /candidateAssets/, 'repatch must publish extracted assets on version drift');
+assert.match(repatcher, /for \(const name of \['chunks', 'assets'\]\)/, 'repatch must publish extracted assets together with the module graph on version drift');
 assert.equal(JSON.parse(featuresJson)['tengu_ethereal_nova'], true, 'features.json must enable tengu_ethereal_nova');
 assert.equal(JSON.parse(featuresJson)['tengu_omelette_fouet'], true, 'features.json must enable tengu_omelette_fouet');
 assert.equal(JSON.parse(featuresJson)['tengu_slate_quill'], true, 'features.json must enable tengu_slate_quill');
