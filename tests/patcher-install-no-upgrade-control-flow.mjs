@@ -4,6 +4,7 @@ import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSyn
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { renderGeneratedPair } from '../build.mjs';
 
 const generated = await renderGeneratedPair();
@@ -356,7 +357,7 @@ if (name === 'install-ripgrep.mjs') {
       writeFileSync(sourceVersion, '2.1.225\n', 'utf8');
     }
     if (args.includes('--no-upgrade') && !options.missingClean) {
-      const clean = spawnSync(process.execPath, [new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url).pathname, 'clean-save', dirname(target), '2.1.225'], { encoding: 'utf8' });
+      const clean = spawnSync(process.execPath, [fileURLToPath(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)), 'clean-save', dirname(target), '2.1.225'], { encoding: 'utf8' });
       assert.equal(clean.status, 0, clean.stdout + clean.stderr);
     }
     if (options.priorChunks) {

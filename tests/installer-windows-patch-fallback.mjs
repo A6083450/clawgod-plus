@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { renderGeneratedPair } from '../build.mjs';
 
 const generated = (await renderGeneratedPair()).find(pair => pair.output === 'dist/win/install.ps1').content;
@@ -291,7 +292,7 @@ ${fixtureSpan}
       writeFileSync(join(candidateVendor, 'candidate-native.node'), candidateNative);
     }
     if (fixture.noUpgrade && !fixture.missingClean) {
-      const clean = spawnSync(process.execPath, [new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url).pathname, 'clean-save', clawDir, '2.1.225'], { encoding: 'utf8' });
+      const clean = spawnSync(process.execPath, [fileURLToPath(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)), 'clean-save', clawDir, '2.1.225'], { encoding: 'utf8' });
       assert.equal(clean.status, 0, clean.stdout + clean.stderr);
     }
     writeFileSync(join(clawDir, 'vendor-transaction.mjs'), vendorTransaction, 'utf8');

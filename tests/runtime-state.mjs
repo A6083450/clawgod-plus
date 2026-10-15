@@ -4,8 +4,9 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const helper = new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url).pathname;
+const helper = fileURLToPath(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'clawgod-runtime-state-'));
 try {
   const live = join(root, 'live');
