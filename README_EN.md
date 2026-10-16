@@ -51,18 +51,18 @@ The installer fetches the current platform-specific official `@anthropic-ai/clau
 
 ## Install ClawGod Plus
 
-These commands download the pinned ClawGod Plus release assets (v2026.10.15-claude.2.1.300.1).
+These commands download the pinned ClawGod Plus release assets (v2026.10.16-claude.2.1.301).
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.15-claude.2.1.300.1/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.16-claude.2.1.301/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.15-claude.2.1.300.1/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.16-claude.2.1.301/install.ps1 | iex
 ```
 
 Useful installer options (with no version specified, the installer keeps the currently installed Claude Code version; a fresh install pulls the latest):

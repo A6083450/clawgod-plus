@@ -476,6 +476,9 @@ check('裁剪制表符时使用上游展开函数', () => {
 });
 
 for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = false, sharedChunk] of [
+  ['2.1.301', 'darwin', 'chunk-ahaek174.js', 'g_s', 'qNn', { Ns: 'ps', Dd: 'uf', Cx: 'n1', xC: 'mC', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'md', bn: 'vn', wo: 'Ar', Xf: 'Od', jn: 'Vn', hht: 'Zge', Rx: 'i1', xx: 't1', bGt: 'f0e', LNr: 'tws', MNr: 'ews', C8: 'bUo' }, true, 'chunk-5fz1rmt8.js'],
+  ['2.1.301', 'linux', 'chunk-v75f1y8v.js', 'Pys', 'RNn', { Ns: 'ps', Dd: 'uf', Cx: 'r1', xC: 'yC', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'md', bn: 'bn', wo: 'Ar', Xf: 'Od', jn: 'Vn', hht: 'Kge', Rx: 'l1', xx: 'i1', bGt: 'iMe', LNr: 'hSs', MNr: 'gSs', C8: 'WFo' }, true, 'chunk-0f9arzew.js'],
+  ['2.1.301', 'win32', 'chunk-weqngj1f.js', 'Fys', 'LFn', { Ns: 'ps', Dd: 'uf', Cx: 'i1', xC: 'pC', cmr: 'clawgodAnsiTokens', Kf: 'clawgodMergeStyles', Dc: 'md', bn: 'bn', wo: 'Ar', Xf: 'Od', jn: 'Vn', hht: 'Qge', Rx: 'o1', xx: 'n1', bGt: 'iMe', LNr: 'wSs', MNr: 'SSs', C8: 'X$o' }, true, 'chunk-6fj7dxav.js'],
   ["2.1.300","darwin","chunk-qva6rjg9.js","Ums","BDn",{"Ns":"ms","Dd":"rf","Cx":"Vx","xC":"aC","cmr":"clawgodAnsiTokens","Kf":"clawgodMergeStyles","Dc":"ud","bn":"vn","wo":"Mo","Xf":"Td","jn":"jn","hht":"_ge","Rx":"Xx","xx":"qx","bGt":"xOe","LNr":"vys","MNr":"Eys","C8":"oNo"},true,"chunk-jb09nhqp.js"],
   ["2.1.300","linux","chunk-6r27kmjr.js","tms","v0n",{"Ns":"ms","Dd":"rf","Cx":"Vx","xC":"lC","cmr":"clawgodAnsiTokens","Kf":"clawgodMergeStyles","Dc":"ud","bn":"bn","wo":"Mo","Xf":"Td","jn":"jn","hht":"pge","Rx":"Xx","xx":"qx","bGt":"vOe","LNr":"Rys","MNr":"Cys","C8":"CLo"},true,"chunk-zytv259w.js"],
   ["2.1.300","win32","chunk-zejrn9cc.js","lms","xLn",{"Ns":"ms","Dd":"rf","Cx":"Xx","xC":"sC","cmr":"clawgodAnsiTokens","Kf":"clawgodMergeStyles","Dc":"ud","bn":"bn","wo":"Mo","Xf":"Td","jn":"jn","hht":"yge","Rx":"Qx","xx":"Vx","bGt":"vIe","LNr":"Dys","MNr":"Mys","C8":"DNo"},true,"chunk-6gc6gzex.js"],
@@ -548,7 +551,9 @@ for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = f
     const declarations = ast.body.filter(node => ['FunctionDeclaration', 'ClassDeclaration', 'VariableDeclaration'].includes(node.type)
       && (version === '2.1.299' ? [names.Ns, names.Dd, names.Cx, names.xC, 'clawgodMergeStyles'].includes(node.id?.name) || node.id?.name?.startsWith('clawgod') || node.declarations?.some(item => item.id?.name?.startsWith('clawgod')) || ['sanitizeControlSequences', 'parseStyledText', 'packCell', 'unionDamage', 'writeCell', 'paintCells'].includes(node.id?.name) : node.id?.name !== names.Dc && node.id?.name !== 'tabClip'))
       .map(node => adapted.slice(node.start, node.end)).join('\n');
-    const directionHelpers = version === '2.1.300' ? 'function of(value){return value!==undefined}function kl(){return false}const Ab={ltr:"\\u200e",rtl:"\\u200f"},Tb=Ab;' : '';
+    const directionHelpers = version === '2.1.301'
+      ? 'function cf(value){return value!==undefined}function zl(){return false}const _b={ltr:"\\u200e",rtl:"\\u200f"};'
+      : version === '2.1.300' ? 'function of(value){return value!==undefined}function kl(){return false}const Ab={ltr:"\\u200e",rtl:"\\u200f"},Tb=Ab;' : '';
     const actual = new Function('clawgodAnsiTokens', 'clawgodNormalizeStyles', `${helpers}\n${directionHelpers}\n${declarations}\nreturn {Line:${names.Dd},paint:${names.xC}};`)(upstream.tokenize, upstream.normalize);
     const styles = createStylePool();
     const screen = createScreen(styles, 20);
@@ -559,7 +564,11 @@ for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = f
     assert.deepEqual(screen.stylesAt(8), []);
     assert.equal(screen.hyperlinkAt(8), 'https://example.com');
     assert.equal(line.width('中\tA', 0), 9);
-    if (version === '2.1.300') {
+    if (['2.1.300', '2.1.301'].includes(version)) {
+      const directed = createScreen(styles, 20);
+      assert.equal(actual.paint(directed, '中A', 0, 0, line, 'ltr'), 3);
+      assert.equal(directed.char(0), '中');
+      assert.equal(directed.char(2), 'A');
       const clipped = createScreen(styles, 20);
       assert.equal(actual.paint(clipped, 'A中B\tC', 0, 0, line, undefined, { x1: 2, x2: 9 }), 9);
       assert.equal(clipped.char(2), ' ', '左边界不能留下半个宽字素');
@@ -587,6 +596,9 @@ for (const [version, platform, chunk, tokenizer, normalize, names, arrayTabs = f
 }
 
 for (const [version, platform, sharedChunk, ansiChunk, textChunk, factory, textFunction, normalize, reserved] of [
+  ['2.1.301', 'darwin', 'chunk-5fz1rmt8.js', 'chunk-ahaek174.js', 'chunk-fbmnw6hb.js', 'i$n', 'N', 'US', 'gOe'],
+  ['2.1.301', 'linux', 'chunk-0f9arzew.js', 'chunk-v75f1y8v.js', 'chunk-hn071sw0.js', 'B$n', 'N', 'Fb', 'lOe'],
+  ['2.1.301', 'win32', 'chunk-6fj7dxav.js', 'chunk-weqngj1f.js', 'chunk-jx9wxmsd.js', 'KHn', 'N', 'Ub', 'lIe'],
   ["2.1.300","darwin","chunk-jb09nhqp.js","chunk-qva6rjg9.js","chunk-76bn3rwk.js","eNn","N","OS","PIe"],
   ["2.1.300","linux","chunk-zytv259w.js","chunk-6r27kmjr.js","chunk-kxsypegk.js","LLn","N","Ib","EIe"],
   ["2.1.300","win32","chunk-6gc6gzex.js","chunk-zejrn9cc.js","chunk-68247c5r.js","WNn","N","Ib","kOe"],
