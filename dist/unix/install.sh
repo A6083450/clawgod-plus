@@ -15134,6 +15134,108 @@ const CELL_PLATFORM_SHAPES = [
     "tabReplacement": "let Ne=md(Re);if(Ne.indexOf(String.fromCharCode(9))>=0){let clawgodTabOffset=((W%Qge)+Qge)%Qge;Ne=X$o([\" \".repeat(clawgodTabOffset)+Ne]).join(\"\").slice(clawgodTabOffset)}let Ae=V.x2-W",
     "writeLineSource": "function pC(n,u,f,m,p,g,C){let T=cf(g)?_b[g]+u:u;if(p.segment(T,zl()),C!==void 0)f=p.keepColumns(f,C.x1,C.x2);return p.count===0?f:paintCells(n,p.cells,f,m)}"
   },
+  // 2.1.302 darwin：沿用七参数绘制，冻结本版官方声明与依赖。
+  {
+    "shape": [
+      { "header": "function ds(n){", "digest": "8304d23ee54d505bc4dd8c551bc01bc221ce6f43b88219363d5afb7c693c0b40" },
+      { "header": "class rf{", "digest": "8043a742e809242754734c4c2338963ae45c96e0df1ae39d90d911389069cef6" },
+      { "header": "function r1(n,u,f,m){", "digest": "fc19d4eec03632d6409a8f16a2cd228c76e0831d431016fa5fb2a8188040c198" },
+      { "header": "function gC(n,u,f,m,p,g,C){", "digest": "72a86afc92612ea5af127c276b617a48dc5f6002554836f0d8437d1af305de9f" },
+      { "header": "function cd(n){", "digest": "37123aa2dcb6753d3e6d845fbb1f4f75fa4f6d67d557f8b253affbb878ed6208" }
+    ],
+    "names": {
+      "Ns": "ds", "Dd": "rf", "Cx": "r1", "xC": "gC",
+      "cmr": "clawgodAnsiTokens", "Kf": "clawgodMergeStyles", "Dc": "cd",
+      "bn": "vn", "wo": "xr", "Xf": "Nd", "jn": "qn", "hht": "Hhe",
+      "Rx": "l1", "xx": "o1", "bGt": "F0e", "LNr": "Vvs", "MNr": "zvs", "C8": "Ijo"
+    },
+    "dependency": {
+      "specifier": "/$bunfs/root/chunk-h7pqjkwe.js",
+      "digest": "4eb43ffd0e8474369b62918992e549b460a46d752e889b9544611e4593fb25a3",
+      "tokenizer": "aws",
+      "normalizeStyles": "m$n"
+    },
+    "shared": {
+      "specifier": "/$bunfs/root/chunk-9bpwkp0k.js",
+      "digest": "ac253b69c55a133983e644de0d06349287c869615af46a5f9b9eed64f368a2af",
+      "factory": "AUn",
+      "renderer": "chunk-174fh6cj.js",
+      "text": "chunk-kkq7q3vx.js",
+      "textDigest": "f7aaccd1ea7c54a90d511ba529cdf9b824d975d3c0a2296a085caf41acfcc823",
+      "textBranch": "if(!X.test(n))return M(N(n));"
+    },
+    "tabAnchor": "let we=cd(Re),Te=Y.x2-W",
+    "tabReplacement": "let we=cd(Re);if(we.indexOf(String.fromCharCode(9))>=0){let clawgodTabOffset=((W%Hhe)+Hhe)%Hhe;we=Ijo([\" \".repeat(clawgodTabOffset)+we]).join(\"\").slice(clawgodTabOffset)}let Te=Y.x2-W",
+    "writeLineSource": "function gC(n,u,f,m,p,g,C){let M=lf(g)?Ob[g]+u:u;if(p.segment(M,Dl()),C!==void 0)f=p.keepColumns(f,C.x1,C.x2);return p.count===0?f:paintCells(n,p.cells,f,m)}"
+  },
+  // 2.1.302 linux：沿用七参数绘制，冻结本版官方声明与依赖。
+  {
+    "shape": [
+      { "header": "function cs(n){", "digest": "857f79b80d8f7f22e9b32262a10f8a05c6d3ad93a35f43e7210f3f300d465779" },
+      { "header": "class rf{", "digest": "dc68497dd69047993dd5eab6c7d108363b131133ed82d3f0f86a205ce8337627" },
+      { "header": "function o1(n,u,f,m){", "digest": "af7b48413748a24effa0dd67457e0140ce9c05174be154e66c0512f4121a5681" },
+      { "header": "function yC(n,u,f,m,p,g,R){", "digest": "ea0b5258f6b002feb78873c78127375455c03526ff30e37cf9b560dc4383b95b" },
+      { "header": "function cd(n){", "digest": "ce7d485c38dfe9db1e6a6960927292dc9836c8a36b22b7f94314d215a0f93e8c" }
+    ],
+    "names": {
+      "Ns": "cs", "Dd": "rf", "Cx": "o1", "xC": "yC",
+      "cmr": "clawgodAnsiTokens", "Kf": "clawgodMergeStyles", "Dc": "cd",
+      "bn": "Sn", "wo": "Er", "Xf": "Nd", "jn": "qn", "hht": "Rhe",
+      "Rx": "r1", "xx": "i1", "bGt": "IMe", "LNr": "aEs", "MNr": "iEs", "C8": "ejo"
+    },
+    "dependency": {
+      "specifier": "/$bunfs/root/chunk-2p6bc6n4.js",
+      "digest": "50a4cd3aef514f4367ff65e31600fc473d1820981830e765ea07045dd9f3ed13",
+      "tokenizer": "vSs",
+      "normalizeStyles": "Y$n"
+    },
+    "shared": {
+      "specifier": "/$bunfs/root/chunk-stw100w7.js",
+      "digest": "cd7e10377ae9c374e34bf2c32ce13c493d822e88169b638d6feac13af61fa480",
+      "factory": "aUn",
+      "renderer": "chunk-6rjsdck6.js",
+      "text": "chunk-jnazex8d.js",
+      "textDigest": "2458c421b070410c29ebad3c381723270db6a18e30bc98366b911720c3db4526",
+      "textBranch": "if(!X.test(n))return v(N(n));"
+    },
+    "tabAnchor": "let we=cd(Re),Te=Y.x2-W",
+    "tabReplacement": "let we=cd(Re);if(we.indexOf(String.fromCharCode(9))>=0){let clawgodTabOffset=((W%Rhe)+Rhe)%Rhe;we=ejo([\" \".repeat(clawgodTabOffset)+we]).join(\"\").slice(clawgodTabOffset)}let Te=Y.x2-W",
+    "writeLineSource": "function yC(n,u,f,m,p,g,R){let T=lf(g)?Ob[g]+u:u;if(p.segment(T,wl()),R!==void 0)f=p.keepColumns(f,R.x1,R.x2);return p.count===0?f:paintCells(n,p.cells,f,m)}"
+  },
+  // 2.1.302 win32：沿用七参数绘制，冻结本版官方声明与依赖。
+  {
+    "shape": [
+      { "header": "function cs(n){", "digest": "07d0b4e7e418149f230a3335f4c84f7c6d1dfa47191edbfae721e06ab9c93cfd" },
+      { "header": "class rf{", "digest": "3945afebd3269f539227b3196a253b20b300f300bcaa4c1137ff8f5b99676b1a" },
+      { "header": "function l1(n,u,f,m){", "digest": "e8d1a9857c3a8f9cce6a30deef7e51daf8390fc1ccd16b443b5e4ea870a6ee47" },
+      { "header": "function bC(n,u,f,m,p,g,C){", "digest": "07a44b5d7d1b94e13961a0427d35f85422969d154a9e1628216934105104cf30" },
+      { "header": "function cd(n){", "digest": "2bd784b83d7b1b21c3ee2dfe949f535c278a149c7b52f07b36ca113eefe78b83" }
+    ],
+    "names": {
+      "Ns": "cs", "Dd": "rf", "Cx": "l1", "xC": "bC",
+      "cmr": "clawgodAnsiTokens", "Kf": "clawgodMergeStyles", "Dc": "cd",
+      "bn": "Sn", "wo": "Er", "Xf": "Nd", "jn": "qn", "hht": "Mhe",
+      "Rx": "a1", "xx": "r1", "bGt": "PMe", "LNr": "YEs", "MNr": "KEs", "C8": "sjo"
+    },
+    "dependency": {
+      "specifier": "B:/~BUN/root/chunk-zk5r3sp1.js",
+      "digest": "dba3efc830e1e6c6624a86fa5b12a8901d23106266c3be3f9734030608dfef53",
+      "tokenizer": "RSs",
+      "normalizeStyles": "e$n"
+    },
+    "shared": {
+      "specifier": "B:/~BUN/root/chunk-cz9nz8bx.js",
+      "digest": "55c9ab80155647017bb241da6f6bb2873c82eed74517c372bfae284106768a19",
+      "factory": "pUn",
+      "renderer": "chunk-cszf1a3v.js",
+      "text": "chunk-xw69qbhq.js",
+      "textDigest": "827f8e311f8eaba8599be4824f831d80d032bcfe1aec3bbf20b83476eeabf221",
+      "textBranch": "if(!X.test(n))return h(N(n));"
+    },
+    "tabAnchor": "let Ne=cd(Re),Te=Y.x2-W",
+    "tabReplacement": "let Ne=cd(Re);if(Ne.indexOf(String.fromCharCode(9))>=0){let clawgodTabOffset=((W%Mhe)+Mhe)%Mhe;Ne=sjo([\" \".repeat(clawgodTabOffset)+Ne]).join(\"\").slice(clawgodTabOffset)}let Te=Y.x2-W",
+    "writeLineSource": "function bC(n,u,f,m,p,g,C){let T=lf(g)?Ob[g]+u:u;if(p.segment(T,wl()),C!==void 0)f=p.keepColumns(f,C.x1,C.x2);return p.count===0?f:paintCells(n,p.cells,f,m)}"
+  },
 ];
 
 // Every name the injected source introduces must be free in the target module;
