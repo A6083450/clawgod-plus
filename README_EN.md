@@ -51,18 +51,18 @@ The installer fetches the current platform-specific official `@anthropic-ai/clau
 
 ## Install ClawGod Plus
 
-These commands download the pinned ClawGod Plus release assets (v2026.10.19-claude.2.1.302).
+These commands download the pinned ClawGod Plus release assets (v2026.10.19-claude.2.1.302.1).
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.1/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.1/install.ps1 | iex
 ```
 
 Useful installer options (with no version specified, the installer keeps the currently installed Claude Code version; a fresh install pulls the latest):
@@ -392,7 +392,7 @@ The installer scripts are deterministic generated artifacts: `src/` is the singl
 
 Starting `claude` without task arguments checks stable ClawGod releases (24-hour cache, up to 3 seconds online) and offers Install / Later / Skip this version. The skipped release is stored in `~/.clawgod/.update-check`; newer releases still prompt, and manual `claude update` ignores the skip. Non-interactive invocations, task arguments and subcommands never prompt. Restart `claude` after installation.
 
-Normal updates fetch the latest ClawGod installer, then use its bundled **verified Claude Code version** (`src/generic/verified-version.txt`), not npm `latest`. Fresh installs use the same default; a newer installed version is not automatically downgraded. New upstream releases may wait for compatibility verification.
+Normal `claude update` fetches the latest ClawGod installer and tries npm `latest` first. If the candidate fails and the installer confirms safe restoration, the same installer retries its **verified stable version** (`src/generic/verified-version.txt`), even if that means returning to a lower stable version. A failed stable attempt reports failure and uses the existing rollback. Interruptions, recovery conflicts and unconfirmed restoration never trigger a retry. Direct fresh installs still default to the verified version.
 
 The renderer is recognized by local structural contracts for relevant declarations and dependencies. Binding renames, chunk paths, and unrelated declarations no longer require per-version fingerprints; actual layout or calling-interface changes still fail closed. Neither `--tolerate-stale` nor clean-runtime fallback bypasses an unknown renderer.
 
@@ -402,7 +402,7 @@ Use the normal command:
 claude update
 ```
 
-`claude update` is handed directly to the ClawGod updater by the wrapper and no longer depends on the upstream bundle's update action shape. If a new release only drifts on a mandatory bundle recognizer, the update commits a clean post-processed Claude Code runtime and shows a fallback warning; download, extract, vendor-publication, or Bun-load failures still roll back. Running the installer directly, first install, and `--no-upgrade` do not enable that degradation. Plugin baselines are managed separately: the update does not pin Claude Code to plugin versions.
+The wrapper hands `claude update` directly to the ClawGod updater, independent of upstream update-action shapes. Both ordinary update attempts require successful patching; a clean runtime without enhancements is not treated as a successful latest upgrade. Explicit `--version` only attempts the requested version, never switches to stable automatically, and retains the existing warning-based whole-bundle fallback. Plugin baselines are managed separately: the update does not pin Claude Code to plugin versions.
 
 Explicit `claude update --tolerate-stale`, `bash install.sh --tolerate-stale`, PowerShell `-TolerateStale`, or `CLAWGOD_TOLERATE_STALE=1` skips only stale matchers, retains upstream behavior at those sites, and applies the remaining patches with a skipped-item report. It does not tolerate syntax errors, ambiguity or startup failures, and does not change the existing automatic whole-bundle fallback.
 

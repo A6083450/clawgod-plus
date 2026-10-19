@@ -39,7 +39,7 @@ done
 # 默认只采用随安装器验证的版本；保留较新的已装版本，绝不静默降级。
 if [ -z "$VERSION" ] && [ "${UNINSTALL:-}" != 1 ] && [ "$NO_UPGRADE" != 1 ]; then
   VERSION="$VERIFIED_VERSION"
-  if [ -f "$CLAWGOD_DIR/.source-version" ]; then
+  if [ "${CLAWGOD_UPDATE_STABLE_FALLBACK:-}" != 1 ] && [ -f "$CLAWGOD_DIR/.source-version" ]; then
     _pinned="$(tr -d '\r\n' < "$CLAWGOD_DIR/.source-version")"
     if [[ ! "$_pinned" =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]]; then
       printf '%s\n' 'clawgod: invalid .source-version; specify --version explicitly' >&2

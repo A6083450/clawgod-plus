@@ -51,18 +51,18 @@ macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行�
 
 ## 安装 ClawGod Plus
 
-安装命令下载固定版本（v2026.10.19-claude.2.1.302）的 ClawGod Plus Release 资产。
+安装命令下载固定版本（v2026.10.19-claude.2.1.302.1）的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.1/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.1/install.ps1 | iex
 ```
 
 常用安装参数（不传版本时默认保持当前已安装的 Claude Code 版本，全新安装才拉取最新版）：
@@ -402,7 +402,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 直接运行 `claude` 时自动检查 ClawGod 正式 Release（缓存 24 小时，联网最多等待 3 秒），发现新版可选择「安装更新 / 稍后提醒 / 跳过此版本」。跳过记录保存在 `~/.clawgod/.update-check`，更高版本仍会提醒；手动 `claude update` 不受影响。非交互、带任务参数及子命令不弹菜单。安装完成后重新启动 `claude`。
 
-普通更新先获取最新 ClawGod 安装器，再使用其内置的**已验证 Claude Code 版本**（`src/generic/verified-version.txt`），不再自动追随 npm `latest`。全新安装采用同一默认值；已装版本更高时不自动降级。上游新版本可能需要等待兼容验证。
+普通 `claude update` 先获取最新 ClawGod 安装器，再尝试 npm `latest`。若候选升级失败且安装器确认已安全恢复旧运行时，则复用同一安装器重试内置的**已验证稳定版本**（`src/generic/verified-version.txt`），即使这意味着回到较低的稳定版本。稳定重试仍失败会报错并执行原有回滚。用户中断、恢复冲突或未确认恢复的失败不自动重试。直接运行安装器的新装默认仍为已验证版本。
 
 渲染器按相关声明及依赖的局部结构契约识别，变量改名、分块路径变化和无关声明改动不再要求逐版本添加指纹；真实布局或调用接口变化仍拒绝安装。未知渲染器不能靠 `--tolerate-stale` 或 clean-runtime 回退绕过。
 
@@ -412,7 +412,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 claude update
 ```
 
-`claude update` 由 wrapper 直接交给 ClawGod updater，不再依赖上游 bundle 的 update action 形状。若新版只有 mandatory bundle recognizer 兼容性漂移，更新会提交 clean post-processed Claude Code runtime，并显示 fallback warning；下载、提取、vendor 发布或 Bun load 失败仍回滚。直接运行 installer、首次安装和 `--no-upgrade` 不启用该降级。插件基线独立管理：更新不会把 Claude Code 固定到插件版本。
+`claude update` 由 wrapper 直接交给 ClawGod updater，不依赖上游 bundle 的 update action 形状。普通更新的两次尝试都要求补丁成功，不再把无增强 clean runtime 当作最新版升级成功。显式 `--version` 只尝试指定版本，不自动换稳定版，并保留原有带警告的整包兼容回退。插件基线独立管理：更新不会把 Claude Code 固定到插件版本。
 
 另可显式使用 `claude update --tolerate-stale`、`bash install.sh --tolerate-stale`、PowerShell `-TolerateStale`，或环境变量 `CLAWGOD_TOLERATE_STALE=1`：只跳过失配的补丁，保留其上游行为，继续应用其他成功补丁并列出跳过项。该选项不忽略语法错误、歧义或运行时失败，也不改变默认的整包兼容回退策略。
 

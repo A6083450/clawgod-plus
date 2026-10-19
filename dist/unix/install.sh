@@ -54,7 +54,7 @@ done
 # 默认只采用随安装器验证的版本；保留较新的已装版本，绝不静默降级。
 if [ -z "$VERSION" ] && [ "${UNINSTALL:-}" != 1 ] && [ "$NO_UPGRADE" != 1 ]; then
   VERSION="$VERIFIED_VERSION"
-  if [ -f "$CLAWGOD_DIR/.source-version" ]; then
+  if [ "${CLAWGOD_UPDATE_STABLE_FALLBACK:-}" != 1 ] && [ -f "$CLAWGOD_DIR/.source-version" ]; then
     _pinned="$(tr -d '\r\n' < "$CLAWGOD_DIR/.source-version")"
     if [[ ! "$_pinned" =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]]; then
       printf '%s\n' 'clawgod: invalid .source-version; specify --version explicitly' >&2
@@ -622,6 +622,7 @@ const {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
   renameSync,
   rmSync,
@@ -725,6 +726,9 @@ function runSelfUpdate(argv, options = {}) {
     const proxyFetch = join(clawgodDir, 'proxy-fetch.mjs');
     let installer = join(clawgodDir, windows ? 'install.ps1' : 'install.sh');
     const childEnv = childEnvironment(env, parsed);
+    delete childEnv.CLAWGOD_UPDATE_STABLE_FALLBACK;
+    const latestFirst = !parsed.explicitVersion && !parsed.noUpgrade && !parsed.leanOff && !parsed.leanOn && !parsed.leanMax;
+    if (latestFirst) delete childEnv.CLAWGOD_UPDATE_PATCH_FAIL_OPEN;
 
     if (!isTrustedLocalInstaller({ clawgodDir, installer, platform, explicitVersion: parsed.explicitVersion })) {
       if (!existsSync(fetchFile)) throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');
@@ -747,12 +751,29 @@ function runSelfUpdate(argv, options = {}) {
     const command = windows
       ? ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer]
       : ['bash', installer];
-    // 显式 latest 必须与旧 updater 隐式注入的 latest 区分。
-    if (parsed.explicitVersion && parsed.version === 'latest') command.push(windows ? '-Version' : '--version', 'latest');
-    return outcomeFromResult(
-      spawn(command[0], command.slice(1), { stdio: 'inherit', env: childEnv }),
+    delete childEnv.CLAWGOD_UPDATE_ROLLBACK_RECEIPT;
+    if (latestFirst) childEnv.CLAWGOD_UPDATE_ROLLBACK_RECEIPT = join(temporaryDirectory, 'rollback-receipt');
+    const firstCommand = [...command];
+    if (latestFirst || parsed.explicitVersion && parsed.version === 'latest') firstCommand.push(windows ? '-Version' : '--version', 'latest');
+    const first = outcomeFromResult(
+      spawn(firstCommand[0], firstCommand.slice(1), { stdio: 'inherit', env: childEnv }),
       'installer process did not return an exit status',
     );
+    if (!latestFirst || first.status === 0 || first.signal || first.status === 130 || first.status === 143) return first;
+    let restored = false;
+    try { restored = readFileSync(childEnv.CLAWGOD_UPDATE_ROLLBACK_RECEIPT, 'utf8') === 'restored\n'; } catch {}
+    if (!restored || readdirSync(clawgodDir).some(name => name.startsWith('.runtime-rollback.'))) {
+      stderr.write('[clawgod] 升级失败，但未确认已安全恢复或仍有恢复事务；为保护原安装，不自动重试。\n');
+      return first;
+    }
+    stderr.write('[clawgod] 最新版升级失败，已恢复原运行时；正在尝试安装器内置的稳定版本。\n');
+    childEnv.CLAWGOD_UPDATE_STABLE_FALLBACK = '1';
+    const fallback = outcomeFromResult(
+      spawn(command[0], command.slice(1), { stdio: 'inherit', env: childEnv }),
+      'stable installer process did not return an exit status',
+    );
+    if (fallback.status === 0 && !fallback.signal) stderr.write('[clawgod] 已安装稳定版本；最新版尚未升级成功。\n');
+    return fallback;
   } catch (error) {
     stderr.write(`[clawgod] update failed: ${error && error.message ? error.message : String(error)}\n`);
     return { status: 1, signal: null };
@@ -1364,6 +1385,9 @@ rollback_runtime_transaction() {
   fi
   if [ "$RUNTIME_TRANSACTION_CLEANUP_SAFE" = "1" ]; then
     rm -rf "$RUNTIME_TRANSACTION_DIR"
+    if [ ! -e "$RUNTIME_TRANSACTION_DIR" ] && [ -n "${CLAWGOD_UPDATE_ROLLBACK_RECEIPT:-}" ]; then
+      printf 'restored\n' > "$CLAWGOD_UPDATE_ROLLBACK_RECEIPT"
+    fi
   else
     printf '%s\n' "clawgod: prior CLI restored; untrusted transaction data retained at $RUNTIME_TRANSACTION_DIR" >&2
   fi
@@ -25766,7 +25790,7 @@ dim "  claude            — Start patched Claude Code (green logo)"
 dim "  claude.orig       — Run original unpatched Claude Code"
 echo ""
 dim "  Updates: 'claude update' is patched to route through this installer."
-dim "  Uses the installer-verified Claude Code release + re-patches"
+dim "  Tries npm latest first; retries stable after a confirmed rollback"
 dim "  in one step. Extra options:"
 dim "    claude update --version 2.1.180   (install a specific version)"
 dim "    claude update --no-upgrade        (re-patch without downloading)"

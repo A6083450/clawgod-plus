@@ -389,6 +389,7 @@ if (name === 'install-ripgrep.mjs') {
         SANITY_EXIT: String(options.sanityExit || 0),
         SANITY_PANIC: options.sanityPanic ? '1' : '0',
         CLAWGOD_UPDATE_PATCH_FAIL_OPEN: options.updateFailOpen ? '1' : '',
+        CLAWGOD_UPDATE_ROLLBACK_RECEIPT: join(home, 'rollback-receipt'),
         CHROME_MARKER: chromeMarker,
         VENDOR_PUBLISH_CALLS: vendorPublishCalls,
         RUNTIME_CHECK_CALLS: runtimeCheckCalls,
@@ -416,6 +417,7 @@ if (name === 'install-ripgrep.mjs') {
     const observedExternalSentinel = join(observedExternalRoot, 'sentinel.bin');
     return {
       run,
+      rollbackReceipt: existsSync(join(home, 'rollback-receipt')) ? readFileSync(join(home, 'rollback-receipt'), 'utf8') : null,
       managed: Object.fromEntries(Object.keys(oldManaged).map(name => [name, existsSync(join(dirname(target), name)) ? readFileSync(join(dirname(target), name), 'utf8') : null])),
       asset: existsSync(join(dirname(target), 'assets', 'prior.txt')) ? readFileSync(join(dirname(target), 'assets', 'prior.txt'), 'utf8') : null,
       pluginHealth,
@@ -535,6 +537,7 @@ if (name === 'install-ripgrep.mjs') {
   assert.notEqual(directCompatibilityFailure.run.status, 0, 'direct install must fail closed for an unauthorized compatibility fallback');
   assert.deepEqual(directCompatibilityFailure.patchArgs, ['--enhancements-file', directCompatibilityFailure.configPath], 'direct install must not authorize the compatibility fallback patch argument');
   assertPriorRuntimeRestored(directCompatibilityFailure, 'direct compatibility failure');
+  assert.equal(directCompatibilityFailure.rollbackReceipt, 'restored\n', '只有恢复完成才允许 updater 重试稳定版');
 
   const updateCompatibilityFallback = runLifecycleCase('update-compatibility-fallback', [], {
     updateFailOpen: true,
@@ -743,6 +746,9 @@ if (name === 'install-ripgrep.mjs') {
     publishFault: true,
   });
   assert.notEqual(publishFailed.run.status, 0, 'mid-publish failure must return nonzero');
+  assert.equal(publishFailed.rollbackReceipt, null, '恢复冲突不能允许第二轮安装');
+  assert.equal(rootReplaced.rollbackReceipt, null, '替换根冲突不能允许第二轮安装');
+  assert.equal(updateCompatibilityFallback.rollbackReceipt, null, '已提交运行时不能发恢复回执');
   assert.notEqual(publishFailed.runtime, 'prior installed runtime\n', 'vendor conflict must not restore the prior CLI against an incomplete vendor');
   assert.notEqual(publishFailed.sourceVersion, '2.1.225\n', 'vendor conflict must not restore the prior source marker');
   assert.deepEqual(publishFailed.vendor.oldNative.bytes, Buffer.from([0x00, 0x11, 0x80, 0xff]), 'vendor conflict recovery must restore prior native bytes');

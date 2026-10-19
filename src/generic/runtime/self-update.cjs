@@ -3,6 +3,7 @@ const {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
   renameSync,
   rmSync,
@@ -106,6 +107,9 @@ function runSelfUpdate(argv, options = {}) {
     const proxyFetch = join(clawgodDir, 'proxy-fetch.mjs');
     let installer = join(clawgodDir, windows ? 'install.ps1' : 'install.sh');
     const childEnv = childEnvironment(env, parsed);
+    delete childEnv.CLAWGOD_UPDATE_STABLE_FALLBACK;
+    const latestFirst = !parsed.explicitVersion && !parsed.noUpgrade && !parsed.leanOff && !parsed.leanOn && !parsed.leanMax;
+    if (latestFirst) delete childEnv.CLAWGOD_UPDATE_PATCH_FAIL_OPEN;
 
     if (!isTrustedLocalInstaller({ clawgodDir, installer, platform, explicitVersion: parsed.explicitVersion })) {
       if (!existsSync(fetchFile)) throw new Error('managed fetch-file.mjs is missing; reinstall ClawGod Plus');
@@ -128,12 +132,29 @@ function runSelfUpdate(argv, options = {}) {
     const command = windows
       ? ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer]
       : ['bash', installer];
-    // 显式 latest 必须与旧 updater 隐式注入的 latest 区分。
-    if (parsed.explicitVersion && parsed.version === 'latest') command.push(windows ? '-Version' : '--version', 'latest');
-    return outcomeFromResult(
-      spawn(command[0], command.slice(1), { stdio: 'inherit', env: childEnv }),
+    delete childEnv.CLAWGOD_UPDATE_ROLLBACK_RECEIPT;
+    if (latestFirst) childEnv.CLAWGOD_UPDATE_ROLLBACK_RECEIPT = join(temporaryDirectory, 'rollback-receipt');
+    const firstCommand = [...command];
+    if (latestFirst || parsed.explicitVersion && parsed.version === 'latest') firstCommand.push(windows ? '-Version' : '--version', 'latest');
+    const first = outcomeFromResult(
+      spawn(firstCommand[0], firstCommand.slice(1), { stdio: 'inherit', env: childEnv }),
       'installer process did not return an exit status',
     );
+    if (!latestFirst || first.status === 0 || first.signal || first.status === 130 || first.status === 143) return first;
+    let restored = false;
+    try { restored = readFileSync(childEnv.CLAWGOD_UPDATE_ROLLBACK_RECEIPT, 'utf8') === 'restored\n'; } catch {}
+    if (!restored || readdirSync(clawgodDir).some(name => name.startsWith('.runtime-rollback.'))) {
+      stderr.write('[clawgod] 升级失败，但未确认已安全恢复或仍有恢复事务；为保护原安装，不自动重试。\n');
+      return first;
+    }
+    stderr.write('[clawgod] 最新版升级失败，已恢复原运行时；正在尝试安装器内置的稳定版本。\n');
+    childEnv.CLAWGOD_UPDATE_STABLE_FALLBACK = '1';
+    const fallback = outcomeFromResult(
+      spawn(command[0], command.slice(1), { stdio: 'inherit', env: childEnv }),
+      'stable installer process did not return an exit status',
+    );
+    if (fallback.status === 0 && !fallback.signal) stderr.write('[clawgod] 已安装稳定版本；最新版尚未升级成功。\n');
+    return fallback;
   } catch (error) {
     stderr.write(`[clawgod] update failed: ${error && error.message ? error.message : String(error)}\n`);
     return { status: 1, signal: null };

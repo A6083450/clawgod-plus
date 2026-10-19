@@ -19,6 +19,7 @@ try {
     ['same', '2.1.302', [], {}, '2.1.302'],
     ['newer', '2.1.303', [], {}, '2.1.303'],
     ['major', '3.0.0', [], {}, '3.0.0'],
+    ['stable-fallback', '2.1.303', [], { CLAWGOD_UPDATE_STABLE_FALLBACK: '1' }, '2.1.302'],
     ['explicit', '2.1.303', ['--version', '2.1.299'], {}, '2.1.299'],
     ['env', '', [], { CLAWGOD_VERSION: '2.1.303' }, '2.1.303'],
     ['latest', '', ['--version', 'latest'], { CLAWGOD_UPDATE_PATCH_FAIL_OPEN: '1' }, 'latest'],

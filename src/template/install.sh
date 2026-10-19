@@ -259,6 +259,9 @@ rollback_runtime_transaction() {
   fi
   if [ "$RUNTIME_TRANSACTION_CLEANUP_SAFE" = "1" ]; then
     rm -rf "$RUNTIME_TRANSACTION_DIR"
+    if [ ! -e "$RUNTIME_TRANSACTION_DIR" ] && [ -n "${CLAWGOD_UPDATE_ROLLBACK_RECEIPT:-}" ]; then
+      printf 'restored\n' > "$CLAWGOD_UPDATE_ROLLBACK_RECEIPT"
+    fi
   else
     printf '%s\n' "clawgod: prior CLI restored; untrusted transaction data retained at $RUNTIME_TRANSACTION_DIR" >&2
   fi
@@ -998,7 +1001,7 @@ dim "  claude            — Start patched Claude Code (green logo)"
 dim "  claude.orig       — Run original unpatched Claude Code"
 echo ""
 dim "  Updates: 'claude update' is patched to route through this installer."
-dim "  Uses the installer-verified Claude Code release + re-patches"
+dim "  Tries npm latest first; retries stable after a confirmed rollback"
 dim "  in one step. Extra options:"
 dim "    claude update --version 2.1.180   (install a specific version)"
 dim "    claude update --no-upgrade        (re-patch without downloading)"
