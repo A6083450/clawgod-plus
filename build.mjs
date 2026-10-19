@@ -163,6 +163,9 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
     fileSystem.readFile(join(rootDir, 'src/unix/desktop/desktop-zh-Hans.json'), 'utf8'),
   ]);
   loadEnhancementManifest(enhancementsJson, { filename: 'enhancements.json' });
+  const desktopChineseGzip = gzipSync(desktopChineseJson);
+  // 固定 gzip 的 OS 字节，避免 macOS/Linux/Windows 生成不同安装器。
+  desktopChineseGzip[9] = 255;
   const patcherBundle = await buildPatcherBundle({ rootDir });
   const runtimeSourceFiles = {
     PROXY_FETCH_MJS: 'src/generic/runtime/proxy-fetch.mjs',
@@ -234,7 +237,7 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
           UNIX_LAUNCHER: platformSources.UNIX_LAUNCHER,
           UNIX_DESKTOP_ENHANCEMENT: platformSources.UNIX_DESKTOP_ENHANCEMENT,
           UNIX_DESKTOP_LANGUAGE_MJS: platformSources.UNIX_DESKTOP_LANGUAGE_MJS,
-          UNIX_DESKTOP_CHINESE_BASE64: gzipSync(desktopChineseJson).toString('base64'),
+          UNIX_DESKTOP_CHINESE_BASE64: desktopChineseGzip.toString('base64'),
         }),
       ...Object.fromEntries(Object.entries(runtimeSources)
         .filter(([name]) => name !== 'CLAUDE_HUD_STATUSLINE_MJS')
