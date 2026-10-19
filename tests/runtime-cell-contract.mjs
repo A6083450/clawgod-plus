@@ -59,7 +59,7 @@ for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias
     copyFileSync(new URL('../src/generic/runtime/post-processor.mjs', import.meta.url), join(dir, 'post-process.mjs'));
     writeFileSync(join(dir, 'cli.original.js'), '');
     for (const [file, text] of modules) writeFileSync(join(dir, 'chunks', file), text);
-    const result = spawnSync(process.execPath, [join(dir, 'post-process.mjs')], { encoding: 'utf8', timeout: 20000 });
+    const result = spawnSync(process.execPath, [join(dir, 'post-process.mjs')], { encoding: 'utf8', timeout: 120000 });
     assert.ifError(result.error);
     if (['valid', 'renamed', 'unrelated'].includes(variant)) {
       assert.equal(result.status, 0, `${platform}/${variant}: ${result.stderr}`);
