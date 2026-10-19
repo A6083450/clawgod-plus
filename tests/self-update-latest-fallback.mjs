@@ -33,6 +33,8 @@ for (const platform of ['darwin', 'win32']) {
       if (['fallback','both-fail'].includes(scenario)) {
         assert.equal(calls.length, 2, '失败后只重试一次稳定版');
         assert.equal(calls[1].env.CLAWGOD_VERSION, undefined);
+        assert.equal(calls[1].env.CLAWGOD_UPDATE_STABLE_FALLBACK, '1');
+        assert.equal(calls[0].env.CLAWGOD_UPDATE_STABLE_FALLBACK, undefined);
         assert.notEqual(calls[1].env.CLAWGOD_UPDATE_PATCH_FAIL_OPEN, '1');
         assert.equal(calls[1].args.includes('latest'), false);
         assert.match(messages.join(''), /稳定|verified/);

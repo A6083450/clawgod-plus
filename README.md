@@ -51,18 +51,18 @@ macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行�
 
 ## 安装 ClawGod Plus
 
-安装命令下载固定版本（v2026.10.19-claude.2.1.302）的 ClawGod Plus Release 资产。
+安装命令下载固定版本（v2026.10.19-claude.2.1.302.2）的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.2/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.2/install.ps1 | iex
 ```
 
 常用安装参数（不传版本时默认保持当前已安装的 Claude Code 版本，全新安装才拉取最新版）：
@@ -406,7 +406,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 直接运行 `claude` 时自动检查 ClawGod 正式 Release（缓存 24 小时，联网最多等待 3 秒），发现新版可选择「安装更新 / 稍后提醒 / 跳过此版本」。跳过记录保存在 `~/.clawgod/.update-check`，更高版本仍会提醒；手动 `claude update` 不受影响。非交互、带任务参数及子命令不弹菜单。安装完成后重新启动 `claude`。
 
-普通 `claude update` 先获取最新 ClawGod 安装器，再尝试 npm `latest`。若候选升级失败且安装器确认已安全恢复旧运行时，则复用同一安装器重试内置的**已验证稳定版本**（`src/generic/verified-version.txt`）；已装版本更高时保留较高版本，不自动降级。稳定重试仍失败会报错并执行原有回滚。用户中断、恢复冲突或未确认恢复的失败不自动重试。直接运行安装器的新装默认仍为已验证版本。
+普通 `claude update` 先获取最新 ClawGod 安装器，再尝试 npm `latest`。若候选升级失败且安装器确认已安全恢复旧运行时，则复用同一安装器重试内置的**已验证稳定版本**（`src/generic/verified-version.txt`），即使这意味着回到较低的稳定版本。稳定重试仍失败会报错并执行原有回滚。用户中断、恢复冲突或未确认恢复的失败不自动重试。直接运行安装器的新装默认仍为已验证版本。
 
 渲染器按相关声明及依赖的局部结构契约识别，变量改名、分块路径变化和无关声明改动不再要求逐版本添加指纹；真实布局或调用接口变化仍拒绝安装。未知渲染器不能靠 `--tolerate-stale` 或 clean-runtime 回退绕过。
 

@@ -51,18 +51,18 @@ The installer fetches the current platform-specific official `@anthropic-ai/clau
 
 ## Install ClawGod Plus
 
-These commands download the pinned ClawGod Plus release assets (v2026.10.19-claude.2.1.302).
+These commands download the pinned ClawGod Plus release assets (v2026.10.19-claude.2.1.302.2).
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.2/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.2/install.ps1 | iex
 ```
 
 Useful installer options (with no version specified, the installer keeps the currently installed Claude Code version; a fresh install pulls the latest):
@@ -396,7 +396,7 @@ The installer scripts are deterministic generated artifacts: `src/` is the singl
 
 Starting `claude` without task arguments checks stable ClawGod releases (24-hour cache, up to 3 seconds online) and offers Install / Later / Skip this version. The skipped release is stored in `~/.clawgod/.update-check`; newer releases still prompt, and manual `claude update` ignores the skip. Non-interactive invocations, task arguments and subcommands never prompt. Restart `claude` after installation.
 
-Normal `claude update` fetches the latest ClawGod installer and tries npm `latest` first. If the candidate fails and the installer confirms safe restoration, the same installer retries its **verified stable version** (`src/generic/verified-version.txt`), preserving a newer installed version instead of downgrading. A failed stable attempt reports failure and uses the existing rollback. Interruptions, recovery conflicts and unconfirmed restoration never trigger a retry. Direct fresh installs still default to the verified version.
+Normal `claude update` fetches the latest ClawGod installer and tries npm `latest` first. If the candidate fails and the installer confirms safe restoration, the same installer retries its **verified stable version** (`src/generic/verified-version.txt`), even if that means returning to a lower stable version. A failed stable attempt reports failure and uses the existing rollback. Interruptions, recovery conflicts and unconfirmed restoration never trigger a retry. Direct fresh installs still default to the verified version.
 
 The renderer is recognized by local structural contracts for relevant declarations and dependencies. Binding renames, chunk paths, and unrelated declarations no longer require per-version fingerprints; actual layout or calling-interface changes still fail closed. Neither `--tolerate-stale` nor clean-runtime fallback bypasses an unknown renderer.
 

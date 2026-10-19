@@ -51,18 +51,18 @@ macOS/Linux では Shell、Windows では PowerShell を OS のコマンド入�
 
 ## ClawGod Plus をインストール
 
-以下のコマンドは、固定バージョン（v2026.10.19-claude.2.1.302）の ClawGod Plus Release アセットをダウンロードします。
+以下のコマンドは、固定バージョン（v2026.10.19-claude.2.1.302.2）の ClawGod Plus Release アセットをダウンロードします。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.2/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.2/install.ps1 | iex
 ```
 
 主なインストーラオプション（バージョン未指定時は現在インストール済みの Claude Code バージョンを維持し、新規インストール時のみ最新を取得）：
@@ -396,7 +396,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 タスク引数なしで `claude` を起動すると正式な ClawGod Release を確認し（24 時間キャッシュ、通信待ちは最大 3 秒）、インストール・後で通知・このバージョンをスキップから選べます。スキップは `~/.clawgod/.update-check` に保存され、さらに新しいバージョンは通知されます。手動の `claude update` はスキップに影響されません。非対話実行、タスク引数、サブコマンドではメニューを表示しません。インストール後は `claude` を再起動してください。
 
-通常の `claude update` は最新の ClawGod インストーラを取得し、まず npm `latest` を試します。候補の更新が失敗し、安全な復元が確認された場合のみ、同じインストーラの**検証済み安定版**（`src/generic/verified-version.txt`）を再試行します。インストール済みの方が新しければ自動でダウングレードしません。安定版も失敗すればエラーと従来のロールバックを行います。中断、復元競合、復元未確認の場合は再試行しません。直接の新規インストールは引き続き検証済み版が既定です。
+通常の `claude update` は最新の ClawGod インストーラを取得し、まず npm `latest` を試します。候補の更新が失敗し、安全な復元が確認された場合のみ、同じインストーラの**検証済み安定版**（`src/generic/verified-version.txt`）を再試行します。必要なら現在より低い安定版へ戻ります。安定版も失敗すればエラーと従来のロールバックを行います。中断、復元競合、復元未確認の場合は再試行しません。直接の新規インストールは引き続き検証済み版が既定です。
 
 レンダラーは関連する宣言と依存関係の局所的な構造契約で識別します。変数名、chunk パス、無関係な宣言の変更にはバージョンごとの指紋追加が不要ですが、レイアウトや呼び出しインターフェースの変更は引き続き拒否します。未知のレンダラーは `--tolerate-stale` や clean-runtime フォールバックでも回避できません。
 

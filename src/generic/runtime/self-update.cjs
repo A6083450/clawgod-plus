@@ -107,6 +107,7 @@ function runSelfUpdate(argv, options = {}) {
     const proxyFetch = join(clawgodDir, 'proxy-fetch.mjs');
     let installer = join(clawgodDir, windows ? 'install.ps1' : 'install.sh');
     const childEnv = childEnvironment(env, parsed);
+    delete childEnv.CLAWGOD_UPDATE_STABLE_FALLBACK;
     const latestFirst = !parsed.explicitVersion && !parsed.noUpgrade && !parsed.leanOff && !parsed.leanOn && !parsed.leanMax;
     if (latestFirst) delete childEnv.CLAWGOD_UPDATE_PATCH_FAIL_OPEN;
 
@@ -146,7 +147,8 @@ function runSelfUpdate(argv, options = {}) {
       stderr.write('[clawgod] 升级失败，但未确认已安全恢复或仍有恢复事务；为保护原安装，不自动重试。\n');
       return first;
     }
-    stderr.write('[clawgod] 最新版升级失败，正在尝试安装器内置的稳定版本（不自动降级已装高版本）。\n');
+    stderr.write('[clawgod] 最新版升级失败，已恢复原运行时；正在尝试安装器内置的稳定版本。\n');
+    childEnv.CLAWGOD_UPDATE_STABLE_FALLBACK = '1';
     const fallback = outcomeFromResult(
       spawn(command[0], command.slice(1), { stdio: 'inherit', env: childEnv }),
       'stable installer process did not return an exit status',

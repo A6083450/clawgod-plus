@@ -29,7 +29,7 @@ $ClawDir = Join-Path $env:USERPROFILE ".clawgod"
 if (-not $Version -and -not $Uninstall -and -not $NoUpgrade) {
     $Version = $VerifiedVersion
     $srcVer = Join-Path $ClawDir ".source-version"
-    if (Test-Path $srcVer) {
+    if ($env:CLAWGOD_UPDATE_STABLE_FALLBACK -ne '1' -and (Test-Path $srcVer)) {
         $pinned = (Get-Content $srcVer -Raw) -replace '[\r\n]', ''
         if ($pinned -notmatch '^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$') {
             throw 'Invalid .source-version; specify -Version explicitly'
