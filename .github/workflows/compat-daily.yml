@@ -283,7 +283,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($test in @('wrapper-provider-lean', 'openai-proxy', 'patcher-terminal-replies', 'patcher-voice-input', 'runtime-cell-segmenter', 'runtime-cell-contract', 'installer-version-policy')) {
+          foreach ($test in @('wrapper-provider-lean', 'openai-proxy', 'patcher-terminal-replies', 'patcher-voice-input', 'patcher-design-canvas', 'patcher-design-local', 'runtime-cell-segmenter', 'runtime-cell-contract', 'installer-version-policy')) {
             & bun "$env:GITHUB_WORKSPACE\tests\$test.mjs"
             if ($LASTEXITCODE -ne 0) { throw "$test failed" }
           }

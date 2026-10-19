@@ -51,21 +51,21 @@ macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行�
 
 ## 安装 ClawGod Plus
 
-安装命令下载固定版本（v2026.10.19-claude.2.1.302.2）的 ClawGod Plus Release 资产。
+安装命令下载固定版本（v2026.10.19-claude.2.1.303）的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.2/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.303/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302.2/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.303/install.ps1 | iex
 ```
 
-常用安装参数（不传版本时默认保持当前已安装的 Claude Code 版本，全新安装才拉取最新版）：
+常用安装参数（不传版本时默认使用安装器已验证的 Claude Code 版本，保留较新的已装版本）：
 
 ```bash
 bash install.sh --version 2.1.220  # 安装指定 Claude Code 版本

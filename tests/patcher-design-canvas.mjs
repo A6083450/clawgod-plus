@@ -35,7 +35,7 @@ assert.match(registrySource, /designCanvasRegistry/, 'patcher registry must impo
 
 const designCanvasRegistry = patchRegistries.find((registry) => registry.id === 'design-canvas');
 assert.ok(designCanvasRegistry, 'design-canvas registry must be part of the patcher registries');
-assert.equal(designCanvasRegistry.patches.length, 2, 'design-canvas must ship exactly the gate and payload patches');
+assert.equal(designCanvasRegistry.patches.length, 3, 'design-canvas must retain legacy patches and the local fallback');
 
 // ─── Synthetic fixture (2.1.234 shape) ────────────────────────────────
 
@@ -225,7 +225,9 @@ if (existsSync(realBundle)) {
     }
   }
   const canvasEvidence = /isDesignCanvasSkillEnabled|DESIGN_CANVAS_(?:DESCRIPTION|MENU_DESCRIPTION|COMMAND_NAME)|payload\.template\.html\.asset|Create a design canvas/;
-  if (canvasEvidence.test(content)) for (const patch of designCanvasRegistry.patches) {
+  for (const patch of designCanvasRegistry.patches) {
+    const localFallback = patch.appliedMarker === '/*__clawgod_design_local__*/';
+    if (localFallback ? !patch.knownShape.test(content) && !content.includes(patch.appliedMarker) : !canvasEvidence.test(content)) continue;
     if (content.includes(patch.appliedMarker)) {
       assert.equal(
         content.match(new RegExp(patch.appliedMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length,
