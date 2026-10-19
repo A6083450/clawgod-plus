@@ -210,6 +210,11 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
       await fileSystem.readFile(join(rootDir, path), 'utf8'),
     ]),
   ));
+  const verifiedVersion = (await fileSystem.readFile(join(rootDir, 'src/generic/verified-version.txt'), 'utf8')).trim();
+  if (!/^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$/.test(verifiedVersion)) throw new Error('Invalid verified Claude Code version');
+  for (const name of ['UNIX_LIFECYCLE', 'WINDOWS_LIFECYCLE']) {
+    platformSources[name] = renderTemplate(platformSources[name], { VERIFIED_VERSION: verifiedVersion });
+  }
   return Promise.all(OUTPUTS.map(async entry => {
     const template = await fileSystem.readFile(join(rootDir, entry.template), 'utf8');
     const powerShell = entry.output.endsWith('.ps1');

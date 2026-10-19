@@ -1,6 +1,9 @@
 CLAWGOD_DIR="$HOME/.clawgod"
 BIN_DIR="$HOME/.local/bin"
 VERSION="${CLAWGOD_VERSION:-}"
+VERIFIED_VERSION="@@CLAWGOD_VERIFIED_VERSION@@"
+# 旧 updater 把无参更新标记为 latest；显式 --version 在后面的参数解析中恢复。
+if [ "$VERSION" = latest ] && [ "${CLAWGOD_UPDATE_PATCH_FAIL_OPEN:-}" = 1 ]; then VERSION=""; fi
 NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
 TOLERATE_STALE="${CLAWGOD_TOLERATE_STALE:-}"
 LEAN_OFF="${CLAWGOD_LEAN_OFF:-}"
@@ -33,18 +36,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# 未显式指定版本时，保持当前已安装的 Claude Code 版本（读 .source-version），
-# 避免重跑 install 把 Claude Code 意外升级到最新；全新安装才回退 latest。
-# `claude update` 路径会显式注入 CLAWGOD_VERSION（含 latest），不受此影响。
-if [ -z "$VERSION" ]; then
-  if [ -r "$CLAWGOD_DIR/.source-version" ]; then
-    _pinned="$(tr -d '[:space:]' < "$CLAWGOD_DIR/.source-version" 2>/dev/null || true)"
-    # 仅接受形如 X.Y 的版本号，防御残留的非版本内容（如历史 repatch 写下的 basename）
-    case "$_pinned" in
-      [0-9]*.[0-9]*) VERSION="$_pinned" ;;
-    esac
+# 默认只采用随安装器验证的版本；保留较新的已装版本，绝不静默降级。
+if [ -z "$VERSION" ] && [ "${UNINSTALL:-}" != 1 ] && [ "$NO_UPGRADE" != 1 ]; then
+  VERSION="$VERIFIED_VERSION"
+  if [ -f "$CLAWGOD_DIR/.source-version" ]; then
+    _pinned="$(tr -d '\r\n' < "$CLAWGOD_DIR/.source-version")"
+    if [[ ! "$_pinned" =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]]; then
+      printf '%s\n' 'clawgod: invalid .source-version; specify --version explicitly' >&2
+      exit 1
+    fi
+    IFS=. read -r _major _minor _patch <<< "$_pinned"
+    IFS=. read -r _vmajor _vminor _vpatch <<< "$VERIFIED_VERSION"
+    if (( _major > _vmajor || _major == _vmajor && _minor > _vminor || _major == _vmajor && _minor == _vminor && _patch > _vpatch )); then VERSION="$_pinned"; fi
   fi
-  [ -z "$VERSION" ] && VERSION="latest"
 fi
 
 CLAWGOD_ENHANCEMENT_IDS=(

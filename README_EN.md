@@ -51,18 +51,18 @@ The installer fetches the current platform-specific official `@anthropic-ai/clau
 
 ## Install ClawGod Plus
 
-These commands download the pinned ClawGod Plus release assets (v2026.10.17-claude.2.1.302).
+These commands download the pinned ClawGod Plus release assets (v2026.10.19-claude.2.1.302).
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.17-claude.2.1.302/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.17-claude.2.1.302/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.ps1 | iex
 ```
 
 Useful installer options (with no version specified, the installer keeps the currently installed Claude Code version; a fresh install pulls the latest):
@@ -390,6 +390,12 @@ The installer scripts are deterministic generated artifacts: `src/` is the singl
 
 ## Update
 
+Starting `claude` without task arguments checks stable ClawGod releases (24-hour cache, up to 3 seconds online) and offers Install / Later / Skip this version. The skipped release is stored in `~/.clawgod/.update-check`; newer releases still prompt, and manual `claude update` ignores the skip. Non-interactive invocations, task arguments and subcommands never prompt. Restart `claude` after installation.
+
+Normal updates fetch the latest ClawGod installer, then use its bundled **verified Claude Code version** (`src/generic/verified-version.txt`), not npm `latest`. Fresh installs use the same default; a newer installed version is not automatically downgraded. New upstream releases may wait for compatibility verification.
+
+The renderer is recognized by local structural contracts for relevant declarations and dependencies. Binding renames, chunk paths, and unrelated declarations no longer require per-version fingerprints; actual layout or calling-interface changes still fail closed. Neither `--tolerate-stale` nor clean-runtime fallback bypasses an unknown renderer.
+
 Use the normal command:
 
 ```bash
@@ -403,6 +409,7 @@ Explicit `claude update --tolerate-stale`, `bash install.sh --tolerate-stale`, P
 Failed upgrades restore the previous CLI, wrapper, assets and clean-source backups, not user Provider/runtime-switch/plugin configuration. `--no-upgrade` validates the complete current-version clean source before re-patching; missing or damaged backups must not mix versions.
 
 ```bash
+claude update --version latest # explicitly try npm latest; compatibility checks still apply
 claude update --version 2.1.220  # pin a known Claude Code version
 claude update --no-upgrade      # reuse current source; recover that exact version if clean backup is missing
 ```

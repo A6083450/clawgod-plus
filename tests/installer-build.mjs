@@ -836,6 +836,7 @@ try {
     'src/template/install.sh',
     'src/template/install.ps1',
     'src/generic/features.json',
+    'src/generic/verified-version.txt',
     'src/generic/enhancements.json',
     'src/generic/enhancement-config.mjs',
     'src/generic/runtime/proxy-fetch.mjs',

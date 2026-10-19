@@ -3,6 +3,8 @@ const {
   existsSync,
   mkdtempSync,
   readFileSync,
+  writeFileSync,
+  renameSync,
   rmSync,
 } = require('node:fs');
 const { spawnSync } = require('node:child_process');
@@ -30,7 +32,7 @@ function parseUpdateArgs(argv) {
   return {
     command,
     explicitVersion,
-    version: explicitVersion ? args[versionIndex + 1] : 'latest',
+    version: explicitVersion ? args[versionIndex + 1] : '',
     noUpgrade: args.includes('--no-upgrade'),
     tolerateStale: args.includes('--tolerate-stale'),
     leanOff: args.includes('--lean-off'),
@@ -66,6 +68,7 @@ function childEnvironment(env, parsed) {
     CLAWGOD_UPDATE_PATCH_FAIL_OPEN: '1',
     CLAWGOD_VERSION: parsed.version,
   };
+  if (!parsed.explicitVersion) delete childEnv.CLAWGOD_VERSION;
   for (const [environmentKey, argumentKey] of UPDATE_FLAGS) {
     if (parsed[argumentKey]) childEnv[environmentKey] = '1';
     else delete childEnv[environmentKey];
@@ -125,6 +128,8 @@ function runSelfUpdate(argv, options = {}) {
     const command = windows
       ? ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer]
       : ['bash', installer];
+    // 显式 latest 必须与旧 updater 隐式注入的 latest 区分。
+    if (parsed.explicitVersion && parsed.version === 'latest') command.push(windows ? '-Version' : '--version', 'latest');
     return outcomeFromResult(
       spawn(command[0], command.slice(1), { stdio: 'inherit', env: childEnv }),
       'installer process did not return an exit status',
@@ -150,7 +155,72 @@ function exitWithOutcome(outcome, processObject = process) {
   processObject.exit(outcome.status);
 }
 
+function newerRelease(candidate, installed) {
+  if (!STABLE_SELF_VERSION.test(candidate) || !STABLE_SELF_VERSION.test(installed)) return false;
+  const left = candidate.split(/-claude\.|\./).map(Number);
+  const right = installed.split(/-claude\.|\./).map(Number);
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const delta = (left[index] || 0) - (right[index] || 0);
+    if (delta) return delta > 0;
+  }
+  return false;
+}
+
+function shouldCheckUpdate(args, inputTTY, outputTTY, env) {
+  return inputTTY === true && outputTTY === true && !env.CI
+    && args.every(arg => arg === '--chrome' || arg === '--no-chrome');
+}
+
+async function askUpdate(version) {
+  const readline = require('node:readline/promises').createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = await readline.question(`[clawgod] 发现新版 v${version}\n  1. 安装更新\n  2. 稍后提醒（默认）\n  3. 跳过此版本\n请选择 [2]: `);
+    return answer.trim() === '1' ? 'install' : answer.trim() === '3' ? 'skip' : 'later';
+  } finally { readline.close(); }
+}
+
+async function checkForUpdate({ clawgodDir = join(homedir(), '.clawgod'), now = Date.now,
+  fetch = globalThis.fetch, ask = askUpdate, install = () => runSelfUpdate(['update']) } = {}) {
+  try {
+    const installed = readFileSync(join(clawgodDir, '.clawgod-version'), 'utf8').trim();
+    if (!STABLE_SELF_VERSION.test(installed)) return null;
+    const file = join(clawgodDir, '.update-check');
+    let state = {};
+    try { const parsed = JSON.parse(readFileSync(file, 'utf8')); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) state = parsed; } catch {}
+    const save = () => {
+      const temporary = `${file}.${process.pid}.tmp`;
+      try { writeFileSync(temporary, JSON.stringify(state) + '\n', { mode: 0o600 }); renameSync(temporary, file); }
+      finally { rmSync(temporary, { force:true }); }
+    };
+    // 旧缓存没有资产完整性标记，必须重新检查，不能提示尚未上传完的 Release。
+    if (state.ready !== true || !Number.isFinite(state.t) || now() < state.t || now() - state.t >= 86400000) {
+      const response = await fetch('https://api.github.com/repos/A6083450/clawgod-plus/releases/latest', {
+        headers: { 'User-Agent':'clawgod', Accept:'application/vnd.github+json' }, signal: AbortSignal.timeout(3000),
+      });
+      if (!response.ok) return null;
+      const release = await response.json();
+      const version = typeof release.tag_name === 'string' ? release.tag_name.replace(/^v/, '') : '';
+      if (!STABLE_SELF_VERSION.test(version) || release.draft || release.prerelease
+        || !['install.sh','install.ps1'].every(name => release.assets?.some(asset => asset.name === name))) return null;
+      // 网络等待期间另一终端可能已选择跳过，刷新不能用旧快照覆盖它。
+      try { const latest = JSON.parse(readFileSync(file, 'utf8')); if (typeof latest?.skipped === 'string') state.skipped = latest.skipped; } catch {}
+      state = { t:now(), v:version, ready:true, skipped:typeof state.skipped === 'string' ? state.skipped : '' };
+      save();
+    }
+    if (!newerRelease(state.v, installed) || state.skipped === state.v) return null;
+    const choice = await ask(state.v);
+    if (choice === 'skip') { state.skipped = state.v; save(); }
+    if (choice === 'install') return install();
+  } catch {
+    // 更新检查失败不能阻止 Claude 启动。
+  }
+  return null;
+}
+
 module.exports = {
+  checkForUpdate,
+  newerRelease,
+  shouldCheckUpdate,
   parseUpdateArgs,
   runSelfUpdate,
   exitWithOutcome,

@@ -6399,6 +6399,78 @@ export function structuralModule(source) {
     topBindings: Object.fromEntries([...root.names].map(([name, id]) => [name, Number(id.slice(8))])) };
 }
 
+// 只冻结根声明可达的本地依赖；导入边由调用者核对，不能把无关 chunk 内容算进契约。
+export function cellDeclarationContract(source, roots) {
+  const { ast } = structuralModule(source);
+  const declarations = new Map(), imports = new Map(), selected = new Map(), edges = new Map();
+  for (const node of ast.body) {
+    if (node.type === 'ImportDeclaration') {
+      for (const item of node.specifiers) {
+        imports.set(item.local.name, { local: item.local.name, imported: item.imported?.name,
+          specifier: node.source.value, source: `import ${source.slice(item.start, item.end)} from ${JSON.stringify(node.source.value)};` });
+        if (item.type === 'ImportSpecifier') imports.get(item.local.name).source = `import{${source.slice(item.start, item.end)}}from${JSON.stringify(node.source.value)};`;
+      }
+    } else if (node.type === 'VariableDeclaration') {
+      for (const item of node.declarations) {
+        if (item.id.type === 'Identifier') declarations.set(item.id.name, { source: `${node.kind} ${source.slice(item.start, item.end)};`, node });
+      }
+    } else if (node.id?.name) declarations.set(node.id.name, { source: source.slice(node.start, node.end), node });
+  }
+  function visit(name) {
+    if (selected.has(name) || edges.has(name)) return;
+    if (imports.has(name)) { edges.set(name, imports.get(name)); return; }
+    const declaration = declarations.get(name);
+    if (!declaration) return;
+    selected.set(name, declaration);
+    const parsed = structuralModule(declaration.source);
+    for (const match of parsed.normalized.matchAll(/"global:([\w$]+)"/g)) visit(match[1]);
+  }
+  for (const root of roots) {
+    if (!declarations.has(root)) throw Error(`缺少契约根声明：${root}`);
+    visit(root);
+  }
+  // 声明以外的顶层写入/初始化不能被切片丢弃，否则会漏掉实际生效的布局变化。
+  function references(node) {
+    if (!node || typeof node !== 'object') return false;
+    if (node.type === 'Identifier' && selected.has(node.name)) return true;
+    return Object.entries(node).some(([key, value]) => {
+      if (!node.computed && (key === 'key' && ['Property', 'MethodDefinition', 'PropertyDefinition'].includes(node.type)
+        || key === 'property' && node.type === 'MemberExpression')) return false;
+      return Array.isArray(value) ? value.some(references) : references(value);
+    });
+  }
+  for (const node of ast.body) {
+    if (['ImportDeclaration', 'ExportNamedDeclaration', 'FunctionDeclaration', 'ClassDeclaration'].includes(node.type)) continue;
+    if (node.type === 'VariableDeclaration') {
+      const effects = node => node && typeof node === 'object' && (['CallExpression', 'NewExpression', 'AssignmentExpression', 'UpdateExpression', 'AwaitExpression', 'TaggedTemplateExpression'].includes(node.type)
+        || Object.values(node).some(value => Array.isArray(value) ? value.some(effects) : effects(value)));
+      if (node.declarations.some(item => !selected.has(item.id.name) && references(item.init) && effects(item.init))) throw Error('契约依赖存在额外顶层初始化');
+    } else if (references(node)) throw Error('契约依赖存在额外顶层操作');
+  }
+  const touchesSelected = value => [...JSON.stringify(value).matchAll(/"global:([\w$]+)"/g)].some(match => selected.has(match[1]));
+  function writesSelected(node) {
+    if (!node || typeof node !== 'object') return false;
+    if (node.type === 'AssignmentExpression' && touchesSelected(node.left)
+      || node.type === 'UpdateExpression' && touchesSelected(node.argument)
+      || node.type === 'StaticBlock' && touchesSelected(node)) return true;
+    return Object.values(node).some(value => Array.isArray(value) ? value.some(writesSelected) : writesSelected(value));
+  }
+  for (const node of ast.body) {
+    if (node.id && !selected.has(node.id.name)
+      && writesSelected(JSON.parse(structuralModule(source.slice(node.start,node.end)).normalized))) {
+      throw Error(`契约依赖存在间接顶层操作：${node.id.name}`);
+    }
+  }
+  const text = [...edges.values()].map(edge => edge.source).concat([...selected.values()].map(item => item.source)).join('\n');
+  const structure = structuralModule(text);
+  const ordered = ast.body.flatMap(node => node.type === 'VariableDeclaration'
+    ? node.declarations.filter(item => selected.has(item.id.name) || references(item.init)).map(item => `${node.kind} ${source.slice(item.start,item.end)};`)
+    : node.id && selected.has(node.id.name) ? [source.slice(node.start,node.end)] : []);
+  const initialization = structuralModule([...edges.values()].map(edge => edge.source).concat(ordered).join('\n'));
+  return { ...structure, digest: createHash('sha256').update(structure.digest + initialization.digest).digest('hex'),
+    source: text, imports: [...edges.values()], declarations: selected };
+}
+
 const here = realpathSync.native(dirname(fileURLToPath(import.meta.url)));
 const src = `${here}/cli.original.js`;
 const dst = `${here}/cli.original.cjs`;
@@ -7916,6 +7988,133 @@ function structuralCellProfile(source, dependencies) {
   };
 }
 
+// 七参数字符格 ABI：冻结可达声明而非整个 renderer，绑定名和分块路径不属于接口。
+function localCellProfile(source, dependencies) {
+  try {
+    const ast = cellAst.parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+    const one = predicate => {
+      const nodes = ast.body.filter(node => node.id && predicate(source.slice(node.start, node.end), node));
+      if (nodes.length !== 1) throw Error('渲染契约根不唯一');
+      return nodes[0].id.name;
+    };
+    const roots = [
+      one(text => text.includes('widthMask:') && text.includes('spacerCharIndex:')),
+      one(text => text.includes('stylePool;charPool;native=')),
+      one(text => text.includes('.setCell(') && text.includes('.atlasRecorder')),
+      one(text => text.includes('.keepColumns(') && text.includes('.segment(')),
+      one(text => /^function [\w$]+\(([\w$]+)\)\{return [\w$]+\.test\(\1\)\?\1\.replace\([\w$]+,"\\uFFFD"\):\1\}$/.test(text)),
+    ];
+    const renderer = cellDeclarationContract(source, roots);
+    const windows = renderer.digest === '5662354f359aff6215a218c960def8daa016b665a826182ca74f7f7a3931e976';
+    if (!windows && renderer.digest !== '81d0cbf0d426ae6b3b29b279988115f7135d920654b90201a9e235e36851b6a5') return null;
+    const names = Object.fromEntries(Object.entries({ Ns:12, Dd:23, Cx:81, xC:110, Dc:137,
+      bn:14, wo:15, Xf:16, jn:17, hht:1, Rx:90, xx:93, bGt:3, LNr:5, MNr:6 })
+      .map(([key, index]) => [key, renderer.bindings[index - (windows && index >= 12 ? 1 : 0)]]));
+    names.cmr = 'clawgodAnsiTokens';
+    names.Kf = 'clawgodMergeStyles';
+    const imports = ast.body.filter(node => node.type === 'ImportDeclaration');
+    const hash = text => createHash('sha256').update(text).digest('hex');
+    const resolveImport = local => {
+      const node = imports.find(node => node.specifiers.some(item => item.local.name === local));
+      const binding = node?.specifiers.find(item => item.local.name === local);
+      const text = node && dependencies.get(basename(node.source.value));
+      if (typeof text !== 'string' || binding.type !== 'ImportSpecifier') throw Error('缺少契约依赖');
+      const structure = structuralModule(text);
+      const exported = structure.ast.body.flatMap(item => item.type === 'ExportNamedDeclaration' ? item.specifiers : [])
+        .find(item => item.exported.name === binding.imported.name);
+      if (!exported) throw Error('契约导出缺失');
+      return { source: text, structure, specifier: node.source.value, local: exported.local.name };
+    };
+    const shared = resolveImport(renderer.bindings[0]);
+    if (shared.structure.digest !== 'a4df63c44a7007f50b1418b8f808f8600771ce2003d94c291174145ec3ba36f6'
+      || shared.local !== shared.structure.bindings[6]) return null;
+    for (const [local, upstream] of [[2,0],[4,5],[windows ? 9 : 10,1],[windows ? 10 : 11,2]]) {
+      const edge = resolveImport(renderer.bindings[local]);
+      if (edge.specifier !== shared.specifier || edge.local !== shared.structure.bindings[upstream]) return null;
+    }
+    const chalk = resolveImport(names.bGt);
+    if (chalk.structure.digest !== '2fdd7ca5ded53c63977f6f7efb408920fd99b93e1fee3ce1f25a57d809c27aab'
+      || chalk.local !== chalk.structure.bindings[187]) return null;
+    const styles = resolveImport(names.MNr), normalizedStyles = resolveImport(names.LNr);
+    if (styles.specifier !== normalizedStyles.specifier
+      || cellDeclarationContract(styles.source, [styles.local, normalizedStyles.local]).digest !== '549f52003f118824c71b45c8abda724deb6e7c17848fc353a012e07c49f30e9e') return null;
+    function verifyEdges(contract, expected) {
+      if (contract.imports.length !== expected.length) return false;
+      return contract.imports.every((edge, index) => {
+        const text = dependencies.get(basename(edge.specifier));
+        if (typeof text !== 'string') return false;
+        const parsed = structuralModule(text);
+        const [digest, binding] = expected[index];
+        const exported = parsed.ast.body.flatMap(node => node.type === 'ExportNamedDeclaration' ? node.specifiers : [])
+          .find(item => item.exported.name === edge.imported);
+        return parsed.digest === digest && exported?.local.name === parsed.bindings[binding];
+      });
+    }
+    if (!verifyEdges(cellDeclarationContract(styles.source, [styles.local, normalizedStyles.local]), [[chalk.structure.digest, 176]])) return null;
+    const tabs = resolveImport(names.hht);
+    const expanders = imports.filter(node => node.source.value === tabs.specifier).flatMap(node => node.specifiers)
+      .filter(item => item.local.name !== names.hht).filter(item => {
+        try {
+          const edge = resolveImport(item.local.name);
+          const contract = cellDeclarationContract(tabs.source, [tabs.local, edge.local]);
+          return contract.digest === '714287168495299b3b5a5d0c9ee451730c3b2d8cd4817813a6319661ce152c46'
+            && verifyEdges(contract, [...[0,5,12,6,14,10].map(index => ['ea528a66e176e8d0e965ba61400fe5c041c2e03ab480314d3bdc64c31a87f1f8', index]),
+              [windows ? '3128c6dd72850c8e53097f5ff2d5cacbb841a6eff22da707f8e8e904fdabb7e3' : '1fd9187348c1e13e2407819e6ab3892ac64e1e3d313a3f3a460665d47317df66', 1]]);
+        } catch { return false; }
+      });
+    if (expanders.length !== 1) return null;
+    names.C8 = expanders[0].local.name;
+    const ansiCandidates = imports.map(node => {
+      const text = dependencies.get(basename(node.source.value));
+      if (!text || !text.includes('Number.POSITIVE_INFINITY')) return null;
+      const structure = structuralModule(text);
+      return structure.digest === '5c710815d4d1b551b526147eacb70dcd92be27824e3e2e7ef6252df9eb1f911a'
+        ? { source: text, structure, specifier: node.source.value } : null;
+    }).filter(Boolean);
+    if (ansiCandidates.length !== 1) return null;
+    const ansi = ansiCandidates[0];
+    const textCandidates = [];
+    for (const [file, text] of dependencies) {
+      if (!text.includes(shared.specifier) || !text.includes('.trimEnd()')) continue;
+      const parsed = cellAst.parse(text, { ecmaVersion: 'latest', sourceType: 'module' });
+      const functions = parsed.body.filter(node => node.type === 'FunctionDeclaration');
+      const checks = functions.filter(node => { const body = text.slice(node.start,node.end); return body.includes('.trimEnd()') && body.includes('.indexOf('); });
+      const segments = functions.filter(node => text.slice(node.start,node.end).includes(`${shared.local}(`));
+      if (checks.length !== 1 || segments.length !== 1) continue;
+      const contract = cellDeclarationContract(text, [checks[0].id.name, segments[0].id.name]);
+      if (contract.digest !== '806962f28be74e895c24d42d325ff581238ccc482c57443c68d12e6a93f51733') continue;
+      for (const [local, upstream] of [[3,5],[4,6],[5,0]]) {
+        const edge = contract.imports.find(item => item.local === contract.bindings[local]);
+        if (edge?.specifier !== shared.specifier || edge.imported !== shared.structure.bindings[upstream]) return null;
+      }
+      const branch = text.slice(checks[0].start,checks[0].end).match(/if\(![\w$]+\.test\([\w$]+\)\)return [\w$]+\([\w$]+\([\w$]+\)\);/);
+      if (branch) textCandidates.push({ file, source: text, branch: branch[0] });
+    }
+    if (textCandidates.length !== 1) return null;
+    const text = textCandidates[0];
+    const anchors = [...source.matchAll(/let ([\w$]+)=([\w$]+)\(([\w$]+)\),([\w$]+)=([\w$]+)\.x2-([\w$]+)/g)]
+      .filter(match => match[2] === names.Dc);
+    if (anchors.length !== 1) return null;
+    const [tabAnchor, out, sanitize, input, width, box, col] = anchors[0];
+    const shape = roots.map(name => {
+      const node = ast.body.find(node => node.id?.name === name);
+      const declaration = source.slice(node.start, node.end);
+      return { header: declaration.slice(0, declaration.indexOf('{') + 1), digest: hash(declaration) };
+    });
+    const line = ast.body.find(node => node.id?.name === names.xC);
+    const [screen,, x, y, cells] = line.params.map(node => node.name);
+    const call = line.body.body.at(-1)?.argument?.alternate;
+    if (call?.type !== 'CallExpression') return null;
+    const writeLineSource = source.slice(line.start,call.start) + `paintCells(${screen},${cells}.cells,${x},${y})` + source.slice(call.end,line.end);
+    return { shape, names, writeLineSource, mappedWriteLine: true, tabAnchor,
+      tabReplacement: `let ${out}=${sanitize}(${input});if(${out}.indexOf(String.fromCharCode(9))>=0){let clawgodTabOffset=((${col}%${names.hht})+${names.hht})%${names.hht};${out}=${names.C8}([" ".repeat(clawgodTabOffset)+${out}]).join("").slice(clawgodTabOffset)}let ${width}=${box}.x2-${col}`,
+      dependency: { specifier: ansi.specifier, digest: hash(ansi.source), tokenizer: ansi.structure.bindings[115], normalizeStyles: ansi.structure.bindings[63] },
+      shared: { specifier: shared.specifier, digest: hash(shared.source), factory: shared.local,
+        text: text.file, textDigest: hash(text.source), textBranch: text.branch },
+    };
+  } catch { return null; }
+}
+
 const CELL_RENDERER_NAMES = Object.freeze([
   'clawgodCacheLimit', 'clawgodOsc8Prefix', 'clawgodSgr', 'clawgodAmbiguousNarrow',
   'clawgodSegmenter', 'clawgodGraphemes', 'clawgodCsiEnd', 'clawgodOscEnd',
@@ -8020,13 +8219,13 @@ export function adaptCellRenderer(source, shape, dependencies = new Map()) {
     if (adapted !== null) return adapted;
   }
   if (!shape && source.includes('stylePool;charPool;native=')) {
-    const profile = structuralCellProfile(source, dependencies);
+    const profile = localCellProfile(source, dependencies) ?? structuralCellProfile(source, dependencies);
     if (profile) return adaptCellRendererShape(source, profile, dependencies);
   }
   return null;
 }
 
-function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, writeLineSource = CELL_WRITE_LINE_SOURCE, oscDeclaration = OSC8_DECLARATION }, dependencies) {
+function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, writeLineSource = CELL_WRITE_LINE_SOURCE, mappedWriteLine = false, oscDeclaration = OSC8_DECLARATION }, dependencies) {
   if (shared) {
     const factory = dependencies.get(basename(shared.specifier));
     if (typeof factory !== 'string' || createHash('sha256').update(factory).digest('hex') !== shared.digest) return null;
@@ -8074,7 +8273,8 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
   let adapted = source;
   for (const [span, text] of replacements) {
     // 注入模板中的这些短名只作为标识符出现；单次替换避免 Cx→Rx→Mx 连锁改名。
-    const mapped = text.replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
+    const mapped = mappedWriteLine && span === spans[3] ? text
+      : text.replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
     adapted = adapted.slice(0, span.start) + mapped + adapted.slice(span.end);
   }
   return ansiImport + adapted.replace(tabAnchor, tabReplacement);
@@ -8102,7 +8302,7 @@ function installPublicCellRenderer(modulePaths) {
     && basename(profile.shared.specifier) === basename(targets[0].path));
   if (!sharedProfile) {
     const profiles = [...dependencies.values()].filter(source => source.includes('stylePool;charPool;native='))
-      .map(source => structuralCellProfile(source, dependencies)).filter(Boolean)
+      .map(source => localCellProfile(source, dependencies) ?? structuralCellProfile(source, dependencies)).filter(Boolean)
       .filter(profile => basename(profile.shared.specifier) === basename(targets[0].path));
     if (profiles.length === 1) sharedProfile = profiles[0];
   }

@@ -53,6 +53,12 @@ function enhancementSummaryExpectation() {
   return { enabled: e2eEnhancements === '' ? ENHANCEMENT_IDS.length : requestedEnhancementIds().length };
 }
 
+function versionArgs(version = process.env.CLAWGOD_E2E_VERSION ?? '') {
+  if (!version) return [];
+  assert.match(version, /^(?:latest|\d+\.\d+\.\d+)$/, 'E2E 候选必须是 latest 或精确版本');
+  return ['--version', version];
+}
+
 function createIsolatedRuntime(tempHome, bunExecutable = process.execPath) {
   const shimDir = join(tempHome, 'forbidden-bin');
   const markerPath = join(tempHome, 'forbidden-dependency.log');
@@ -510,6 +516,8 @@ if (process.env.CLAWGOD_E2E_CONTRACT) {
     } else if (process.env.CLAWGOD_E2E_CONTRACT === 'patch-summary') {
       const fixture = JSON.parse(input);
       marker = validatePatchSummary(fixture.label, fixture.output);
+    } else if (process.env.CLAWGOD_E2E_CONTRACT === 'version-args') {
+      marker = JSON.stringify(versionArgs(input));
     } else if (process.env.CLAWGOD_E2E_CONTRACT === 'version-equality') {
       const fixture = JSON.parse(input);
       marker = validateVersionEquality(fixture.wrapperOutput, fixture.sourceVersion);
@@ -804,7 +812,7 @@ try {
     assert.equal(sameFileIdentity(patchesBefore, lstatSync(patchesFile)), true, '安装和卸载不得替换运行时配置或修改权限');
   };
   const fullPluginValidation = e2eEnhancements === '';
-  const initialInstallOutput = run('initial --lean-on install', '/bin/bash', [join(root, 'dist/unix/install.sh'), '--lean-on', ...selectionArgs()]);
+  const initialInstallOutput = run('initial --lean-on install', '/bin/bash', [join(root, 'dist/unix/install.sh'), '--lean-on', ...versionArgs(), ...selectionArgs()]);
   console.log(validatePatchSummary('unix initial', initialInstallOutput));
   console.log(validateEnhancementSummary(initialInstallOutput));
   console.log(formatPluginSummary(validatePluginSummary(initialInstallOutput)));

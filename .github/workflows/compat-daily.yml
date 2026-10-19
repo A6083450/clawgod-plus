@@ -5,6 +5,12 @@ name: Compat Daily
 
 on:
   workflow_dispatch:
+    inputs:
+      claude_version:
+        description: 'Claude candidate: empty uses verified default; latest probes upstream'
+        required: false
+        default: ''
+        type: string
   push:
     branches: [main]
     paths:
@@ -42,6 +48,9 @@ on:
       - 'docs/superpowers/plans/2026-08-09-claude-plugin-dependencies.md'
       - scripts/rebuild-helper-zips.mjs
       - .github/workflows/compat-daily.yml
+
+env:
+  CLAWGOD_E2E_VERSION: ${{ inputs.claude_version || '' }}
 
 permissions:
   contents: write
@@ -274,7 +283,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($test in @('wrapper-provider-lean', 'openai-proxy', 'patcher-terminal-replies', 'patcher-voice-input', 'runtime-cell-segmenter')) {
+          foreach ($test in @('wrapper-provider-lean', 'openai-proxy', 'patcher-terminal-replies', 'patcher-voice-input', 'runtime-cell-segmenter', 'runtime-cell-contract', 'installer-version-policy')) {
             & bun "$env:GITHUB_WORKSPACE\tests\$test.mjs"
             if ($LASTEXITCODE -ne 0) { throw "$test failed" }
           }
@@ -645,6 +654,10 @@ jobs:
           Invoke-Expression $installerSource
           '@
           [System.IO.File]::WriteAllText($iexFixture, $iexFixtureSource, [System.Text.Encoding]::ASCII)
+          if ($env:CLAWGOD_E2E_VERSION) {
+            if ($env:CLAWGOD_E2E_VERSION -notmatch '^(latest|\d+\.\d+\.\d+)$') { throw 'Invalid candidate version' }
+            $env:CLAWGOD_VERSION = $env:CLAWGOD_E2E_VERSION
+          }
           $env:CLAWGOD_LEAN_ON = '1'
           $env:CLAWGOD_IEX_INSTALLER = $installer
           try {
@@ -652,6 +665,7 @@ jobs:
           } finally {
             Remove-Item Env:CLAWGOD_LEAN_ON -ErrorAction SilentlyContinue
             Remove-Item Env:CLAWGOD_IEX_INSTALLER -ErrorAction SilentlyContinue
+            Remove-Item Env:CLAWGOD_VERSION -ErrorAction SilentlyContinue
           }
           $initialSummary = Assert-PatchSummary 'initial' $initialOutput
           $initialWarnings = if ($initialSummary.Groups[3].Success) { ", $($initialSummary.Groups[3].Value) warnings" } else { '' }

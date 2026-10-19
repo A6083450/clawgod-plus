@@ -53,8 +53,8 @@ if (patchFallback) {
 // In practice the block was reading a directory that never changes, but
 // could *retract* a fresher version that install.sh just pulled from npm
 // registry — putting users into a re-patch loop. Upgrades now go through
-// the patched `claude update` → install.sh redirect, which always pulls
-// the latest from npm.
+// `claude update` → installer redirect, which selects a verified release
+// unless the user explicitly requests a version.
 
 // One-time migration: earlier wrapper versions set CLAUDE_CONFIG_DIR=~/.clawgod,
 // which made Claude Code read/write ~/.clawgod/.claude.json instead of the
@@ -287,29 +287,6 @@ if (process.argv.includes('--lean-off') || process.argv.includes('--lean-on') ||
   process.exit(0);
 }
 
-// Update check — cached, non-blocking, 24h interval
-try {
-  const _ucFile = join(clawgodDir, '.update-check');
-  const _verFile = join(clawgodDir, '.clawgod-version');
-  if (!versionOnly && existsSync(_verFile)) {
-    const _localVer = readFileSync(_verFile, 'utf8').trim();
-    let _uc = null;
-    try { if (existsSync(_ucFile)) _uc = JSON.parse(readFileSync(_ucFile, 'utf8')); } catch {}
-    var _semGt = function(a, b) { var x = a.split('.'), y = b.split('.'); for (var i = 0; i < 3; i++) { var d = (parseInt(x[i]||0)) - (parseInt(y[i]||0)); if (d) return d > 0; } return false; };
-    if (_uc && _uc.v && _semGt(_uc.v, _localVer)) {
-      process.stderr.write('[clawgod] v' + _uc.v + ' available (installed: v' + _localVer + ") — run 'claude update' to upgrade\n");
-    }
-    if (!_uc || Date.now() - (_uc.t || 0) > 86400000) {
-      fetch('https://api.github.com/repos/A6083450/clawgod-plus/releases/latest', {
-        headers: { 'User-Agent': 'clawgod' },
-        signal: AbortSignal.timeout(5000),
-      }).then(function(r) { return r.json(); }).then(function(d) {
-        var v = (d.tag_name || '').replace(/^v/, '');
-        if (v) writeFileSync(_ucFile, JSON.stringify({ t: Date.now(), v: v }));
-      }).catch(function() {});
-    }
-  }
-} catch {}
 
 if (!versionOnly) {
   try {
@@ -317,4 +294,13 @@ if (!versionOnly) {
   } catch {}
 }
 
-require('./cli.original.cjs');
+// 在上游接管 stdin 前询问，非交互调用不检查、不输出提示。
+const updateNotifier = process.stdin.isTTY && process.stderr.isTTY ? require('./self-update.cjs') : null;
+if (updateNotifier?.shouldCheckUpdate(process.argv.slice(2), process.stdin.isTTY, process.stderr.isTTY, process.env)) {
+  updateNotifier.checkForUpdate().then(outcome => {
+    if (outcome) {
+      process.stderr.write(outcome.status === 0 ? '[clawgod] 更新完成，请重新运行 claude。\n' : '[clawgod] 更新未完成，请重新运行 claude。\n');
+      updateNotifier.exitWithOutcome(outcome);
+    } else require('./cli.original.cjs');
+  });
+} else require('./cli.original.cjs');

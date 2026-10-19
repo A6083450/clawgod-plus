@@ -91,6 +91,7 @@ const args = process.argv.slice(2);
 await Bun.write(process.env.RUN_CAPTURE, JSON.stringify({ invokedAs: basename(process.argv[1]), args, updateEnv }));
 if (process.env.REQUIRE_POWERSHELL_BYPASS === '1') {
   const expected = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', args[4]];
+  if (args.length === 7 && args[5] === '-Version' && args[6] === 'latest') expected.push('-Version', 'latest');
   if (args.length !== expected.length || args.some((value, index) => value !== expected[index])) process.exit(91);
 }
 process.exit(Number(process.env.RUN_EXIT || 0));
@@ -181,14 +182,14 @@ assert.deepEqual(
   {
     command: 'update',
     explicitVersion: false,
-    version: 'latest',
+    version: '',
     noUpgrade: false,
     tolerateStale: false,
     leanOff: false,
     leanOn: false,
     leanMax: false,
   },
-  'argument parsing must default an unversioned update to latest',
+  '无参更新必须交给新安装器选择已验证版本',
 );
 assert.throws(
   () => parseUpdateArgs(['update', '--version']),
@@ -298,7 +299,7 @@ withUpdateFixture('unversioned forced refresh', {
     ...updateEnvSnapshot(),
     CLAWGOD_NONINTERACTIVE: '1',
     CLAWGOD_UPDATE_PATCH_FAIL_OPEN: '1',
-    CLAWGOD_VERSION: 'latest',
+    CLAWGOD_VERSION: null,
   });
   assert.deepEqual(
     fixture.invoked(),
@@ -311,6 +312,15 @@ withUpdateFixture('unversioned forced refresh', {
   );
   assert.deepEqual(fixture.temporaryEntries(), [], 'unversioned refresh must clean its temporary directory');
 });
+
+for (const windows of [false, true]) {
+  withUpdateFixture('explicit latest', { windows }, fixture => {
+    const result = runSelfUpdate(['update', '--version', 'latest'], fixture.options);
+    assert.equal(result.status, 0);
+    assert.equal(fixture.invoked().updateEnv.CLAWGOD_VERSION, 'latest');
+    assert.deepEqual(fixture.invoked().args.slice(-2), [windows ? '-Version' : '--version', 'latest'], '显式 latest 必须作为参数传入，避免被旧 updater 迁移规则吞掉');
+  });
+}
 
 for (const [label, localVersion, localInstallerVersion, duplicateInstallerDeclaration] of [
   ['development marker', '0.0.0-dev', undefined, false],

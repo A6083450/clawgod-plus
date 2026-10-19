@@ -51,18 +51,18 @@ macOS/Linux では Shell、Windows では PowerShell を OS のコマンド入�
 
 ## ClawGod Plus をインストール
 
-以下のコマンドは、固定バージョン（v2026.10.17-claude.2.1.302）の ClawGod Plus Release アセットをダウンロードします。
+以下のコマンドは、固定バージョン（v2026.10.19-claude.2.1.302）の ClawGod Plus Release アセットをダウンロードします。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.17-claude.2.1.302/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.17-claude.2.1.302/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.19-claude.2.1.302/install.ps1 | iex
 ```
 
 主なインストーラオプション（バージョン未指定時は現在インストール済みの Claude Code バージョンを維持し、新規インストール時のみ最新を取得）：
@@ -390,6 +390,12 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 ## アップデート
 
+タスク引数なしで `claude` を起動すると正式な ClawGod Release を確認し（24 時間キャッシュ、通信待ちは最大 3 秒）、インストール・後で通知・このバージョンをスキップから選べます。スキップは `~/.clawgod/.update-check` に保存され、さらに新しいバージョンは通知されます。手動の `claude update` はスキップに影響されません。非対話実行、タスク引数、サブコマンドではメニューを表示しません。インストール後は `claude` を再起動してください。
+
+通常の更新は最新の ClawGod インストーラを取得し、内蔵の**検証済み Claude Code バージョン**（`src/generic/verified-version.txt`）を使用します。npm `latest` には自動追従しません。新規インストールも同じ既定値を使い、より新しいインストール済みバージョンは自動でダウングレードしません。上流の新バージョンは互換性検証を待つ場合があります。
+
+レンダラーは関連する宣言と依存関係の局所的な構造契約で識別します。変数名、chunk パス、無関係な宣言の変更にはバージョンごとの指紋追加が不要ですが、レイアウトや呼び出しインターフェースの変更は引き続き拒否します。未知のレンダラーは `--tolerate-stale` や clean-runtime フォールバックでも回避できません。
+
 通常のコマンドを使用します。
 
 ```bash
@@ -403,6 +409,7 @@ claude update
 更新失敗時は以前の CLI、Wrapper、assets、clean-source バックアップを復元し、ユーザーの Provider・実行時スイッチ・プラグイン設定は巻き戻しません。`--no-upgrade` は現在バージョンの完全な clean source を検証して再パッチし、欠損したバックアップと他バージョンを混在させません。
 
 ```bash
+claude update --version latest # npm 最新版を明示的に試す（互換性チェックは維持）
 claude update --version 2.1.220  # 既知の Claude Code バージョンに固定
 claude update --no-upgrade      # 現行ソースで再適用、clean バックアップ欠損時は同一版を復元
 ```

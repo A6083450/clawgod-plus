@@ -13,7 +13,10 @@ param(
 $ErrorActionPreference = "Stop"
 $EnhancementsSpecified = $PSBoundParameters.ContainsKey('Enhancements')
 
-if ($env:CLAWGOD_VERSION -and -not $Version) { $Version = $env:CLAWGOD_VERSION }
+if ($env:CLAWGOD_VERSION -and -not $Version) {
+    if ($env:CLAWGOD_VERSION -ne 'latest' -or $env:CLAWGOD_UPDATE_PATCH_FAIL_OPEN -ne '1') { $Version = $env:CLAWGOD_VERSION }
+}
+$VerifiedVersion = "@@CLAWGOD_VERIFIED_VERSION@@"
 if ($env:CLAWGOD_NO_UPGRADE -eq "1") { $NoUpgrade = [switch]$true }
 if ($env:CLAWGOD_TOLERATE_STALE -eq "1") { $TolerateStale = [switch]$true }
 if ($env:CLAWGOD_LEAN_OFF -eq "1") { $LeanOff = [switch]$true }
@@ -22,17 +25,17 @@ if ($env:CLAWGOD_LEAN_MAX -eq "1") { $LeanMax = [switch]$true }
 
 $ClawDir = Join-Path $env:USERPROFILE ".clawgod"
 
-# Without an explicit version, preserve the currently installed Claude Code
-# version from .source-version. Fresh installs fall back to latest. The
-# `claude update` path injects CLAWGOD_VERSION explicitly, including latest.
-if (-not $Version) {
+# Default to the verified release without downgrading an installed newer version.
+if (-not $Version -and -not $Uninstall -and -not $NoUpgrade) {
+    $Version = $VerifiedVersion
     $srcVer = Join-Path $ClawDir ".source-version"
     if (Test-Path $srcVer) {
-        $pinned = ((Get-Content $srcVer -Raw -ErrorAction SilentlyContinue) -replace '\s', '')
-        # Accept only X.Y-style versions; ignore stale non-version markers.
-        if ($pinned -match '^\d+\.\d+') { $Version = $pinned }
+        $pinned = (Get-Content $srcVer -Raw) -replace '[\r\n]', ''
+        if ($pinned -notmatch '^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$') {
+            throw 'Invalid .source-version; specify -Version explicitly'
+        }
+        if ([version]$pinned -gt [version]$VerifiedVersion) { $Version = $pinned }
     }
-    if (-not $Version) { $Version = "latest" }
 }
 
 $BinDir  = Join-Path $env:USERPROFILE ".local\bin"

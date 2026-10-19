@@ -24,6 +24,13 @@ function runContract(contract, input) {
   return spawnSync(process.execPath, [e2e.pathname], { encoding: 'utf8', env });
 }
 
+for (const [input, expected] of [['', []], ['latest', ['--version', 'latest']], ['2.1.303', ['--version', '2.1.303']]]) {
+  const result = runContract('version-args', input);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), expected);
+}
+assert.notEqual(runContract('version-args', '--uninstall').status, 0);
+
 const enhancementCount = JSON.parse(readFileSync(new URL('../src/generic/enhancements.json', import.meta.url), 'utf8')).length;
 for (const enabled of [0, 3]) assert.ok(compatWorkflow.includes(`enhancements summary: ${enabled} enabled, ${enhancementCount - enabled} disabled`), 'CI selection summaries must match the current manifest');
 

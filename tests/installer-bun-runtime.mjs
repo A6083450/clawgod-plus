@@ -32,7 +32,10 @@ canonicalRuntime['patcher.mjs'] = await buildPatcherBundle();
 
 for (const [name, source] of Object.entries(canonicalPlatform)) {
   const generated = name.startsWith('unix/') ? unix : windows;
-  assert.ok(generated.includes(source), `${name} must be embedded exactly in its generated installer`);
+  const rendered = name.includes('lifecycle') ? renderTemplate(source, {
+    VERIFIED_VERSION: readFileSync(new URL('../src/generic/verified-version.txt', import.meta.url), 'utf8').trim(),
+  }) : source;
+  assert.ok(generated.includes(rendered), `${name} must be embedded exactly in its generated installer`);
 }
 
 function assertTemporaryPath(path, label) {

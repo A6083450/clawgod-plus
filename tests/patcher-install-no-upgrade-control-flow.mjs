@@ -46,7 +46,7 @@ const branchEnd = installer.indexOf('fi  # end --no-upgrade skip', normalBranchS
 const claudeDownload = installer.indexOf('"$NPM_PKG@$VERSION" "$NATIVE_BIN_TMPDIR"', normalBranchStart);
 const pluginEnsure = installer.indexOf('"$CLAWGOD_DIR/plugin-dependencies.mjs" ensure', branchEnd);
 const latestUpdateRunsClaudeDownloadBeforePluginEnsure = installer.includes('VERSION="${CLAWGOD_VERSION:-}"')
-  && installer.includes('[ -z "$VERSION" ] && VERSION="latest"')
+  && installer.includes('VERSION="$VERIFIED_VERSION"')
   && claudeDownload > normalBranchStart && claudeDownload < branchEnd && pluginEnsure > branchEnd;
 const explicitVersionFlowsToClaudePackageResolverOnly = installer.includes('--version) VERSION="$2"; shift 2 ;;')
   && installer.includes('"$NPM_PKG@$VERSION" "$NATIVE_BIN_TMPDIR"')
@@ -460,7 +460,7 @@ if (name === 'install-ripgrep.mjs') {
   }
 
   const lifecycleCases = [
-    { label: 'default-latest', args: [], expectedResolver: '@anthropic-ai/claude-code-darwin-arm64@latest' },
+    { label: 'default-verified', args: [], expectedResolver: `@anthropic-ai/claude-code-darwin-arm64@${readFileSync(new URL('../src/generic/verified-version.txt', import.meta.url), 'utf8').trim()}` },
     { label: 'explicit-version', args: ['--version', '2.1.777'], expectedResolver: '@anthropic-ai/claude-code-darwin-arm64@2.1.777' },
     { label: 'no-upgrade', args: ['--no-upgrade'], expectedResolver: null },
   ];
@@ -544,12 +544,13 @@ if (name === 'install-ripgrep.mjs') {
   assert.equal(updateCompatibilityFallback.run.status, 0, `authorized updater fallback must finish successfully: ${updateCompatibilityFallback.run.stdout}${updateCompatibilityFallback.run.stderr}`);
   assert.deepEqual(updateCompatibilityFallback.patchArgs, ['--enhancements-file', updateCompatibilityFallback.configPath, '--allow-compatibility-fallback'], 'authorized updater fallback must opt in through the exact patcher argv');
   assert.equal(updateCompatibilityFallback.runtime, '(function(exports,require,module,__filename,__dirname){})', 'authorized updater fallback must commit the candidate runtime');
-  assert.equal(updateCompatibilityFallback.sourceVersion, '2.1.225\n', 'authorized updater fallback must commit the candidate source marker');
+  const verifiedVersion = readFileSync(new URL('../src/generic/verified-version.txt', import.meta.url), 'utf8').trim();
+  assert.equal(updateCompatibilityFallback.sourceVersion, `${verifiedVersion}\n`, 'authorized updater fallback must commit the candidate source marker');
   assert.deepEqual(updateCompatibilityFallback.vendor.candidate?.bytes, Buffer.from([0xca, 0xfe, 0xba, 0xbe]), 'authorized updater fallback must commit candidate native modules');
   assert.equal(updateCompatibilityFallback.vendor.oldNative, null, 'authorized updater fallback must retire prior native modules');
   assert.deepEqual(updateCompatibilityFallback.fallbackState, {
     schemaVersion: 1,
-    sourceVersion: '2.1.225',
+    sourceVersion: verifiedVersion,
     clawgodVersion: fixtureSelfVersion,
     reason: 'bundle-patch-compatibility',
   }, 'authorized updater fallback must persist valid release-format compatibility state');
