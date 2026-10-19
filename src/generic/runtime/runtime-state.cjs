@@ -13,6 +13,8 @@ const MANAGED = [
   'install-ripgrep.mjs', 'install-voice-asr.mjs', 'plugin-dependencies.mjs',
   'claude-mem-compat.cjs', 'apply-claude-code-chrome-fix.sh',
   'apply-claude-code-chrome-fix.ps1', 'install.sh', 'install.ps1',
+  'restore-claude-3p-cu-browser.sh',
+  'desktop-language.mjs', 'desktop-zh-Hans.json',
 ];
 const VERSION = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/;
 

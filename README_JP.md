@@ -129,6 +129,10 @@ Windows PowerShell では次の引数になります。
 
 その後の `claude update` は `~/.clawgod/enhancements.json` に保存済みの選択を再利用し、一切プロンプトを表示しません。`claude-hud` または `claude-mem` を無効化すると ClawGod が管理する設定を復元し、`superpowers` を無効化しても管理を停止するだけで、ユーザーがインストールしたプラグインは削除しません。
 
+**Claude Desktop（macOS、任意）：** `computer-use` を選択すると、インストールと更新時に `/Applications/Claude.app` と `~/Applications/Claude.app` を確認し、インストール済み Desktop のサードパーティ API モードに CU／内蔵ブラウザのパッチを適用し、標準の言語メニューに簡体字中国語を追加します。辞書は圧縮して同梱し、追加ダウンロードや言語の強制変更は行いません。未インストールならスキップします。実行中のアプリとセッションは維持するため、Desktop 終了後にインストーラを再実行してください。ヘルパーはインストーラに内蔵され、macOS の `python3`、`codesign` とインストーラの Bun を使用します。依存不足やパッチ失敗は警告のみで、CLI のインストールは続行します。Windows と Linux では実行しません。
+
+元の asar は `~/Library/Application Support/Claude-3p/app.asar.orig-<バージョン>` に保存します。ad-hoc 署名は公式の自動更新や OS の権限認識に影響する場合があります。`computer-use` の無効化や ClawGod のアンインストールで Desktop を自動復元せず、バックアップも削除しません。言語リソースもバージョン別に保存し、復元時は所有権を検証してユーザーの後続変更を上書きしません。復元する場合はアンインストール前に `bash ~/.clawgod/restore-claude-3p-cu-browser.sh --restore /Applications/Claude.app` を実行してください（ユーザーディレクトリへのインストールはパスを変更）。
+
 ### Cometix パッチの統合
 
 [CometixSpace/claude-code](https://github.com/CometixSpace/claude-code/tree/44ae56d8f1a6367091bdd8681961b2463edab7ec/patcher) の固定コミット `44ae56d8f1a6367091bdd8681961b2463edab7ec` を動作仕様の参考に、既存レジストリへ次の12機能を実装しています。別の patcher CLI、npm ランタイム、上流 TUI は導入しません。既存のカスタム選択は維持され、`all` には新規項目が追加されます。
@@ -392,7 +396,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 タスク引数なしで `claude` を起動すると正式な ClawGod Release を確認し（24 時間キャッシュ、通信待ちは最大 3 秒）、インストール・後で通知・このバージョンをスキップから選べます。スキップは `~/.clawgod/.update-check` に保存され、さらに新しいバージョンは通知されます。手動の `claude update` はスキップに影響されません。非対話実行、タスク引数、サブコマンドではメニューを表示しません。インストール後は `claude` を再起動してください。
 
-通常の更新は最新の ClawGod インストーラを取得し、内蔵の**検証済み Claude Code バージョン**（`src/generic/verified-version.txt`）を使用します。npm `latest` には自動追従しません。新規インストールも同じ既定値を使い、より新しいインストール済みバージョンは自動でダウングレードしません。上流の新バージョンは互換性検証を待つ場合があります。
+通常の `claude update` は最新の ClawGod インストーラを取得し、まず npm `latest` を試します。候補の更新が失敗し、安全な復元が確認された場合のみ、同じインストーラの**検証済み安定版**（`src/generic/verified-version.txt`）を再試行します。インストール済みの方が新しければ自動でダウングレードしません。安定版も失敗すればエラーと従来のロールバックを行います。中断、復元競合、復元未確認の場合は再試行しません。直接の新規インストールは引き続き検証済み版が既定です。
 
 レンダラーは関連する宣言と依存関係の局所的な構造契約で識別します。変数名、chunk パス、無関係な宣言の変更にはバージョンごとの指紋追加が不要ですが、レイアウトや呼び出しインターフェースの変更は引き続き拒否します。未知のレンダラーは `--tolerate-stale` や clean-runtime フォールバックでも回避できません。
 
@@ -402,7 +406,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 claude update
 ```
 
-`claude update` は wrapper から ClawGod updater に直接渡され、上流 bundle の update action 形状には依存しません。新バージョンが mandatory bundle recognizer の互換性ドリフトだけなら、更新は clean な post-process 済み Claude Code runtime をコミットして fallback warning を表示します。ダウンロード、抽出、vendor 公開、Bun load の失敗は引き続きロールバックされます。インストーラを直接実行、初回インストール、`--no-upgrade` ではこのフォールバックは有効になりません。プラグインのベースラインは独立して管理され、Claude Code をプラグインのバージョンに固定しません。
+`claude update` は wrapper から ClawGod updater に直接渡され、上流の update action に依存しません。通常更新の両試行はパッチ成功を要求し、拡張なしの clean runtime を最新版への更新成功とは扱いません。明示的な `--version` は指定版だけを試し、安定版へ自動変更せず、従来の警告付き全体フォールバックを維持します。プラグインのベースラインは独立して管理され、Claude Code をプラグインのバージョンに固定しません。
 
 明示的な `claude update --tolerate-stale`、`bash install.sh --tolerate-stale`、PowerShell `-TolerateStale`、または `CLAWGOD_TOLERATE_STALE=1` は、古くなったマッチャーだけをスキップし、その箇所の上流動作を維持したまま他のパッチを適用して一覧を表示します。構文エラー、曖昧な一致、起動失敗は許容せず、従来の全体フォールバックも変更しません。
 

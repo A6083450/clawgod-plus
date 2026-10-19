@@ -880,6 +880,9 @@ try {
     'src/generic/patcher/enhancements/branding.mjs',
     'src/unix/lifecycle.sh',
     'src/unix/launcher.sh',
+    'src/unix/desktop/restore-claude-3p-cu-browser.sh',
+    'src/unix/desktop/desktop-language.mjs',
+    'src/unix/desktop/desktop-zh-Hans.json',
     'src/windows/lifecycle.ps1',
     'src/windows/launcher.cmd',
   ]) {

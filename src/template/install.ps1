@@ -780,6 +780,9 @@ if (Test-Path -LiteralPath $RuntimeRollbackDir) {
     }
     if ($RuntimeTransactionCommitted -or ($VendorRollbackComplete -and $RuntimeTransactionCleanupSafe)) {
         Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not $RuntimeTransactionCommitted -and -not (Test-Path -LiteralPath $RuntimeRollbackDir) -and $env:CLAWGOD_UPDATE_ROLLBACK_RECEIPT) {
+            [System.IO.File]::WriteAllText($env:CLAWGOD_UPDATE_ROLLBACK_RECEIPT, "restored`n", [System.Text.Encoding]::ASCII)
+        }
     } elseif ($VendorRollbackComplete) {
         Write-Err "Prior CLI restored; untrusted transaction data retained at $RuntimeRollbackDir"
     }
@@ -1054,7 +1057,7 @@ Write-Dim "  claude            -- Start patched Claude Code (green logo)"
 Write-Dim "  claude.orig       -- Run original unpatched Claude Code"
 Write-Host ""
 Write-Dim "  Updates: 'claude update' is patched to route through this installer."
-Write-Dim "  Uses the installer-verified Claude Code release + re-patches"
+Write-Dim "  Tries npm latest first; retries stable after a confirmed rollback"
 Write-Dim "  in one step. Extra options:"
 Write-Dim "    claude update --version 2.1.180   (install a specific version)"
 Write-Dim "    claude update --no-upgrade        (re-patch without downloading)"

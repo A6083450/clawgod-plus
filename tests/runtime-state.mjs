@@ -28,6 +28,8 @@ try {
   writeFileSync(join(live, 'cli.cjs'), 'old wrapper');
   writeFileSync(join(live, 'assets', 'payload.txt'), 'old asset');
   writeFileSync(join(live, 'post-process.mjs'), 'old helper');
+  writeFileSync(join(live, 'restore-claude-3p-cu-browser.sh'), 'old Desktop helper');
+  writeFileSync(join(live, 'desktop-zh-Hans.json'), 'old Desktop catalog');
   writeFileSync(join(live, '.clawgod-version'), 'old release');
   writeFileSync(join(live, 'provider.json'), 'user provider');
   writeFileSync(join(live, 'enhancements.json'), 'user selection');
@@ -36,6 +38,9 @@ try {
   writeFileSync(join(live, 'assets', 'payload.txt'), 'new asset');
   writeFileSync(join(live, 'assets', 'extra.txt'), 'candidate-only');
   writeFileSync(join(live, 'post-process.mjs'), 'new helper');
+  writeFileSync(join(live, 'restore-claude-3p-cu-browser.sh'), 'new Desktop helper');
+  writeFileSync(join(live, 'desktop-zh-Hans.json'), 'new Desktop catalog');
+  writeFileSync(join(live, 'desktop-language.mjs'), 'new-only language helper');
   writeFileSync(join(live, '.source-version'), '2.2.0');
   writeFileSync(join(live, '.clawgod-version'), 'new release');
   writeFileSync(join(live, 'cli.original.cjs.bak'), 'new clean');
@@ -46,6 +51,9 @@ try {
   assert.equal(readFileSync(join(live, 'assets', 'payload.txt'), 'utf8'), 'old asset');
   assert.equal(existsSync(join(live, 'assets', 'extra.txt')), false);
   assert.equal(readFileSync(join(live, 'post-process.mjs'), 'utf8'), 'old helper');
+  assert.equal(readFileSync(join(live, 'restore-claude-3p-cu-browser.sh'), 'utf8'), 'old Desktop helper');
+  assert.equal(readFileSync(join(live, 'desktop-zh-Hans.json'), 'utf8'), 'old Desktop catalog');
+  assert.equal(existsSync(join(live, 'desktop-language.mjs')), false);
   assert.equal(readFileSync(join(live, '.clawgod-version'), 'utf8'), 'old release');
   assert.equal(existsSync(join(live, 'startup-check.cjs')), false);
   assert.equal(readFileSync(join(live, 'provider.json'), 'utf8'), 'user changed provider');

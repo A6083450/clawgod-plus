@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as defaultFileSystem from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 
 import { loadEnhancementManifest } from './src/generic/enhancement-config.mjs';
 import { runtimeFeatureMetadata } from './src/generic/patcher/registry.mjs';
@@ -156,9 +157,10 @@ function resolveOutput(rootDir, output) {
 }
 
 export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = defaultFileSystem } = {}) {
-  const [featuresJson, enhancementsJson] = await Promise.all([
+  const [featuresJson, enhancementsJson, desktopChineseJson] = await Promise.all([
     fileSystem.readFile(join(rootDir, 'src/generic/features.json'), 'utf8'),
     fileSystem.readFile(join(rootDir, 'src/generic/enhancements.json'), 'utf8'),
+    fileSystem.readFile(join(rootDir, 'src/unix/desktop/desktop-zh-Hans.json'), 'utf8'),
   ]);
   loadEnhancementManifest(enhancementsJson, { filename: 'enhancements.json' });
   const patcherBundle = await buildPatcherBundle({ rootDir });
@@ -201,6 +203,8 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
   const platformSourceFiles = {
     UNIX_LIFECYCLE: 'src/unix/lifecycle.sh',
     UNIX_LAUNCHER: 'src/unix/launcher.sh',
+    UNIX_DESKTOP_ENHANCEMENT: 'src/unix/desktop/restore-claude-3p-cu-browser.sh',
+    UNIX_DESKTOP_LANGUAGE_MJS: 'src/unix/desktop/desktop-language.mjs',
     WINDOWS_LIFECYCLE: 'src/windows/lifecycle.ps1',
     WINDOWS_LAUNCHER: 'src/windows/launcher.cmd',
   };
@@ -225,7 +229,13 @@ export async function renderGeneratedPair({ rootDir = ROOT_DIR, fileSystem = def
         : enhancementsJson,
       ...(powerShell
         ? { WINDOWS_LIFECYCLE: platformSources.WINDOWS_LIFECYCLE, WINDOWS_LAUNCHER: platformSources.WINDOWS_LAUNCHER }
-        : { UNIX_LIFECYCLE: platformSources.UNIX_LIFECYCLE, UNIX_LAUNCHER: platformSources.UNIX_LAUNCHER }),
+        : {
+          UNIX_LIFECYCLE: platformSources.UNIX_LIFECYCLE,
+          UNIX_LAUNCHER: platformSources.UNIX_LAUNCHER,
+          UNIX_DESKTOP_ENHANCEMENT: platformSources.UNIX_DESKTOP_ENHANCEMENT,
+          UNIX_DESKTOP_LANGUAGE_MJS: platformSources.UNIX_DESKTOP_LANGUAGE_MJS,
+          UNIX_DESKTOP_CHINESE_BASE64: gzipSync(desktopChineseJson).toString('base64'),
+        }),
       ...Object.fromEntries(Object.entries(runtimeSources)
         .filter(([name]) => name !== 'CLAUDE_HUD_STATUSLINE_MJS')
         .map(([name, source]) => [

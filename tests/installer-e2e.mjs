@@ -66,6 +66,11 @@ function createIsolatedRuntime(tempHome, bunExecutable = process.execPath) {
   const bunPath = join(bunDir, 'bun');
   mkdirSync(bunDir, { recursive: true });
   symlinkSync(bunExecutable, bunPath);
+  // A temporary HOME must never allow Desktop's system-wide app to be patched.
+  mkdirSync(shimDir, { recursive: true });
+  const bashShim = join(shimDir, 'bash');
+  writeFileSync(bashShim, '#!/bin/sh\ncase "$1" in */restore-claude-3p-cu-browser.sh) echo "isolated E2E: Desktop patch skipped"; exit 0 ;; esac\nexec /bin/bash "$@"\n');
+  chmodSync(bashShim, 0o700);
   return {
     shimDir,
     markerPath,
@@ -94,6 +99,12 @@ function pathIsInside(root, path) {
 }
 
 function validateEnvironmentIsolation(tempHome, runtime, bunExecutable = process.execPath) {
+  const desktop = spawnSync('bash', [join(tempHome, '.clawgod', 'restore-claude-3p-cu-browser.sh')], { encoding: 'utf8', env: runtime.env });
+  assert.equal(desktop.status, 0, 'sandbox must intercept the Desktop helper before any app access');
+  assert.match(desktop.stdout, /isolated E2E: Desktop patch skipped/);
+  const forwarded = spawnSync('bash', ['-c', 'printf shell-forwarded'], { encoding: 'utf8', env: runtime.env });
+  assert.equal(forwarded.status, 0, forwarded.stderr);
+  assert.equal(forwarded.stdout, 'shell-forwarded', 'sandbox must preserve other Bash consumers');
   const bunResolution = resolveCommand('bun', runtime.env);
   assert.equal(bunResolution.status, 0, `sandbox PATH must resolve Bun: ${bunResolution.stderr}`);
   const resolvedBun = bunResolution.stdout.trim();

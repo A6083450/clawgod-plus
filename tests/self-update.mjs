@@ -298,14 +298,14 @@ withUpdateFixture('unversioned forced refresh', {
   assert.deepEqual(fetch.updateEnv, {
     ...updateEnvSnapshot(),
     CLAWGOD_NONINTERACTIVE: '1',
-    CLAWGOD_UPDATE_PATCH_FAIL_OPEN: '1',
+    CLAWGOD_UPDATE_PATCH_FAIL_OPEN: null,
     CLAWGOD_VERSION: null,
   });
   assert.deepEqual(
     fixture.invoked(),
     {
       invokedAs: 'bash',
-      args: [fetch.destination],
+      args: [fetch.destination, '--version', 'latest'],
       updateEnv: fetch.updateEnv,
     },
     'an unversioned Unix update must invoke its freshly downloaded installer',
@@ -384,7 +384,7 @@ for (const windows of [false, true]) {
     const outcome = runSelfUpdate(['update', '--tolerate-stale'], fixture.options);
     assert.equal(outcome.status, 0);
     assert.equal(fixture.invoked().updateEnv.CLAWGOD_TOLERATE_STALE, '1', 'explicit stale opt-in must reach either installer');
-    assert.equal(fixture.invoked().updateEnv.CLAWGOD_UPDATE_PATCH_FAIL_OPEN, '1', 'stale opt-in must not remove the existing update fallback');
+    assert.equal(fixture.invoked().updateEnv.CLAWGOD_UPDATE_PATCH_FAIL_OPEN, null, 'latest 优先仍禁止整包无增强假成功');
   });
   withUpdateFixture('environment stale opt-in', { windows }, fixture => {
     fixture.options.env.CLAWGOD_TOLERATE_STALE = '1';

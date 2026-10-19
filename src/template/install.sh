@@ -186,7 +186,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/runtime-state.cjs" "$CLAWGOD_DIR/startup-check.cjs" "$CLAWGOD_DIR/startup-check.log" "$CLAWGOD_DIR/.clean-source.json" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/runtime-state.cjs" "$CLAWGOD_DIR/startup-check.cjs" "$CLAWGOD_DIR/startup-check.log" "$CLAWGOD_DIR/.clean-source.json" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/restore-claude-3p-cu-browser.sh" "$CLAWGOD_DIR/desktop-language.mjs" "$CLAWGOD_DIR/desktop-zh-Hans.json" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -259,6 +259,9 @@ rollback_runtime_transaction() {
   fi
   if [ "$RUNTIME_TRANSACTION_CLEANUP_SAFE" = "1" ]; then
     rm -rf "$RUNTIME_TRANSACTION_DIR"
+    if [ ! -e "$RUNTIME_TRANSACTION_DIR" ] && [ -n "${CLAWGOD_UPDATE_ROLLBACK_RECEIPT:-}" ]; then
+      printf 'restored\n' > "$CLAWGOD_UPDATE_ROLLBACK_RECEIPT"
+    fi
   else
     printf '%s\n' "clawgod: prior CLI restored; untrusted transaction data retained at $RUNTIME_TRANSACTION_DIR" >&2
   fi
@@ -970,6 +973,67 @@ else
   warn "claude-mem compatibility setup failed; ClawGod Plus core install will continue"
 fi
 
+# --- Optional Claude Desktop enhancement ----------------------------
+
+run_claude_desktop_enhancement() {
+  [ "$(uname -s)" = Darwin ] || return 0
+  local app="" candidate selected
+  for candidate in "/Applications/Claude.app" "$HOME/Applications/Claude.app"; do
+    if [ -f "$candidate/Contents/Resources/app.asar" ]; then
+      app="$candidate"
+      break
+    fi
+  done
+  if [ -z "$app" ]; then
+    dim "Claude Desktop not installed; skipping Desktop enhancement"
+    return 0
+  fi
+  if ! selected=$("$BUN_BIN" -e '
+    const {readFile}=await import("node:fs/promises");
+    const {join,dirname}=await import("node:path");
+    const {pathToFileURL}=await import("node:url");
+    const root=process.argv[1];
+    const {loadEnhancementManifest,readEnhancementConfig,resolveEnhancementSelection}=await import(pathToFileURL(join(root,"enhancement-config.mjs")).href);
+    const manifest=loadEnhancementManifest(await readFile(join(root,"enhancement-manifest.json"),"utf8"));
+    const stored=await readEnhancementConfig({homeDir:dirname(root),manifest});
+    console.log(resolveEnhancementSelection({stored},manifest).enabled.includes("computer-use"));
+  ' "$CLAWGOD_DIR"); then
+    warn "Could not read Desktop enhancement selection; skipping"
+    return 0
+  fi
+  if [ "$selected" != true ]; then
+    dim "computer-use enhancement disabled; skipping Claude Desktop"
+    return 0
+  fi
+  local helper="$CLAWGOD_DIR/restore-claude-3p-cu-browser.sh"
+  local language="$CLAWGOD_DIR/desktop-language.mjs" catalogs="$CLAWGOD_DIR/desktop-zh-Hans.json"
+  if ! cat > "$helper" << 'DESKTOP_ENHANCEMENT_EOF'
+@@CLAWGOD_UNIX_DESKTOP_ENHANCEMENT@@
+DESKTOP_ENHANCEMENT_EOF
+  then
+    warn "Could not install optional Claude Desktop helper; ClawGod Plus core install will continue"
+    return 0
+  fi
+  if ! cat > "$language" << 'DESKTOP_LANGUAGE_EOF'
+@@CLAWGOD_UNIX_DESKTOP_LANGUAGE_MJS@@
+DESKTOP_LANGUAGE_EOF
+  then
+    warn "Could not install optional Claude Desktop language helper; ClawGod Plus core install will continue"
+    return 0
+  fi
+  if ! "$BUN_BIN" -e 'await Bun.write(process.argv[1], Bun.gunzipSync(Buffer.from(await Bun.stdin.text(), "base64")))' "$catalogs" << 'DESKTOP_CHINESE_EOF'
+@@CLAWGOD_UNIX_DESKTOP_CHINESE_BASE64@@
+DESKTOP_CHINESE_EOF
+  then
+    warn "Could not unpack the bundled Desktop Chinese catalog; ClawGod Plus core install will continue"
+    return 0
+  fi
+  if ! chmod 700 "$helper" "$language" || ! chmod 600 "$catalogs" || ! CLAWGOD_BUN_BIN="$BUN_BIN" bash "$helper" --install "$app"; then
+    warn "Optional Claude Desktop enhancement failed; ClawGod Plus core install will continue"
+  fi
+}
+run_claude_desktop_enhancement
+
 # ─── Check PATH ───────────────────────────────────────
 
 if ! echo "$PATH" | grep -q "$CLAUDE_DIR" && ! echo "$PATH" | grep -q "$BIN_DIR"; then
@@ -998,7 +1062,7 @@ dim "  claude            — Start patched Claude Code (green logo)"
 dim "  claude.orig       — Run original unpatched Claude Code"
 echo ""
 dim "  Updates: 'claude update' is patched to route through this installer."
-dim "  Uses the installer-verified Claude Code release + re-patches"
+dim "  Tries npm latest first; retries stable after a confirmed rollback"
 dim "  in one step. Extra options:"
 dim "    claude update --version 2.1.180   (install a specific version)"
 dim "    claude update --no-upgrade        (re-patch without downloading)"

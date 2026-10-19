@@ -332,6 +332,7 @@ ${fixtureSpan}
         CLAWGOD_TEST_CANDIDATE_VENDOR: paths.candidateVendor,
         CLAWGOD_TEST_NO_UPGRADE: String(Boolean(fixture.noUpgrade)),
         CLAWGOD_UPDATE_PATCH_FAIL_OPEN: fixture.update || '',
+        CLAWGOD_UPDATE_ROLLBACK_RECEIPT: join(paths.clawDir, 'rollback-receipt'),
         CLAWGOD_TOLERATE_STALE: fixture.stale ? '1' : '',
         CLAWGOD_TEST_EXTRACT_EXIT: String(fixture.extractExit || 0),
         CLAWGOD_TEST_POSTPROCESS_EXIT: String(fixture.postProcessExit || 0),
@@ -356,6 +357,9 @@ ${fixtureSpan}
     const resultLine = run.stdout.trim().split(/\r?\n/).findLast(line => line.startsWith('{'));
     assert.ok(resultLine, `${fixture.label}: native harness must emit transaction observations`);
     const result = JSON.parse(resultLine);
+    const receipt = join(paths.clawDir, 'rollback-receipt');
+    if (!fixture.success && !fixture.conflict && !fixture.retained) assert.equal(readFileSync(receipt, 'utf8'), 'restored\n', `${fixture.label}: 恢复成功才写回执`);
+    else assert.equal(existsSync(receipt), false, `${fixture.label}: 已提交或恢复不明确不能重试`);
     if (fixture.early) {
       assert.equal(existsSync(paths.patchArgs), false, `${fixture.label}: partial extraction or postprocessing must not reach patching`);
       assertRestored(inspect(paths), fixture.label);
