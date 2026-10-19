@@ -26299,13 +26299,17 @@ export function installDesktopChinese(app, backup, catalogs) {
   const meta = html.match(/<meta\b[^>]*name=["']i18n-catalogs["'][^>]*>/g);
   if (meta) {
     if (meta.length !== 1 || !/data-i18n-catalogs="[^"]*"/.test(meta[0])) throw new Error('Desktop catalog manifest format changed');
-    const patched = meta[0].replace(/data-i18n-catalogs="([^"]*)"/, (match, value) => value.split(',').some(entry => entry.startsWith('zh-Hans:')) ? match : `data-i18n-catalogs="${value}${value ? ',' : ''}zh-Hans:1.1.1"`);
+    const patched = meta[0].replace(/data-i18n-catalogs="([^"]*)"/, (match, value) => {
+      const entries = value.split(',').filter(Boolean).map(entry => entry.replace(/:1\.1\.1$/, ':1.1'));
+      if (!entries.some(entry => entry.startsWith('zh-Hans:'))) entries.push('zh-Hans:1.1');
+      return `data-i18n-catalogs="${entries.join(',')}"`;
+    });
     html = html.replace(meta[0], patched);
   } else {
     if (html.split('</head>').length !== 2) throw new Error('Desktop HTML format changed');
     const locales = new Set(readdirSync(safePath(app, `${ionPath}/i18n`)).filter(name => /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*\.json$/.test(name)).map(name => name.slice(0, -5)));
     locales.add('zh-Hans');
-    html = html.replace('</head>', `<meta name="i18n-catalogs" data-i18n-catalogs="${[...locales].sort().map(locale => `${locale}:1.1.1`).join(',')}"></head>`);
+    html = html.replace('</head>', `<meta name="i18n-catalogs" data-i18n-catalogs="${[...locales].sort().map(locale => `${locale}:1.1`).join(',')}"></head>`);
   }
   plan(index, Buffer.from(html));
   if (!changes.length) return 'Claude Desktop already has the native Simplified Chinese option';

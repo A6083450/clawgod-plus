@@ -11,6 +11,8 @@ const { installDesktopChinese, restoreDesktopChinese } = await import(helper.hre
 const oldList = '["en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"]';
 const catalogs = { schemaVersion: 1, locale: 'zh-Hans', base: { greeting: '你好', language: '语言' }, dynamic: { model: '模型' } };
 const root = mkdtempSync(join(tmpdir(), 'clawgod Desktop Chinese '));
+// Claude's local renderer parses catalog entries as locale:baseVersion.dynamicVersion.
+const rendererLocales = html => (html.match(/data-i18n-catalogs="([^"]*)"/)?.[1] || '').split(',').map(entry => /^([\w-]+):([\w-]+)\.([\w-]+)$/.exec(entry)).filter(Boolean).map(entry => entry[1]);
 function fixture(name, source = `var supported=${oldList},fallback=${oldList};`) {
   const app = join(root, name, 'Claude.app');
   const ion = join(app, 'Contents/Resources/ion-dist');
@@ -38,7 +40,7 @@ try {
   assert.equal(context.supported.includes('zh-Hans'), true, 'native language choices must include Chinese');
   assert.equal(context.fallback.includes('zh-Hans'), true, 'native locale negotiation must accept Chinese');
   assert.equal(context.supported.includes('ja-JP'), true, 'existing language choices must remain');
-  assert.match(readFileSync(join(f.ion, 'index.html'), 'utf8'), /zh-Hans:1\.1\.1/);
+  assert.equal(rendererLocales(readFileSync(join(f.ion, 'index.html'), 'utf8')).includes('zh-Hans'), true, 'native renderer must recognize the registered Chinese catalog');
   assert.deepEqual(JSON.parse(readFileSync(join(f.ion, 'i18n/zh-Hans.json'))), catalogs.base);
   assert.deepEqual(JSON.parse(readFileSync(join(f.ion, 'i18n/dynamic/zh-Hans.json'))), catalogs.dynamic);
   assert.equal(readFileSync(join(f.app, 'user-settings.json'), 'utf8'), '{"locale":"en-US","keep":true}', 'adding the option must not force a language');
@@ -78,6 +80,14 @@ try {
   installDesktopChinese(existing.app, existing.backup, catalogs);
   restoreDesktopChinese(existing.app, existing.backup);
   assert.equal(readFileSync(join(existing.ion, 'i18n/zh-Hans.json'), 'utf8'), '{"greeting":"用户词表"}', 'a pre-existing catalog remains user-owned');
+
+  const oldMeta = fixture('legacy-catalog-meta');
+  const oldHtml = '<html><head><meta name="i18n-catalogs" data-i18n-catalogs="en-US:1.1.1,zh-Hans:1.1.1"></head><body></body></html>';
+  writeFileSync(join(oldMeta.ion, 'index.html'), oldHtml);
+  installDesktopChinese(oldMeta.app, oldMeta.backup, catalogs);
+  assert.deepEqual(rendererLocales(readFileSync(join(oldMeta.ion, 'index.html'), 'utf8')), ['en-US', 'zh-Hans'], 'repair legacy helper metadata without losing existing catalog registrations');
+  restoreDesktopChinese(oldMeta.app, oldMeta.backup);
+  assert.equal(readFileSync(join(oldMeta.ion, 'index.html'), 'utf8'), oldHtml);
 
   const bundled = fixture('bundled-catalog');
   installDesktopChinese(bundled.app, bundled.backup);
