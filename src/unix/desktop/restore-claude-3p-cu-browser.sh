@@ -16,7 +16,7 @@
 #      重算 chunk 的 SHA-256/分块哈希与后续文件偏移，并做全文件哈希自检
 #   3. 计算新的 asar 头 JSON 哈希，等长替换包内所有 Info.plist 的
 #      ElectronAsarIntegrity 值（Electron asar 完整性 fuse 校验的就是它）
-#   4. 保留 entitlements/runtime 元数据后 ad-hoc 重签名，避免汉化副本丢失 JIT 权限
+#   4. 逐组件保留 JIT/runtime 等权限，移除官方身份绑定后 ad-hoc 重签名
 #   5. 重启 Claude；特性数仅供诊断，CU/浏览器仍需在界面中验证
 #
 # 依赖：python3、Bun、codesign（Xcode CLT）
@@ -72,6 +72,60 @@ get_plist_hash() {
   /usr/libexec/PlistBuddy -c 'Print :ElectronAsarIntegrity:Resources/app.asar:hash' "$MAIN_PLIST" 2>/dev/null || true
 }
 
+sign_claude() {
+  python3 - "$APP" <<'SIGN_CLAUDE_EOF'
+import os, pathlib, plistlib, subprocess, sys, tempfile
+
+app = pathlib.Path(sys.argv[1])
+magics = {b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xce',
+          b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca', b'\xca\xfe\xba\xbf', b'\xbf\xba\xfe\xca'}
+try:
+    binaries, bundles = [], []
+    for root, dirs, files in os.walk(app / 'Contents'):
+        dirs[:] = [name for name in dirs if not (pathlib.Path(root) / name).is_symlink()]
+        bundles.extend(pathlib.Path(root) / name for name in dirs if name.endswith(('.app', '.framework')))
+        for name in files:
+            path = pathlib.Path(root) / name
+            if path.is_symlink():
+                continue
+            with path.open('rb') as stream:
+                if stream.read(4) in magics:
+                    binaries.append(path)
+    order = lambda path: (-len(path.parts), str(path))
+    targets = sorted(binaries, key=order) + sorted(bundles, key=order) + [app]
+    plans = []
+    # 先读取全部元数据；ad-hoc 签名不能携带官方团队/钥匙串身份绑定。
+    for path in targets:
+        original = subprocess.run(['codesign', '-d', '--entitlements', ':-', '--xml', str(path)], capture_output=True, text=True)
+        signed = original.returncode == 0
+        if not signed and 'not signed at all' not in original.stderr:
+            raise RuntimeError(original.stderr.strip() or '无法读取签名元数据: ' + str(path))
+        entitlements = plistlib.loads(original.stdout.encode()) if original.stdout.strip() else {}
+        if not isinstance(entitlements, dict):
+            raise RuntimeError('签名权限格式无效: ' + str(path))
+        for key in ['com.apple.application-identifier', 'application-identifier', 'com.apple.developer.team-identifier', 'keychain-access-groups']:
+            entitlements.pop(key, None)
+        entitlements['com.apple.security.cs.disable-library-validation'] = True
+        plans.append((path, entitlements, signed))
+    with tempfile.TemporaryDirectory(prefix='clawgod-desktop-sign-') as temporary:
+        for index, (path, entitlements, signed) in enumerate(plans):
+            plist = pathlib.Path(temporary) / (str(index) + '.plist')
+            plist.write_bytes(plistlib.dumps(entitlements))
+            command = ['codesign', '--force', '--sign', '-', '--timestamp=none']
+            if signed:
+                command.append('--preserve-metadata=flags,runtime')
+            command += ['--entitlements', str(plist), str(path)]
+            result = subprocess.run(command, capture_output=True, text=True)
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or '签名失败: ' + str(path))
+    subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
+    print('==> 已逐组件安全重签名，JIT 等功能权限保留 (%d 个组件)' % len(plans))
+except Exception as error:
+    print('ERROR: Desktop 签名失败: ' + str(error), file=sys.stderr)
+    sys.exit(1)
+SIGN_CLAUDE_EOF
+}
+
 # ---------- --restore ----------
 if [[ "${1:-}" == "--restore" ]]; then
   [[ -f "$BACKUP" ]] || die "未找到备份 $BACKUP"
@@ -99,7 +153,7 @@ if old and old != restore_hash:
                     open(p, "wb").write(t.replace(old.encode(), restore_hash.encode())); n += 1
 print("plist hash restored in %d files (old=%s new=%s)" % (n, old[:16], restore_hash[:16]))
 PYEOF
-  codesign --force --deep --preserve-metadata=entitlements,flags,runtime --sign - "$APP" >/dev/null 2>&1 || die "codesign 失败；回滚备份保留以便重试"
+  sign_claude || die "codesign 失败；回滚备份保留以便重试"
   open "$APP"
   echo "✅ 已回滚到原始 asar 并重启 Claude"
   exit 0
@@ -303,8 +357,8 @@ else
   echo "==> 未找到中文资源助手，跳过语言选项增强"
 fi
 
-echo "==> 保留 JIT 等签名权限并 ad-hoc 重签名"
-codesign --force --deep --preserve-metadata=entitlements,flags,runtime --sign - "$APP" >/dev/null 2>&1 || die "codesign 失败"
+echo "==> 保留 JIT 等功能权限并逐组件 ad-hoc 重签名"
+sign_claude || die "codesign 失败"
 
 if [[ "$MODE" == "--install" ]]; then
   echo "✅ Claude Desktop CU/浏览器补丁已写入，下次启动应用时生效；实际工具仍需在会话中验证"

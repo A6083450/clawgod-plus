@@ -131,7 +131,7 @@ Windows PowerShell では次の引数になります。
 
 **Claude Desktop（macOS、任意）：** `computer-use` を選択すると、インストールと更新時に `/Applications/Claude.app` と `~/Applications/Claude.app` を確認し、インストール済み Desktop のサードパーティ API モードに CU／内蔵ブラウザのパッチを適用し、標準の言語メニューに簡体字中国語を追加します。辞書は圧縮して同梱し、追加ダウンロードや言語の強制変更は行いません。未インストールならスキップします。実行中のアプリとセッションは維持するため、Desktop 終了後にインストーラを再実行してください。ヘルパーはインストーラに内蔵され、macOS の `python3`、`codesign` とインストーラの Bun を使用します。依存不足やパッチ失敗は警告のみで、CLI のインストールは続行します。Windows と Linux では実行しません。
 
-元の asar は `~/Library/Application Support/Claude-3p/app.asar.orig-<バージョン>` に保存します。ad-hoc 署名は公式の自動更新や OS の権限認識に影響する場合があります。`computer-use` の無効化や ClawGod のアンインストールで Desktop を自動復元せず、バックアップも削除しません。言語リソースもバージョン別に保存し、復元時は所有権を検証してユーザーの後続変更を上書きしません。復元する場合はアンインストール前に `bash ~/.clawgod/restore-claude-3p-cu-browser.sh --restore /Applications/Claude.app` を実行してください（ユーザーディレクトリへのインストールはパスを変更）。
+元の asar は `~/Library/Application Support/Claude-3p/app.asar.orig-<バージョン>` に保存します。各コンポーネントの JIT などの機能権限を維持し、公式のチーム識別権限を除去して ad-hoc 署名します。公式の自動更新や OS の権限認識に影響する場合があります。`computer-use` の無効化や ClawGod のアンインストールで Desktop を自動復元せず、バックアップも削除しません。言語リソースもバージョン別に保存し、復元時は所有権を検証してユーザーの後続変更を上書きしません。復元する場合はアンインストール前に `bash ~/.clawgod/restore-claude-3p-cu-browser.sh --restore /Applications/Claude.app` を実行してください（ユーザーディレクトリへのインストールはパスを変更）。
 
 ### Cometix パッチの統合
 

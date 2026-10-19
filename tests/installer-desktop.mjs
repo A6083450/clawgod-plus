@@ -103,18 +103,54 @@ try {
     writeFileSync(join(ion, 'assets/v1/locale.js'), scriptBefore);
     writeFileSync(join(ion, 'index.html'), '<html><head></head><body></body></html>');
     writeFileSync(join(ion, 'i18n/en-US.json'), '{"hello":"Hello"}');
+    mkdirSync(join(app, 'Contents/MacOS'), { recursive: true });
+    mkdirSync(join(app, 'Contents/Frameworks/Renderer.app/Contents/MacOS'), { recursive: true });
+    writeFileSync(join(app, 'Contents/MacOS/Claude'), Buffer.from([0xcf, 0xfa, 0xed, 0xfe]));
+    writeFileSync(join(app, 'Contents/Frameworks/Renderer.app/Contents/MacOS/Renderer'), Buffer.from([0xcf, 0xfa, 0xed, 0xfe]));
+    writeFileSync(join(app, 'Contents/Frameworks/unsigned.node'), Buffer.from([0xcf, 0xfa, 0xed, 0xfe]));
     writeFileSync(join(directory, 'desktop-language.mjs'), languageSource);
     writeFileSync(join(directory, 'desktop-zh-Hans.json'), '{"schemaVersion":1,"locale":"zh-Hans","base":{"hello":"你好"},"dynamic":{}}');
     executable(join(bin, 'pgrep'), `exit ${running ? 0 : 1}`);
-    executable(join(bin, 'python3'), 'cat >/dev/null\nprintf "RESULT=PATCH_OK\\n"');
-    executable(join(bin, 'codesign'), 'case " $* " in *" --preserve-metadata=entitlements,flags,runtime "*) exit "${CODESIGN_STATUS:-0}" ;; *) exit 71 ;; esac');
+    executable(join(bin, 'python3'), '[ "$#" = 2 ] && exec "$CLAWGOD_REAL_PYTHON" "$@"\ncat >/dev/null\nprintf "RESULT=PATCH_OK\\n"');
+    executable(join(bin, 'codesign'), `
+for argument do clawgod_sign_target="$argument"; done
+if [ "$1" = -d ]; then
+  [ "\${BAD_ENTITLEMENTS:-0}" = 1 ] && { printf 'malformed'; exit 0; }
+  case "$clawgod_sign_target" in *unsigned.node) printf 'code object is not signed at all' >&2; exit 1 ;; esac
+  case "$clawgod_sign_target" in *Renderer*) printf '%s' "$RENDERER_ENTITLEMENTS" ;; *) printf '%s' "$OFFICIAL_ENTITLEMENTS" ;; esac
+  exit 0
+fi
+[ "$1" = --verify ] && exit "\${CODESIGN_STATUS:-0}"
+case "$clawgod_sign_target" in *unsigned.node) ;; *) case " $* " in *" --preserve-metadata=flags,runtime "*) ;; *) exit 71 ;; esac ;; esac
+clawgod_sign_entitlements=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --entitlements ]; then clawgod_sign_entitlements="$2"; shift; fi
+  shift
+done
+[ -n "$clawgod_sign_entitlements" ] || exit 71
+printf '%s\\n' "$clawgod_sign_target" >> "$SIGN_CALLS"
+case "$clawgod_sign_target" in
+  "$DESKTOP_FIXTURE_APP") cp "$clawgod_sign_entitlements" "$SIGN_ROOT_ENTITLEMENTS" ;;
+  *Renderer.app) cp "$clawgod_sign_entitlements" "$SIGN_RENDERER_ENTITLEMENTS" ;;
+  *unsigned.node) cp "$clawgod_sign_entitlements" "$SIGN_UNSIGNED_ENTITLEMENTS" ;;
+esac
+exit "\${CODESIGN_STATUS:-0}"
+`);
     for (const name of ['open', 'osascript', 'sleep']) executable(join(bin, name), 'printf "%s\\n" "$0" >> "$UNEXPECTED_DESKTOP_ACTION"\nexit 0');
     const fixture = join(directory, helperName);
     writeFileSync(fixture, helperSource.replace('APP="/Applications/Claude.app"', `APP="${app}"`));
     const action = join(directory, 'unexpected-action');
+    const signingEnv = {
+      CLAWGOD_REAL_PYTHON: Bun.which('python3'), DESKTOP_FIXTURE_APP: app,
+      SIGN_CALLS: join(directory, 'sign-calls'), SIGN_ROOT_ENTITLEMENTS: join(directory, 'root-entitlements'), SIGN_RENDERER_ENTITLEMENTS: join(directory, 'renderer-entitlements'),
+      SIGN_UNSIGNED_ENTITLEMENTS: join(directory, 'unsigned-entitlements'),
+      OFFICIAL_ENTITLEMENTS: '<plist version="1.0"><dict><key>com.apple.application-identifier</key><string>TEAM.app</string><key>com.apple.developer.team-identifier</key><string>TEAM</string><key>keychain-access-groups</key><array><string>TEAM.keys</string></array><key>com.apple.security.cs.allow-jit</key><true/><key>com.apple.security.device.camera</key><true/></dict></plist>',
+      RENDERER_ENTITLEMENTS: '<plist version="1.0"><dict><key>com.apple.security.cs.allow-jit</key><true/></dict></plist>',
+    };
+    assert.ok(signingEnv.CLAWGOD_REAL_PYTHON, 'Desktop signing fixtures require the same Python runtime as the macOS helper');
     const result = spawnSync('/bin/bash', [fixture, '--install', app], {
       encoding: 'utf8',
-      env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, CLAWGOD_BUN_BIN: process.execPath, UNEXPECTED_DESKTOP_ACTION: action },
+      env: { ...process.env, ...signingEnv, HOME: home, PATH: `${bin}:${process.env.PATH}`, CLAWGOD_BUN_BIN: process.execPath, UNEXPECTED_DESKTOP_ACTION: action },
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.equal(existsSync(action), false, 'installer mode must never quit, launch or wait for Desktop');
@@ -123,7 +159,16 @@ try {
     if (running) assert.equal(readFileSync(join(ion, 'assets/v1/locale.js'), 'utf8'), scriptBefore);
     else {
       assert.match(readFileSync(join(ion, 'assets/v1/locale.js'), 'utf8'), /zh-Hans/);
-      const restoreEnv = { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, CLAWGOD_BUN_BIN: process.execPath, UNEXPECTED_DESKTOP_ACTION: action };
+      for (const [path, camera, jit] of [[signingEnv.SIGN_ROOT_ENTITLEMENTS, true, true], [signingEnv.SIGN_RENDERER_ENTITLEMENTS, false, true], [signingEnv.SIGN_UNSIGNED_ENTITLEMENTS, false, false]]) {
+        const parsed = spawnSync(signingEnv.CLAWGOD_REAL_PYTHON, ['-c', 'import plistlib,json,sys;print(json.dumps(plistlib.load(open(sys.argv[1],"rb"))))', path], { encoding: 'utf8' });
+        assert.equal(parsed.status, 0, parsed.stderr);
+        const entitlements = JSON.parse(parsed.stdout);
+        assert.equal(entitlements['com.apple.security.cs.allow-jit'] === true, jit, 'JIT must be preserved only on components that originally owned it');
+        assert.equal(entitlements['com.apple.security.cs.disable-library-validation'], true, 'ad-hoc components need to load their signed frameworks');
+        assert.equal(entitlements['com.apple.security.device.camera'] === true, camera, 'component permissions must not be copied from the outer app');
+        for (const key of ['com.apple.application-identifier', 'com.apple.developer.team-identifier', 'keychain-access-groups']) assert.equal(Object.hasOwn(entitlements, key), false, 'official identity entitlements must not reach an ad-hoc signature');
+      }
+      const restoreEnv = { ...process.env, ...signingEnv, HOME: home, PATH: `${bin}:${process.env.PATH}`, CLAWGOD_BUN_BIN: process.execPath, UNEXPECTED_DESKTOP_ACTION: action };
       const failedRestore = spawnSync('/bin/bash', [fixture, '--restore', app], {
         encoding: 'utf8', env: { ...restoreEnv, CODESIGN_STATUS: '72' },
       });
@@ -132,6 +177,10 @@ try {
       assert.equal(restored.status, 0, restored.stdout + restored.stderr);
       assert.equal(readFileSync(join(ion, 'assets/v1/locale.js'), 'utf8'), scriptBefore, 'shell restore must restore native language resources');
       assert.equal(existsSync(join(ion, 'i18n/zh-Hans.json')), false);
+      const calls = readFileSync(signingEnv.SIGN_CALLS, 'utf8');
+      const malformed = spawnSync('/bin/bash', [fixture, '--restore', app], { encoding: 'utf8', env: { ...restoreEnv, BAD_ENTITLEMENTS: '1' } });
+      assert.notEqual(malformed.status, 0, 'malformed original entitlements must stop signing');
+      assert.equal(readFileSync(signingEnv.SIGN_CALLS, 'utf8'), calls, 'validate every component before signing any component');
     }
   }
   const uninstallHome = join(root, 'uninstall-home');

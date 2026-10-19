@@ -131,7 +131,7 @@ Windows PowerShell 对应参数：
 
 **Claude Desktop（macOS，可选）：** 启用 `computer-use` 时，安装和更新会检测 `/Applications/Claude.app` 与 `~/Applications/Claude.app`，为已安装的 Desktop 应用第三方 API 模式的 CU/内置浏览器补丁，并在原生语言菜单加入“中文（简体）”。词表随安装器压缩打包，不额外联网，也不强制更改当前语言。未安装则直接跳过；正在运行则保留会话，退出 Desktop 后重跑安装器即可。补丁助手内嵌在安装器中，依赖 macOS 的 `python3`、`codesign` 和安装器使用的 Bun；依赖缺失或补丁失败只警告，CLI 安装继续。Windows、Linux 不执行此 macOS 补丁。
 
-Desktop 原始 asar 备份保留在 `~/Library/Application Support/Claude-3p/app.asar.orig-<版本>`。补丁会 ad-hoc 重签名，可能影响官方自动更新及系统权限识别。关闭 `computer-use` 或卸载 ClawGod 不会自动还原已修改的 Desktop，也不删除其备份；语言资源另存版本备份，回滚只还原本工具仍持有的改动，用户后来修改的文件会保留并报错。需要回滚时，在卸载前执行 `bash ~/.clawgod/restore-claude-3p-cu-browser.sh --restore /Applications/Claude.app`（用户目录安装请改成对应路径）。
+Desktop 原始 asar 备份保留在 `~/Library/Application Support/Claude-3p/app.asar.orig-<版本>`。补丁会逐组件保留 JIT 等功能权限、移除官方团队身份绑定后 ad-hoc 重签名，可能影响官方自动更新及系统权限识别。关闭 `computer-use` 或卸载 ClawGod 不会自动还原已修改的 Desktop，也不删除其备份；语言资源另存版本备份，回滚只还原本工具仍持有的改动，用户后来修改的文件会保留并报错。需要回滚时，在卸载前执行 `bash ~/.clawgod/restore-claude-3p-cu-browser.sh --restore /Applications/Claude.app`（用户目录安装请改成对应路径）。
 
 ### Cometix 补丁融合
 
