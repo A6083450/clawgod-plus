@@ -98,7 +98,7 @@ jobs:
             (cd dist/win && gh release upload "$tag" install.ps1 apply-claude-code-chrome-fix.ps1 --clobber)
           else
             gh release create "$tag" \
-              --title "ClawGod Plus $tag" \
+              --title "$tag" \
               --notes-file release-notes.md
             (cd dist/unix && gh release upload "$tag" install.sh apply-claude-code-chrome-fix.sh)
             (cd dist/win && gh release upload "$tag" install.ps1 apply-claude-code-chrome-fix.ps1)

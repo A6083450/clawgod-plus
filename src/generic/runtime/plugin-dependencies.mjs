@@ -573,7 +573,7 @@ export function rewriteClaudeMemFile(relativePath, raw, bunPath) {
     { token: 'node "$_P/scripts/version-check.js"', label: 'version-check' },
     { token: 'node "$_P/scripts/bun-runner.js"', label: 'bun-runner' },
   ];
-  const counts = { 'version-check': 0, 'bun-runner': 0 };
+  const counts = { 'version-check': 0, 'bun-runner': 0, 'ensure-launcher': 0, launcher: 0 };
   const quotedBun = quoteClaudeMemHookBun(bunPath);
   for (const groups of Object.values(value.hooks)) {
     if (!Array.isArray(groups)) throw new Error('claude-mem: invalid hooks schema');
@@ -581,6 +581,26 @@ export function rewriteClaudeMemFile(relativePath, raw, bunPath) {
       if (!isPlainRecord(group) || !Array.isArray(group.hooks)) throw new Error('claude-mem: invalid hooks schema');
       for (const hook of group.hooks) {
         if (!isPlainRecord(hook) || typeof hook.command !== 'string') throw new Error('claude-mem: invalid hook command schema');
+        if (hook.command === 'node') {
+          if (hook.type !== 'command' || !Array.isArray(hook.args) || hook.args.length !== 1
+            || hook.args[0] !== '${CLAUDE_PLUGIN_ROOT}/scripts/ensure-launcher.cjs') {
+            throw new Error('claude-mem: unknown Node executable');
+          }
+          hook.command = bunPath;
+          counts['ensure-launcher'] += 1;
+          continue;
+        }
+        if (hook.command === 'claude-mem') {
+          const args = hook.args;
+          if (hook.type !== 'command' || !Array.isArray(args)
+            || !(args.length === 1 && args[0] === 'start'
+              || args.length === 3 && args[0] === 'hook' && args[1] === 'claude-code'
+                && ['context', 'session-init', 'observation', 'file-context', 'summarize', 'session-end'].includes(args[2]))) {
+            throw new Error('claude-mem: unknown launcher command schema');
+          }
+          counts.launcher += 1;
+          continue;
+        }
         const replacements = [];
         const commandCounts = { 'version-check': 0, 'bun-runner': 0 };
         for (const position of claudeMemPluginNodePositions(hook.command)) {
@@ -601,10 +621,13 @@ export function rewriteClaudeMemFile(relativePath, raw, bunPath) {
       }
     }
   }
-  if (counts['version-check'] < 1 || counts['bun-runner'] < 1) {
+  const launcherHooks = counts['ensure-launcher'] > 0 || counts.launcher > 0;
+  if (counts['version-check'] < 1 || (launcherHooks
+    ? counts['ensure-launcher'] !== 1 || counts.launcher < 1
+    : counts['bun-runner'] < 1)) {
     throw new Error('claude-mem: missing required hook replacement');
   }
-  return { text: JSON.stringify(value, null, 2) + '\n', replacements: counts['version-check'] + counts['bun-runner'] };
+  return { text: JSON.stringify(value, null, 2) + '\n', replacements: counts['version-check'] + counts['bun-runner'] + counts['ensure-launcher'] };
 }
 
 export async function configureClaudeMemBun(context, state) {
