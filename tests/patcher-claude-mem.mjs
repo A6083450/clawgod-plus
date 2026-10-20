@@ -434,6 +434,33 @@ for (const [installerName, helper] of [['canonical source', canonicalHelper]]) {
     const windowsMcp = rewriteClaudeMemFile('.mcp.json', JSON.stringify(mcp), windowsBunPath);
     assert.equal(JSON.parse(windowsMcp.text).mcpServers['mcp-search'].command, windowsBunPath, 'Windows source behavior must persist the absolute Bun MCP executable');
 
+    const launcherHooks = { hooks: {
+      Setup: hooksFixture.hooks.Setup,
+      SessionStart: [{ hooks: [
+        { type: 'command', command: 'claude-mem', args: ['start'], async: true },
+        { type: 'command', command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/scripts/ensure-launcher.cjs'], timeout: 180 },
+      ] }],
+      PostToolUse: [{ hooks: [{ type: 'command', command: 'claude-mem', args: ['hook', 'claude-code', 'observation'], async: true }] }],
+    } };
+    for (const executable of [process.execPath, windowsBunPath]) {
+      const result = rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(launcherHooks), executable);
+      const output = JSON.parse(result.text);
+      assert.equal(result.replacements, 2, '新版只替换 Setup 和 ensure-launcher 的 Node 入口');
+      assert.deepEqual(output.hooks.SessionStart[0].hooks[1], { ...launcherHooks.hooks.SessionStart[0].hooks[1], command: executable });
+      assert.deepEqual(output.hooks.PostToolUse, launcherHooks.hooks.PostToolUse, '原生 launcher 参数和异步属性必须保留');
+    }
+    for (const variant of ['missing-ensure', 'missing-launcher', 'unknown-node', 'unknown-launcher']) {
+      const fixture = structuredClone(launcherHooks);
+      if (variant === 'missing-ensure') fixture.hooks.SessionStart[0].hooks.pop();
+      if (variant === 'missing-launcher') {
+        fixture.hooks.SessionStart[0].hooks.shift();
+        delete fixture.hooks.PostToolUse;
+      }
+      if (variant === 'unknown-node') fixture.hooks.SessionStart[0].hooks[1].args = ['${CLAUDE_PLUGIN_ROOT}/scripts/unknown.cjs'];
+      if (variant === 'unknown-launcher') fixture.hooks.PostToolUse[0].hooks[0].args = ['unexpected'];
+      assert.throws(() => rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(fixture), process.execPath), /replacement|executable|schema/i, `${variant} 必须拒绝`);
+    }
+
     const missingVersion = structuredClone(hooksFixture);
     delete missingVersion.hooks.Setup;
     assert.throws(() => rewriteClaudeMemFile('hooks/hooks.json', JSON.stringify(missingVersion), process.execPath), /version-check|replacement|schema/i, 'hooks without version-check must fail closed');

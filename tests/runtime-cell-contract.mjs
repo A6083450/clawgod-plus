@@ -23,10 +23,13 @@ for (const suffix of ['function init(){mask=7}init();', 'class Init{static{mask=
 assert.notEqual(contract('var mask=3,limit=1<<mask;function draw(){return limit}', ['draw']).digest,
   contract('var limit=1<<mask,mask=3;function draw(){return limit}', ['draw']).digest, '初始化顺序必须进入契约');
 
-for (const [platform, renderFile] of [['darwin', 'chunk-7mzb8nrq.js'], ['linux', 'chunk-x66h7b21.js'], ['win32', 'chunk-1jz9m9yh.js']]) {
-const files = new Map(JSON.parse(readFileSync(new URL(`./fixtures/cell-contract-2.1.303-${platform}-graph.txt`, import.meta.url), 'utf8')));
+for (const [version, platform, renderFile] of [
+  ['2.1.303', 'darwin', 'chunk-7mzb8nrq.js'], ['2.1.303', 'linux', 'chunk-x66h7b21.js'], ['2.1.303', 'win32', 'chunk-1jz9m9yh.js'],
+  ['2.1.304', 'darwin', 'chunk-p4db44gq.js'], ['2.1.304', 'linux', 'chunk-yhb0qgpt.js'], ['2.1.304', 'win32', 'chunk-v97bgzk4.js'],
+]) {
+const files = new Map(JSON.parse(readFileSync(new URL(`./fixtures/cell-contract-${version}-${platform}-graph.txt`, import.meta.url), 'utf8')));
 const source = files.get(renderFile);
-assert.notEqual(processor.adaptCellRenderer(source, undefined, files), null, '303 的相同渲染接口无需新增版本指纹');
+assert.notEqual(processor.adaptCellRenderer(source, undefined, files), null, `${version}/${platform} 相同渲染接口必须兼容分块重组`);
 const rename = text => {
   const parsed = processor.structuralModule(text);
   const changes = [...new Map(parsed.identifiers.map(item => [item.start, item])).values()].sort((a, b) => b.start - a.start);
@@ -40,13 +43,19 @@ const [sharedFile, sharedSource] = [...files].find(([, text]) => text.includes('
 const sharedAst = processor.structuralModule(sharedSource).ast;
 const factory = sharedAst.body.find(node => node.id && sharedSource.slice(node.start, node.end).includes('new Bun.ant.CellSegmenter')).id.name;
 const sharedSpecifier = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration' && basename(node.source.value) === sharedFile).source.value;
-for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias-caller', 'text-drift', 'ansi-drift']) {
+for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias-caller', 'text-alias-caller', 'text-drift', 'ansi-drift']) {
   const modules = new Map(variant === 'renamed' ? renamedFiles : files);
   if (variant === 'unrelated') for (const [file, text] of modules) {
-    if (text.includes('stylePool;charPool;native=') || text.includes('.trimEnd()')) modules.set(file, text + '\nfunction unrelatedNewFeature(){return 123}');
+    if (text.includes('stylePool;charPool;native=') || text.includes('.trimEnd()')) modules.set(file, text + '\nfunction unrelatedNewFeature(){return 123}'
+      + (text.includes('stylePool;charPool;native=') ? '' : `\nfunction unrelatedShadow(${factory}){return ${factory}}`));
   }
   if (variant === 'unknown-caller') modules.set('chunk-unknown.js', `import{${factory}}from${JSON.stringify(sharedSpecifier)};${factory}([]);`);
   if (variant === 'alias-caller') modules.set('chunk-unknown.js', `import{${factory} as alias}from${JSON.stringify(sharedSpecifier)};alias([]);`);
+  if (variant === 'text-alias-caller') for (const [file, text] of modules) {
+    if (text.includes('.trimEnd()') && text.includes(`${factory}(`) && !text.includes('stylePool;charPool;native=')) {
+      modules.set(file, text + `\nconst extraNativeFactory=${factory};function extraNativePath(){return extraNativeFactory([])}`);
+    }
+  }
   if (variant === 'text-drift') for (const [file, text] of modules) {
     if (text.includes('.trimEnd()') && text.includes(`${factory}(`) && !text.includes('stylePool;charPool;native=')) modules.set(file, text.replace('return!1;return!0', 'return!0;return!0'));
   }
@@ -71,7 +80,7 @@ for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
-if (platform === 'darwin') {
+if (platform === 'darwin' && version === '2.1.303') {
   const terminated = source.replace(':dg(n,f,m,p)}', ':dg(n,f,m,p); }');
   assert.notEqual(terminated, source);
   const adapted = processor.adaptCellRenderer(terminated, undefined, files);

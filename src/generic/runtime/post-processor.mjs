@@ -6377,7 +6377,7 @@ export function structuralModule(source) {
         return ['export', resolved];
       }
       const resolved = identifier(node);
-      if (resolved.startsWith('binding:')) identifiers.push({ start: node.start, end: node.end, name: node.name,
+      if (resolved.startsWith('binding:')) identifiers.push({ start: node.start, end: node.end, name: node.name, binding: Number(resolved.slice(8)),
         shorthand: parent?.type === 'Property' && parent.shorthand && key === 'value' });
       return ['identifier', resolved];
     }
@@ -8026,11 +8026,14 @@ function localCellProfile(source, dependencies) {
       return { source: text, structure, specifier: node.source.value, local: exported.local.name };
     };
     const shared = resolveImport(renderer.bindings[0]);
-    if (shared.structure.digest !== 'a4df63c44a7007f50b1418b8f808f8600771ce2003d94c291174145ec3ba36f6'
-      || shared.local !== shared.structure.bindings[6]) return null;
+    // 2.1.304 将原样的 ANSI 模块与共享工厂合并；工厂绑定整体后移 128 位。
+    const mergedAnsi = shared.structure.digest === '9eba98324a241b2dc9316c8d9bc30ffd2ed64f8acbf7c1c971d7c53ea010a0bb';
+    const sharedOffset = mergedAnsi ? 128 : 0;
+    if (!mergedAnsi && shared.structure.digest !== 'a4df63c44a7007f50b1418b8f808f8600771ce2003d94c291174145ec3ba36f6'
+      || shared.local !== shared.structure.bindings[sharedOffset + 6]) return null;
     for (const [local, upstream] of [[2,0],[4,5],[windows ? 9 : 10,1],[windows ? 10 : 11,2]]) {
       const edge = resolveImport(renderer.bindings[local]);
-      if (edge.specifier !== shared.specifier || edge.local !== shared.structure.bindings[upstream]) return null;
+      if (edge.specifier !== shared.specifier || edge.local !== shared.structure.bindings[upstream + sharedOffset]) return null;
     }
     const chalk = resolveImport(names.bGt);
     if (chalk.structure.digest !== '2fdd7ca5ded53c63977f6f7efb408920fd99b93e1fee3ce1f25a57d809c27aab'
@@ -8069,6 +8072,7 @@ function localCellProfile(source, dependencies) {
       if (!text || !text.includes('Number.POSITIVE_INFINITY')) return null;
       const structure = structuralModule(text);
       return structure.digest === '5c710815d4d1b551b526147eacb70dcd92be27824e3e2e7ef6252df9eb1f911a'
+        || mergedAnsi && node.source.value === shared.specifier
         ? { source: text, structure, specifier: node.source.value } : null;
     }).filter(Boolean);
     if (ansiCandidates.length !== 1) return null;
@@ -8078,14 +8082,21 @@ function localCellProfile(source, dependencies) {
       if (!text.includes(shared.specifier) || !text.includes('.trimEnd()')) continue;
       const parsed = cellAst.parse(text, { ecmaVersion: 'latest', sourceType: 'module' });
       const functions = parsed.body.filter(node => node.type === 'FunctionDeclaration');
-      const checks = functions.filter(node => { const body = text.slice(node.start,node.end); return body.includes('.trimEnd()') && body.includes('.indexOf('); });
+      const checks = functions.filter(node => { const body = text.slice(node.start,node.end); return body.includes('.trimEnd()') && body.includes('.indexOf(')
+        && /if\(![\w$]+\.test\([\w$]+\)\)return [\w$]+\([\w$]+\([\w$]+\)\);/.test(body); });
       const segments = functions.filter(node => text.slice(node.start,node.end).includes(`${shared.local}(`));
       if (checks.length !== 1 || segments.length !== 1) continue;
       const contract = cellDeclarationContract(text, [checks[0].id.name, segments[0].id.name]);
       if (contract.digest !== '806962f28be74e895c24d42d325ff581238ccc482c57443c68d12e6a93f51733') continue;
+      // 已允许的文本分块也不能通过别名新增契约外的原生调用路径。
+      const factoryImport = parsed.body.find(node => node.type === 'ImportDeclaration'
+        && node.specifiers.some(item => item.local.name === shared.local));
+      const textStructure = structuralModule(text);
+      if (!factoryImport || textStructure.identifiers.some(item => item.binding === textStructure.topBindings[shared.local]
+        && ![factoryImport, segments[0]].some(node => item.start >= node.start && item.end <= node.end))) return null;
       for (const [local, upstream] of [[3,5],[4,6],[5,0]]) {
         const edge = contract.imports.find(item => item.local === contract.bindings[local]);
-        if (edge?.specifier !== shared.specifier || edge.imported !== shared.structure.bindings[upstream]) return null;
+        if (edge?.specifier !== shared.specifier || edge.imported !== shared.structure.bindings[upstream + sharedOffset]) return null;
       }
       const branch = text.slice(checks[0].start,checks[0].end).match(/if\(![\w$]+\.test\([\w$]+\)\)return [\w$]+\([\w$]+\([\w$]+\)\);/);
       if (branch) textCandidates.push({ file, source: text, branch: branch[0] });
