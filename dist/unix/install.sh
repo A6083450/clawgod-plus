@@ -16,7 +16,7 @@ set -e
 CLAWGOD_DIR="$HOME/.clawgod"
 BIN_DIR="$HOME/.local/bin"
 VERSION="${CLAWGOD_VERSION:-}"
-VERIFIED_VERSION="2.1.304"
+VERIFIED_VERSION="2.1.305"
 # 旧 updater 把无参更新标记为 latest；显式 --version 在后面的参数解析中恢复。
 if [ "$VERSION" = latest ] && [ "${CLAWGOD_UPDATE_PATCH_FAIL_OPEN:-}" = 1 ]; then VERSION=""; fi
 NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
@@ -23312,8 +23312,9 @@ function inspectPatcherSource(source) {
 }
 async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   const ENV_EXPR = "(+process.env.CLAUDE_CODE_CONTEXT_LIMIT||+process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS||200000)";
-  const dualRe = /var\s+([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*200000\s*,\s*([\w$]+)\s*=\s*32000\s*,\s*([\w$]+)\s*=\s*128000(?:\s*,\s*([\w$]+)\s*=\s*1e6)?(?=\s*;)/;
-  const alreadyRe = new RegExp("var\\s+([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*[\\w$]+\\s*=\\s*32000\\s*,\\s*[\\w$]+\\s*=\\s*128000(?:\\s*,\\s*[\\w$]+\\s*=\\s*1e6)?(?=\\s*;)");
+  const constantTail = "((?:\\s*,\\s*[\\w$]+\\s*=\\s*(?:32000|128000|1e6)){2,3})(?=\\s*;)";
+  const dualRe = new RegExp("var\\s+([\\w$]+)\\s*=\\s*200000\\s*,\\s*([\\w$]+)\\s*=\\s*200000" + constantTail);
+  const alreadyRe = new RegExp("var\\s+([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)" + constantTail);
   const dualMatch = dualRe.exec(source);
   const alreadyMatch = alreadyRe.exec(source);
   if (!dualMatch && !alreadyMatch) {
@@ -23322,7 +23323,11 @@ async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
     return { status: "stale", detail: "context default constants not found" };
   }
   const match = dualMatch || alreadyMatch;
-  const [, varA, varB, varC, varD, varE] = match;
+  const [, varA, varB, tail] = match;
+  const constants = [...tail.matchAll(/=\s*(32000|128000|1e6)/g)].map((entry) => entry[1]);
+  if (new Set(constants).size !== constants.length || !constants.includes("32000") || !constants.includes("128000")) {
+    return { status: "stale", detail: "context default constants are ambiguous" };
+  }
   const replacements = [];
   const moduleSeparator = `
 /*__CLAWGOD_MODULE_BOUNDARY__*/
@@ -23335,7 +23340,7 @@ async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
     replacements.push({
       start: dualMatch.index,
       end: dualMatch.index + dualMatch[0].length,
-      replacement: `var ${varA}=${ENV_EXPR},${varB}=${ENV_EXPR},${varC}=32000,${varD}=128000${varE ? `,${varE}=1e6` : ""}${codeSplit && !source.includes(refreshMarker) ? refreshRegistration : ""}`
+      replacement: `var ${varA}=${ENV_EXPR},${varB}=${ENV_EXPR}${tail}${codeSplit && !source.includes(refreshMarker) ? refreshRegistration : ""}`
     });
     const cmpRe = /\breturn ([\w$]+)\?([\w$]+)\(\1\)>200000:!1/g;
     let cm;

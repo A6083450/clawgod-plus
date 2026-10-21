@@ -51,18 +51,18 @@ macOS/Linux では Shell、Windows では PowerShell を OS のコマンド入�
 
 ## ClawGod Plus をインストール
 
-以下のコマンドは、固定バージョン（v2026.10.20-claude.2.1.304）の ClawGod Plus Release アセットをダウンロードします。
+以下のコマンドは、固定バージョン（v2026.10.21-claude.2.1.305）の ClawGod Plus Release アセットをダウンロードします。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.20-claude.2.1.304/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.21-claude.2.1.305/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.20-claude.2.1.304/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.21-claude.2.1.305/install.ps1 | iex
 ```
 
 主なインストーラオプション（バージョン未指定時はインストーラの検証済み Claude Code バージョンを使用し、より新しいインストール済みバージョンは維持）：

@@ -6,6 +6,33 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
+import { coreRegistry } from '../src/generic/patcher/core.mjs';
+
+const contextPatch = coreRegistry.customPatches.find(patch => patch.name === 'Context limit configurable');
+const contextTails = [
+  'n0=1e6,sE=32000,r0=128000',
+  'sE=32000,n0=1e6,r0=128000',
+  'sE=32000,r0=128000,n0=1e6',
+  'n0=1e6,r0=128000,sE=32000',
+  'r0=128000,n0=1e6,sE=32000',
+  'r0=128000,sE=32000,n0=1e6',
+];
+for (const tail of contextTails) {
+  const source = `var MCe=200000,c6=200000,${tail};
+function reload(e){Object.assign(process.env,e);return [MCe,c6,n0,sE,r0]}
+globalThis.reload=reload;`;
+  const result = await contextPatch.apply(source, {});
+  assert.equal(result.status, 'applied', `2.1.305 context declaration must allow reordered constants: ${tail}`);
+  assert.ok(result.code.includes(`,${tail};`), 'non-context constants must retain their original order and values');
+  const runtime = evaluate(result.code);
+  assert.deepEqual(Array.from(runtime.reload({})), [200000, 200000, 1000000, 32000, 128000]);
+  assert.deepEqual(Array.from(runtime.reload({ CLAUDE_CODE_MAX_CONTEXT_TOKENS: '500000' })), [500000, 500000, 1000000, 32000, 128000]);
+  assert.deepEqual(Array.from(runtime.reload({ CLAUDE_CODE_CONTEXT_LIMIT: '1000000' })), [1000000, 1000000, 1000000, 32000, 128000]);
+  assert.equal((await contextPatch.apply(result.code, {})).status, 'already', 'reordered constants must remain idempotent');
+}
+for (const tail of ['sE=32000,r0=32000', 'sE=128000,r0=128000', 'sE=32000,r0=128000,n0=128000']) {
+  assert.equal((await contextPatch.apply(`var MCe=200000,c6=200000,${tail};`, {})).status, 'stale', 'ambiguous constants must still stop patching');
+}
 
 const fixture = `
 /* Version: 2.1.218 */
@@ -295,40 +322,43 @@ function nestedAssign(e){return Boolean(Object.assign(process.env,e.env||{}))}
 export{loadSettingsEnv,nestedAssign};
 `;
 
-for (const [name, patcherSource] of await getPatcherSources()) {
-  const dir = mkdtempSync(join(tmpdir(), 'clawgod-context-limit-esm-250-'));
+for (const [name, patcherSource, contextVersion, contextSource] of (await getPatcherSources()).flatMap(([name, source]) => [
+  [name, source, '2.1.250', esmContext250],
+  [name, source, '2.1.305', esmContext250.replace('vGe=200000,UN=200000,l3=32000,c3=128000', 'vGe=200000,UN=200000,n0=1e6,l3=32000,c3=128000')],
+])) {
+  const dir = mkdtempSync(join(tmpdir(), 'clawgod-context-limit-esm-'));
   try {
     seedPatcherAcorn(dir);
     mkdirSync(join(dir, 'chunks'));
     writeFileSync(join(dir, 'patch.mjs'), patcherSource, 'utf8');
     writeFileSync(join(dir, 'cli.original.cjs'), esmEntry250, 'utf8');
-    writeFileSync(join(dir, 'chunks', 'context.js'), esmContext250, 'utf8');
+    writeFileSync(join(dir, 'chunks', 'context.js'), contextSource, 'utf8');
     writeFileSync(join(dir, 'chunks', 'env.js'), esmEnv250, 'utf8');
 
     const patch = spawnSync(process.execPath, ['patch.mjs'], { cwd: dir, encoding: 'utf8' });
     const patchOutput = patch.stdout + patch.stderr;
-    assert.equal(patch.status, 0, `${name} 2.1.250 ESM: ${patchOutput}`);
+    assert.equal(patch.status, 0, `${name} ${contextVersion} ESM: ${patchOutput}`);
 
     const runtimeEnv = { ...process.env };
     delete runtimeEnv.CLAUDE_CODE_CONTEXT_LIMIT;
     delete runtimeEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
     const run = spawnSync(process.execPath, ['cli.original.cjs'], { cwd: dir, encoding: 'utf8', env: runtimeEnv });
-    assert.equal(run.status, 0, `${name} 2.1.250 ESM runtime: ${run.stdout}${run.stderr}`);
+    assert.equal(run.status, 0, `${name} ${contextVersion} ESM runtime: ${run.stdout}${run.stderr}`);
     assert.deepEqual(
       JSON.parse(run.stdout.trim()),
       { before: 200000, after: 1000000, large: false },
-      `${name} 2.1.250 ESM: settings env reload must refresh context vars across chunk boundaries`,
+      `${name} ${contextVersion} ESM: settings env reload must refresh context vars across chunk boundaries`,
     );
 
     const envChunk = readFileSync(join(dir, 'chunks', 'env.js'), 'utf8');
-    assert.doesNotMatch(envChunk, /(?:vGe|UN)=\(\+process\.env/, `${name} 2.1.250 ESM: env chunk must not assign unimported context variables`);
-    assert.match(envChunk, /Object\.assign\(process\.env,e\.env\|\|\{\}\),globalThis\.__clawgod_context_limit_refresh_v1__\?\.\(\)/, `${name} 2.1.250 ESM: top-level sequence env assignment must trigger the cross-module refresh callback`);
-    assert.match(readFileSync(join(dir, 'chunks', 'context.js'), 'utf8'), /globalThis\.__clawgod_context_limit_refresh_v1__=/, `${name} 2.1.250 ESM: context chunk must own the refresh callback`);
+    assert.doesNotMatch(envChunk, /(?:vGe|UN)=\(\+process\.env/, `${name} ${contextVersion} ESM: env chunk must not assign unimported context variables`);
+    assert.match(envChunk, /Object\.assign\(process\.env,e\.env\|\|\{\}\),globalThis\.__clawgod_context_limit_refresh_v1__\?\.\(\)/, `${name} ${contextVersion} ESM: top-level sequence env assignment must trigger the cross-module refresh callback`);
+    assert.match(readFileSync(join(dir, 'chunks', 'context.js'), 'utf8'), /globalThis\.__clawgod_context_limit_refresh_v1__=/, `${name} ${contextVersion} ESM: context chunk must own the refresh callback`);
 
     const second = spawnSync(process.execPath, ['patch.mjs', '--dry-run'], { cwd: dir, encoding: 'utf8' });
     const secondOutput = second.stdout + second.stderr;
-    assert.equal(second.status, 0, `${name} 2.1.250 ESM re-run: ${secondOutput}`);
-    assert.match(secondOutput, /Context limit configurable \(already applied\)/, `${name} 2.1.250 ESM: callback patch must be idempotent`);
+    assert.equal(second.status, 0, `${name} ${contextVersion} ESM re-run: ${secondOutput}`);
+    assert.match(secondOutput, /Context limit configurable \(already applied\)/, `${name} ${contextVersion} ESM: callback patch must be idempotent`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
