@@ -8005,8 +8005,10 @@ function localCellProfile(source, dependencies) {
       one(text => /^function [\w$]+\(([\w$]+)\)\{return [\w$]+\.test\(\1\)\?\1\.replace\([\w$]+,"\\uFFFD"\):\1\}$/.test(text)),
     ];
     const renderer = cellDeclarationContract(source, roots);
-    const windows = renderer.digest === '5662354f359aff6215a218c960def8daa016b665a826182ca74f7f7a3931e976';
-    if (!windows && renderer.digest !== '81d0cbf0d426ae6b3b29b279988115f7135d920654b90201a9e235e36851b6a5') return null;
+    const splitBidiWindows = renderer.digest === '14c0524e2ffffed0c7b54c8ff72ed5b132368b5f14d91fad4826cd071669542d';
+    const splitBidi = splitBidiWindows || renderer.digest === 'ae2075eaf8e325578ef1ffeaa46b2e14c0b027d58c423861c0f9a31f92da3902';
+    const windows = splitBidiWindows || renderer.digest === '5662354f359aff6215a218c960def8daa016b665a826182ca74f7f7a3931e976';
+    if (!splitBidi && !windows && renderer.digest !== '81d0cbf0d426ae6b3b29b279988115f7135d920654b90201a9e235e36851b6a5') return null;
     const names = Object.fromEntries(Object.entries({ Ns:12, Dd:23, Cx:81, xC:110, Dc:137,
       bn:14, wo:15, Xf:16, jn:17, hht:1, Rx:90, xx:93, bGt:3, LNr:5, MNr:6 })
       .map(([key, index]) => [key, renderer.bindings[index - (windows && index >= 12 ? 1 : 0)]]));
@@ -8026,14 +8028,30 @@ function localCellProfile(source, dependencies) {
       return { source: text, structure, specifier: node.source.value, local: exported.local.name };
     };
     const shared = resolveImport(renderer.bindings[0]);
+    // 2.1.310 合入 tmux 检测，原 ANSI/工厂不变，但新增导入使绑定后移四位。
+    const tmuxAnsi = splitBidi && shared.structure.digest === '8ec4f78979e912faa4b865c3205b6b299bdb7b223f94ebf9b51f048e01b11c92';
     // 2.1.304 将原样的 ANSI 模块与共享工厂合并；工厂绑定整体后移 128 位。
-    const mergedAnsi = shared.structure.digest === '9eba98324a241b2dc9316c8d9bc30ffd2ed64f8acbf7c1c971d7c53ea010a0bb';
-    const sharedOffset = mergedAnsi ? 128 : 0;
+    const mergedAnsi = tmuxAnsi || shared.structure.digest === (splitBidi
+      ? 'be8ac874e539c2753fddac24c4af4af0268c14e276b29a1e1835f19d96e94e71'
+      : '9eba98324a241b2dc9316c8d9bc30ffd2ed64f8acbf7c1c971d7c53ea010a0bb');
+    const sharedOffset = tmuxAnsi ? 127 : splitBidi ? 123 : mergedAnsi ? 128 : 0;
     if (!mergedAnsi && shared.structure.digest !== 'a4df63c44a7007f50b1418b8f808f8600771ce2003d94c291174145ec3ba36f6'
       || shared.local !== shared.structure.bindings[sharedOffset + 6]) return null;
-    for (const [local, upstream] of [[2,0],[4,5],[windows ? 9 : 10,1],[windows ? 10 : 11,2]]) {
+    for (const [local, upstream] of (splitBidi ? [[4,5]] : [[2,0],[4,5],[windows ? 9 : 10,1],[windows ? 10 : 11,2]])) {
       const edge = resolveImport(renderer.bindings[local]);
       if (edge.specifier !== shared.specifier || edge.local !== shared.structure.bindings[upstream + sharedOffset]) return null;
+    }
+    // shortcut: 2.1.307 方向小模块整体冻结以挡住间接修改；无关声明变化时也须重新核对。
+    let bidi;
+    if (splitBidi) {
+      bidi = resolveImport(renderer.bindings[2]);
+      const pattern = resolveImport(renderer.bindings[windows ? 9 : 10]);
+      const regex = resolveImport(renderer.bindings[windows ? 10 : 11]);
+      if (bidi.structure.digest !== 'd64dedaa92eb5fed6f31d07b1ea5bf194f7335b9e5158f3954d2daf120ff263d'
+        || bidi.specifier !== pattern.specifier || bidi.specifier !== regex.specifier) return null;
+      const contract = cellDeclarationContract(bidi.source, [bidi.local, pattern.local, regex.local]);
+      if (contract.digest !== '5810a259b57cdd3573fd5f0308a504c41e350cbdac1ac03ced4225b76fc43f5e'
+        || contract.imports.length !== 0) return null;
     }
     const chalk = resolveImport(names.bGt);
     if (chalk.structure.digest !== '2fdd7ca5ded53c63977f6f7efb408920fd99b93e1fee3ce1f25a57d809c27aab'
@@ -8087,16 +8105,21 @@ function localCellProfile(source, dependencies) {
       const segments = functions.filter(node => text.slice(node.start,node.end).includes(`${shared.local}(`));
       if (checks.length !== 1 || segments.length !== 1) continue;
       const contract = cellDeclarationContract(text, [checks[0].id.name, segments[0].id.name]);
-      if (contract.digest !== '806962f28be74e895c24d42d325ff581238ccc482c57443c68d12e6a93f51733') continue;
+      if (contract.digest !== (splitBidi ? 'f87ed46c7161bc28cc0e9b541ce651086c16b1978f797286c6f0e4138d88fdd6'
+        : '806962f28be74e895c24d42d325ff581238ccc482c57443c68d12e6a93f51733')) continue;
       // 已允许的文本分块也不能通过别名新增契约外的原生调用路径。
       const factoryImport = parsed.body.find(node => node.type === 'ImportDeclaration'
         && node.specifiers.some(item => item.local.name === shared.local));
       const textStructure = structuralModule(text);
       if (!factoryImport || textStructure.identifiers.some(item => item.binding === textStructure.topBindings[shared.local]
         && ![factoryImport, segments[0]].some(node => item.start >= node.start && item.end <= node.end))) return null;
-      for (const [local, upstream] of [[3,5],[4,6],[5,0]]) {
+      for (const [local, upstream] of (splitBidi ? [[3,5],[4,6]] : [[3,5],[4,6],[5,0]])) {
         const edge = contract.imports.find(item => item.local === contract.bindings[local]);
         if (edge?.specifier !== shared.specifier || edge.imported !== shared.structure.bindings[upstream + sharedOffset]) return null;
+      }
+      if (splitBidi) {
+        const edge = contract.imports.find(item => item.local === contract.bindings[5]);
+        if (edge?.specifier !== bidi.specifier || edge.imported !== bidi.local) return null;
       }
       const branch = text.slice(checks[0].start,checks[0].end).match(/if\(![\w$]+\.test\([\w$]+\)\)return [\w$]+\([\w$]+\([\w$]+\)\);/);
       if (branch) textCandidates.push({ file, source: text, branch: branch[0] });
@@ -8119,7 +8142,7 @@ function localCellProfile(source, dependencies) {
     const writeLineSource = source.slice(line.start,call.start) + `paintCells(${screen},${cells}.cells,${x},${y})` + source.slice(call.end,line.end);
     return { shape, names, writeLineSource, mappedWriteLine: true, tabAnchor,
       tabReplacement: `let ${out}=${sanitize}(${input});if(${out}.indexOf(String.fromCharCode(9))>=0){let clawgodTabOffset=((${col}%${names.hht})+${names.hht})%${names.hht};${out}=${names.C8}([" ".repeat(clawgodTabOffset)+${out}]).join("").slice(clawgodTabOffset)}let ${width}=${box}.x2-${col}`,
-      dependency: { specifier: ansi.specifier, digest: hash(ansi.source), tokenizer: ansi.structure.bindings[115], normalizeStyles: ansi.structure.bindings[63] },
+      dependency: { specifier: ansi.specifier, digest: hash(ansi.source), tokenizer: ansi.structure.bindings[tmuxAnsi ? 119 : 115], normalizeStyles: ansi.structure.bindings[tmuxAnsi ? 67 : 63] },
       shared: { specifier: shared.specifier, digest: hash(shared.source), factory: shared.local,
         text: text.file, textDigest: hash(text.source), textBranch: text.branch },
     };
