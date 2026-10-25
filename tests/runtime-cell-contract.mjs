@@ -24,12 +24,33 @@ assert.notEqual(contract('var mask=3,limit=1<<mask;function draw(){return limit}
   contract('var limit=1<<mask,mask=3;function draw(){return limit}', ['draw']).digest, '初始化顺序必须进入契约');
 
 for (const [version, platform, renderFile] of [
+  ['2.1.310', 'darwin', 'chunk-pma0w0g1.js'], ['2.1.310', 'linux', 'chunk-rwaeax2b.js'], ['2.1.310', 'win32', 'chunk-abp9eptc.js'],
   ['2.1.303', 'darwin', 'chunk-7mzb8nrq.js'], ['2.1.303', 'linux', 'chunk-x66h7b21.js'], ['2.1.303', 'win32', 'chunk-1jz9m9yh.js'],
   ['2.1.304', 'darwin', 'chunk-p4db44gq.js'], ['2.1.304', 'linux', 'chunk-yhb0qgpt.js'], ['2.1.304', 'win32', 'chunk-v97bgzk4.js'],
+  ['2.1.307', 'win32', 'chunk-rn5pjk0k.js'], ['2.1.307', 'darwin', 'chunk-5bexmhgk.js'], ['2.1.307', 'linux', 'chunk-1h2336rd.js'],
+  ['2.1.308', 'darwin', 'chunk-e4p6x208.js'], ['2.1.308', 'linux', 'chunk-49kqxgk7.js'], ['2.1.308', 'win32', 'chunk-2kgvs2hm.js'],
 ]) {
+// 2.1.307 文本分块含大量无关代码，夹具仅保留契约原声明及其初始化顺序。
 const files = new Map(JSON.parse(readFileSync(new URL(`./fixtures/cell-contract-${version}-${platform}-graph.txt`, import.meta.url), 'utf8')));
 const source = files.get(renderFile);
-assert.notEqual(processor.adaptCellRenderer(source, undefined, files), null, `${version}/${platform} 相同渲染接口必须兼容分块重组`);
+const adapted = processor.adaptCellRenderer(source, undefined, files);
+assert.notEqual(adapted, null, `${version}/${platform} 相同渲染接口必须兼容分块重组`);
+if (version === '2.1.310') {
+  const ansiImport = processor.structuralModule(adapted).ast.body[0];
+  const ansi = files.get(basename(ansiImport.source.value));
+  const [tokenizer, normalize] = ansiImport.specifiers.map(item => item.imported.name);
+  const upstream = new Function(ansi.replace(/import\{[^}]*\}from"[^"]+";/g, '')
+    .replace(/export\{[^}]*\};/, `return {tokenize:${tokenizer},normalize:${normalize}};`))();
+  assert.deepEqual(upstream.tokenize('\x1b[31m中\x1b[0m'), [
+    { type: 'ansi', code: '\x1b[31m', endCode: '\x1b[39m' },
+    { type: 'char', value: '中', fullWidth: true },
+    { type: 'ansi', code: '\x1b[0m', endCode: '\x1b[0m' },
+  ], `${platform}: 合并 tmux 后仍必须导入真正的 ANSI 分词器`);
+  assert.deepEqual(upstream.normalize([
+    { type: 'ansi', code: '\x1b[31m', endCode: '\x1b[39m' },
+    { type: 'ansi', code: '\x1b[0m', endCode: '\x1b[0m' },
+  ]), [], `${platform}: 样式归一化必须正确处理 reset`);
+}
 const rename = text => {
   const parsed = processor.structuralModule(text);
   const changes = [...new Map(parsed.identifiers.map(item => [item.start, item])).values()].sort((a, b) => b.start - a.start);
@@ -43,7 +64,8 @@ const [sharedFile, sharedSource] = [...files].find(([, text]) => text.includes('
 const sharedAst = processor.structuralModule(sharedSource).ast;
 const factory = sharedAst.body.find(node => node.id && sharedSource.slice(node.start, node.end).includes('new Bun.ant.CellSegmenter')).id.name;
 const sharedSpecifier = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration' && basename(node.source.value) === sharedFile).source.value;
-for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias-caller', 'text-alias-caller', 'text-drift', 'ansi-drift']) {
+for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias-caller', 'text-alias-caller', 'text-drift', 'ansi-drift',
+  ...(['2.1.307', '2.1.308', '2.1.310'].includes(version) ? ['direction-drift', 'direction-import', 'direction-missing', 'direction-method-write', 'direction-range-write', 'text-direction-import'] : [])]) {
   const modules = new Map(variant === 'renamed' ? renamedFiles : files);
   if (variant === 'unrelated') for (const [file, text] of modules) {
     if (text.includes('stylePool;charPool;native=') || text.includes('.trimEnd()')) modules.set(file, text + '\nfunction unrelatedNewFeature(){return 123}'
@@ -61,6 +83,33 @@ for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias
   }
   if (variant === 'ansi-drift') for (const [file, text] of modules) {
     if (text.includes('Number.POSITIVE_INFINITY') && text.includes('type:"ansi"') && !text.includes('stylePool;charPool;native=')) modules.set(file, text.replace('Number.POSITIVE_INFINITY', '0'));
+  }
+  if (variant.startsWith('direction-') || variant === 'text-direction-import') {
+    const ranges = source.match(/class [\w$]+\{stylePool;charPool;native=[\w$]+\(([\w$]+)\)/)[1];
+    const directionImport = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration'
+      && node.specifiers.some(item => item.local.name === ranges));
+    const directionFile = basename(directionImport.source.value);
+    if (variant === 'direction-drift') modules.set(directionFile, modules.get(directionFile).replace('[1564,1564]', '[1564,1565]'));
+    if (variant === 'direction-missing') modules.delete(directionFile);
+    if (variant === 'direction-method-write') {
+      const regex = modules.get(directionFile).match(/([\w$]+)=new RegExp\(/)[1];
+      modules.set(directionFile, modules.get(directionFile)
+        + `\nfunction adjustDirection(){Object.defineProperty(${regex},"exec",{value:()=>null})}adjustDirection();`);
+    }
+    if (variant === 'direction-range-write') modules.set(directionFile, modules.get(directionFile)
+      + `\nfunction adjustDirection(){${ranges}[0].splice(1,1,1565)}adjustDirection();`);
+    const wrong = directionImport.specifiers.find(item => item.local.name !== ranges).imported.name;
+    if (variant === 'direction-import') {
+      const binding = directionImport.specifiers.find(item => item.local.name === ranges);
+      modules.set(renderFile, source.slice(0, binding.start) + `${wrong} as ${ranges}` + source.slice(binding.end));
+    }
+    if (variant === 'text-direction-import') for (const [file, text] of modules) {
+      if (text.includes('.trimEnd()') && text.includes(`${factory}(`) && !text.includes('stylePool;charPool;native=')) {
+        const changed = text.replace(`{${ranges}}from`, `{${wrong} as ${ranges}}from`);
+        assert.notEqual(changed, text, '必须改写实际方向范围导入');
+        modules.set(file, changed);
+      }
+    }
   }
   const dir = mkdtempSync(join(tmpdir(), 'clawgod-local-contract-'));
   try {
