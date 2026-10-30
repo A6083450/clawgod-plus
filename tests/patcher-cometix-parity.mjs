@@ -64,6 +64,16 @@ try {
   assert.equal(evaluate(deny).verdict().behavior,'ask');
   assert.equal(evaluate(deny).unsafe().behavior,'deny');
   assert.equal(evaluate(deny,{}, {'classifier-fail-open':false}).verdict().behavior,'deny');
+  const newDenial = 'function recorded(){let result={behavior:"deny",decisionReason:{type:"classifier",classifier:"auto-mode",reason:"no verdict"},message:format(httpStatus,errorKind,{quote:true,recorded:true})};return result}function format(){return "preserve recorded denial"}';
+  const scopedDeny = await patch('classifier-fail-open', denySource + newDenial);
+  assert.equal(evaluate(scopedDeny).verdict().behavior, 'ask', '原不可用分支仍请求人工确认');
+  assert.equal(evaluate(scopedDeny).recorded().behavior, 'deny', '新版带记录的拒绝流程不得被改为确认或放行');
+  assert.equal(evaluate(scopedDeny).unsafe().behavior, 'deny', '真实安全拒绝保持不变');
+  assert.equal(evaluate(scopedDeny, {}, {'classifier-fail-open':false}).verdict().behavior, 'deny');
+  const ambiguousDenySource = denySource + denySource.replace('function verdict()', 'function otherVerdict()').replace('function unsafe()', 'function otherUnsafe()');
+  const ambiguousDeny = await cometixPatches.find(p => p.id === 'classifier-fail-open').apply(ambiguousDenySource, { rootDir });
+  assert.equal(ambiguousDeny.status, 'failed', '多个直接返回点仍须拒绝猜测');
+  assert.equal(ambiguousDeny.code, undefined, '歧义时不得产出部分改写源码');
   const ctrl = await patch('enable-keybindings', 'function flag(n,d){return d};function keys(){return {enabled:flag("tengu_keybinding_customization_release",!1),"ctrl+c":"app:interrupt"}}');
   assert.equal(evaluate(ctrl).keys()['ctrl+c'],'app:exit');
   assert.equal(evaluate(ctrl).keys().enabled,true);

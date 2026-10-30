@@ -129,6 +129,11 @@ function runSelfUpdate(argv, options = {}) {
       stderr.write(`[clawgod] using local installer (remote skipped): ${installer}\n`);
     }
 
+    const guardDeclaration = windows ? /^[$]ClawRuntimeGuardVersion = 1\r?$/gm : /^CLAWGOD_RUNTIME_GUARD_VERSION=1\r?$/gm;
+    if ([...readFileSync(installer, 'utf8').matchAll(guardDeclaration)].length !== 1) {
+      throw new Error('安装器缺少运行会话保护，已拒绝执行；请等待支持安全升级的 ClawGod Release。');
+    }
+
     const command = windows
       ? ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer]
       : ['bash', installer];

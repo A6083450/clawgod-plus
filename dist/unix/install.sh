@@ -16,7 +16,7 @@ set -e
 CLAWGOD_DIR="$HOME/.clawgod"
 BIN_DIR="$HOME/.local/bin"
 VERSION="${CLAWGOD_VERSION:-}"
-VERIFIED_VERSION="2.1.310"
+VERIFIED_VERSION="2.1.314"
 # 旧 updater 把无参更新标记为 latest；显式 --version 在后面的参数解析中恢复。
 if [ "$VERSION" = latest ] && [ "${CLAWGOD_UPDATE_PATCH_FAIL_OPEN:-}" = 1 ]; then VERSION=""; fi
 NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
@@ -399,6 +399,7 @@ configure_enhancement_selection() {
   fi
   persist_enhancement_selection '__CLAWGOD_SAVED__'
 }
+CLAWGOD_RUNTIME_GUARD_VERSION=1
 
 # Colors
 GREEN='\033[0;32m'
@@ -748,6 +749,11 @@ function runSelfUpdate(argv, options = {}) {
       stderr.write(`[clawgod] using local installer (remote skipped): ${installer}\n`);
     }
 
+    const guardDeclaration = windows ? /^[$]ClawRuntimeGuardVersion = 1\r?$/gm : /^CLAWGOD_RUNTIME_GUARD_VERSION=1\r?$/gm;
+    if ([...readFileSync(installer, 'utf8').matchAll(guardDeclaration)].length !== 1) {
+      throw new Error('安装器缺少运行会话保护，已拒绝执行；请等待支持安全升级的 ClawGod Release。');
+    }
+
     const command = windows
       ? ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer]
       : ['bash', installer];
@@ -1070,6 +1076,283 @@ STARTUP_CHECK_EOF
   chmod 700 "$CLAWGOD_DIR/startup-check.cjs"
 }
 
+acquire_runtime_write_lock() {
+  RUNTIME_LOCK_TMPDIR=$(mktemp -d)
+  trap 'finish_runtime_write $?' EXIT
+  RUNTIME_STATE_HELPER="$RUNTIME_LOCK_TMPDIR/runtime-state.cjs"
+  cat > "$RUNTIME_STATE_HELPER" << 'RUNTIME_STATE_EOF'
+const fs = require('node:fs');
+const { dirname, join } = require('node:path');
+const { createHash, randomUUID } = require('node:crypto');
+const { spawnSync } = require('node:child_process');
+
+const MANAGED = [
+  'cli.cjs', 'cli.js', 'cli.original.js', 'cli.original.cjs',
+  'cli.original.js.bak', 'cli.original.cjs.bak', 'chunks', 'chunks.bak', 'assets',
+  '.source-version', '.clawgod-version', '.clean-source.json', 'patch-fallback.json',
+  'patch.mjs', 'patch.js', 'extract-natives.mjs', 'post-process.mjs', 'repatch.mjs',
+  'runtime-state.cjs', 'startup-check.cjs', 'vendor-transaction.mjs', 'self-update.cjs',
+  'patch-fallback.cjs', 'feature-gates.cjs', 'openai-proxy.cjs', 'proxy-fetch.mjs',
+  'fetch-file.mjs', 'enhancement-config.mjs', 'enhancement-manifest.json',
+  'install-ripgrep.mjs', 'install-voice-asr.mjs', 'plugin-dependencies.mjs',
+  'claude-mem-compat.cjs', 'apply-claude-code-chrome-fix.sh',
+  'apply-claude-code-chrome-fix.ps1', 'install.sh', 'install.ps1',
+  'restore-claude-3p-cu-browser.sh',
+  'desktop-language.mjs', 'desktop-zh-Hans.json',
+];
+const VERSION = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/;
+
+function present(path) {
+  try { return fs.lstatSync(path); } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function files(path, prefix = '', allowLinks = false) {
+  const status = fs.lstatSync(path);
+  if (status.isSymbolicLink()) {
+    if (allowLinks) return { [prefix]: `symlink:${fs.readlinkSync(path)}` };
+    throw new Error(`runtime-state: symbolic link is not a managed source: ${path}`);
+  }
+  if (status.isFile()) return { [prefix]: createHash('sha256').update(fs.readFileSync(path)).digest('hex') };
+  if (!status.isDirectory()) throw new Error(`runtime-state: unsupported source type: ${path}`);
+  const result = {};
+  for (const name of fs.readdirSync(path).sort()) {
+    Object.assign(result, files(join(path, name), prefix ? `${prefix}/${name}` : name, allowLinks));
+  }
+  return result;
+}
+
+const WRITE_LOCK = '.runtime-write.lock';
+const READER_PREFIX = '.runtime-reader.';
+
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
+}
+
+function readLock(path) {
+  const status = present(path);
+  if (!status) return null;
+  if (!status.isFile() || status.isSymbolicLink()) throw Error('运行时锁不是普通文件，已停止升级/启动。');
+  let record;
+  try { record = JSON.parse(fs.readFileSync(path, 'utf8')); } catch { throw Error('运行时锁不完整，已停止升级/启动。'); }
+  if (!Number.isSafeInteger(record.pid) || record.pid <= 0 || !/^[a-f0-9-]{36}$/.test(record.token)) {
+    throw Error('运行时锁内容无效，已停止升级/启动。');
+  }
+  return record;
+}
+
+function processList() {
+  const windows = process.platform === 'win32';
+  const result = windows
+    ? spawnSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-Command', '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress'], { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 16 * 1024 * 1024 })
+    : spawnSync('/bin/ps', ['-axww', '-o', 'pid=,ppid=,command='], { encoding: 'utf8', timeout: 15000, maxBuffer: 16 * 1024 * 1024 });
+  if (result.error || result.status !== 0) throw Error('无法检查正在使用运行时的进程，已停止升级。');
+  if (windows) {
+    const rows = JSON.parse(result.stdout);
+    return (Array.isArray(rows) ? rows : [rows]).map(row => ({ pid: row.ProcessId, parent: row.ParentProcessId, command: row.CommandLine || '' }));
+  }
+  return result.stdout.trim().split(/\r?\n/).map(line => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (!match) throw Error('无法解析运行时进程列表，已停止升级。');
+    return { pid: Number(match[1]), parent: Number(match[2]), command: match[3] };
+  });
+}
+
+function activeRuntimeProcesses(root, processes) {
+  const normalize = value => process.platform === 'win32' ? value.replaceAll('\\', '/').toLowerCase() : value;
+  const resolved = fs.realpathSync(root);
+  const rootIdentity = process.platform === 'win32' ? fs.statSync(root, { bigint: true }) : null;
+  const roots = [...new Set([root, resolved,
+    ...(process.platform === 'darwin' && /^\/private\/(?:var|tmp|etc)\//.test(resolved) ? [resolved.slice(8)] : []),
+  ].map(normalize))];
+  return processes.filter(row => {
+    const command = normalize(row.command);
+    const words = command.match(/"[^"]*"|'[^']*'|[^\s]+/g) || [];
+    const executable = (words[0] || '').replace(/^["']|["']$/g, '').split('/').at(-1);
+    if (/^(?:-?(?:ba|z|fi|da)?sh|python[\d.]*|powershell(?:\.exe)?|pwsh(?:\.exe)?)$/.test(executable)) return false;
+    for (const directory of roots) for (const entry of ['cli.cjs', 'cli.original.cjs', 'cli.js']) {
+      const path = join(directory, entry).replaceAll('\\', '/');
+      const start = command.indexOf(path);
+      if (start < 0 || start > 0 && !/[\s"']/.test(command[start - 1])) continue;
+      const rest = command.slice(start + path.length);
+      if (rest && !/^[\s"']/.test(rest)) continue;
+      // update 包装器不会加载上游分块；其他命令（含后台 host）都占用运行时。
+      if (/^["']?\s+(?:update|upgrade)(?:\s|$)/.test(rest) && entry === 'cli.cjs') continue;
+      return true;
+    }
+    if (rootIdentity && rootIdentity.ino !== 0n) for (const [index, word] of words.entries()) {
+      const path = word.replace(/^["']|["']$/g, '');
+      if (!/^[a-z]:\//i.test(path) || !/\/(?:cli\.cjs|cli\.original\.cjs|cli\.js)$/.test(path)) continue;
+      try {
+        // Bun 的 realpath 可能保留 Windows 8.3 拼写，用目录文件身份识别同一运行时。
+        const identity = fs.statSync(dirname(path), { bigint: true });
+        if (identity.ino === rootIdentity.ino && identity.dev === rootIdentity.dev) {
+          if (/\/cli\.cjs$/.test(path) && ['update', 'upgrade'].includes(words[index + 1])) continue;
+          return true;
+        }
+      } catch {}
+    }
+    // shortcut: 旧版相对入口无法可靠跨平台取得 cwd，先保守拒绝；增加进程 cwd 查询后可缩小范围。
+    return words.some((word, index) => {
+      const path = word.replace(/^["']|["']$/g, '');
+      return !/^(?:\/|[a-z]:)/i.test(path) && /(?:^|\/)cli(?:\.original)?\.(?:cjs|js)$/.test(path)
+        && !(/(?:^|\/)cli\.cjs$/.test(path) && ['update', 'upgrade'].includes(words[index + 1]));
+    });
+  });
+}
+
+function ancestors(pid, processes) {
+  const result = new Set();
+  while (pid > 0 && !result.has(pid)) {
+    result.add(pid);
+    pid = processes.find(row => row.pid === pid)?.parent || 0;
+  }
+  return result;
+}
+
+function acquireRuntime(root, ownerPid = process.pid) {
+  if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0 || !alive(ownerPid)) throw Error('升级锁进程无效。');
+  const token = randomUUID(), path = join(root, WRITE_LOCK);
+  try { fs.writeFileSync(path, JSON.stringify({ pid: ownerPid, token }), { flag: 'wx', mode: 0o600 }); }
+  catch (error) {
+    if (error.code === 'EEXIST') throw Error('运行时已有升级/维护锁；请等待完成，异常中断后请先检查恢复数据。');
+    throw error;
+  }
+  try {
+    const readers = [], bootstraps = new Set();
+    const processes = processList(), parents = ancestors(ownerPid, processes);
+    for (const name of fs.readdirSync(root).filter(name => name.startsWith(READER_PREFIX))) {
+      const file = join(root, name), record = readLock(file);
+      if (!record) continue;
+      if (!alive(record.pid)) fs.unlinkSync(file);
+      else if (record.bootstrap === true && parents.has(record.pid)) bootstraps.add(record.pid);
+      else readers.push(record.pid);
+    }
+    const active = activeRuntimeProcesses(root, processes).map(row => row.pid).filter(pid => !bootstraps.has(pid));
+    const pids = [...new Set([...readers, ...active])];
+    if (pids.length) throw Error(`Claude 正在使用运行时（PID: ${pids.join(', ')}）。请先在所有会话中执行 /exit，并关闭仍使用 Claude 的浏览器连接或后台任务，再从普通终端运行 claude update；本次未替换运行时。`);
+    return token;
+  } catch (error) { releaseRuntime(root, token); throw error; }
+}
+
+function releaseRuntime(root, token) {
+  const path = join(root, WRITE_LOCK), record = readLock(path);
+  if (!record || record.token !== token) throw Error('运行时锁 token 不匹配，拒绝删除。');
+  fs.unlinkSync(path);
+}
+
+function assertRuntimeAvailable(root) {
+  const lock = readLock(join(root, WRITE_LOCK));
+  if (!lock) return;
+  // 仅持锁安装器的后代可运行候选启动检查，继承字符串本身不授予访问权。
+  if (process.env.CLAWGOD_RUNTIME_WRITE_TOKEN === lock.token && alive(lock.pid)) {
+    if (ancestors(process.ppid, processList()).has(lock.pid)) return;
+  }
+  throw Error('ClawGod 正在升级/维护，暂时不能启动 Claude；请等待完成后重试。');
+}
+
+function enterRuntime(root, bootstrap = false) {
+  assertRuntimeAvailable(root);
+  const file = join(root, `${READER_PREFIX}${process.pid}.${randomUUID()}`);
+  const record = { pid: process.pid, token: randomUUID(), bootstrap };
+  fs.writeFileSync(file, JSON.stringify(record), { flag: 'wx', mode: 0o600 });
+  try { assertRuntimeAvailable(root); }
+  catch (error) { fs.unlinkSync(file); throw error; }
+  process.once('exit', () => { try { fs.unlinkSync(file); } catch {} });
+  return () => {
+    record.bootstrap = false;
+    fs.writeFileSync(file, JSON.stringify(record), { mode: 0o600 });
+    assertRuntimeAvailable(root);
+  };
+}
+
+function snapshot(root, transaction) {
+  const backup = join(transaction, 'runtime-state');
+  fs.mkdirSync(backup, { mode: 0o700 });
+  const names = MANAGED.filter(name => present(join(root, name)));
+  for (const name of names) files(join(root, name), '', true);
+  for (const name of names) fs.cpSync(join(root, name), join(backup, name), { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+  fs.writeFileSync(join(backup, 'manifest.json'), JSON.stringify(names));
+}
+
+function restore(root, transaction) {
+  const backup = join(transaction, 'runtime-state');
+  const names = JSON.parse(fs.readFileSync(join(backup, 'manifest.json'), 'utf8'));
+  if (!Array.isArray(names) || names.some(name => !MANAGED.includes(name))) throw new Error('runtime-state: invalid rollback manifest');
+  for (const name of names) files(join(backup, name), '', true);
+  for (const name of MANAGED) {
+    fs.rmSync(join(root, name), { recursive: true, force: true });
+    if (names.includes(name)) fs.cpSync(join(backup, name), join(root, name), { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+  }
+}
+
+function cleanManifest(root, version, backup) {
+  if (!VERSION.test(version || '')) throw new Error('runtime-state: exact source version is required');
+  const entry = join(root, backup ? 'cli.original.cjs.bak' : 'cli.original.cjs');
+  const chunks = join(root, backup ? 'chunks.bak' : 'chunks');
+  const modules = files(entry, 'cli.original.cjs');
+  const hasChunks = Boolean(present(chunks));
+  if (hasChunks) Object.assign(modules, files(chunks, 'chunks'));
+  return { schemaVersion: 1, version, hasChunks, modules };
+}
+
+function saveClean(root, version) {
+  const manifest = cleanManifest(root, version, false);
+  fs.rmSync(join(root, '.clean-source.json'), { force: true });
+  fs.rmSync(join(root, 'cli.original.cjs.bak'), { force: true });
+  fs.rmSync(join(root, 'chunks.bak'), { recursive: true, force: true });
+  fs.copyFileSync(join(root, 'cli.original.cjs'), join(root, 'cli.original.cjs.bak'));
+  if (manifest.hasChunks) fs.cpSync(join(root, 'chunks'), join(root, 'chunks.bak'), { recursive: true });
+  fs.writeFileSync(join(root, '.clean-source.json'), JSON.stringify(manifest) + '\n', { mode: 0o600 });
+}
+
+function restoreClean(root, version) {
+  const expected = JSON.parse(fs.readFileSync(join(root, '.clean-source.json'), 'utf8'));
+  const actual = cleanManifest(root, version, true);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error('runtime-state: clean source version or complete module set does not match');
+  fs.rmSync(join(root, 'cli.original.cjs'), { force: true });
+  fs.copyFileSync(join(root, 'cli.original.cjs.bak'), join(root, 'cli.original.cjs'));
+  fs.rmSync(join(root, 'chunks'), { recursive: true, force: true });
+  if (actual.hasChunks) fs.cpSync(join(root, 'chunks.bak'), join(root, 'chunks'), { recursive: true });
+}
+
+module.exports = { snapshot, restore, saveClean, restoreClean, acquireRuntime, releaseRuntime, enterRuntime };
+if (require.main === module) {
+  try {
+    const [command, root, argument] = process.argv.slice(2);
+    if (!root || !argument) throw new Error('runtime-state: command, runtime directory and transaction/version required');
+    if (command === 'lock') console.log(acquireRuntime(root, Number(argument)));
+    else if (command === 'unlock') releaseRuntime(root, argument);
+    else if (command === 'snapshot') snapshot(root, argument);
+    else if (command === 'restore') restore(root, argument);
+    else if (command === 'clean-save') saveClean(root, argument);
+    else if (command === 'clean-restore') restoreClean(root, argument);
+    else throw new Error(`runtime-state: unknown command ${command}`);
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
+}
+RUNTIME_STATE_EOF
+  prepare_enhancement_config_directory
+  RUNTIME_WRITE_TOKEN=$("$BUN_BIN" "$RUNTIME_STATE_HELPER" lock "$CLAWGOD_DIR" "$$")
+  [[ "$RUNTIME_WRITE_TOKEN" =~ ^[a-f0-9-]{36}$ ]] || { err "Invalid runtime write lock token"; return 1; }
+  RUNTIME_WRITE_RELEASE_SAFE=1
+  export CLAWGOD_RUNTIME_WRITE_TOKEN="$RUNTIME_WRITE_TOKEN"
+}
+
+finish_runtime_write() {
+  local status="$1"
+  if [ "${RUNTIME_TRANSACTION_ACTIVE:-}" = 1 ]; then rollback_runtime_transaction; fi
+  if [ -n "${RUNTIME_WRITE_TOKEN:-}" ] && [ "${RUNTIME_WRITE_RELEASE_SAFE:-}" = 1 ]; then
+    if ! "$BUN_BIN" "$RUNTIME_STATE_HELPER" unlock "$CLAWGOD_DIR" "$RUNTIME_WRITE_TOKEN"; then status=1; fi
+  fi
+  rm -rf "$RUNTIME_LOCK_TMPDIR"
+  exit "$status"
+}
+
 resolve_bun() {
   if command -v bun >/dev/null 2>&1; then
     BUN_BIN=$(command -v bun)
@@ -1169,6 +1452,8 @@ if [ "$UNINSTALL" = "1" ]; then
       exit 1
     fi
   done
+  acquire_runtime_write_lock
+  RUNTIME_WRITE_RELEASE_SAFE=0
   # Restore optional Claude plugin integrations before any managed cleanup.
   if [ -f "$CLAWGOD_DIR/plugin-dependencies-state.json" ] && [ ! -f "$CLAWGOD_DIR/plugin-dependencies.mjs" ]; then
     warn "Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled"
@@ -1209,6 +1494,7 @@ if [ "$UNINSTALL" = "1" ]; then
     fi
   done
   rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/runtime-state.cjs" "$CLAWGOD_DIR/startup-check.cjs" "$CLAWGOD_DIR/startup-check.log" "$CLAWGOD_DIR/.clean-source.json" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/restore-claude-3p-cu-browser.sh" "$CLAWGOD_DIR/desktop-language.mjs" "$CLAWGOD_DIR/desktop-zh-Hans.json" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  RUNTIME_WRITE_RELEASE_SAFE=1
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -1254,119 +1540,9 @@ if [ -z "$BUN_VERSION_NUM" ] \
   exit 1
 fi
 
-prepare_enhancement_config_directory
+acquire_runtime_write_lock
 RUNTIME_TRANSACTION_DIR=$(mktemp -d "$CLAWGOD_DIR/.runtime-rollback.XXXXXX")
 chmod 700 "$RUNTIME_TRANSACTION_DIR"
-cat > "$RUNTIME_TRANSACTION_DIR/runtime-state.cjs" << 'RUNTIME_STATE_EOF'
-const fs = require('node:fs');
-const { join } = require('node:path');
-const { createHash } = require('node:crypto');
-
-const MANAGED = [
-  'cli.cjs', 'cli.js', 'cli.original.js', 'cli.original.cjs',
-  'cli.original.js.bak', 'cli.original.cjs.bak', 'chunks', 'chunks.bak', 'assets',
-  '.source-version', '.clawgod-version', '.clean-source.json', 'patch-fallback.json',
-  'patch.mjs', 'patch.js', 'extract-natives.mjs', 'post-process.mjs', 'repatch.mjs',
-  'runtime-state.cjs', 'startup-check.cjs', 'vendor-transaction.mjs', 'self-update.cjs',
-  'patch-fallback.cjs', 'feature-gates.cjs', 'openai-proxy.cjs', 'proxy-fetch.mjs',
-  'fetch-file.mjs', 'enhancement-config.mjs', 'enhancement-manifest.json',
-  'install-ripgrep.mjs', 'install-voice-asr.mjs', 'plugin-dependencies.mjs',
-  'claude-mem-compat.cjs', 'apply-claude-code-chrome-fix.sh',
-  'apply-claude-code-chrome-fix.ps1', 'install.sh', 'install.ps1',
-  'restore-claude-3p-cu-browser.sh',
-  'desktop-language.mjs', 'desktop-zh-Hans.json',
-];
-const VERSION = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/;
-
-function present(path) {
-  try { return fs.lstatSync(path); } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
-function files(path, prefix = '', allowLinks = false) {
-  const status = fs.lstatSync(path);
-  if (status.isSymbolicLink()) {
-    if (allowLinks) return { [prefix]: `symlink:${fs.readlinkSync(path)}` };
-    throw new Error(`runtime-state: symbolic link is not a managed source: ${path}`);
-  }
-  if (status.isFile()) return { [prefix]: createHash('sha256').update(fs.readFileSync(path)).digest('hex') };
-  if (!status.isDirectory()) throw new Error(`runtime-state: unsupported source type: ${path}`);
-  const result = {};
-  for (const name of fs.readdirSync(path).sort()) {
-    Object.assign(result, files(join(path, name), prefix ? `${prefix}/${name}` : name, allowLinks));
-  }
-  return result;
-}
-
-function snapshot(root, transaction) {
-  const backup = join(transaction, 'runtime-state');
-  fs.mkdirSync(backup, { mode: 0o700 });
-  const names = MANAGED.filter(name => present(join(root, name)));
-  for (const name of names) files(join(root, name), '', true);
-  for (const name of names) fs.cpSync(join(root, name), join(backup, name), { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
-  fs.writeFileSync(join(backup, 'manifest.json'), JSON.stringify(names));
-}
-
-function restore(root, transaction) {
-  const backup = join(transaction, 'runtime-state');
-  const names = JSON.parse(fs.readFileSync(join(backup, 'manifest.json'), 'utf8'));
-  if (!Array.isArray(names) || names.some(name => !MANAGED.includes(name))) throw new Error('runtime-state: invalid rollback manifest');
-  for (const name of names) files(join(backup, name), '', true);
-  for (const name of MANAGED) {
-    fs.rmSync(join(root, name), { recursive: true, force: true });
-    if (names.includes(name)) fs.cpSync(join(backup, name), join(root, name), { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
-  }
-}
-
-function cleanManifest(root, version, backup) {
-  if (!VERSION.test(version || '')) throw new Error('runtime-state: exact source version is required');
-  const entry = join(root, backup ? 'cli.original.cjs.bak' : 'cli.original.cjs');
-  const chunks = join(root, backup ? 'chunks.bak' : 'chunks');
-  const modules = files(entry, 'cli.original.cjs');
-  const hasChunks = Boolean(present(chunks));
-  if (hasChunks) Object.assign(modules, files(chunks, 'chunks'));
-  return { schemaVersion: 1, version, hasChunks, modules };
-}
-
-function saveClean(root, version) {
-  const manifest = cleanManifest(root, version, false);
-  fs.rmSync(join(root, '.clean-source.json'), { force: true });
-  fs.rmSync(join(root, 'cli.original.cjs.bak'), { force: true });
-  fs.rmSync(join(root, 'chunks.bak'), { recursive: true, force: true });
-  fs.copyFileSync(join(root, 'cli.original.cjs'), join(root, 'cli.original.cjs.bak'));
-  if (manifest.hasChunks) fs.cpSync(join(root, 'chunks'), join(root, 'chunks.bak'), { recursive: true });
-  fs.writeFileSync(join(root, '.clean-source.json'), JSON.stringify(manifest) + '\n', { mode: 0o600 });
-}
-
-function restoreClean(root, version) {
-  const expected = JSON.parse(fs.readFileSync(join(root, '.clean-source.json'), 'utf8'));
-  const actual = cleanManifest(root, version, true);
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error('runtime-state: clean source version or complete module set does not match');
-  fs.rmSync(join(root, 'cli.original.cjs'), { force: true });
-  fs.copyFileSync(join(root, 'cli.original.cjs.bak'), join(root, 'cli.original.cjs'));
-  fs.rmSync(join(root, 'chunks'), { recursive: true, force: true });
-  if (actual.hasChunks) fs.cpSync(join(root, 'chunks.bak'), join(root, 'chunks'), { recursive: true });
-}
-
-module.exports = { snapshot, restore, saveClean, restoreClean };
-if (require.main === module) {
-  try {
-    const [command, root, argument] = process.argv.slice(2);
-    if (!root || !argument) throw new Error('runtime-state: command, runtime directory and transaction/version required');
-    if (command === 'snapshot') snapshot(root, argument);
-    else if (command === 'restore') restore(root, argument);
-    else if (command === 'clean-save') saveClean(root, argument);
-    else if (command === 'clean-restore') restoreClean(root, argument);
-    else throw new Error(`runtime-state: unknown command ${command}`);
-  } catch (error) {
-    console.error(error.message);
-    process.exitCode = 1;
-  }
-}
-RUNTIME_STATE_EOF
-RUNTIME_STATE_HELPER="$RUNTIME_TRANSACTION_DIR/runtime-state.cjs"
 "$BUN_BIN" "$RUNTIME_STATE_HELPER" snapshot "$CLAWGOD_DIR" "$RUNTIME_TRANSACTION_DIR"
 RUNTIME_TRANSACTION_ACTIVE=1
 RUNTIME_HAD_TARGET=0
@@ -1394,8 +1570,9 @@ rollback_runtime_transaction() {
     printf '%s\n' "clawgod: prior CLI restored; untrusted transaction data retained at $RUNTIME_TRANSACTION_DIR" >&2
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
+  RUNTIME_WRITE_RELEASE_SAFE=1
 }
-trap 'rollback_runtime_transaction' EXIT
+RUNTIME_WRITE_RELEASE_SAFE=0
 cp "$RUNTIME_STATE_HELPER" "$CLAWGOD_DIR/runtime-state.cjs"
 cat > "$CLAWGOD_DIR/enhancement-config.mjs" << 'ENHANCEMENT_CONFIG_EOF'
 import { randomUUID } from 'node:crypto';
@@ -6869,7 +7046,6 @@ commit_runtime_transaction() {
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
   rm -rf "$RUNTIME_TRANSACTION_DIR"
-  trap - EXIT
 }
 
 
@@ -15625,9 +15801,12 @@ function localCellProfile(source, dependencies) {
         try {
           const edge = resolveImport(item.local.name);
           const contract = cellDeclarationContract(tabs.source, [tabs.local, edge.local]);
-          return contract.digest === '714287168495299b3b5a5d0c9ee451730c3b2d8cd4817813a6319661ce152c46'
+          // 2.1.314 更新转义解析器，并把字符宽度函数拆成独立模块；两者按配套契约核验。
+          const updatedTabs = contract.digest === 'b76c5ad5f9d1740f35cdb27f8ec750b54815e62a306e6774607f9b5a9367ff83';
+          return (updatedTabs || contract.digest === '714287168495299b3b5a5d0c9ee451730c3b2d8cd4817813a6319661ce152c46')
             && verifyEdges(contract, [...[0,5,12,6,14,10].map(index => ['ea528a66e176e8d0e965ba61400fe5c041c2e03ab480314d3bdc64c31a87f1f8', index]),
-              [windows ? '3128c6dd72850c8e53097f5ff2d5cacbb841a6eff22da707f8e8e904fdabb7e3' : '1fd9187348c1e13e2407819e6ab3892ac64e1e3d313a3f3a460665d47317df66', 1]]);
+              [updatedTabs ? 'a7d45c3881d9dd1eb2a53e264a0934324025377e3c0c216068870858ce375bef'
+                : windows ? '3128c6dd72850c8e53097f5ff2d5cacbb841a6eff22da707f8e8e904fdabb7e3' : '1fd9187348c1e13e2407819e6ab3892ac64e1e3d313a3f3a460665d47317df66', 1]]);
         } catch { return false; }
       });
     if (expanders.length !== 1) return null;
@@ -16062,12 +16241,17 @@ function run(label, args) {
   const result = spawnSync(runtime, args, { cwd: here, stdio: 'inherit' });
   if (result.error || result.status !== 0) throw new Error(`repatch: ${label} failed (${result.error?.message || `exit ${result.status}`})`);
 }
-const transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
-const candidateDir = join(transactionDir, 'candidate');
-const candidateVendor = join(candidateDir, 'vendor');
+let transactionDir, runtimeToken;
+let safeToUnlock = true;
 let vendorPublishAttempted = false;
 let snapshotted = false;
+const previousToken = process.env.CLAWGOD_RUNTIME_WRITE_TOKEN;
 try {
+  runtimeToken = state.acquireRuntime(here);
+  process.env.CLAWGOD_RUNTIME_WRITE_TOKEN = runtimeToken;
+  transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
+  const candidateDir = join(transactionDir, 'candidate');
+  const candidateVendor = join(candidateDir, 'vendor');
   state.snapshot(here, transactionDir);
   snapshotted = true;
   let cleanReady = false;
@@ -16105,19 +16289,25 @@ try {
   console.log(`[clawgod] re-patched to ${version}`);
 } catch (error) {
   const vendorRestored = !vendorPublishAttempted || error?.rollbackComplete === true;
-  if (vendorRestored) {
+  if (transactionDir && vendorRestored) {
     try {
       if (snapshotted) state.restore(here, transactionDir);
       if (!vendorPublishAttempted || error?.cleanupSafe !== false) rmSync(transactionDir, { recursive: true, force: true });
       else console.error(`repatch: prior CLI restored; untrusted transaction data retained at ${transactionDir}`);
     } catch (rollbackError) {
+      safeToUnlock = false;
       console.error(`repatch: runtime rollback failed; recovery data retained at ${transactionDir}: ${rollbackError.message}`);
     }
-  } else {
+  } else if (transactionDir) {
+    safeToUnlock = false;
     console.error(`repatch: vendor rollback conflict; prior CLI was not restored; recovery data retained at ${transactionDir}`);
   }
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
+} finally {
+  if (runtimeToken && safeToUnlock) state.releaseRuntime(here, runtimeToken);
+  if (previousToken === undefined) delete process.env.CLAWGOD_RUNTIME_WRITE_TOKEN;
+  else process.env.CLAWGOD_RUNTIME_WRITE_TOKEN = previousToken;
 }
 REPATCH_EOF
 chmod +x "$CLAWGOD_DIR/repatch.mjs"
@@ -16512,6 +16702,15 @@ const { homedir } = require('os');
 const { spawnSync } = require('child_process');
 
 const clawgodDir = join(homedir(), '.clawgod');
+let activateRuntime;
+if (!['update', 'upgrade'].includes(process.argv[2])) {
+  try {
+    activateRuntime = require('./runtime-state.cjs').enterRuntime(__dirname, true);
+  } catch (error) {
+    process.stderr.write(`[clawgod] ${error.message}\n`);
+    process.exit(1);
+  }
+}
 const ripgrepBin = join(clawgodDir, 'vendor', 'ripgrep', 'bin');
 const ripgrepPathWasReady = process.env.CLAWGOD_INTERNAL_RIPGREP_PATH_READY === ripgrepBin
   && (process.env.PATH || '').split(delimiter)[0] === ripgrepBin;
@@ -16801,6 +17000,15 @@ if (!versionOnly) {
   } catch {}
 }
 
+function startUpstream() {
+  try { activateRuntime(); }
+  catch (error) {
+    process.stderr.write(`[clawgod] ${error.message}\n`);
+    process.exit(1);
+  }
+  require('./cli.original.cjs');
+}
+
 // 在上游接管 stdin 前询问，非交互调用不检查、不输出提示。
 const updateNotifier = process.stdin.isTTY && process.stderr.isTTY ? require('./self-update.cjs') : null;
 if (updateNotifier?.shouldCheckUpdate(process.argv.slice(2), process.stdin.isTTY, process.stderr.isTTY, process.env)) {
@@ -16808,9 +17016,9 @@ if (updateNotifier?.shouldCheckUpdate(process.argv.slice(2), process.stdin.isTTY
     if (outcome) {
       process.stderr.write(outcome.status === 0 ? '[clawgod] 更新完成，请重新运行 claude。\n' : '[clawgod] 更新未完成，请重新运行 claude。\n');
       updateNotifier.exitWithOutcome(outcome);
-    } else require('./cli.original.cjs');
+    } else startUpstream();
   });
-} else require('./cli.original.cjs');
+} else startUpstream();
 WRAPPER_EOF
 chmod +x "$CLAWGOD_DIR/cli.cjs"
 echo "$CLAWGOD_SELF_VERSION" > "$CLAWGOD_DIR/.clawgod-version"
@@ -24124,7 +24332,8 @@ function transform(id, source, ast) {
       throw new Error("classifier model is not a parameter");
     prepend(fn, `if(${enabled}){let __clawgodModel=(process.env.CLAWGOD_CLASSIFIER_MODEL||process.env.CLAUDE_CLASSIFIER_MODEL||"").trim();if(__clawgodModel)${name}=__clawgodModel;}`);
   } else if (id === "classifier-fail-open") {
-    const targets = nodes("ObjectExpression", (n) => literal2(prop(n, "behavior")?.value, "deny") && nodes("Property", (p) => p.key?.name === "classifier" && literal2(p.value, "auto-mode"), n).length > 0 && text(n).includes("httpStatus") && text(n).includes("errorKind") && !text(n).includes("noVerdict"));
+    const returned = new Set(nodes("ReturnStatement").map((node) => node.argument));
+    const targets = nodes("ObjectExpression", (n) => returned.has(n) && literal2(prop(n, "behavior")?.value, "deny") && nodes("Property", (p) => p.key?.name === "classifier" && literal2(p.value, "auto-mode"), n).length > 0 && text(n).includes("httpStatus") && text(n).includes("errorKind") && !text(n).includes("noVerdict"));
     if (!targets.length)
       return edits;
     replace(prop(one(targets, "classifier unavailable result"), "behavior").value, `(${enabled}?"ask":"deny")`);
@@ -26985,6 +27194,8 @@ fi
 hash -r 2>/dev/null
 
 # ─── Done ─────────────────────────────────────────────
+
+RUNTIME_WRITE_RELEASE_SAFE=1
 
 echo ""
 echo -e "  ${BOLD}${GREEN}ClawGod Plus installed!${NC}"

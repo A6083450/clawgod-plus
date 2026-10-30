@@ -12,6 +12,7 @@ try {
   const ripgrepBin = join(directory, 'vendor', 'ripgrep', 'bin');
   mkdirSync(ripgrepBin, { recursive: true });
   copyFileSync(new URL('../src/generic/runtime/wrapper.cjs', import.meta.url), join(directory, 'cli.cjs'));
+  writeFileSync(join(directory, 'runtime-state.cjs'), readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)));
   const helper = readFileSync(new URL('../src/generic/runtime/feature-gates.cjs', import.meta.url), 'utf8');
   writeFileSync(join(directory, 'feature-gates.cjs'), renderTemplate(helper, {
     RUNTIME_FEATURE_METADATA: JSON.stringify({ teams: ['agent-teams'] }),

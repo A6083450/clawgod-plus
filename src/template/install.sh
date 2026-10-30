@@ -13,6 +13,7 @@ set -e
 # ─────────────────────────────────────────────────────────
 
 @@CLAWGOD_UNIX_LIFECYCLE@@
+CLAWGOD_RUNTIME_GUARD_VERSION=1
 
 # Colors
 GREEN='\033[0;32m'
@@ -46,6 +47,30 @@ PATCH_FALLBACK_EOF
 @@CLAWGOD_STARTUP_CHECK_CJS@@
 STARTUP_CHECK_EOF
   chmod 700 "$CLAWGOD_DIR/startup-check.cjs"
+}
+
+acquire_runtime_write_lock() {
+  RUNTIME_LOCK_TMPDIR=$(mktemp -d)
+  trap 'finish_runtime_write $?' EXIT
+  RUNTIME_STATE_HELPER="$RUNTIME_LOCK_TMPDIR/runtime-state.cjs"
+  cat > "$RUNTIME_STATE_HELPER" << 'RUNTIME_STATE_EOF'
+@@CLAWGOD_RUNTIME_STATE_CJS@@
+RUNTIME_STATE_EOF
+  prepare_enhancement_config_directory
+  RUNTIME_WRITE_TOKEN=$("$BUN_BIN" "$RUNTIME_STATE_HELPER" lock "$CLAWGOD_DIR" "$$")
+  [[ "$RUNTIME_WRITE_TOKEN" =~ ^[a-f0-9-]{36}$ ]] || { err "Invalid runtime write lock token"; return 1; }
+  RUNTIME_WRITE_RELEASE_SAFE=1
+  export CLAWGOD_RUNTIME_WRITE_TOKEN="$RUNTIME_WRITE_TOKEN"
+}
+
+finish_runtime_write() {
+  local status="$1"
+  if [ "${RUNTIME_TRANSACTION_ACTIVE:-}" = 1 ]; then rollback_runtime_transaction; fi
+  if [ -n "${RUNTIME_WRITE_TOKEN:-}" ] && [ "${RUNTIME_WRITE_RELEASE_SAFE:-}" = 1 ]; then
+    if ! "$BUN_BIN" "$RUNTIME_STATE_HELPER" unlock "$CLAWGOD_DIR" "$RUNTIME_WRITE_TOKEN"; then status=1; fi
+  fi
+  rm -rf "$RUNTIME_LOCK_TMPDIR"
+  exit "$status"
 }
 
 resolve_bun() {
@@ -147,6 +172,8 @@ if [ "$UNINSTALL" = "1" ]; then
       exit 1
     fi
   done
+  acquire_runtime_write_lock
+  RUNTIME_WRITE_RELEASE_SAFE=0
   # Restore optional Claude plugin integrations before any managed cleanup.
   if [ -f "$CLAWGOD_DIR/plugin-dependencies-state.json" ] && [ ! -f "$CLAWGOD_DIR/plugin-dependencies.mjs" ]; then
     warn "Could not restore optional Claude plugin integrations; ClawGod Plus was not uninstalled"
@@ -187,6 +214,7 @@ if [ "$UNINSTALL" = "1" ]; then
     fi
   done
   rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/runtime-state.cjs" "$CLAWGOD_DIR/startup-check.cjs" "$CLAWGOD_DIR/startup-check.log" "$CLAWGOD_DIR/.clean-source.json" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/restore-claude-3p-cu-browser.sh" "$CLAWGOD_DIR/desktop-language.mjs" "$CLAWGOD_DIR/desktop-zh-Hans.json" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  RUNTIME_WRITE_RELEASE_SAFE=1
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
   echo ""
@@ -232,13 +260,9 @@ if [ -z "$BUN_VERSION_NUM" ] \
   exit 1
 fi
 
-prepare_enhancement_config_directory
+acquire_runtime_write_lock
 RUNTIME_TRANSACTION_DIR=$(mktemp -d "$CLAWGOD_DIR/.runtime-rollback.XXXXXX")
 chmod 700 "$RUNTIME_TRANSACTION_DIR"
-cat > "$RUNTIME_TRANSACTION_DIR/runtime-state.cjs" << 'RUNTIME_STATE_EOF'
-@@CLAWGOD_RUNTIME_STATE_CJS@@
-RUNTIME_STATE_EOF
-RUNTIME_STATE_HELPER="$RUNTIME_TRANSACTION_DIR/runtime-state.cjs"
 "$BUN_BIN" "$RUNTIME_STATE_HELPER" snapshot "$CLAWGOD_DIR" "$RUNTIME_TRANSACTION_DIR"
 RUNTIME_TRANSACTION_ACTIVE=1
 RUNTIME_HAD_TARGET=0
@@ -266,8 +290,9 @@ rollback_runtime_transaction() {
     printf '%s\n' "clawgod: prior CLI restored; untrusted transaction data retained at $RUNTIME_TRANSACTION_DIR" >&2
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
+  RUNTIME_WRITE_RELEASE_SAFE=1
 }
-trap 'rollback_runtime_transaction' EXIT
+RUNTIME_WRITE_RELEASE_SAFE=0
 cp "$RUNTIME_STATE_HELPER" "$CLAWGOD_DIR/runtime-state.cjs"
 cat > "$CLAWGOD_DIR/enhancement-config.mjs" << 'ENHANCEMENT_CONFIG_EOF'
 @@CLAWGOD_ENHANCEMENT_CONFIG_MJS@@
@@ -440,7 +465,6 @@ commit_runtime_transaction() {
   fi
   RUNTIME_TRANSACTION_ACTIVE=0
   rm -rf "$RUNTIME_TRANSACTION_DIR"
-  trap - EXIT
 }
 
 
@@ -1054,6 +1078,8 @@ fi
 hash -r 2>/dev/null
 
 # ─── Done ─────────────────────────────────────────────
+
+RUNTIME_WRITE_RELEASE_SAFE=1
 
 echo ""
 echo -e "  ${BOLD}${GREEN}ClawGod Plus installed!${NC}"

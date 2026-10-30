@@ -251,6 +251,7 @@ for (const [installerName, helper] of [['canonical source', canonicalHelper]]) {
     const capture = join(home, 'capture.json');
     writeFileSync(cli, '', 'utf8');
     writeFileSync(cli, canonicalWrapper, 'utf8');
+    writeFileSync(join(join(home, '.clawgod'), 'runtime-state.cjs'), readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)));
     writeFileSync(
       join(home, '.clawgod', 'provider.json'),
       `${JSON.stringify({ apiKey: 'provider-secret', baseURL: 'https://gateway.example.test', smallModel: 'provider-haiku' })}\n`,

@@ -106,7 +106,9 @@ function transform(id, source, ast) {
     if (!parameters.includes(name)) throw new Error('classifier model is not a parameter');
     prepend(fn, `if(${enabled}){let __clawgodModel=(process.env.CLAWGOD_CLASSIFIER_MODEL||process.env.CLAUDE_CLASSIFIER_MODEL||"").trim();if(__clawgodModel)${name}=__clawgodModel;}`);
   } else if (id === 'classifier-fail-open') {
-    const targets = nodes('ObjectExpression', n => literal(prop(n, 'behavior')?.value, 'deny') &&
+    // 2.1.314 新增带记录的拒绝对象；只适配原有直接返回的不可用结果。
+    const returned = new Set(nodes('ReturnStatement').map(node => node.argument));
+    const targets = nodes('ObjectExpression', n => returned.has(n) && literal(prop(n, 'behavior')?.value, 'deny') &&
       nodes('Property', p => p.key?.name === 'classifier' && literal(p.value, 'auto-mode'), n).length > 0 && text(n).includes('httpStatus') && text(n).includes('errorKind') && !text(n).includes('noVerdict'));
     if (!targets.length) return edits;
     replace(prop(one(targets, 'classifier unavailable result'), 'behavior').value, `(${enabled}?"ask":"deny")`);

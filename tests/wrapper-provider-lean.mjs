@@ -17,6 +17,7 @@ function run({ config = {}, env = {}, settings = {}, flags = [], args = [] } = {
   if (config !== null) writeFileSync(join(directory, 'provider.json'), JSON.stringify(config));
   for (const flag of flags) writeFileSync(join(directory, flag), '');
   copyFileSync(new URL('../src/generic/runtime/wrapper.cjs', import.meta.url), join(directory, 'cli.cjs'));
+  writeFileSync(join(directory, 'runtime-state.cjs'), readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)));
   writeFileSync(join(directory, 'openai-proxy.cjs'), `exports.startProxy=config=>{globalThis.proxyConfig=config;return {port:12345,stop(){}}};`);
   writeFileSync(join(directory, 'cli.original.cjs'), 'console.log(JSON.stringify({env:process.env,proxy:globalThis.proxyConfig}));');
   const result = spawnSync(process.execPath, [join(directory, 'cli.cjs'), ...args], {

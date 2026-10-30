@@ -17,7 +17,7 @@ for (const platform of ['darwin', 'win32']) {
       const result = runSelfUpdate(argv, { homeDir:home, temporaryRoot:home, platform,
         env:{CLAWGOD_UPDATE_PATCH_FAIL_OPEN:'1',CLAWGOD_VERSION:'old'}, stderr:{write:text=>messages.push(text)},
         spawn(command, args, options) {
-          if (args[0]?.endsWith('fetch-file.mjs')) { writeFileSync(args[2], 'fixture installer'); return {status:0,signal:null}; }
+          if (args[0]?.endsWith('fetch-file.mjs')) { writeFileSync(args[2], platform === 'win32' ? '$ClawRuntimeGuardVersion = 1\n' : 'CLAWGOD_RUNTIME_GUARD_VERSION=1\n'); return {status:0,signal:null}; }
           calls.push({args,env:{...options.env}});
           if (['fallback','both-fail','retained'].includes(scenario) && options.env.CLAWGOD_UPDATE_ROLLBACK_RECEIPT) writeFileSync(options.env.CLAWGOD_UPDATE_ROLLBACK_RECEIPT, 'restored\n');
           if (scenario === 'retained') mkdirSync(join(dir,'.runtime-rollback.retained'), {recursive:true});

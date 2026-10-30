@@ -646,6 +646,7 @@ try {
     chmodSync(managedRg, 0o755);
     chmodSync(systemRg, 0o755);
     writeFileSync(join(clawDir, 'cli.cjs'), wrapper);
+    writeFileSync(join(clawDir, 'runtime-state.cjs'), readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)));
     const loadCounter = join(clawDir, 'upstream-load-count');
     writeFileSync(join(clawDir, 'cli.original.cjs'), `
 const fs = require('node:fs');

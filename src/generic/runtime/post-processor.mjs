@@ -8078,9 +8078,12 @@ function localCellProfile(source, dependencies) {
         try {
           const edge = resolveImport(item.local.name);
           const contract = cellDeclarationContract(tabs.source, [tabs.local, edge.local]);
-          return contract.digest === '714287168495299b3b5a5d0c9ee451730c3b2d8cd4817813a6319661ce152c46'
+          // 2.1.314 更新转义解析器，并把字符宽度函数拆成独立模块；两者按配套契约核验。
+          const updatedTabs = contract.digest === 'b76c5ad5f9d1740f35cdb27f8ec750b54815e62a306e6774607f9b5a9367ff83';
+          return (updatedTabs || contract.digest === '714287168495299b3b5a5d0c9ee451730c3b2d8cd4817813a6319661ce152c46')
             && verifyEdges(contract, [...[0,5,12,6,14,10].map(index => ['ea528a66e176e8d0e965ba61400fe5c041c2e03ab480314d3bdc64c31a87f1f8', index]),
-              [windows ? '3128c6dd72850c8e53097f5ff2d5cacbb841a6eff22da707f8e8e904fdabb7e3' : '1fd9187348c1e13e2407819e6ab3892ac64e1e3d313a3f3a460665d47317df66', 1]]);
+              [updatedTabs ? 'a7d45c3881d9dd1eb2a53e264a0934324025377e3c0c216068870858ce375bef'
+                : windows ? '3128c6dd72850c8e53097f5ff2d5cacbb841a6eff22da707f8e8e904fdabb7e3' : '1fd9187348c1e13e2407819e6ab3892ac64e1e3d313a3f3a460665d47317df66', 1]]);
         } catch { return false; }
       });
     if (expanders.length !== 1) return null;

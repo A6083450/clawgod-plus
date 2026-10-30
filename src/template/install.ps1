@@ -14,6 +14,7 @@
     .\install.ps1 -Uninstall
 #>
 @@CLAWGOD_WINDOWS_LIFECYCLE@@
+$ClawRuntimeGuardVersion = 1
 
 $ClaudeMemCompatBytes = [Convert]::FromBase64String('@@CLAWGOD_CLAUDE_MEM_COMPAT_CJS_BASE64@@')
 $SelfUpdateBytes = [Convert]::FromBase64String('@@CLAWGOD_SELF_UPDATE_CJS_BASE64@@')
@@ -105,6 +106,33 @@ function Write-OK($msg)   { Write-Host "  $([char]0x2713) $msg" -ForegroundColor
 function Write-Err($msg)  { Write-Host "  $([char]0x2717) $msg" -ForegroundColor Red }
 function Write-Warn($msg) { Write-Host "  ! $msg" -ForegroundColor Yellow }
 function Write-Dim($msg)  { Write-Host "  $msg" -ForegroundColor DarkGray }
+
+function Enter-RuntimeWriteLock {
+    $script:RuntimeLockTempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("clawgod-runtime-lock-" + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $RuntimeLockTempDir | Out-Null
+    $script:RuntimeStateHelper = Join-Path $RuntimeLockTempDir 'runtime-state.cjs'
+    [System.IO.File]::WriteAllBytes($RuntimeStateHelper, $RuntimeStateBytes)
+    New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
+    $token = & $BunBin $RuntimeStateHelper lock $ClawDir $PID
+    if ($LASTEXITCODE -ne 0) { throw 'Could not acquire runtime write lock; runtime was not changed.' }
+    $script:RuntimeWriteToken = "$token".Trim()
+    if ($RuntimeWriteToken -cnotmatch '^[a-f0-9-]{36}$') { throw 'Invalid runtime write lock token.' }
+    $script:RuntimeWriteReleaseSafe = $true
+    $env:CLAWGOD_RUNTIME_WRITE_TOKEN = $RuntimeWriteToken
+}
+
+function Exit-RuntimeWriteLock {
+    try {
+        if ($RuntimeWriteToken -and $RuntimeWriteReleaseSafe) {
+            & $BunBin $RuntimeStateHelper unlock $ClawDir $RuntimeWriteToken
+            if ($LASTEXITCODE -ne 0) { throw 'Could not release runtime write lock.' }
+        }
+    } finally {
+        if ($RuntimeLockTempDir) { Remove-Item -LiteralPath $RuntimeLockTempDir -Recurse -Force -ErrorAction SilentlyContinue }
+        if ($HadRuntimeWriteToken) { $env:CLAWGOD_RUNTIME_WRITE_TOKEN = $PreviousRuntimeWriteToken }
+        else { Remove-Item Env:CLAWGOD_RUNTIME_WRITE_TOKEN -ErrorAction SilentlyContinue }
+    }
+}
 
 function Resolve-Bun {
     $candidates = @()
@@ -237,6 +265,12 @@ Write-Host "  ClawGod Plus Installer" -ForegroundColor White -NoNewline
 Write-Host " (Windows)" -ForegroundColor DarkGray
 Write-Host ""
 
+$HadRuntimeWriteToken = Test-Path Env:CLAWGOD_RUNTIME_WRITE_TOKEN
+$PreviousRuntimeWriteToken = $env:CLAWGOD_RUNTIME_WRITE_TOKEN
+$RuntimeWriteToken = $null
+$RuntimeLockTempDir = $null
+$RuntimeWriteReleaseSafe = $false
+try {
 # --- Uninstall ----------------------------------------
 
 if ($Uninstall) {
@@ -253,6 +287,8 @@ if ($Uninstall) {
         (Test-ClaudeLauncherConflict -Current $claudeExe -Original $claudeExeOrig)) {
         exit 1
     }
+    Enter-RuntimeWriteLock
+    $RuntimeWriteReleaseSafe = $false
     # Restore optional Claude plugin integrations before any managed cleanup.
     $pluginDependencies = Join-Path $ClawDir "plugin-dependencies.mjs"
     $pluginState = Join-Path $ClawDir "plugin-dependencies-state.json"
@@ -333,6 +369,7 @@ if ($Uninstall) {
     Get-ChildItem -LiteralPath $ClawDir -Filter ".patch-fallback.*.tmp" -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
     Get-ChildItem -Path $ClawDir -Filter 'cli.original.js.backup-*' -ErrorAction SilentlyContinue | Remove-Item -Force
     Get-ChildItem -Path $ClawDir -Filter 'cli.original.cjs.backup-*' -ErrorAction SilentlyContinue | Remove-Item -Force
+    $RuntimeWriteReleaseSafe = $true
     Write-OK "ClawGod Plus uninstalled"
     Write-Host ""
     Write-Dim "Restart your terminal for changes to take effect."
@@ -391,7 +428,7 @@ if (-not $BunVersionOk) {
 }
 
 # --- Handle -NoUpgrade (skip download, re-patch only) ----------------
-New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
+Enter-RuntimeWriteLock
 $RuntimeTarget = Join-Path $ClawDir "cli.original.cjs"
 $RuntimeSourceVersion = Join-Path $ClawDir ".source-version"
 $RuntimeRollbackDir = Join-Path $ClawDir (".runtime-rollback." + [Guid]::NewGuid().ToString("N"))
@@ -408,10 +445,9 @@ $RuntimeVendorPublishStarted = $false
 $VendorRollbackComplete = $false
 $RuntimeTransactionCleanupSafe = $true
 New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
-$RuntimeStateHelper = Join-Path $RuntimeRollbackDir 'runtime-state.cjs'
-[System.IO.File]::WriteAllBytes($RuntimeStateHelper, $RuntimeStateBytes)
 & $BunBin $RuntimeStateHelper snapshot $ClawDir $RuntimeRollbackDir
 if ($LASTEXITCODE -ne 0) { throw 'Failed to snapshot managed runtime.' }
+$RuntimeWriteReleaseSafe = $false
 try {
 [System.IO.File]::WriteAllBytes((Join-Path $ClawDir 'runtime-state.cjs'), $RuntimeStateBytes)
 
@@ -774,6 +810,7 @@ if (Test-Path -LiteralPath $RuntimeRollbackDir) {
                 $RuntimeTransactionCleanupSafe = $false
                 throw "Runtime rollback failed; recovery data retained at $RuntimeRollbackDir"
             }
+            $RuntimeWriteReleaseSafe = $true
         } else {
             Write-Err "Vendor rollback conflict; prior CLI was not restored; recovery data retained at $RuntimeRollbackDir"
         }
@@ -1050,6 +1087,8 @@ if ($userPath -notlike "*$BinDir*") {
 
 # --- Done ---------------------------------------------
 
+$RuntimeWriteReleaseSafe = $true
+
 Write-Host ""
 Write-Host "  ClawGod Plus installed!" -ForegroundColor Green
 Write-Host ""
@@ -1075,3 +1114,6 @@ Write-Dim "    bun upgrade --canary           (if installed from bun.sh)"
 Write-Dim "    scoop update bun               (scoop -- may lag stable)"
 Write-Dim "    irm https://bun.sh/install.ps1 | iex   (re-install latest)"
 Write-Host ""
+} finally {
+    Exit-RuntimeWriteLock
+}

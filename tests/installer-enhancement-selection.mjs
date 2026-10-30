@@ -268,8 +268,8 @@ function selectionEnvironment(fixture, extra = {}) {
   };
 }
 
-function assertOnlyConfig(home, expected) {
-  assert.deepEqual(readdirSync(home), ['.clawgod'], 'selection must not create unrelated HOME entries');
+function assertOnlyConfig(home, expected, entries = ['.clawgod']) {
+  assert.deepEqual(readdirSync(home).sort(), entries, 'selection must not create unrelated HOME entries');
   const clawgod = join(home, '.clawgod');
   assert.deepEqual(readdirSync(clawgod), ['enhancements.json'], 'selection must clean all transaction artifacts');
   assert.equal(readFileSync(join(clawgod, 'enhancements.json'), 'utf8'), expected, 'selection must persist exact canonical bytes');
@@ -837,16 +837,25 @@ function powerShellEnvironment(fixture, extra = {}) {
   };
 }
 
+function initializePowerShell(pwsh, fixture, extra = {}) {
+  const env = powerShellEnvironment(fixture, extra);
+  // .NET 10 空启动也会创建 SharedMemory 目录；只把安装器之外的副作用计入基线。
+  const warmup = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-Command', 'exit 0'], { encoding: 'utf8', env });
+  assert.equal(warmup.status, 0, `PowerShell fixture warmup failed: ${warmup.stdout}${warmup.stderr}`);
+  return { env, entries: readdirSync(fixture.home).sort() };
+}
+
 function runPowerShell(pwsh, label, args, expected, { keySequence = null, prepare, env = {} } = {}) {
   const fixture = createPowerShellFixture(`clawgod-selection-pwsh-${label}-`, keySequence);
   try {
     if (prepare) prepare(fixture);
+    const baseline = initializePowerShell(pwsh, fixture, env);
     const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fixture.script, ...args], {
       encoding: 'utf8',
-      env: powerShellEnvironment(fixture, env),
+      env: baseline.env,
     });
     assert.equal(run.status, 0, `${label}: ${run.stdout}${run.stderr}`);
-    assertOnlyConfig(fixture.home, expected);
+    assertOnlyConfig(fixture.home, expected, [...new Set([...baseline.entries, '.clawgod'])].sort());
     return `${run.stdout}${run.stderr}`;
   } finally {
     rmSync(fixture.fixtureRoot, { recursive: true, force: true });
@@ -913,12 +922,13 @@ if (pwsh) {
   {
     const fixture = createPowerShellFixture('clawgod-selection-pwsh-cancel-', ['Escape']);
     try {
+      const baseline = initializePowerShell(pwsh, fixture);
       const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fixture.script], {
         encoding: 'utf8',
-        env: powerShellEnvironment(fixture),
+        env: baseline.env,
       });
       assert.equal(run.status, 130, `PowerShell cancel must exit 130: ${run.stdout}${run.stderr}`);
-      assert.deepEqual(readdirSync(fixture.home), [], 'PowerShell cancel must not write config');
+      assert.deepEqual(readdirSync(fixture.home).sort(), baseline.entries, 'PowerShell cancel must not write config');
     } finally {
       rmSync(fixture.fixtureRoot, { recursive: true, force: true });
     }
