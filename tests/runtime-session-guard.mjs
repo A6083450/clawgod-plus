@@ -109,10 +109,10 @@ try {
 
   const foreignWriter = await start(`const s=require('./runtime-state.cjs');console.log('ready '+s.acquireRuntime(__dirname));process.stdin.once('data',()=>process.exit(0));`);
   const foreignToken = foreignWriter.ready.trim().split(' ').at(-1);
-  const forged = spawnSync(process.execPath, ['-e', `require(${JSON.stringify(helper)}).enterRuntime(${JSON.stringify(root)})`], {
+  const forged = spawnSync(process.execPath, ['-e', `const fs=require('node:fs');const lock=JSON.parse(fs.readFileSync(require('node:path').join(${JSON.stringify(root)},'.runtime-write.lock'),'utf8'));console.log(JSON.stringify({pid:process.pid,ppid:process.ppid,lockPid:lock.pid,rows:process.platform==='win32'?require('node:child_process').spawnSync('powershell.exe',['-NoProfile','-Command',\`Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate | ConvertTo-Json -Compress\`],{encoding:'utf8'}).stdout:null}));require(${JSON.stringify(helper)}).enterRuntime(${JSON.stringify(root)})`], {
     encoding: 'utf8', env: { ...process.env, CLAWGOD_RUNTIME_WRITE_TOKEN: foreignToken },
   });
-  assert.notEqual(forged.status, 0, '不是安装器后代的进程即使知道 token 也不能启动');
+  assert.notEqual(forged.status, 0, `不是安装器后代的进程即使知道 token 也不能启动：${forged.stdout}${forged.stderr}`);
   await stop(foreignWriter);
   state.releaseRuntime(root, foreignToken);
 
