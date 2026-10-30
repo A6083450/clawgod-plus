@@ -824,6 +824,7 @@ function powerShellEnvironment(fixture, extra = {}) {
     ...platformEnvironment,
     HOME: fixture.home,
     USERPROFILE: fixture.home,
+    DOTNET_CLI_HOME: join(fixture.fixtureRoot, 'dotnet-home'),
     PATH: fixture.path,
     CLAWGOD_TEST_BUN: process.execPath,
     BUN_INSTALL_CACHE_DIR: join(fixture.fixtureRoot, 'bun-install-cache'),

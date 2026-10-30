@@ -68,10 +68,16 @@ if (version === '2.1.314') {
     [['a\nb\tX'], ['a\nb       X']],
     [['\x1b[31m中\x1b[0m\tX'], ['\x1b[31m中\x1b[0m      X']],
     [['\x1b]8;;https://example.com\x1b\\中\x1b]8;;\x1b\\\tX'], ['\x1b]8;;https://example.com\x1b\\中\x1b]8;;\x1b\\      X']],
-    [['\x1bOa\tX'], ['\x1bOa       X']],
-    [['\x1b( B\tX'], ['\x1b( B       X']],
-    [['\x1bktitle\x1b\\\tX'], ['\x18title\x1b\\   X']],
   ]) assert.deepEqual(expand(input), expected, `${platform}: 新版转义解析必须保留正确制表符列宽`);
+  // Bun stable/canary 对非标准转义的宽度不同；列宽基线取当前原生 API，不复用被测展开器。
+  for (const [input, prefix] of [
+    ['\x1bOa\tX', '\x1bOa'],
+    ['\x1b( B\tX', '\x1b( B'],
+    ['\x1bktitle\x1b\\\tX', '\x18title\x1b\\'],
+  ]) {
+    const padding = 8 - Bun.stringWidth(prefix, { ambiguousIsNarrow: true }) % 8;
+    assert.deepEqual(expand([input]), [prefix + ' '.repeat(padding) + 'X'], `${platform}: 转义后必须按原生列宽对齐`);
+  }
   const [widthFile, widthSource] = [...files].find(([, text]) => /function [\w$]+\([\w$]+\)\{return Bun\.stringWidth\(/.test(text));
   for (const [file, before, after] of [
     [tabFile, 'intermediatesRunToFinal??!1', 'intermediatesRunToFinal??!0'],
