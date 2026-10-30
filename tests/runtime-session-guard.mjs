@@ -76,7 +76,12 @@ try {
   copyFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), join(root, 'repatch.mjs'));
   copyFileSync(new URL('../src/generic/runtime/vendor-transaction.mjs', import.meta.url), join(root, 'vendor-transaction.mjs'));
   const native = join(dir, '2.1.314'); writeFileSync(native, 'fixture');
+  if (process.platform === 'win32') {
+    writeFileSync(helper, readFileSync(helper, 'utf8') + `\nconst acquire = module.exports.acquireRuntime; module.exports.acquireRuntime = (root, ...args) => { const rows = processList(); console.error(JSON.stringify({ root, normalizedRoot: root.replaceAll('\\\\', '/').toLowerCase(), realpath: fs.realpathSync(root), cwd: process.cwd(), tokenPresent: Boolean(process.env.CLAWGOD_RUNTIME_WRITE_TOKEN), active: activeRuntimeProcesses(root, rows), legacy: rows.filter(row => row.pid === ${legacy.pid}) })); return acquire(root, ...args); };\n`);
+    assert.throws(() => require(helper).acquireRuntime(root), /先.*\/exit|正在使用/);
+  }
   const repatch = spawnSync(process.execPath, [join(root, 'repatch.mjs'), native], { encoding: 'utf8' });
+  if (process.platform === 'win32') console.log('Windows repatch diagnostic:', repatch.stderr);
   assert.notEqual(repatch.status, 0);
   assert.match(repatch.stderr, /先.*\/exit|正在使用/, '重补丁也必须在改写前拒绝活跃会话');
   assert.equal(readdirSync(root).some(name => name.startsWith('.runtime-rollback.')), false);
