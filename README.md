@@ -51,18 +51,18 @@ macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行�
 
 ## 安装 ClawGod Plus
 
-安装命令下载固定版本（v2026.10.25-claude.2.1.310）的 ClawGod Plus Release 资产。
+安装命令下载固定版本（v2026.10.30-claude.2.1.314）的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.25-claude.2.1.310/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.30-claude.2.1.314/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.25-claude.2.1.310/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.30-claude.2.1.314/install.ps1 | iex
 ```
 
 常用安装参数（不传版本时默认使用安装器已验证的 Claude Code 版本，保留较新的已装版本）：
@@ -410,11 +410,13 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 渲染器按相关声明及依赖的局部结构契约识别，变量改名、分块路径变化和无关声明改动不再要求逐版本添加指纹；真实布局或调用接口变化仍拒绝安装。未知渲染器不能靠 `--tolerate-stale` 或 clean-runtime 回退绕过。
 
-使用正常命令：
+**先退出会话，再升级：** 在所有 Claude 会话中正常执行 `/exit`，并关闭仍使用 Claude 的浏览器连接或后台任务，然后从普通终端执行以下命令。安装、重补丁和卸载会先检查运行时占用；仍有活跃会话时拒绝覆盖，列出 PID，不强杀进程。升级期间的新启动也会被拒绝，避免旧会话退出时缺少分块或新会话加载半成品。
 
 ```bash
 claude update
 ```
+
+新版 updater 会拒绝缺少会话保护的旧安装器；遇到该提示时，请使用上方安装命令获取新版 Release 安装器。若安装器被强制终止或回滚无法确认，`.runtime-write.lock` 会保留并阻止启动：先检查安装日志和 `.runtime-rollback.*` 恢复数据，不要直接删除锁或混回旧 chunks。
 
 `claude update` 由 wrapper 直接交给 ClawGod updater，不依赖上游 bundle 的 update action 形状。普通更新的两次尝试都要求补丁成功，不再把无增强 clean runtime 当作最新版升级成功。显式 `--version` 只尝试指定版本，不自动换稳定版，并保留原有带警告的整包兼容回退。插件基线独立管理：更新不会把 Claude Code 固定到插件版本。
 

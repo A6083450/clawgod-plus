@@ -19,12 +19,17 @@ function run(label, args) {
   const result = spawnSync(runtime, args, { cwd: here, stdio: 'inherit' });
   if (result.error || result.status !== 0) throw new Error(`repatch: ${label} failed (${result.error?.message || `exit ${result.status}`})`);
 }
-const transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
-const candidateDir = join(transactionDir, 'candidate');
-const candidateVendor = join(candidateDir, 'vendor');
+let transactionDir, runtimeToken;
+let safeToUnlock = true;
 let vendorPublishAttempted = false;
 let snapshotted = false;
+const previousToken = process.env.CLAWGOD_RUNTIME_WRITE_TOKEN;
 try {
+  runtimeToken = state.acquireRuntime(here);
+  process.env.CLAWGOD_RUNTIME_WRITE_TOKEN = runtimeToken;
+  transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
+  const candidateDir = join(transactionDir, 'candidate');
+  const candidateVendor = join(candidateDir, 'vendor');
   state.snapshot(here, transactionDir);
   snapshotted = true;
   let cleanReady = false;
@@ -62,17 +67,23 @@ try {
   console.log(`[clawgod] re-patched to ${version}`);
 } catch (error) {
   const vendorRestored = !vendorPublishAttempted || error?.rollbackComplete === true;
-  if (vendorRestored) {
+  if (transactionDir && vendorRestored) {
     try {
       if (snapshotted) state.restore(here, transactionDir);
       if (!vendorPublishAttempted || error?.cleanupSafe !== false) rmSync(transactionDir, { recursive: true, force: true });
       else console.error(`repatch: prior CLI restored; untrusted transaction data retained at ${transactionDir}`);
     } catch (rollbackError) {
+      safeToUnlock = false;
       console.error(`repatch: runtime rollback failed; recovery data retained at ${transactionDir}: ${rollbackError.message}`);
     }
-  } else {
+  } else if (transactionDir) {
+    safeToUnlock = false;
     console.error(`repatch: vendor rollback conflict; prior CLI was not restored; recovery data retained at ${transactionDir}`);
   }
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
+} finally {
+  if (runtimeToken && safeToUnlock) state.releaseRuntime(here, runtimeToken);
+  if (previousToken === undefined) delete process.env.CLAWGOD_RUNTIME_WRITE_TOKEN;
+  else process.env.CLAWGOD_RUNTIME_WRITE_TOKEN = previousToken;
 }

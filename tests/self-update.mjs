@@ -68,7 +68,8 @@ function withUpdateFixture(label, options, callback) {
   mkdirSync(bin, { recursive: true });
   mkdirSync(updateTmp, { recursive: true });
   for (const path of [home, clawgod, bin, updateTmp]) assertTemporaryPath(path, fixtureRoot, `${label} ${basename(path)}`);
-  writeFileSync(installerFixture, 'fixture installer', 'utf8');
+  const guardDeclaration = options.windows ? '$ClawRuntimeGuardVersion = 1\n' : 'CLAWGOD_RUNTIME_GUARD_VERSION=1\n';
+  writeFileSync(installerFixture, (options.legacyGuard ? '' : guardDeclaration) + 'fixture installer', 'utf8');
 
   if (!options.missingFetch) makeExecutable(join(clawgod, 'fetch-file.mjs'), `
 import { copyFileSync } from 'node:fs';
@@ -111,7 +112,7 @@ process.exit(Number(process.env.RUN_EXIT || 0));
     const installerSource = installerVersion === null
       ? 'local installer without a version declaration\n'
       : `${installerVersionLine}\n${options.duplicateInstallerDeclaration ? `${installerVersionLine}\n` : ''}local installer\n`;
-    writeFileSync(join(clawgod, options.windows ? 'install.ps1' : 'install.sh'), installerSource, 'utf8');
+    writeFileSync(join(clawgod, options.windows ? 'install.ps1' : 'install.sh'), (options.legacyGuard ? '' : guardDeclaration) + installerSource, 'utf8');
     if (options.localVersion !== undefined) writeFileSync(join(clawgod, '.clawgod-version'), `${options.localVersion}\n`, 'utf8');
   }
 
@@ -161,6 +162,15 @@ process.exit(Number(process.env.RUN_EXIT || 0));
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
+}
+
+for (const windows of [false, true]) for (const localInstaller of [false, true]) {
+  withUpdateFixture('旧安装器不能绕过会话保护', { windows, localInstaller, localVersion: '2026.10.25-claude.2.1.310', legacyGuard: true }, fixture => {
+    const outcome = runSelfUpdate(['update', '--version', '2.1.314'], fixture.options);
+    assert.equal(outcome.status, 1);
+    assert.equal(fixture.invoked(), null, '缺少保护声明的安装器不得执行');
+    assert.match(fixture.stderrChunks.join(''), /会话保护/);
+  });
 }
 
 assert.deepEqual(
@@ -442,8 +452,9 @@ withUpdateFixture('installer signal', {}, fixture => {
   let calls = 0;
   const outcome = runSelfUpdate(['update'], {
     ...fixture.options,
-    spawn() {
+    spawn(_command, args) {
       calls += 1;
+      if (calls === 1) writeFileSync(args[2], 'CLAWGOD_RUNTIME_GUARD_VERSION=1\n');
       return calls === 1 ? { status: 0, signal: null } : { status: null, signal: 'SIGINT' };
     },
   });

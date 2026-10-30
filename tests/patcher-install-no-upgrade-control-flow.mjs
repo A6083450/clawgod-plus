@@ -62,7 +62,7 @@ const optionalStart = installer.indexOf('# --- Ensure optional Claude plugins');
 const optionalEnd = installer.indexOf('\ninstall_claude_mem_compat_helper', optionalStart);
 assert.ok(optionalStart >= 0 && optionalEnd > optionalStart, 'install.sh must retain an extractable plugin health-check stage');
 const fixtureSelfVersion = '2026.9.2-claude.2.1.258';
-const lifecycleSpan = installer.slice(0, optionalEnd).replace(
+const lifecycleSpan = (installer.slice(0, optionalEnd) + '\nRUNTIME_WRITE_RELEASE_SAFE=1\n').replace(
   'CLAWGOD_SELF_VERSION="0.0.0-dev"  # injected by release workflow from git tag',
   `CLAWGOD_SELF_VERSION="${fixtureSelfVersion}"  # fixture release-format version`,
 );
@@ -171,7 +171,7 @@ process.exit(child.status ?? 1);
   writeFileSync(fakeBun, `#!${process.execPath}
 import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, chmodSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 const [target, ...args] = process.argv.slice(2);
 if (target === '--version') {
@@ -219,6 +219,8 @@ if (name === 'install-ripgrep.mjs') {
   }
 } else if (name === 'runtime-state.cjs' || name === 'startup-check.cjs' || name === 'patch-fallback.cjs') {
   if (name === 'runtime-state.cjs' && args[0] === 'snapshot' && process.env.PATCH_FALLBACK_SNAPSHOT_FAULT === '1') process.exit(74);
+  if (name === 'runtime-state.cjs' && args[0] === 'restore' && process.env.RUNTIME_RESTORE_FAULT === '1') process.exit(75);
+  if (name === 'runtime-state.cjs' && args[0] === 'unlock' && process.env.RUNTIME_UNLOCK_FAULT === '1') process.exit(76);
   const child = spawnSync(process.execPath, [target, ...args], { env: process.env, stdio: 'inherit' });
   process.exit(child.status ?? 1);
 } else if (name === 'vendor-transaction.mjs') {
@@ -279,10 +281,14 @@ if (name === 'install-ripgrep.mjs') {
   process.exit(Number(process.env.PATCH_EXIT || 0));
 } else if (name === 'cli.cjs' && args[0] === '--version') {
   appendFileSync(process.env.RUNTIME_CHECK_CALLS, 'check\\n');
+  const lock = JSON.parse(readFileSync(join(dirname(target), '.runtime-write.lock'), 'utf8'));
+  if (process.env.CLAWGOD_RUNTIME_WRITE_TOKEN !== lock.token) process.exit(96);
   if (process.env.SANITY_PANIC === '1') process.stderr.write('Expected CommonJS module to have a function wrapper\\n');
   else console.log('2.1.999 (Claude Code)');
   process.exit(Number(process.env.SANITY_EXIT || 0));
 } else if (name === 'plugin-dependencies.mjs' && args[0] === 'ensure') {
+  const lock = JSON.parse(readFileSync(join(dirname(target), '.runtime-write.lock'), 'utf8'));
+  if (process.env.CLAWGOD_RUNTIME_WRITE_TOKEN !== lock.token) process.exit(96);
   writeFileSync(process.env.PLUGIN_HEALTH_MARKER, JSON.stringify({ args, clawgodVersion: process.env.CLAWGOD_VERSION || null }) + '\\n');
 } else {
   console.error('unexpected fake Bun boundary: ' + JSON.stringify({ target, args }));
@@ -394,6 +400,8 @@ if (name === 'install-ripgrep.mjs') {
         VENDOR_PUBLISH_CALLS: vendorPublishCalls,
         RUNTIME_CHECK_CALLS: runtimeCheckCalls,
         PATCH_FALLBACK_SNAPSHOT_FAULT: options.fallbackSnapshotFault ? '1' : '0',
+        RUNTIME_RESTORE_FAULT: options.restoreFault ? '1' : '0',
+        RUNTIME_UNLOCK_FAULT: options.unlockFault ? '1' : '0',
         EXTERNAL_REPLACEMENT: externalReplacement,
         VENDOR_PUBLISH_FAULT: options.publishFault || options.rootReplacementFault ? '1' : '0',
         VENDOR_PREFLIGHT_FAULT: options.preflightFault ? '1' : '0',
@@ -417,6 +425,8 @@ if (name === 'install-ripgrep.mjs') {
     const observedExternalSentinel = join(observedExternalRoot, 'sentinel.bin');
     return {
       run,
+      writeLocked: existsSync(join(dirname(target), '.runtime-write.lock')),
+      lockTempDirectories: readdirSync(temp),
       rollbackReceipt: existsSync(join(home, 'rollback-receipt')) ? readFileSync(join(home, 'rollback-receipt'), 'utf8') : null,
       managed: Object.fromEntries(Object.keys(oldManaged).map(name => [name, existsSync(join(dirname(target), name)) ? readFileSync(join(dirname(target), name), 'utf8') : null])),
       asset: existsSync(join(dirname(target), 'assets', 'prior.txt')) ? readFileSync(join(dirname(target), 'assets', 'prior.txt'), 'utf8') : null,
@@ -469,6 +479,8 @@ if (name === 'install-ripgrep.mjs') {
   for (const fixture of lifecycleCases) {
     const result = runLifecycleCase(fixture.label, fixture.args);
     assert.equal(result.run.status, 0, `${fixture.label}: ${result.run.stdout}${result.run.stderr}`);
+    assert.equal(result.writeLocked, false, `${fixture.label}: successful lifecycle must release its write lock`);
+    assert.deepEqual(result.lockTempDirectories, [], `${fixture.label}: completion must clean temporary helper files`);
     assert.deepEqual(result.patchArgs, ['--enhancements-file', result.configPath], `${fixture.label}: patcher argv must contain the exact saved config path`);
     assert.equal(result.configBytes, '{\n  "schemaVersion": 1,\n  "mode": "custom",\n  "enabled": [\n    "agents",\n    "branding"\n  ]\n}\n', `${fixture.label}: version flow must preserve saved config bytes`);
     assert.equal(result.configAfter.mode & 0o7777, result.configBefore.mode & 0o7777, `${fixture.label}: version flow must preserve saved config mode`);
@@ -493,6 +505,11 @@ if (name === 'install-ripgrep.mjs') {
     assert.equal(result.vendor.ripgrep.ino, result.vendor.ripgrepBefore.ino, `${fixture.label}: managed ripgrep identity must remain unchanged`);
   }
 
+  const unlockFailure = runLifecycleCase('runtime-unlock-failure', [], { unlockFault: true });
+  assert.notEqual(unlockFailure.run.status, 0, 'runtime unlock failure must fail installation');
+  assert.equal(unlockFailure.writeLocked, true, 'runtime unlock failure must preserve the write lock');
+  assert.deepEqual(unlockFailure.lockTempDirectories, [], 'unlock failure must still clean its temporary helper');
+
   const stale = runLifecycleCase('explicit-stale', ['--tolerate-stale'], {});
   assert.equal(stale.run.status, 0, stale.run.stdout + stale.run.stderr);
   assert.deepEqual(stale.patchArgs, ['--enhancements-file', stale.configPath, '--tolerate-stale']);
@@ -502,6 +519,7 @@ if (name === 'install-ripgrep.mjs') {
 
   const assertPriorRuntimeRestored = (result, label, { fallback = null } = {}) => {
     assert.equal(result.runtime, 'prior installed runtime\n', `${label}: failed transaction must restore the prior runtime`);
+    assert.equal(result.writeLocked, false, `${label}: confirmed rollback must release its write lock`);
     assert.equal(result.managed['cli.cjs'], 'old wrapper', `${label}: failed transaction must restore prior wrapper`);
     assert.equal(result.managed['post-process.mjs'], 'old postprocessor', `${label}: failed transaction must restore prior helper`);
     assert.equal(result.managed['.clawgod-version'], 'old release', `${label}: failed transaction must restore prior release marker`);
@@ -529,6 +547,13 @@ if (name === 'install-ripgrep.mjs') {
   assert.equal(fallbackSnapshotFailure.runtime, 'prior installed runtime\n', 'fallback-state snapshot failure must preserve the prior runtime');
   assert.equal(fallbackSnapshotFailure.chunks, 'prior chunk fixture\n', 'fallback-state snapshot failure must preserve live chunks before transaction activation');
   assert.deepEqual(fallbackSnapshotFailure.fallbackState, priorFallbackState, 'fallback-state snapshot failure must preserve the prior fallback state');
+
+  assert.equal(fallbackSnapshotFailure.writeLocked, false, 'snapshot failure before runtime mutation must release its lock');
+  const restoreFailure = runLifecycleCase('runtime-restore-failure', [], { patchExit: 41, priorRuntime: 'prior installed runtime\n', restoreFault: true });
+  assert.notEqual(restoreFailure.run.status, 0, 'runtime restore failure must remain fatal');
+  assert.equal(restoreFailure.writeLocked, true, 'unconfirmed runtime rollback must retain its write lock');
+  assert.equal(restoreFailure.rollbackReceipt, null, 'unconfirmed rollback cannot authorize another installation');
+  assert.deepEqual(restoreFailure.lockTempDirectories, [], 'failed restore must still clean its standalone temporary helper');
 
   const directCompatibilityFailure = runLifecycleCase('direct-compatibility-failure', [], {
     patchExit: 42,
@@ -747,6 +772,8 @@ if (name === 'install-ripgrep.mjs') {
   });
   assert.notEqual(publishFailed.run.status, 0, 'mid-publish failure must return nonzero');
   assert.equal(publishFailed.rollbackReceipt, null, '恢复冲突不能允许第二轮安装');
+  assert.equal(publishFailed.writeLocked, true, 'vendor rollback conflict must retain the write lock');
+  assert.equal(rootReplaced.writeLocked, true, 'unknown live vendor identity must retain the write lock');
   assert.equal(rootReplaced.rollbackReceipt, null, '替换根冲突不能允许第二轮安装');
   assert.equal(updateCompatibilityFallback.rollbackReceipt, null, '已提交运行时不能发恢复回执');
   assert.notEqual(publishFailed.runtime, 'prior installed runtime\n', 'vendor conflict must not restore the prior CLI against an incomplete vendor');

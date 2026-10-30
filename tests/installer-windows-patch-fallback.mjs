@@ -37,6 +37,9 @@ function transactionSpan(source, label) {
   return span;
 }
 
+const lockFunctions = canonical.slice(canonical.indexOf('function Enter-RuntimeWriteLock {'), canonical.indexOf('function Resolve-Bun {'));
+assert.match(lockFunctions, /\$RuntimeStateHelper lock \$ClawDir \$PID/, 'Windows lock must belong to its installer process');
+assert.match(lockFunctions, /\$env:CLAWGOD_RUNTIME_WRITE_TOKEN = \$RuntimeWriteToken/, 'Windows startup checks must inherit the maintenance token');
 const canonicalSpan = transactionSpan(canonical, 'src/template/install.ps1');
 const generatedSpan = transactionSpan(generated, 'generated dist/win/install.ps1');
 assert.match(generatedSpan, /\$RuntimeTransactionCommitted = \$true/, 'generated Windows transaction span must retain production commit assignment');
@@ -107,7 +110,9 @@ if (process.env.CLAWGOD_TEST_POSTPROCESS_EXIT) process.exit(Number(process.env.C
 writeFileSync(process.env.CLAWGOD_TEST_PATCH_ARGS, JSON.stringify(process.argv.slice(2)));
 process.exit(Number(process.env.CLAWGOD_TEST_PATCH_EXIT));
 `;
-  const fakeCli = `const { mkdirSync, renameSync, writeFileSync } = require('node:fs');
+  const fakeCli = `const { mkdirSync, readFileSync, renameSync, writeFileSync } = require('node:fs');
+const lock = JSON.parse(readFileSync(require('node:path').join(__dirname, '.runtime-write.lock'), 'utf8'));
+if (process.env.CLAWGOD_RUNTIME_WRITE_TOKEN !== lock.token) process.exit(96);
 if (process.env.CLAWGOD_TEST_VENDOR_CONFLICT === '1') {
   renameSync(process.env.CLAWGOD_TEST_VENDOR_DIR, process.env.CLAWGOD_TEST_DISPLACED_VENDOR);
   mkdirSync(process.env.CLAWGOD_TEST_VENDOR_DIR, { recursive: true });
@@ -146,10 +151,6 @@ $RuntimeTransactionCleanupSafe = $true
 $RuntimeStateBytes = [System.Text.Encoding]::UTF8.GetBytes($env:CLAWGOD_TEST_RUNTIME_STATE)
 $StartupCheckBytes = [System.Text.Encoding]::UTF8.GetBytes($env:CLAWGOD_TEST_STARTUP_CHECK)
 New-Item -ItemType Directory -Path $RuntimeRollbackDir | Out-Null
-$RuntimeStateHelper = Join-Path $RuntimeRollbackDir 'runtime-state.cjs'
-[System.IO.File]::WriteAllBytes($RuntimeStateHelper, $RuntimeStateBytes)
-& $BunBin $RuntimeStateHelper snapshot $ClawDir $RuntimeRollbackDir
-if ($LASTEXITCODE -ne 0) { throw 'fixture snapshot failed' }
 $ProxyFetchBytes = [System.Text.Encoding]::UTF8.GetBytes('export {};')
 $FetchPackageBytes = [System.Text.Encoding]::UTF8.GetBytes($env:CLAWGOD_TEST_FETCH_PACKAGE)
 $ExtractorBytes = [System.Text.Encoding]::UTF8.GetBytes($env:CLAWGOD_TEST_EXTRACTOR)
@@ -172,11 +173,24 @@ function Install-UpdateRuntimeHelpers {
   [System.IO.File]::WriteAllBytes((Join-Path $ClawDir 'patch-fallback.cjs'), $PatchFallbackBytes)
   [System.IO.File]::WriteAllBytes((Join-Path $ClawDir 'startup-check.cjs'), $StartupCheckBytes)
 }
+${lockFunctions}
+$HadRuntimeWriteToken = Test-Path Env:CLAWGOD_RUNTIME_WRITE_TOKEN
+$PreviousRuntimeWriteToken = $env:CLAWGOD_RUNTIME_WRITE_TOKEN
+$RuntimeLockTempDir = $null
+$RuntimeWriteToken = $null
+$RuntimeWriteReleaseSafe = $false
 $Caught = $null
 try {
+Enter-RuntimeWriteLock
+& $BunBin $RuntimeStateHelper snapshot $ClawDir $RuntimeRollbackDir
+if ($LASTEXITCODE -ne 0) { throw 'fixture snapshot failed' }
+$RuntimeWriteReleaseSafe = $false
 ${fixtureSpan}
+$RuntimeWriteReleaseSafe = $true
 } catch {
   $Caught = $_.Exception.Message
+} finally {
+  Exit-RuntimeWriteLock
 }
 [ordered]@{
   caught = $Caught
@@ -185,6 +199,8 @@ ${fixtureSpan}
   rollbackComplete = $VendorRollbackComplete
   cleanupSafe = $RuntimeTransactionCleanupSafe
   transactionExists = Test-Path -LiteralPath $RuntimeRollbackDir
+  writeLocked = Test-Path -LiteralPath (Join-Path $ClawDir '.runtime-write.lock')
+  lockTempExists = Test-Path -LiteralPath $RuntimeLockTempDir
 } | ConvertTo-Json -Compress
 `, 'utf8');
 
@@ -357,6 +373,8 @@ ${fixtureSpan}
     const resultLine = run.stdout.trim().split(/\r?\n/).findLast(line => line.startsWith('{'));
     assert.ok(resultLine, `${fixture.label}: native harness must emit transaction observations`);
     const result = JSON.parse(resultLine);
+    assert.equal(result.writeLocked, Boolean(fixture.conflict), `${fixture.label}: only unconfirmed rollback may retain the write lock`);
+    assert.equal(result.lockTempExists, false, `${fixture.label}: finalizer must remove its temporary helper directory`);
     const receipt = join(paths.clawDir, 'rollback-receipt');
     if (!fixture.success && !fixture.conflict && !fixture.retained) assert.equal(readFileSync(receipt, 'utf8'), 'restored\n', `${fixture.label}: 恢复成功才写回执`);
     else assert.equal(existsSync(receipt), false, `${fixture.label}: 已提交或恢复不明确不能重试`);

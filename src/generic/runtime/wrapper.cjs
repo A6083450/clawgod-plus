@@ -5,6 +5,15 @@ const { homedir } = require('os');
 const { spawnSync } = require('child_process');
 
 const clawgodDir = join(homedir(), '.clawgod');
+let activateRuntime;
+if (!['update', 'upgrade'].includes(process.argv[2])) {
+  try {
+    activateRuntime = require('./runtime-state.cjs').enterRuntime(__dirname, true);
+  } catch (error) {
+    process.stderr.write(`[clawgod] ${error.message}\n`);
+    process.exit(1);
+  }
+}
 const ripgrepBin = join(clawgodDir, 'vendor', 'ripgrep', 'bin');
 const ripgrepPathWasReady = process.env.CLAWGOD_INTERNAL_RIPGREP_PATH_READY === ripgrepBin
   && (process.env.PATH || '').split(delimiter)[0] === ripgrepBin;
@@ -294,6 +303,15 @@ if (!versionOnly) {
   } catch {}
 }
 
+function startUpstream() {
+  try { activateRuntime(); }
+  catch (error) {
+    process.stderr.write(`[clawgod] ${error.message}\n`);
+    process.exit(1);
+  }
+  require('./cli.original.cjs');
+}
+
 // 在上游接管 stdin 前询问，非交互调用不检查、不输出提示。
 const updateNotifier = process.stdin.isTTY && process.stderr.isTTY ? require('./self-update.cjs') : null;
 if (updateNotifier?.shouldCheckUpdate(process.argv.slice(2), process.stdin.isTTY, process.stderr.isTTY, process.env)) {
@@ -301,6 +319,6 @@ if (updateNotifier?.shouldCheckUpdate(process.argv.slice(2), process.stdin.isTTY
     if (outcome) {
       process.stderr.write(outcome.status === 0 ? '[clawgod] 更新完成，请重新运行 claude。\n' : '[clawgod] 更新未完成，请重新运行 claude。\n');
       updateNotifier.exitWithOutcome(outcome);
-    } else require('./cli.original.cjs');
+    } else startUpstream();
   });
-} else require('./cli.original.cjs');
+} else startUpstream();

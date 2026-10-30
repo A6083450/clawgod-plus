@@ -34,6 +34,7 @@ function run(args, options = {}) {
     mkdirSync(ripgrepBin, { recursive: true });
     mkdirSync(bin, { recursive: true });
     copyFileSync(wrapperSource, join(clawgod, 'cli.cjs'));
+    writeFileSync(join(clawgod, 'runtime-state.cjs'), readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)));
     if (existsSync(fallbackSource)) copyFileSync(fallbackSource, join(clawgod, 'patch-fallback.cjs'));
 
     writeFileSync(join(clawgod, 'self-update.cjs'), `

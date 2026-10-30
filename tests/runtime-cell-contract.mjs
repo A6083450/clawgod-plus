@@ -24,6 +24,7 @@ assert.notEqual(contract('var mask=3,limit=1<<mask;function draw(){return limit}
   contract('var limit=1<<mask,mask=3;function draw(){return limit}', ['draw']).digest, '初始化顺序必须进入契约');
 
 for (const [version, platform, renderFile] of [
+  ['2.1.314', 'darwin', 'chunk-xsq68wek.js'], ['2.1.314', 'linux', 'chunk-x7qf93mw.js'], ['2.1.314', 'win32', 'chunk-m6k5tg8b.js'],
   ['2.1.310', 'darwin', 'chunk-pma0w0g1.js'], ['2.1.310', 'linux', 'chunk-rwaeax2b.js'], ['2.1.310', 'win32', 'chunk-abp9eptc.js'],
   ['2.1.303', 'darwin', 'chunk-7mzb8nrq.js'], ['2.1.303', 'linux', 'chunk-x66h7b21.js'], ['2.1.303', 'win32', 'chunk-1jz9m9yh.js'],
   ['2.1.304', 'darwin', 'chunk-p4db44gq.js'], ['2.1.304', 'linux', 'chunk-yhb0qgpt.js'], ['2.1.304', 'win32', 'chunk-v97bgzk4.js'],
@@ -35,7 +36,7 @@ const files = new Map(JSON.parse(readFileSync(new URL(`./fixtures/cell-contract-
 const source = files.get(renderFile);
 const adapted = processor.adaptCellRenderer(source, undefined, files);
 assert.notEqual(adapted, null, `${version}/${platform} 相同渲染接口必须兼容分块重组`);
-if (version === '2.1.310') {
+if (['2.1.310', '2.1.314'].includes(version)) {
   const ansiImport = processor.structuralModule(adapted).ast.body[0];
   const ansi = files.get(basename(ansiImport.source.value));
   const [tokenizer, normalize] = ansiImport.specifiers.map(item => item.imported.name);
@@ -51,6 +52,46 @@ if (version === '2.1.310') {
     { type: 'ansi', code: '\x1b[0m', endCode: '\x1b[0m' },
   ]), [], `${platform}: 样式归一化必须正确处理 reset`);
 }
+if (version === '2.1.314') {
+  const expander = adapted.match(/=([\w$]+)\(\[" "\.repeat\(clawgodTabOffset\)/)[1];
+  const tabImport = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration'
+    && node.specifiers.some(item => item.local.name === expander));
+  const tabFile = basename(tabImport.source.value), tabSource = files.get(tabFile);
+  const tabs = contract(tabSource, [expander]);
+  const dependencies = tabs.imports.map(edge => new Function(files.get(basename(edge.specifier))
+    .replace(/export\{[^}]*\};/, `return ${edge.imported};`))());
+  const expand = new Function(...tabs.imports.map(edge => edge.local),
+    tabs.source.replace(/import\{[^}]*\}from"[^"]+";/g, '') + `;return ${expander};`)(...dependencies);
+  for (const [input, expected] of [
+    [['中\tX'], ['中      X']],
+    [['a', '\t', 'b'], ['a', '       ', 'b']],
+    [['a\nb\tX'], ['a\nb       X']],
+    [['\x1b[31m中\x1b[0m\tX'], ['\x1b[31m中\x1b[0m      X']],
+    [['\x1b]8;;https://example.com\x1b\\中\x1b]8;;\x1b\\\tX'], ['\x1b]8;;https://example.com\x1b\\中\x1b]8;;\x1b\\      X']],
+    [['\x1bOa\tX'], ['\x1bOa       X']],
+    [['\x1b( B\tX'], ['\x1b( B       X']],
+    [['\x1bktitle\x1b\\\tX'], ['\x18title\x1b\\   X']],
+  ]) assert.deepEqual(expand(input), expected, `${platform}: 新版转义解析必须保留正确制表符列宽`);
+  const [widthFile, widthSource] = [...files].find(([, text]) => /function [\w$]+\([\w$]+\)\{return Bun\.stringWidth\(/.test(text));
+  for (const [file, before, after] of [
+    [tabFile, 'intermediatesRunToFinal??!1', 'intermediatesRunToFinal??!0'],
+    [tabFile, '.slice(2)', '.slice(1)'],
+    [widthFile, 'ambiguousIsNarrow:!0', 'ambiguousIsNarrow:!1'],
+  ]) {
+    const modules = new Map(files), text = modules.get(file);
+    assert.ok(text.includes(before));
+    modules.set(file, text.replace(before, after));
+    assert.equal(processor.adaptCellRenderer(source, undefined, modules), null, `${platform}: 制表符依赖漂移必须拒绝`);
+  }
+  const missing = new Map(files);
+  missing.delete(widthFile);
+  assert.equal(processor.adaptCellRenderer(source, undefined, missing), null, '缺少独立宽度模块必须拒绝');
+  const wrongImport = new Map(files);
+  const widthName = processor.structuralModule(widthSource).ast.body.find(node => node.type === 'FunctionDeclaration').id.name;
+  wrongImport.set(tabFile, tabSource.replace(`{${widthName}}from`, `{missingWidth as ${widthName}}from`));
+  assert.notEqual(wrongImport.get(tabFile), tabSource);
+  assert.equal(processor.adaptCellRenderer(source, undefined, wrongImport), null, '宽度模块导入不存在的导出必须拒绝');
+}
 const rename = text => {
   const parsed = processor.structuralModule(text);
   const changes = [...new Map(parsed.identifiers.map(item => [item.start, item])).values()].sort((a, b) => b.start - a.start);
@@ -65,7 +106,7 @@ const sharedAst = processor.structuralModule(sharedSource).ast;
 const factory = sharedAst.body.find(node => node.id && sharedSource.slice(node.start, node.end).includes('new Bun.ant.CellSegmenter')).id.name;
 const sharedSpecifier = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration' && basename(node.source.value) === sharedFile).source.value;
 for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias-caller', 'text-alias-caller', 'text-drift', 'ansi-drift',
-  ...(['2.1.307', '2.1.308', '2.1.310'].includes(version) ? ['direction-drift', 'direction-import', 'direction-missing', 'direction-method-write', 'direction-range-write', 'text-direction-import'] : [])]) {
+  ...(['2.1.307', '2.1.308', '2.1.310', '2.1.314'].includes(version) ? ['direction-drift', 'direction-import', 'direction-missing', 'direction-method-write', 'direction-range-write', 'text-direction-import'] : [])]) {
   const modules = new Map(variant === 'renamed' ? renamedFiles : files);
   if (variant === 'unrelated') for (const [file, text] of modules) {
     if (text.includes('stylePool;charPool;native=') || text.includes('.trimEnd()')) modules.set(file, text + '\nfunction unrelatedNewFeature(){return 123}'

@@ -12,6 +12,7 @@ function run(config, args = [], extraEnv = {}) {
   const bin = join(dir, 'vendor/ripgrep/bin');
   mkdirSync(bin, { recursive: true });
   copyFileSync(new URL('../src/generic/runtime/wrapper.cjs', import.meta.url), join(dir, 'cli.cjs'));
+  writeFileSync(join(dir, 'runtime-state.cjs'), readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)));
   if (config !== null) writeFileSync(join(dir, 'provider.json'), JSON.stringify(config));
   writeFileSync(join(dir, '.claude.json'), '{"migration":"must-stay"}');
   writeFileSync(join(dir, '.clawgod-version'), '1.0.0');

@@ -1575,7 +1575,7 @@ assert.doesNotMatch(unix, /\$\(\$BUN_BIN\s+--version/, 'Unix Bun version probes 
 
 const resolveBunStart = unix.indexOf('resolve_bun() {');
 const normalPreflightStart = unix.indexOf('if ! resolve_bun; then', unix.indexOf('# ─── Bun prerequisite'));
-const normalPreflightEnd = unix.indexOf('prepare_enhancement_config_directory', normalPreflightStart);
+const normalPreflightEnd = unix.indexOf('acquire_runtime_write_lock', normalPreflightStart);
 assert.notEqual(resolveBunStart, -1, 'Unix installer must define resolve_bun');
 assert.notEqual(normalPreflightStart, -1, 'Unix installer must resolve Bun before normal installation');
 assert.notEqual(normalPreflightEnd, -1, 'Unix installer must retain its normal Bun preflight');
