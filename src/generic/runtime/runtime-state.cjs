@@ -1,5 +1,5 @@
 const fs = require('node:fs');
-const { join } = require('node:path');
+const { dirname, join } = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
@@ -80,6 +80,7 @@ function processList() {
 function activeRuntimeProcesses(root, processes) {
   const normalize = value => process.platform === 'win32' ? value.replaceAll('\\', '/').toLowerCase() : value;
   const resolved = fs.realpathSync(root);
+  const rootIdentity = process.platform === 'win32' ? fs.statSync(root, { bigint: true }) : null;
   const roots = [...new Set([root, resolved,
     ...(process.platform === 'darwin' && /^\/private\/(?:var|tmp|etc)\//.test(resolved) ? [resolved.slice(8)] : []),
   ].map(normalize))];
@@ -97,6 +98,18 @@ function activeRuntimeProcesses(root, processes) {
       // update 包装器不会加载上游分块；其他命令（含后台 host）都占用运行时。
       if (/^["']?\s+(?:update|upgrade)(?:\s|$)/.test(rest) && entry === 'cli.cjs') continue;
       return true;
+    }
+    if (rootIdentity && rootIdentity.ino !== 0n) for (const [index, word] of words.entries()) {
+      const path = word.replace(/^["']|["']$/g, '');
+      if (!/^[a-z]:\//i.test(path) || !/\/(?:cli\.cjs|cli\.original\.cjs|cli\.js)$/.test(path)) continue;
+      try {
+        // Bun 的 realpath 可能保留 Windows 8.3 拼写，用目录文件身份识别同一运行时。
+        const identity = fs.statSync(dirname(path), { bigint: true });
+        if (identity.ino === rootIdentity.ino && identity.dev === rootIdentity.dev) {
+          if (/\/cli\.cjs$/.test(path) && ['update', 'upgrade'].includes(words[index + 1])) continue;
+          return true;
+        }
+      } catch {}
     }
     // shortcut: 旧版相对入口无法可靠跨平台取得 cwd，先保守拒绝；增加进程 cwd 查询后可缩小范围。
     return words.some((word, index) => {

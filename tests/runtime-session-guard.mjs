@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import state from '../src/generic/runtime/runtime-state.cjs';
 
 assert.equal(typeof state.acquireRuntime, 'function', '升级必须先取得独占运行时锁');
@@ -76,12 +77,7 @@ try {
   copyFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), join(root, 'repatch.mjs'));
   copyFileSync(new URL('../src/generic/runtime/vendor-transaction.mjs', import.meta.url), join(root, 'vendor-transaction.mjs'));
   const native = join(dir, '2.1.314'); writeFileSync(native, 'fixture');
-  if (process.platform === 'win32') {
-    writeFileSync(helper, readFileSync(helper, 'utf8') + `\nconst acquire = module.exports.acquireRuntime; module.exports.acquireRuntime = (root, ...args) => { const rows = processList(); console.error(JSON.stringify({ root, normalizedRoot: root.replaceAll('\\\\', '/').toLowerCase(), realpath: fs.realpathSync(root), cwd: process.cwd(), tokenPresent: Boolean(process.env.CLAWGOD_RUNTIME_WRITE_TOKEN), active: activeRuntimeProcesses(root, rows), legacy: rows.filter(row => row.pid === ${legacy.pid}) })); return acquire(root, ...args); };\n`);
-    assert.throws(() => require(helper).acquireRuntime(root), /先.*\/exit|正在使用/);
-  }
   const repatch = spawnSync(process.execPath, [join(root, 'repatch.mjs'), native], { encoding: 'utf8' });
-  if (process.platform === 'win32') console.log('Windows repatch diagnostic:', repatch.stderr);
   assert.notEqual(repatch.status, 0);
   assert.match(repatch.stderr, /先.*\/exit|正在使用/, '重补丁也必须在改写前拒绝活跃会话');
   assert.equal(readdirSync(root).some(name => name.startsWith('.runtime-rollback.')), false);
@@ -89,6 +85,19 @@ try {
   const relativeLegacy = await start(idle, 'cli.cjs', [], true);
   assert.throws(() => state.acquireRuntime(root), /先.*\/exit|正在使用/, '无法确认归属的旧版相对路径入口也必须保护');
   await stop(relativeLegacy);
+  if (process.platform === 'win32') {
+    const longRoot = fileURLToPath(pathToFileURL(root));
+    const identity = (await import('node:fs')).statSync(longRoot, { bigint: true });
+    assert.notEqual(identity.ino, 0n, 'Windows 目录身份必须可用，不能用零 inode 识别别名');
+    const aliasLegacy = await start(idle, 'cli.cjs');
+    assert.throws(() => state.acquireRuntime(longRoot), /先.*\/exit|正在使用/, '长路径根必须识别以 8.3 临时路径启动的会话');
+    const otherRoot = join(dir, 'other runtime'); mkdirSync(otherRoot);
+    const otherToken = state.acquireRuntime(otherRoot); state.releaseRuntime(otherRoot, otherToken);
+    await stop(aliasLegacy);
+    const aliasUpdater = await start(idle, 'cli.cjs', ['update']);
+    const aliasToken = state.acquireRuntime(longRoot); state.releaseRuntime(longRoot, aliasToken);
+    await stop(aliasUpdater);
+  }
   const updater = await start(idle, 'cli.cjs', ['update']);
   const updateToken = state.acquireRuntime(root, process.pid);
   state.releaseRuntime(root, updateToken);
