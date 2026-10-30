@@ -94,6 +94,16 @@ try {
     const otherRoot = join(dir, 'other runtime'); mkdirSync(otherRoot);
     const otherToken = state.acquireRuntime(otherRoot); state.releaseRuntime(otherRoot, otherToken);
     await stop(aliasLegacy);
+    const savedPath = process.env.PATH, savedSystemRoot = process.env.SystemRoot;
+    try {
+      process.env.PATH = '';
+      const narrowToken = state.acquireRuntime(otherRoot); state.releaseRuntime(otherRoot, narrowToken);
+      process.env.SystemRoot = join(dir, 'missing Windows');
+      assert.throws(() => state.acquireRuntime(otherRoot), /无法检查/, '缺少系统 PowerShell 时必须拒绝维护');
+    } finally {
+      process.env.PATH = savedPath;
+      process.env.SystemRoot = savedSystemRoot;
+    }
     const aliasUpdater = await start(idle, 'cli.cjs', ['update']);
     const aliasToken = state.acquireRuntime(longRoot); state.releaseRuntime(longRoot, aliasToken);
     await stop(aliasUpdater);
@@ -109,14 +119,13 @@ try {
 
   const foreignWriter = await start(`const s=require('./runtime-state.cjs');console.log('ready '+s.acquireRuntime(__dirname));process.stdin.once('data',()=>process.exit(0));`);
   const foreignToken = foreignWriter.ready.trim().split(' ').at(-1);
-  if (process.platform === 'win32') writeFileSync(helper, readFileSync(helper, 'utf8')
-    .replace('const lock = readLock(join(root, WRITE_LOCK));', `fs.writeSync(2,JSON.stringify({phase:'entry',root,exists:fs.existsSync(join(root,WRITE_LOCK))})+'\\n'); const lock = readLock(join(root, WRITE_LOCK)); fs.writeSync(2,JSON.stringify({phase:'read',lockPid:lock?.pid,tokenMatches:process.env.CLAWGOD_RUNTIME_WRITE_TOKEN===lock?.token,alive:lock&&alive(lock.pid)})+'\\n');`)
-    .replace('if (ancestors(process.ppid, processList()).has(lock.pid)) return;', `const chain=[...ancestors(process.ppid,processList())]; fs.writeSync(2,JSON.stringify({phase:'ancestry',pid:process.pid,ppid:process.ppid,chain,lockPid:lock.pid})+'\\n'); if(chain.includes(lock.pid)){fs.writeSync(2,'allowed\\n');return;}`)
-    .replace("throw Error('ClawGod 正在升级/维护", "fs.writeSync(2,'throwing\\n'); throw Error('ClawGod 正在升级/维护"));
-  const forged = spawnSync(process.execPath, ['-e', `const fs=require('node:fs');const lock=JSON.parse(fs.readFileSync(require('node:path').join(${JSON.stringify(root)},'.runtime-write.lock'),'utf8'));console.log(JSON.stringify({pid:process.pid,ppid:process.ppid,lockPid:lock.pid,platform:process.platform,tokenPresent:Boolean(process.env.CLAWGOD_RUNTIME_WRITE_TOKEN),lockStatus:fs.lstatSync(require('node:path').join(${JSON.stringify(root)},'.runtime-write.lock')).isFile(),rows:process.platform==='win32'?require('node:child_process').spawnSync('powershell.exe',['-NoProfile','-Command',\`Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate | ConvertTo-Json -Compress\`],{encoding:'utf8'}).stdout:null}));try {require(${JSON.stringify(helper)}).enterRuntime(${JSON.stringify(root)});fs.writeSync(2,'entered\\n');process.exit(0)}catch(error){fs.writeSync(2,'caught:'+error.message+'\\n');process.exit(17)}`], {
+  const forgedScript = join(root, 'foreign-token.cjs');
+  writeFileSync(forgedScript, `try { require('./runtime-state.cjs').enterRuntime(__dirname); process.exit(0); } catch (error) { require('node:fs').writeSync(2, error.message); process.exit(17); }`);
+  const forged = spawnSync(process.execPath, [forgedScript], {
     encoding: 'utf8', env: { ...process.env, CLAWGOD_RUNTIME_WRITE_TOKEN: foreignToken },
   });
-  assert.notEqual(forged.status, 0, `不是安装器后代的进程即使知道 token 也不能启动：${forged.stdout}${forged.stderr}`);
+  assert.equal(forged.status, 17, '不是安装器后代的进程即使知道 token 也不能启动');
+  assert.match(forged.stderr, /升级|维护/, '必须确认为维护锁拒绝，而不是脚本加载失败');
   await stop(foreignWriter);
   state.releaseRuntime(root, foreignToken);
 
