@@ -7,7 +7,7 @@ import { runInNewContext } from 'node:vm';
 
 const helper = new URL('../src/unix/desktop/desktop-language.mjs', import.meta.url);
 assert.ok(existsSync(helper), 'Desktop enhancement must include native Chinese language support');
-const { installDesktopChinese, restoreDesktopChinese } = await import(helper.href);
+const { installDesktopChinese, restoreDesktopChinese, patchPackedDesktopChinese } = await import(helper.href);
 const oldList = '["en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"]';
 const catalogs = { schemaVersion: 1, locale: 'zh-Hans', base: { greeting: '你好', language: '语言' }, dynamic: { model: '模型' } };
 const root = mkdtempSync(join(tmpdir(), 'clawgod Desktop Chinese '));
@@ -26,6 +26,36 @@ function fixture(name, source = `var supported=${oldList},fallback=${oldList};`)
   return { app, ion, backup: join(root, name, 'language-backup'), script: join(ion, 'assets/v1/shared-renamed.js') };
 }
 try {
+  assert.equal(typeof patchPackedDesktopChinese, 'function', 'packed Desktop resources need a pure language transform');
+  const packedScript = `var choices=${oldList};function accepts(v){return choices.includes(v)}var fallback="en-US",startup=${oldList};function choose(v,locales=startup){return locales.includes(v)?v:fallback}globalThis.result={accepts:accepts("zh-Hans"),startup:choose("zh-Hans")};`;
+  const packedEntries = {
+    'assets/v1/locale-renamed.js': packedScript,
+    'index.html': '<html><head></head><body></body></html>',
+    'i18n/en-US.json': JSON.stringify({ greeting: 'Hello', untranslated: 'New feature', name: 'Hello {name}', count: '{count, plural, one {one} other {many}}' }),
+    'i18n/dynamic/en-US.json': JSON.stringify({ model: 'Model', added: 'New model' }),
+  };
+  const packedCatalogs = { ...catalogs, base: { ...catalogs.base, name: '你好 {wrong}', count: '{count, plural, other {多个}}' } };
+  const packedBefore = JSON.stringify(packedEntries);
+  const packed = patchPackedDesktopChinese(packedEntries, packedCatalogs);
+  assert.equal(JSON.stringify(packedEntries), packedBefore, 'a pure transform must not mutate the supplied resources');
+  const packedContext = {};
+  runInNewContext(packed.entries['assets/v1/locale-renamed.js'], packedContext);
+  assert.equal(packedContext.result.accepts, true, 'packed language menu accepts Chinese');
+  assert.equal(packedContext.result.startup, 'zh-Hans', 'packed cold start must retain Chinese');
+  assert.deepEqual(JSON.parse(packed.entries['i18n/zh-Hans.json']), { greeting: '你好', untranslated: 'New feature', name: 'Hello {name}', count: '{count, plural, other {多个}}' });
+  assert.deepEqual(JSON.parse(packed.entries['i18n/dynamic/zh-Hans.json']), { model: '模型', added: 'New model' });
+  assert.equal(rendererLocales(packed.entries['index.html']).includes('zh-Hans'), true);
+  const malformedIcu = patchPackedDesktopChinese(packedEntries, { ...packedCatalogs, base: { count: '{count, plural}' } });
+  assert.equal(JSON.parse(malformedIcu.entries['i18n/zh-Hans.json']).count, '{count, plural, one {one} other {many}}', 'plural without options must fall back to valid English');
+  const allPacked = { ...packedEntries, ...packed.entries };
+  assert.deepEqual(patchPackedDesktopChinese(allPacked, packedCatalogs).entries, {}, 'packed reruns must not rewrite unchanged resources');
+  assert.throws(() => patchPackedDesktopChinese({ ...packedEntries, 'assets/v1/duplicate.js': packedScript }, packedCatalogs), /locale|ambiguous|expected/i);
+  assert.throws(() => patchPackedDesktopChinese({ ...packedEntries, 'assets/v1/locale-renamed.js': packedScript + 'function {' }, packedCatalogs), /syntax|parse|Unexpected|Expected/i);
+  assert.throws(() => patchPackedDesktopChinese({ ...packedEntries, 'i18n/dynamic/en-US.json': '[]' }, packedCatalogs), /catalog/i);
+  const cli = Bun.spawnSync([process.execPath, new URL(helper).pathname, 'packed'], { stdin: Buffer.from(JSON.stringify({ entries: packedEntries, catalogs: packedCatalogs })) });
+  assert.equal(cli.exitCode, 0, cli.stderr.toString());
+  assert.deepEqual(JSON.parse(cli.stdout.toString()).entries, packed.entries, 'shell bridge must return the same packed resource changes');
+
   const absent = join(root, 'missing.app');
   installDesktopChinese(absent, join(root, 'missing-backup'), catalogs);
   assert.equal(existsSync(absent), false, 'absent Desktop must not be created');

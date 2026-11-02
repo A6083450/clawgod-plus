@@ -26623,20 +26623,46 @@ run_claude_desktop_enhancement() {
 #   - 备份保存在 ~/Library/Application Support/Claude-3p/app.asar.orig-<版本>
 #   - 回滚：bash restore-claude-3p-cu-browser.sh --restore
 #   - 安装器调用 --install [Claude.app 路径]：运行中的应用跳过，完成后不启动应用
+#   - 4.4212.0：--prepare 手动汉化 ion-dist.asar；--prepare-cu 仅在3p静态且用户开启时补缺失CU项。
+#     --prepare <原始.app> <新候选.app> 离线生成候选；失败不替换原应用。
+#     新版回滚使用完整 .app 备份，不能用旧 --restore 恢复官方签名。
 
 set -euo pipefail
 
 APP="/Applications/Claude.app"
 MODE="${1:-}"
 case "$MODE" in
-  --install|--restore) APP="${2:-$APP}" ;;
+  '') [[ $# -eq 0 ]] || { printf '%s\n' 'ERROR: unexpected arguments' >&2; exit 1; } ;;
+  --install|--restore) [[ $# -le 2 ]] || { printf '%s\n' 'ERROR: unexpected arguments' >&2; exit 1; }; APP="${2:-$APP}" ;;
+  --prepare|--prepare-cu) [[ $# -eq 3 ]] || { printf '%s\n' 'usage: --prepare|--prepare-cu <Claude.app> <new-candidate.app>' >&2; exit 1; }; APP="$2" ;;
+  *) printf '%s\n' 'ERROR: unsupported Desktop helper option' >&2; exit 1 ;;
 esac
 ASAR="$APP/Contents/Resources/app.asar"
 MAIN_PLIST="$APP/Contents/Info.plist"
 USER_DATA_3P="$HOME/Library/Application Support/Claude-3p"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
-if [[ "$MODE" == "--install" ]]; then
+packed_running() {
+  local processes process process_app
+  processes=$(ps -axo comm=) || die "无法确认 Desktop 进程状态"
+  while IFS= read -r process; do
+    case "$process" in
+      */Contents/MacOS/*|*/Contents/Frameworks/*)
+        process_app="${process%%/Contents/*}"
+        [[ "$process_app" -ef "$APP" ]] && return 0 ;;
+    esac
+  done <<< "$processes"
+  return 1
+}
+if [[ -f "$APP/Contents/Resources/ion-dist.asar" ]]; then
+  [[ "$APP" = /* && "$APP" == *.app && "$APP" != *'//'* && "$APP" != *'/../'* && "$APP" != *'/./'* ]] || die "应用路径必须为规范绝对路径"
+fi
+if [[ "$MODE" == "--install" && -f "$APP/Contents/Resources/ion-dist.asar" ]]; then
+  if packed_running; then
+    printf '%s\n' '==> Claude Desktop 正在运行，跳过；完全退出后再手动安装'
+    exit 0
+  fi
+elif [[ "$MODE" == "--install" ]]; then
   [[ -f "$ASAR" ]] || { echo "==> Claude Desktop 未安装，跳过增强"; exit 0; }
   if pgrep -x Claude >/dev/null; then
     echo "==> Claude Desktop 正在运行，跳过增强；退出后重新运行 ClawGod 安装器"
@@ -26648,6 +26674,9 @@ command -v python3 >/dev/null || die "需要 python3"
 command -v codesign >/dev/null || die "需要 codesign（安装 Xcode Command Line Tools）"
 
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$MAIN_PLIST" 2>/dev/null || echo unknown)
+case "$VERSION" in
+  4.*) [[ -f "$APP/Contents/Resources/ion-dist.asar" && ! -L "$APP/Contents/Resources/ion-dist.asar" ]] || die "新版界面归档缺失或不安全；拒绝旧版补丁回落" ;;
+esac
 BACKUP="$USER_DATA_3P/app.asar.orig-$VERSION"
 LANGUAGE_HELPER="$(dirname "${BASH_SOURCE[0]}")/desktop-language.mjs"
 LANGUAGE_BACKUP="$USER_DATA_3P/desktop-language.orig-$VERSION"
@@ -26671,7 +26700,7 @@ get_plist_hash() {
 }
 
 sign_claude() {
-  python3 - "$APP" <<'SIGN_CLAUDE_EOF'
+  python3 -I - "$APP" <<'SIGN_CLAUDE_EOF'
 import os, pathlib, plistlib, subprocess, sys, tempfile
 
 app = pathlib.Path(sys.argv[1])
@@ -26723,6 +26752,357 @@ except Exception as error:
     sys.exit(1)
 SIGN_CLAUDE_EOF
 }
+
+patch_packed_language() {
+  python3 -I - "$APP" "$LANGUAGE_HELPER" "${CLAWGOD_BUN_BIN:-bun}" "$MODE" <<'PACKED_LANGUAGE_EOF'
+import copy, hashlib, json, os, pathlib, plistlib, re, struct, subprocess, sys, tempfile
+
+app, helper, bun = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+operation = sys.argv[4] if len(sys.argv) > 4 else '--prepare'
+if operation not in ('--prepare', '--prepare-cu', '--install'):
+    raise ValueError('Unsupported packed Desktop operation')
+sha = lambda data: hashlib.sha256(data).hexdigest()
+
+# BEGIN STATIC CU TRANSFORM
+import os, re, subprocess
+
+def patch_static_cu(source):
+    identifier = r'[A-Za-z_$][\w$]*'
+    call = rf'{identifier}\(\{{builtinBrowserEnabled:this\.builtinBrowserEnabled\(\),selfHostedSessions:{identifier}\({identifier}\)\}}\)'
+    method = re.compile(rf'hardcodedMainGrowthBookFeatures\(\)\{{(?:return |/\*clawgod-static-cu-v1\*/let __clawgodCuBase=)({call})(?=;|\}})')
+    static = re.compile(rf'growthBookSource\(\)\{{let ({identifier})=({identifier})\(\);if\(!({identifier})\(\1\)\)return\{{kind:"static",features:this\.hardcodedMainGrowthBookFeatures\(\)\}};')
+    preference = re.compile(rf'function {identifier}\(({identifier})=\{{\}}\)\{{return!{identifier}\(\)\|\|{identifier}\(\)\?!1:{identifier}\(\1\)&&({identifier})\("chicagoEnabled"\)\}}')
+    methods, sources, preferences = list(method.finditer(source)), list(static.finditer(source)), list(preference.finditer(source))
+    if len(methods) != 1 or len(sources) != 1 or len(preferences) != 1:
+        raise ValueError('Static CU target missing or ambiguous')
+    match, branch, setting = methods[0], sources[0], preferences[0]
+    if not 0 < branch.start() - match.end() < 2500 or 'hardcodedMainGrowthBookFeatures(){' in source[match.end():branch.start()]:
+        raise ValueError('Static CU methods are not associated')
+    original = 'hardcodedMainGrowthBookFeatures(){return ' + match[1] + '}'
+    defaults = '[["1291166712",{enabled:true}],["4293378213",true],["36693946",true]]'
+    patched = ('hardcodedMainGrowthBookFeatures(){/*clawgod-static-cu-v1*/let __clawgodCuBase=' + match[1]
+               + ';if(' + branch[3] + '(' + branch[2] + '())||' + setting[2] + '("chicagoEnabled")!==!0)return __clawgodCuBase;'
+               + 'let __clawgodCuMap={...__clawgodCuBase};for(let[k,v]of' + defaults
+               + ')if(!Object.prototype.hasOwnProperty.call(__clawgodCuMap,k))__clawgodCuMap[k]={value:v,on:!!v,off:!v,source:"force",experiment:null,experimentResult:null};return __clawgodCuMap;}')
+    if source.startswith(patched, match.start()):
+        output = source
+    elif source.startswith(original, match.start()):
+        output = source[:match.start()] + patched + source[match.start() + len(original):]
+    else:
+        raise ValueError('Unknown or partial static CU patch')
+    startup = re.compile(rf'let ({identifier})=({identifier})\(\)\.growthBookSource\(\);if\(\1.kind==="static"\)\{{({identifier})\(\1.features,"map-final"\);return\}}')
+    update = re.compile(rf'{identifier}\.data==="chicagoEnabled"&&{identifier}!=={identifier}\.data&&\(')
+    startups, updates = list(startup.finditer(output)), list(update.finditer(output))
+    if len(startups) != 1 or len(updates) != 1:
+        raise ValueError('Static CU preference refresh target missing or ambiguous')
+    apply, change = startups[0], updates[0]
+    refresh = ('/*clawgod-static-cu-refresh-v1*/(()=>{if(' + apply[2] + '().type!=="3p")return;let e='
+               + apply[2] + '().growthBookSource();if(e.kind==="static")' + apply[3] + '(e.features,"map-final")})(),')
+    after = output[change.end():]
+    original_refresh = re.compile(rf'{identifier}\(\),Promise\.resolve\(\)\.then\(')
+    if after.startswith(refresh):
+        if not original_refresh.match(after[len(refresh):]):
+            raise ValueError('Unknown static CU preference refresh patch')
+    elif original_refresh.match(after):
+        output = output[:change.end()] + refresh + after
+    else:
+        raise ValueError('Unknown static CU preference update shape')
+    syntax = subprocess.run([os.environ.get('CLAWGOD_BUN_BIN', 'bun'), '-e', 'new Bun.Transpiler({loader:"js"}).transformSync(await Bun.stdin.text());'],
+                            input=output, text=True, capture_output=True)
+    if syntax.returncode:
+        raise ValueError('Static CU JavaScript syntax check failed: ' + syntax.stderr.strip())
+    return output
+# END STATIC CU TRANSFORM
+
+def regular(path):
+    parents = (parent for parent in (path, *path.parents) if parent == app or app in parent.parents)
+    if any(parent.is_symlink() for parent in parents) or not path.is_file():
+        raise ValueError('Unsafe Desktop resource: ' + str(path))
+    return path.read_bytes()
+
+def archive(raw, unpacked):
+    if len(raw) < 16:
+        raise ValueError('Truncated ASAR header')
+    a, b, c, length = struct.unpack('<4I', raw[:16])
+    start = 8 + b
+    if a != 4 or b != c + 4 or length > c - 4 or start > len(raw):
+        raise ValueError('Invalid ASAR header bounds')
+    header = json.loads(raw[16:16 + length])
+    entries, intervals = {}, []
+    def walk(node, prefix=''):
+        for name, value in node['files'].items():
+            if not name or name in ('.', '..') or '/' in name or '\\' in name:
+                raise ValueError('Unsafe ASAR path')
+            path = prefix + name
+            if 'files' in value:
+                walk(value, path + '/')
+                continue
+            if 'link' in value:
+                raise ValueError('Unsupported ASAR link')
+            size, integrity = value.get('size'), value.get('integrity', {})
+            if type(size) is not int or size < 0 or integrity.get('algorithm') != 'SHA256':
+                raise ValueError('Invalid ASAR size or integrity')
+            block = integrity.get('blockSize')
+            if type(block) is not int or block <= 0:
+                raise ValueError('Invalid ASAR block size')
+            if value.get('unpacked'):
+                source = unpacked / path
+                regular(source)
+                # 官方原生模块在打包后签名，ASAR 的 unpacked 长度/哈希可能已过时；由 codesign 核验。
+                entries[path] = (value, b'')
+                continue
+            else:
+                offset = value.get('offset')
+                if not isinstance(offset, str) or not re.fullmatch(r'\d+', offset):
+                    raise ValueError('Invalid ASAR offset')
+                offset = int(offset)
+                if start + offset + size > len(raw):
+                    raise ValueError('ASAR entry outside archive')
+                intervals.append((offset, offset + size))
+                data = raw[start + offset:start + offset + size]
+            blocks = [sha(data[i:i + block]) for i in range(0, len(data), block)] or [sha(b'')]
+            if len(data) != size or sha(data) != integrity.get('hash') or blocks != integrity.get('blocks'):
+                raise ValueError('ASAR content integrity mismatch: ' + path)
+            entries[path] = (value, data)
+    walk(header)
+    end = 0
+    for left, right in sorted(set(intervals)):
+        if left < end:
+            raise ValueError('Overlapping ASAR entries')
+        end = right
+    return header, entries, sha(raw[16:16 + length]), start, end
+
+plist_path = app / 'Contents/Info.plist'
+original_plist = regular(plist_path)
+plist = plistlib.loads(original_plist)
+if plist.get('CFBundleShortVersionString') != '4.4212.0' or plist.get('CFBundleIdentifier') != 'com.anthropic.claudefordesktop':
+    raise ValueError('Unsupported packed Desktop version or identity')
+def integrity_digest(value):
+    return hashlib.sha256(''.join(key + value[key]['algorithm'] + value[key]['hash'] for key in sorted(value)).encode('utf-8')).digest()
+
+framework_path = app / 'Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework'
+framework = regular(framework_path)
+sentinel = b'AGbevlPCksUGKNL8TSn7wGmJEuJsXb2A'
+slot = framework.find(sentinel)
+if framework.count(sentinel) != 1 or framework[slot + 32:slot + 34] != b'\x01\x01' or slot + 66 > len(framework):
+    raise ValueError('Unsupported Electron integrity digest slot')
+if framework[slot + 34:slot + 66] != integrity_digest(plist.get('ElectronAsarIntegrity', {})):
+    raise ValueError('Electron integrity dictionary digest mismatch')
+archives = {}
+for name in ('app.asar', 'ion-dist.asar'):
+    path = app / 'Contents/Resources' / name
+    raw = regular(path)
+    parsed = archive(raw, path.with_name(name + '.unpacked'))
+    expected = plist.get('ElectronAsarIntegrity', {}).get('Resources/' + name, {})
+    if expected.get('algorithm') != 'SHA256' or expected.get('hash') != parsed[2]:
+        raise ValueError('Desktop plist ASAR integrity mismatch: ' + name)
+    archives[name] = (path, raw, parsed)
+path, raw, (header, entries, old_hash, start, end) = archives['ion-dist.asar']
+record_path = app / 'Contents/Resources/clawgod-language.json'
+record = None
+if record_path.exists() or record_path.is_symlink():
+    record = json.loads(regular(record_path))
+    if (record.get('schemaVersion') != 1 or record.get('version') != plist['CFBundleShortVersionString']
+            or record.get('build') != plist.get('CFBundleVersion')
+            or record.get('identifier') != plist['CFBundleIdentifier']
+            or record.get('main') != sha(archives['app.asar'][1])
+            or record.get('after') != sha(raw)):
+        raise ValueError('Desktop packed language ownership changed')
+language_record = record
+cu_record_path = app / 'Contents/Resources/clawgod-cu.json'
+cu_record = None
+if cu_record_path.exists() or cu_record_path.is_symlink():
+    cu_record = json.loads(regular(cu_record_path))
+    if (cu_record.get('schemaVersion') != 1 or cu_record.get('mode') != '3p-static-opt-in'
+            or not re.fullmatch(r'[a-f0-9]{64}', str(cu_record.get('before', '')))
+            or cu_record.get('version') != plist['CFBundleShortVersionString']
+            or cu_record.get('build') != plist.get('CFBundleVersion')
+            or cu_record.get('identifier') != plist['CFBundleIdentifier']
+            or cu_record.get('after') != sha(archives['app.asar'][1])
+            or cu_record.get('ion') != sha(archives['ion-dist.asar'][1])):
+        raise ValueError('Desktop static CU ownership changed')
+if operation == '--prepare-cu':
+    if record is None:
+        raise ValueError('Static CU requires the verified managed language application')
+    path, raw, (header, entries, old_hash, start, end) = archives['app.asar']
+    targets = [(name, data) for name, (value, data) in entries.items()
+               if name.startswith('.vite/build/') and name.endswith('.js') and not value.get('unpacked')
+               and b'hardcodedMainGrowthBookFeatures(){' in data and b'growthBookSource(){' in data
+               and b'"chicagoEnabled"' in data]
+    if len(targets) != 1:
+        raise ValueError('Static CU archive target missing or ambiguous')
+    target, content = targets[0]
+    patched = patch_static_cu(content.decode('utf-8'))
+    changes = {} if patched.encode('utf-8') == content else {target: patched}
+    if cu_record is not None:
+        if changes:
+            raise ValueError('Static CU patch shape changed')
+        print('RESULT=STATIC_CU_ALREADY_PATCHED')
+        sys.exit(0)
+    if not changes:
+        raise ValueError('Unowned static CU patch')
+    report = {}
+else:
+    if any(value.get('unpacked') for value, _ in entries.values()):
+        raise ValueError('Packed language archive must not contain unpacked entries')
+    texts = {}
+    for name, (value, data) in entries.items():
+        if (name.startswith('assets/') and name.endswith('.js')) or name in ('index.html', 'i18n/en-US.json', 'i18n/dynamic/en-US.json', 'i18n/zh-Hans.json', 'i18n/dynamic/zh-Hans.json'):
+            texts[name] = data.decode('utf-8')
+    result = subprocess.run([bun, helper, 'packed'], input=json.dumps({'entries': texts}), capture_output=True, text=True)
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or 'Desktop language transform failed')
+    report = json.loads(result.stdout)
+    changes = report['entries']
+    if not isinstance(changes, dict):
+        raise ValueError('Invalid Desktop language changes')
+    if not changes:
+        if record is None:
+            raise ValueError('Unowned packed language patch; original application required')
+        print('RESULT=PACKED_ALREADY_PATCHED')
+        sys.exit(0)
+    if record is not None:
+        raise ValueError('Desktop language patch shape changed; original application required')
+new_header = copy.deepcopy(header)
+all_data = {name: data for name, (_, data) in entries.items()}
+for name, text in changes.items():
+    parts = pathlib.PurePosixPath(name).parts
+    if not isinstance(text, str) or name.startswith('/') or '\\' in name or any(part in ('', '.', '..') for part in parts):
+        raise ValueError('Unsafe Desktop language change')
+    if name not in entries and name not in ('i18n/zh-Hans.json', 'i18n/dynamic/zh-Hans.json'):
+        raise ValueError('Unexpected new Desktop resource')
+    all_data[name] = text.encode('utf-8')
+    directory = new_header
+    for part in parts[:-1]:
+        directory = directory['files'].setdefault(part, {'files': {}})
+    value = directory['files'].setdefault(parts[-1], {'integrity': {'algorithm': 'SHA256', 'blockSize': 4194304}})
+    data, block = all_data[name], value['integrity']['blockSize']
+    value['size'] = len(data)
+    value['integrity']['hash'] = sha(data)
+    value['integrity']['blocks'] = [sha(data[i:i + block]) for i in range(0, len(data), block)] or [sha(b'')]
+chunks, offset = [], 0
+
+def offsets(node, prefix=''):
+    global offset
+    for name, value in node['files'].items():
+        full = prefix + name
+        if 'files' in value:
+            offsets(value, full + '/')
+        elif not value.get('unpacked'):
+            value['offset'] = str(offset)
+            data = all_data[full]
+            chunks.append(data)
+            offset += len(data)
+
+offsets(new_header)
+encoded = json.dumps(new_header, ensure_ascii=False, separators=(',', ':')).encode()
+padding = (-len(encoded)) % 4
+prefix = struct.pack('<4I', 4, len(encoded) + padding + 8, len(encoded) + padding + 4, len(encoded))
+output = prefix + encoded + b'\0' * padding + b''.join(chunks) + raw[start + end:]
+archive(output, path.with_name(path.name + '.unpacked'))
+plist['ElectronAsarIntegrity']['Resources/' + path.name]['hash'] = sha(encoded)
+updated_plist = plistlib.dumps(plist, fmt=plistlib.FMT_BINARY if original_plist.startswith(b'bplist') else plistlib.FMT_XML, sort_keys=False)
+# Electron also seals the complete plist integrity dictionary in its framework.
+updated_framework = framework[:slot + 34] + integrity_digest(plist['ElectronAsarIntegrity']) + framework[slot + 66:]
+# 只修改私有候选；任一资源写入失败时不发布候选应用。
+if operation == '--prepare-cu':
+    record = {**language_record, 'main': sha(output)}
+    cu_record = {'schemaVersion': 1, 'version': plist['CFBundleShortVersionString'], 'build': plist.get('CFBundleVersion'),
+                 'identifier': plist['CFBundleIdentifier'], 'mode': '3p-static-opt-in',
+                 'before': sha(raw), 'after': sha(output), 'ion': sha(archives['ion-dist.asar'][1])}
+else:
+    record = {'schemaVersion': 1, 'version': plist['CFBundleShortVersionString'], 'build': plist.get('CFBundleVersion'),
+              'identifier': plist['CFBundleIdentifier'], 'main': sha(archives['app.asar'][1]),
+              'before': sha(raw), 'after': sha(output)}
+writes = [(path, output), (plist_path, updated_plist), (framework_path, updated_framework), (record_path, (json.dumps(record) + '\n').encode())]
+if operation == '--prepare-cu':
+    writes.append((cu_record_path, (json.dumps(cu_record) + '\n').encode()))
+for target, data in writes:
+    fd, temporary = tempfile.mkstemp(prefix='.clawgod-', dir=target.parent)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(data)
+        os.chmod(temporary, target.stat().st_mode & 0o777 if target.exists() else 0o644)
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+print('RESULT=PACKED_PATCH_OK')
+print('TRANSLATED=%s TOTAL=%s' % (report.get('translated'), report.get('total')))
+PACKED_LANGUAGE_EOF
+}
+
+source_fingerprint() {
+  python3 -I - "$1" <<'SOURCE_FINGERPRINT_EOF'
+import hashlib, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+names = ('Contents/Info.plist', 'Contents/Resources/app.asar', 'Contents/Resources/ion-dist.asar',
+         'Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework',
+         'Contents/Resources/clawgod-language.json', 'Contents/Resources/clawgod-cu.json')
+parts = []
+for name in names:
+    path = root / name
+    if path.is_symlink():
+        raise ValueError('Unsafe source ownership or resource link')
+    value = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else 'absent'
+    parts.append(name + ':' + value)
+print('|'.join(parts))
+SOURCE_FINGERPRINT_EOF
+}
+
+if [[ -f "$APP/Contents/Resources/ion-dist.asar" ]]; then
+  [[ "$VERSION" == "4.4212.0" ]] || die "仅验证了 packed Desktop 4.4212.0；未知版本不修改"
+  [[ -f "$LANGUAGE_HELPER" ]] || die "缺少语言助手"
+  command -v "${CLAWGOD_BUN_BIN:-bun}" >/dev/null || die "需要 Bun"
+  codesign --verify --deep --strict "$APP" || die "输入应用签名完整性校验失败"
+  TARGET_APP="$APP"
+  SOURCE_ID=$(source_fingerprint "$APP") || die "无法记录源应用身份"
+  if [[ "$MODE" == "--prepare" || "$MODE" == "--prepare-cu" ]]; then
+    DESTINATION="$3"
+    [[ "$DESTINATION" = /* && "$DESTINATION" == *.app && "$DESTINATION" != *'//'* && "$DESTINATION" != *'/../'* && "$DESTINATION" != *'/./'* && ! -e "$DESTINATION" && ! -L "$DESTINATION" ]] || die "候选路径必须是新的规范绝对路径"
+    case "$DESTINATION" in "$APP/"*) die "候选不得位于源应用内" ;; esac
+  elif [[ "$MODE" == "--install" ]]; then
+    if packed_running; then printf '%s\n' '==> Claude Desktop 正在运行，跳过'; exit 0; fi
+    DESTINATION="$APP"
+  elif [[ "$MODE" == "--restore" ]]; then
+    die "新版使用完整官方应用备份回滚；资源恢复不能恢复官方签名"
+  else
+    die "新版请显式使用 --prepare 或 --install，不自动退出正在运行的应用"
+  fi
+  [[ ! -L "$APP" && -d "$APP" && -d "$(dirname "$DESTINATION")" ]] || die "不安全的应用或候选路径"
+  STAGING=$(mktemp -d "$(dirname "$DESTINATION")/.clawgod-desktop.XXXXXX")
+  chmod 700 "$STAGING"
+  trap 'rm -rf "$STAGING"' EXIT
+  cp -pR "$APP" "$STAGING/Claude.app"
+  APP="$STAGING/Claude.app"
+  patch_packed_language || die "新版汉化预检失败；原应用保持不变"
+  sign_claude || die "候选签名失败；原应用保持不变"
+  APP="$TARGET_APP"
+  CURRENT_ID=$(source_fingerprint "$APP") || die "无法重新核验源应用身份"
+  [[ "$CURRENT_ID" == "$SOURCE_ID" ]] || die "源应用在准备过程中改变，取消发布"
+  if [[ "$MODE" == "--prepare" || "$MODE" == "--prepare-cu" ]]; then
+    [[ ! -e "$DESTINATION" && ! -L "$DESTINATION" ]] || die "候选目标已出现，拒绝覆盖"
+    mv "$STAGING/Claude.app" "$DESTINATION"
+    printf '%s\n' "==> 候选已生成：${DESTINATION}（未替换或启动当前应用）"
+    exit 0
+  fi
+  if packed_running; then die "Desktop 在准备过程中启动，取消替换"; fi
+  CURRENT_ID=$(source_fingerprint "$APP") || die "无法重新核验源应用身份"
+  [[ "$CURRENT_ID" == "$SOURCE_ID" ]] || die "源应用在准备过程中改变，取消替换"
+  codesign --verify --deep --strict "$APP" || die "发布前源签名校验失败"
+  mkdir -p "$USER_DATA_3P"
+  FULL_BACKUP=$(mktemp -d "$USER_DATA_3P/desktop-full-$VERSION.XXXXXX")
+  chmod 700 "$FULL_BACKUP"
+  mv "$APP" "$FULL_BACKUP/Claude.app"
+  if ! mv "$STAGING/Claude.app" "$APP"; then
+    mv "$FULL_BACKUP/Claude.app" "$APP"
+    die "发布失败，已恢复原应用"
+  fi
+  printf '%s\n' "==> 新版汉化已安装，未启动应用；完整回滚备份：$FULL_BACKUP/Claude.app"
+  printf '%s\n' '==> 保留原生浏览器和 CU 权限检查；补丁为 ad-hoc 签名，后续使用官方包手动更新'
+  exit 0
+fi
+[[ "$MODE" != "--prepare" && "$MODE" != "--prepare-cu" ]] || die "候选准备仅支持已验证的 packed Desktop"
 
 # ---------- --restore ----------
 if [[ "${1:-}" == "--restore" ]]; then
@@ -27060,6 +27440,104 @@ function owned(current, file) {
   if (hash(current) !== file.after && hash(current) !== file.before) throw new Error(`Desktop language ownership changed; user-modified file preserved: ${file.path}`);
 }
 
+export function patchPackedDesktopChinese(entries, catalogs) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) throw new Error('Invalid Desktop packed resources');
+  for (const [path, text] of Object.entries(entries)) {
+    if (isAbsolute(path) || path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..') || typeof text !== 'string') throw new Error('Unsafe Desktop packed resource path or value');
+  }
+  catalogs ??= JSON.parse(readFileSync(new URL('./desktop-zh-Hans.json', import.meta.url), 'utf8'));
+  if (catalogs?.schemaVersion !== 1 || catalogs.locale !== 'zh-Hans') throw new Error('Invalid Desktop Chinese catalog schema');
+  catalog(catalogs.base); catalog(catalogs.dynamic, true);
+  const changes = {}, plan = (path, text) => { if (entries[path] !== text) changes[path] = text; };
+  const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const lists = `(?:${escape(oldLocales)}|${escape(chineseLocales)})`;
+  const menu = new RegExp(`var ([\\w$]+)=(${lists});function [\\w$]+\\(([\\w$]+)\\)\\{return \\1\\.includes\\(\\3\\)\\}`, 'g');
+  const startup = new RegExp(`var [\\w$]+="en-US",[\\w$]+=(${lists});function [\\w$]+\\(`, 'g');
+  let menuCount = 0, startupCount = 0;
+  for (const [path, source] of Object.entries(entries)) {
+    if (!path.startsWith('assets/') || !path.endsWith('.js')) continue;
+    menuCount += [...source.matchAll(menu)].length;
+    startupCount += [...source.matchAll(startup)].length;
+    const patched = source.replace(menu, match => match.replace(oldLocales, chineseLocales))
+      .replace(startup, match => match.replace(oldLocales, chineseLocales));
+    if (patched !== source) {
+      new Bun.Transpiler({ loader: 'js' }).transformSync(patched);
+      plan(path, patched);
+    }
+  }
+  if (menuCount !== 1 || startupCount !== 1) throw new Error(`Desktop packed locale lists changed: expected 1 menu and 1 startup, found ${menuCount}/${startupCount}`);
+  const argumentsIn = text => {
+    const args = new Set();
+    if (/'[{}]/.test(text)) return null;
+    const content = (start, nested = false) => {
+      let i = start;
+      while (i < text.length) {
+        if (text[i] === '}') { if (!nested) throw new Error('Unexpected brace'); return i + 1; }
+        if (text[i++] !== '{') continue;
+        const head = /^\s*([\w]+)\s*([,}])/.exec(text.slice(i));
+        if (!head) throw new Error('Invalid argument');
+        i += head[0].length;
+        if (head[2] === '}') { args.add(head[1]); continue; }
+        const format = /^\s*(plural|selectordinal|select|number|date|time)\s*([,}])/.exec(text.slice(i));
+        if (!format) throw new Error('Invalid format');
+        args.add(`${head[1]}:${format[1]}`); i += format[0].length;
+        if (format[2] === '}') {
+          if (['plural', 'selectordinal', 'select'].includes(format[1])) throw new Error('Missing options');
+          continue;
+        }
+        if (!['plural', 'selectordinal', 'select'].includes(format[1])) {
+          const end = text.indexOf('}', i);
+          if (end < 0 || text.slice(i, end).includes('{')) throw new Error('Invalid style');
+          i = end + 1; continue;
+        }
+        const offset = /^\s*offset:\d+/.exec(text.slice(i));
+        if (offset) i += offset[0].length;
+        let other = false;
+        while (true) {
+          const option = /^\s*([\w=-]+)\s*\{/.exec(text.slice(i));
+          if (!option) throw new Error('Invalid option');
+          other ||= option[1] === 'other'; i = content(i + option[0].length, true);
+          const end = /^\s*\}/.exec(text.slice(i));
+          if (end) { if (!other) throw new Error('Missing other'); i += end[0].length; break; }
+        }
+      }
+      if (nested) throw new Error('Unclosed argument');
+      return i;
+    };
+    try { content(0); return [...args].sort().join(','); } catch { return null; }
+  };
+  let translated = 0, total = 0;
+  for (const [path, translations] of [['i18n', catalogs.base], ['i18n/dynamic', catalogs.dynamic]]) {
+    const english = JSON.parse(entries[`${path}/en-US.json`] ?? 'null');
+    catalog(english, path.endsWith('dynamic'));
+    const output = { ...english }, existing = entries[`${path}/zh-Hans.json`];
+    if (existing !== undefined) catalog(JSON.parse(existing), path.endsWith('dynamic'));
+    for (const [id, source] of Object.entries(english)) {
+      total++;
+      const text = translations[id], signature = argumentsIn(source);
+      // shortcut: 复杂 ICU 引号或嵌套格式保守回退英文，升级词表校验时再扩大支持。
+      if (typeof text === 'string' && signature !== null && argumentsIn(text) === signature) { output[id] = text; translated++; }
+    }
+    if (existing === undefined) plan(`${path}/zh-Hans.json`, JSON.stringify(output));
+  }
+  let html = entries['index.html'];
+  if (typeof html !== 'string') throw new Error('Desktop packed HTML missing');
+  const meta = html.match(/<meta\b[^>]*name=["']i18n-catalogs["'][^>]*>/g);
+  if (meta) {
+    if (meta.length !== 1 || !/data-i18n-catalogs="[^"]*"/.test(meta[0])) throw new Error('Desktop catalog manifest format changed');
+    html = html.replace(meta[0], meta[0].replace(/data-i18n-catalogs="([^"]*)"/, (match, value) => {
+      const values = value.split(',').filter(Boolean);
+      if (!values.some(item => item.startsWith('zh-Hans:'))) values.push('zh-Hans:1.1');
+      return `data-i18n-catalogs="${values.join(',')}"`;
+    }));
+  } else {
+    if (html.split('</head>').length !== 2) throw new Error('Desktop HTML format changed');
+    html = html.replace('</head>', '<meta name="i18n-catalogs" data-i18n-catalogs="zh-Hans:1.1"></head>');
+  }
+  plan('index.html', html);
+  return { entries: changes, translated, total };
+}
+
 export function installDesktopChinese(app, backup, catalogs) {
   app = resolve(app); backup = resolve(backup);
   if (!status(app)) return 'Claude Desktop not installed; Chinese language skipped';
@@ -27154,8 +27632,13 @@ export function restoreDesktopChinese(app, backup) {
 if (import.meta.main) {
   try {
     const [command, app, backup] = process.argv.slice(2);
-    if (!app || !backup || !['install', 'restore'].includes(command)) throw new Error('usage: desktop-language.mjs install|restore <Claude.app> <backup-directory>');
-    console.log(command === 'install' ? installDesktopChinese(app, backup) : restoreDesktopChinese(app, backup));
+    if (command === 'packed' && !app && !backup) {
+      const input = JSON.parse(await Bun.stdin.text());
+      console.log(JSON.stringify(patchPackedDesktopChinese(input.entries, input.catalogs)));
+    } else {
+      if (!app || !backup || !['install', 'restore'].includes(command)) throw new Error('usage: desktop-language.mjs install|restore <Claude.app> <backup-directory>');
+      console.log(command === 'install' ? installDesktopChinese(app, backup) : restoreDesktopChinese(app, backup));
+    }
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
 DESKTOP_LANGUAGE_EOF

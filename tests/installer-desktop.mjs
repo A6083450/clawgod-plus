@@ -109,7 +109,7 @@ try {
     writeFileSync(join(directory, 'desktop-language.mjs'), languageSource);
     writeFileSync(join(directory, 'desktop-zh-Hans.json'), '{"schemaVersion":1,"locale":"zh-Hans","base":{"hello":"你好"},"dynamic":{}}');
     executable(join(bin, 'pgrep'), `exit ${running ? 0 : 1}`);
-    executable(join(bin, 'python3'), '[ "$#" = 2 ] && exec "$CLAWGOD_REAL_PYTHON" "$@"\ncat >/dev/null\nprintf "RESULT=PATCH_OK\\n"');
+    executable(join(bin, 'python3'), '[ "$1" = -I ] && [ "$2" = - ] && exec "$CLAWGOD_REAL_PYTHON" "$@"\ncat >/dev/null\nprintf "RESULT=PATCH_OK\\n"');
     executable(join(bin, 'codesign'), `
 for argument do clawgod_sign_target="$argument"; done
 if [ "$1" = -d ]; then
