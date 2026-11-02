@@ -76,6 +76,104 @@ function owned(current, file) {
   if (hash(current) !== file.after && hash(current) !== file.before) throw new Error(`Desktop language ownership changed; user-modified file preserved: ${file.path}`);
 }
 
+export function patchPackedDesktopChinese(entries, catalogs) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) throw new Error('Invalid Desktop packed resources');
+  for (const [path, text] of Object.entries(entries)) {
+    if (isAbsolute(path) || path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..') || typeof text !== 'string') throw new Error('Unsafe Desktop packed resource path or value');
+  }
+  catalogs ??= JSON.parse(readFileSync(new URL('./desktop-zh-Hans.json', import.meta.url), 'utf8'));
+  if (catalogs?.schemaVersion !== 1 || catalogs.locale !== 'zh-Hans') throw new Error('Invalid Desktop Chinese catalog schema');
+  catalog(catalogs.base); catalog(catalogs.dynamic, true);
+  const changes = {}, plan = (path, text) => { if (entries[path] !== text) changes[path] = text; };
+  const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const lists = `(?:${escape(oldLocales)}|${escape(chineseLocales)})`;
+  const menu = new RegExp(`var ([\\w$]+)=(${lists});function [\\w$]+\\(([\\w$]+)\\)\\{return \\1\\.includes\\(\\3\\)\\}`, 'g');
+  const startup = new RegExp(`var [\\w$]+="en-US",[\\w$]+=(${lists});function [\\w$]+\\(`, 'g');
+  let menuCount = 0, startupCount = 0;
+  for (const [path, source] of Object.entries(entries)) {
+    if (!path.startsWith('assets/') || !path.endsWith('.js')) continue;
+    menuCount += [...source.matchAll(menu)].length;
+    startupCount += [...source.matchAll(startup)].length;
+    const patched = source.replace(menu, match => match.replace(oldLocales, chineseLocales))
+      .replace(startup, match => match.replace(oldLocales, chineseLocales));
+    if (patched !== source) {
+      new Bun.Transpiler({ loader: 'js' }).transformSync(patched);
+      plan(path, patched);
+    }
+  }
+  if (menuCount !== 1 || startupCount !== 1) throw new Error(`Desktop packed locale lists changed: expected 1 menu and 1 startup, found ${menuCount}/${startupCount}`);
+  const argumentsIn = text => {
+    const args = new Set();
+    if (/'[{}]/.test(text)) return null;
+    const content = (start, nested = false) => {
+      let i = start;
+      while (i < text.length) {
+        if (text[i] === '}') { if (!nested) throw new Error('Unexpected brace'); return i + 1; }
+        if (text[i++] !== '{') continue;
+        const head = /^\s*([\w]+)\s*([,}])/.exec(text.slice(i));
+        if (!head) throw new Error('Invalid argument');
+        i += head[0].length;
+        if (head[2] === '}') { args.add(head[1]); continue; }
+        const format = /^\s*(plural|selectordinal|select|number|date|time)\s*([,}])/.exec(text.slice(i));
+        if (!format) throw new Error('Invalid format');
+        args.add(`${head[1]}:${format[1]}`); i += format[0].length;
+        if (format[2] === '}') {
+          if (['plural', 'selectordinal', 'select'].includes(format[1])) throw new Error('Missing options');
+          continue;
+        }
+        if (!['plural', 'selectordinal', 'select'].includes(format[1])) {
+          const end = text.indexOf('}', i);
+          if (end < 0 || text.slice(i, end).includes('{')) throw new Error('Invalid style');
+          i = end + 1; continue;
+        }
+        const offset = /^\s*offset:\d+/.exec(text.slice(i));
+        if (offset) i += offset[0].length;
+        let other = false;
+        while (true) {
+          const option = /^\s*([\w=-]+)\s*\{/.exec(text.slice(i));
+          if (!option) throw new Error('Invalid option');
+          other ||= option[1] === 'other'; i = content(i + option[0].length, true);
+          const end = /^\s*\}/.exec(text.slice(i));
+          if (end) { if (!other) throw new Error('Missing other'); i += end[0].length; break; }
+        }
+      }
+      if (nested) throw new Error('Unclosed argument');
+      return i;
+    };
+    try { content(0); return [...args].sort().join(','); } catch { return null; }
+  };
+  let translated = 0, total = 0;
+  for (const [path, translations] of [['i18n', catalogs.base], ['i18n/dynamic', catalogs.dynamic]]) {
+    const english = JSON.parse(entries[`${path}/en-US.json`] ?? 'null');
+    catalog(english, path.endsWith('dynamic'));
+    const output = { ...english }, existing = entries[`${path}/zh-Hans.json`];
+    if (existing !== undefined) catalog(JSON.parse(existing), path.endsWith('dynamic'));
+    for (const [id, source] of Object.entries(english)) {
+      total++;
+      const text = translations[id], signature = argumentsIn(source);
+      // shortcut: 复杂 ICU 引号或嵌套格式保守回退英文，升级词表校验时再扩大支持。
+      if (typeof text === 'string' && signature !== null && argumentsIn(text) === signature) { output[id] = text; translated++; }
+    }
+    if (existing === undefined) plan(`${path}/zh-Hans.json`, JSON.stringify(output));
+  }
+  let html = entries['index.html'];
+  if (typeof html !== 'string') throw new Error('Desktop packed HTML missing');
+  const meta = html.match(/<meta\b[^>]*name=["']i18n-catalogs["'][^>]*>/g);
+  if (meta) {
+    if (meta.length !== 1 || !/data-i18n-catalogs="[^"]*"/.test(meta[0])) throw new Error('Desktop catalog manifest format changed');
+    html = html.replace(meta[0], meta[0].replace(/data-i18n-catalogs="([^"]*)"/, (match, value) => {
+      const values = value.split(',').filter(Boolean);
+      if (!values.some(item => item.startsWith('zh-Hans:'))) values.push('zh-Hans:1.1');
+      return `data-i18n-catalogs="${values.join(',')}"`;
+    }));
+  } else {
+    if (html.split('</head>').length !== 2) throw new Error('Desktop HTML format changed');
+    html = html.replace('</head>', '<meta name="i18n-catalogs" data-i18n-catalogs="zh-Hans:1.1"></head>');
+  }
+  plan('index.html', html);
+  return { entries: changes, translated, total };
+}
+
 export function installDesktopChinese(app, backup, catalogs) {
   app = resolve(app); backup = resolve(backup);
   if (!status(app)) return 'Claude Desktop not installed; Chinese language skipped';
@@ -170,7 +268,12 @@ export function restoreDesktopChinese(app, backup) {
 if (import.meta.main) {
   try {
     const [command, app, backup] = process.argv.slice(2);
-    if (!app || !backup || !['install', 'restore'].includes(command)) throw new Error('usage: desktop-language.mjs install|restore <Claude.app> <backup-directory>');
-    console.log(command === 'install' ? installDesktopChinese(app, backup) : restoreDesktopChinese(app, backup));
+    if (command === 'packed' && !app && !backup) {
+      const input = JSON.parse(await Bun.stdin.text());
+      console.log(JSON.stringify(patchPackedDesktopChinese(input.entries, input.catalogs)));
+    } else {
+      if (!app || !backup || !['install', 'restore'].includes(command)) throw new Error('usage: desktop-language.mjs install|restore <Claude.app> <backup-directory>');
+      console.log(command === 'install' ? installDesktopChinese(app, backup) : restoreDesktopChinese(app, backup));
+    }
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

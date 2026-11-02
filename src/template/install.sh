@@ -1056,7 +1056,7 @@ DESKTOP_CHINESE_EOF
     warn "Optional Claude Desktop enhancement failed; ClawGod Plus core install will continue"
   fi
 }
-run_claude_desktop_enhancement
+# 暂停自动增强：全部安装和 computer-use 均不修改 Claude Desktop。
 
 # ─── Check PATH ───────────────────────────────────────
 

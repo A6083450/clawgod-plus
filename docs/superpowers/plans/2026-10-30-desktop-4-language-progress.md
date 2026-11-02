@@ -1,0 +1,22 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-10-30-desktop-4-language.md
+
+- Spec: /Users/liangjiaquan/.claude/plans/woolly-singing-clock.md（已批准）。
+- Baseline: 104782d，分支 fix/desktop-4-language；未提交，保留 generated-images/。
+- Pre-flight: Task 1 产生 patchPackedDesktopChinese(entries, catalogs) 和 packed stdin/stdout 协议，Task 2 的内嵌 Python 调用；归档读写仅一处。
+- Ruling: 不创建 worktree，按批准设计在普通任务分支工作；不提交、不推送 — 用户未要求 worktree/提交 — 成本为共用检出目录，需保护未跟踪用户文件。
+- Ruling: 新版不改主 app.asar 的安全/门控，只有语言归档变化 — 已证实浏览器有原生默认支持，CU 不得自动开启 — 旧增强不保证全部等价恢复。
+- Task 1: complete — packed纯变换与CLI桥接先RED后GREEN，bun tests/desktop-language.mjs通过；旧散装测试保留。
+- Ruling: 检出目录出现并发暂停自动Desktop的README/template/installer测试改动；保留这些改动，不恢复自动调用，新增适配仅显式手动执行 — 避免覆盖另一任务的安全保护 — 测试和生成产物需结合并发模板再验。
+- Task 2: packed归档与候选准备RED→GREEN；新增独立tests/desktop-packed-language.mjs，未覆盖并发自动暂停断言；installer-desktop后半仅调整签名Python -I stub。
+- Ruling: 官方unpacked原生模块打包后签名，ASAR内size/hash元数据过时；不按此元数据拒绝这些未修改模块，输入先codesign --verify --deep --strict，重签后再verify — 真实官方实包复现并补回归 — 原生文件信任依赖完整签名而不是过时归档元数据。
+- Ruling: 官方主包包含同区间去重条目，允许完全相同offset区间，仍验证每项hash并拒绝部分重叠 — 实包复现并补回归 — 解析器仅支持本次已验证形态。
+- 实包候选已生成：/Users/liangjiaquan/Downloads/ai-update/claude4-localized-validation-20261030-GkYHOM/Claude.app。仅4个ion条目变化，主app.asar字节不变，全部packed hash/block与双plist头哈希通过，39组件ad-hoc verify通过，GUI未启动，/Applications官方签名仍有效。
+- 译文严格参数检查后命中31609/40292（78.45%），余项英文回退；不承诺完整新版汉化。
+- Task 3: complete — canary build/check、四组桌面focused、shell语法、diff --check通过；最终完整71项 FAILED0，网络E2E按默认跳过。最终候选Claude-reviewed.app实包独立校验通过，GUI未启动、当前官方应用未改。安装等待用户确认退出时机。
+- Deferred minors: 无（ICU问题按Important已修）。未提交、未推送，保留全部备份和日志。
+- Final: Ruling: 不删除工作记录或清理备份 — 未提交且应用尚未安装验收，保留恢复证据 — 占用额外磁盘但不丢数据。
+- Final review: 独立 reviewer 报3项Important，全部RED→GREEN：尾斜杠别名绕过进程检查、4.x缺归档回落legacy、候选准备期间源身份漂移。已增加明确拒绝/完整源哈希复核。
+- Final: Ruling: 将 reviewer 标为Minor的坏 ICU plural/select 无选项问题按用户可见格式化错误提升为Important并修复 — 译文信任边界需英文回退 — 若错误会导致局部文案加载失败；新增RED→GREEN用例。
+- Final: Ruling: reviewer Declined to judge 的并发自动暂停、既有legacy策略、ad-hoc取舍和自动更新支持均维持边界 — 本任务只负责已批准4.4212.0手动汉化；不改他人暂停、不扩legacy、不承诺自动更新 — 旧版策略与官方身份问题不在本轮解决。
+- 首轮全量71项中1项失败：installer-bun-runtime将Python局部变量node误当Node执行，且父cwd构建生成路径注释噪声；已将局部变量改为directory，从repo根canary构建消除Windows无关变化，策略focused已通过。非功能放宽，最终套件待确认。
+- 2026-11-02 合并前审查：路径别名绕过运行门禁先 RED 后 GREEN；改用目录身份比较，并在进程检查前拒绝非规范路径。macOS 专属 shell 集成限制在 darwin，跨平台归档校验保留；缺少 PlistBuddy 的失败已模拟复现，修复后的 Linux 分支模拟通过。未安装或修改本机应用。
