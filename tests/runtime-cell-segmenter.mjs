@@ -159,6 +159,16 @@ check('注入源码保持 ASCII，且不引用私有 Bun API', () => {
   assert.throws(() => renderer.Ns(), /must not run/);
 });
 
+check('上游样式函数 uri 不被超链接局部变量遮蔽', () => {
+  const source = RENDERER_MODULE.replace(/\bLNr\b/g, 'uri')
+    .replace('export { Ns, Dd, Cx, xC, setChalkLevel };', 'return { parseStyledText };');
+  const actual = new Function(source)();
+  const cells = actual.parseStyledText('A\x1b]8;;https://example.com\x07中\x1b]8;;\x07', createStylePool());
+  assert.deepEqual(cells.map(({ value, hyperlink }) => [value, hyperlink]), [
+    ['A', undefined], ['中', 'https://example.com'],
+  ]);
+});
+
 check('字素按显示宽度写入字符格', () => {
   const { screen, end } = paint('A中文😀é');
   assert.equal(end, 8);

@@ -24,6 +24,7 @@ assert.notEqual(contract('var mask=3,limit=1<<mask;function draw(){return limit}
   contract('var limit=1<<mask,mask=3;function draw(){return limit}', ['draw']).digest, '初始化顺序必须进入契约');
 
 for (const [version, platform, renderFile] of [
+  ['2.1.316', 'darwin', 'chunk-94gy2hwx.js'], ['2.1.316', 'linux', 'chunk-bzr73sfg.js'], ['2.1.316', 'win32', 'chunk-y4v019ax.js'],
   ['2.1.314', 'darwin', 'chunk-xsq68wek.js'], ['2.1.314', 'linux', 'chunk-x7qf93mw.js'], ['2.1.314', 'win32', 'chunk-m6k5tg8b.js'],
   ['2.1.310', 'darwin', 'chunk-pma0w0g1.js'], ['2.1.310', 'linux', 'chunk-rwaeax2b.js'], ['2.1.310', 'win32', 'chunk-abp9eptc.js'],
   ['2.1.303', 'darwin', 'chunk-7mzb8nrq.js'], ['2.1.303', 'linux', 'chunk-x66h7b21.js'], ['2.1.303', 'win32', 'chunk-1jz9m9yh.js'],
@@ -36,7 +37,7 @@ const files = new Map(JSON.parse(readFileSync(new URL(`./fixtures/cell-contract-
 const source = files.get(renderFile);
 const adapted = processor.adaptCellRenderer(source, undefined, files);
 assert.notEqual(adapted, null, `${version}/${platform} 相同渲染接口必须兼容分块重组`);
-if (['2.1.310', '2.1.314'].includes(version)) {
+if (['2.1.310', '2.1.314', '2.1.316'].includes(version)) {
   const ansiImport = processor.structuralModule(adapted).ast.body[0];
   const ansi = files.get(basename(ansiImport.source.value));
   const [tokenizer, normalize] = ansiImport.specifiers.map(item => item.imported.name);
@@ -52,7 +53,7 @@ if (['2.1.310', '2.1.314'].includes(version)) {
     { type: 'ansi', code: '\x1b[0m', endCode: '\x1b[0m' },
   ]), [], `${platform}: 样式归一化必须正确处理 reset`);
 }
-if (version === '2.1.314') {
+if (['2.1.314', '2.1.316'].includes(version)) {
   const expander = adapted.match(/=([\w$]+)\(\[" "\.repeat\(clawgodTabOffset\)/)[1];
   const tabImport = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration'
     && node.specifiers.some(item => item.local.name === expander));
@@ -69,6 +70,15 @@ if (version === '2.1.314') {
     [['\x1b[31m中\x1b[0m\tX'], ['\x1b[31m中\x1b[0m      X']],
     [['\x1b]8;;https://example.com\x1b\\中\x1b]8;;\x1b\\\tX'], ['\x1b]8;;https://example.com\x1b\\中\x1b]8;;\x1b\\      X']],
   ]) assert.deepEqual(expand(input), expected, `${platform}: 新版转义解析必须保留正确制表符列宽`);
+  if (version === '2.1.316') {
+    assert.deepEqual(expand(['\x1b\x1b[31m中\x1b[0m\tX']), ['\x18\x1b[31m中\x1b[0m      X'],
+      `${platform}: 单独 ESC 必须按上游新逻辑作为文本净化`);
+    const modules = new Map(files);
+    const changed = tabSource.replace(/\.type==="sequence"&&([\w$]+)\.value==="\\x1B"/, '.type==="text"&&$1.value==="\\x1B"');
+    assert.notEqual(changed, tabSource);
+    modules.set(tabFile, changed);
+    assert.equal(processor.adaptCellRenderer(source, undefined, modules), null, '单独 ESC 分类条件漂移必须拒绝');
+  }
   // Bun stable/canary 对非标准转义的宽度不同；列宽基线取当前原生 API，不复用被测展开器。
   for (const [input, prefix] of [
     ['\x1bOa\tX', '\x1bOa'],
@@ -112,7 +122,8 @@ const sharedAst = processor.structuralModule(sharedSource).ast;
 const factory = sharedAst.body.find(node => node.id && sharedSource.slice(node.start, node.end).includes('new Bun.ant.CellSegmenter')).id.name;
 const sharedSpecifier = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration' && basename(node.source.value) === sharedFile).source.value;
 for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias-caller', 'text-alias-caller', 'text-drift', 'ansi-drift',
-  ...(['2.1.307', '2.1.308', '2.1.310', '2.1.314'].includes(version) ? ['direction-drift', 'direction-import', 'direction-missing', 'direction-method-write', 'direction-range-write', 'text-direction-import'] : [])]) {
+  ...(version === '2.1.316' ? ['text-prefix-drift'] : []),
+  ...(['2.1.307', '2.1.308', '2.1.310', '2.1.314', '2.1.316'].includes(version) ? ['direction-drift', 'direction-import', 'direction-missing', 'direction-method-write', 'direction-range-write', 'text-direction-import'] : [])]) {
   const modules = new Map(variant === 'renamed' ? renamedFiles : files);
   if (variant === 'unrelated') for (const [file, text] of modules) {
     if (text.includes('stylePool;charPool;native=') || text.includes('.trimEnd()')) modules.set(file, text + '\nfunction unrelatedNewFeature(){return 123}'
@@ -127,6 +138,13 @@ for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias
   }
   if (variant === 'text-drift') for (const [file, text] of modules) {
     if (text.includes('.trimEnd()') && text.includes(`${factory}(`) && !text.includes('stylePool;charPool;native=')) modules.set(file, text.replace('return!1;return!0', 'return!0;return!0'));
+  }
+  if (variant === 'text-prefix-drift') for (const [file, text] of modules) {
+    if (text.includes('.trimEnd()') && !text.includes('stylePool;charPool;native=')) {
+      const changed = text.replace(/\[([\w$]+),([\w$]+)\(`\$\{\1\}:`\)\]/, '[$1,$2(`${$1}/`)]');
+      assert.notEqual(changed, text, '必须改写真正的预计算保留名称前缀');
+      modules.set(file, changed);
+    }
   }
   if (variant === 'ansi-drift') for (const [file, text] of modules) {
     if (text.includes('Number.POSITIVE_INFINITY') && text.includes('type:"ansi"') && !text.includes('stylePool;charPool;native=')) modules.set(file, text.replace('Number.POSITIVE_INFINITY', '0'));
@@ -170,6 +188,21 @@ for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias
       assert.equal(result.status, 0, `${platform}/${variant}: ${result.stderr}`);
       const factoryFile = variant === 'renamed' ? sharedFile.replace('chunk-', 'chunk-renamed-') : sharedFile;
       assert.doesNotMatch(readFileSync(join(dir, 'chunks', factoryFile), 'utf8'), /new Bun\.ant\.CellSegmenter/);
+      if (version === '2.1.316') {
+        const textFile = [...modules].find(([, text]) => text.includes('.trimEnd()') && !text.includes('stylePool;charPool;native='))[0];
+        const output = readFileSync(join(dir, 'chunks', textFile), 'utf8');
+        const check = processor.structuralModule(output).ast.body.find(node => node.type === 'FunctionDeclaration'
+          && output.slice(node.start, node.end).includes('.trimEnd()') && output.slice(node.start, node.end).includes('.indexOf('));
+        const body = output.slice(check.start, check.end);
+        const normalize = body.match(/let [\w$]+=([\w$]+)\([\w$]+\);return/)[1];
+        const reserved = body.match(/return ([\w$]+)\.find/)[1];
+        const checkName = new Function(normalize, reserved, `${body};return ${check.id.name}`)(
+          value => value.normalize('NFKC').toLowerCase().replace(/[\s\p{Cc}\p{Cf}]/gu, ''), ['anthropic-skills']);
+        for (const name of ['anthropic-skills', 'ａｎｔｈｒｏｐｉｃ-skills', 'anthro​pic-skills', 'anthro\x00pic-skills']) {
+          assert.equal(checkName(name), 'anthropic-skills', `${platform}/${variant}: 新版仍须阻止技能名称冒充`);
+        }
+        assert.equal(checkName('正常技能'), undefined);
+      }
     } else {
       assert.notEqual(result.status, 0, `${platform}/${variant} 必须拒绝`);
       for (const [file, text] of modules) assert.equal(readFileSync(join(dir, 'chunks', file), 'utf8'), text, '拒绝时必须零改写');

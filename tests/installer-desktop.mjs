@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { renderGeneratedPair } from '../build.mjs';
@@ -21,7 +20,6 @@ const helperName = 'restore-claude-3p-cu-browser.sh';
 const helperSource = readFileSync(new URL(`../src/unix/desktop/${helperName}`, import.meta.url), 'utf8');
 const languageSource = readFileSync(new URL('../src/unix/desktop/desktop-language.mjs', import.meta.url), 'utf8');
 const catalogSource = readFileSync(new URL('../src/unix/desktop/desktop-zh-Hans.json', import.meta.url));
-const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const root = mkdtempSync(join(tmpdir(), 'clawgod desktop installer '));
 function executable(path, source) {
   writeFileSync(path, `#!/bin/sh\n${source}\n`);
@@ -32,10 +30,10 @@ try {
     ['absent', {}],
     ['linux', { platform: 'Linux', installed: true }],
     ['disabled', { installed: true, enabled: [] }],
-    ['present', { installed: true }],
+    ['all', { installed: true }],
+    ['computer-use', { installed: true, enabled: ['computer-use'] }],
     ['user-app', { userApp: true }],
-    ['failed', { installed: true, status: 7 }],
-    ['invalid-selection', { installed: true, invalid: true }],
+    ['existing-helper', { installed: true, existing: true }],
   ]) {
     const directory = join(root, name);
     const home = join(directory, 'home');
@@ -53,34 +51,34 @@ try {
     copyFileSync(new URL('../src/generic/enhancement-config.mjs', import.meta.url), join(runtime, 'enhancement-config.mjs'));
     copyFileSync(new URL('../src/generic/enhancements.json', import.meta.url), join(runtime, 'enhancement-manifest.json'));
     const selection = options.enabled ? { schemaVersion: 1, mode: 'custom', enabled: options.enabled } : { schemaVersion: 1, mode: 'all', enabled: [] };
-    writeFileSync(join(runtime, 'enhancements.json'), options.invalid ? 'invalid JSON' : `${JSON.stringify(selection, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(join(runtime, 'enhancements.json'), `${JSON.stringify(selection, null, 2)}\n`, { mode: 0o600 });
+    if (options.existing) {
+      writeFileSync(join(runtime, helperName), helperSource);
+      writeFileSync(join(runtime, 'desktop-language.mjs'), languageSource);
+      writeFileSync(join(runtime, 'desktop-zh-Hans.json'), catalogSource);
+    }
     executable(join(bin, 'uname'), `printf '%s\\n' '${options.platform || 'Darwin'}'`);
     // Only the macOS mutation boundary is replaced; selection and installer shell are real.
-    executable(join(bin, 'bash'), 'printf "%s\\n" "$@" > "$DESKTOP_CALL"\nexit "${DESKTOP_STATUS:-0}"');
+    executable(join(bin, 'bash'), 'printf "%s\\n" "$@" > "$DESKTOP_CALL"\nexit 0');
     const fixture = join(directory, 'installer-hook.sh');
     writeFileSync(fixture, `set -e\ninfo() { echo "INFO:$*"; }\nwarn() { echo "WARN:$*"; }\ndim() { echo "DIM:$*"; }\n${hook.replace('for candidate in "/Applications/Claude.app"', 'for candidate in "$DESKTOP_SYSTEM_APP"')}\necho CORE_INSTALL_CONTINUES\n`);
     const call = join(directory, 'desktop-call');
     const result = spawnSync('/bin/bash', [fixture], {
       encoding: 'utf8',
-      env: { ...process.env, HOME: home, CLAWGOD_DIR: runtime, BUN_BIN: process.execPath, PATH: `${bin}:${dirname(process.execPath)}:${process.env.PATH}`, DESKTOP_SYSTEM_APP: systemApp, DESKTOP_CALL: call, DESKTOP_STATUS: String(options.status || 0) },
+      env: { ...process.env, HOME: home, CLAWGOD_DIR: runtime, BUN_BIN: process.execPath, PATH: `${bin}:${dirname(process.execPath)}:${process.env.PATH}`, DESKTOP_SYSTEM_APP: systemApp, DESKTOP_CALL: call },
     });
     assert.equal(result.status, 0, `${name}: ${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, /CORE_INSTALL_CONTINUES/, `${name}: optional Desktop work must not abort the CLI install`);
-    const shouldRun = ['present', 'user-app', 'failed'].includes(name);
-    assert.equal(existsSync(call), shouldRun, `${name}: run Desktop patch only when installed and selected on macOS`);
-    assert.equal(existsSync(join(runtime, helperName)), shouldRun, `${name}: no helper is installed when Desktop work is skipped`);
-    assert.equal(existsSync(join(runtime, 'desktop-language.mjs')), shouldRun, `${name}: no language helper without Desktop`);
-    assert.equal(existsSync(join(runtime, 'desktop-zh-Hans.json')), shouldRun, `${name}: no catalog without Desktop`);
-    if (shouldRun) {
-      assert.equal(readFileSync(call, 'utf8'), `${join(runtime, helperName)}\n--install\n${app}\n`, `${name}: use noninteractive mode with the detected app`);
-      assert.equal(readFileSync(join(runtime, helperName), 'utf8').trimEnd(), helperSource.trimEnd(), 'release installer must embed the current canonical helper');
-      assert.equal(statSync(join(runtime, helperName)).mode & 0o777, 0o700);
-      assert.equal(readFileSync(join(runtime, 'desktop-language.mjs'), 'utf8').trimEnd(), languageSource.trimEnd());
-      assert.equal(sha(readFileSync(join(runtime, 'desktop-zh-Hans.json'))), sha(catalogSource), 'compressed installer payload must reproduce the bundled catalog exactly');
-      assert.equal(statSync(join(runtime, 'desktop-zh-Hans.json')).mode & 0o777, 0o600);
-      assert.equal(readFileSync(join(app, 'Contents/Resources/app.asar'), 'utf8'), 'original app', 'test must never invoke real macOS mutation commands');
+    assert.equal(existsSync(call), false, `${name}: 暂停期间全部安装和 computer-use 均不得调用 Desktop 补丁`);
+    for (const file of [helperName, 'desktop-language.mjs', 'desktop-zh-Hans.json']) {
+      assert.equal(existsSync(join(runtime, file)), !!options.existing, `${name}: 不安装 Desktop 资源，也不删除旧版恢复助手`);
     }
-    if (name === 'failed' || name === 'invalid-selection') assert.match(result.stdout, /WARN:/, `${name}: report the optional failure`);
+    if (options.existing) {
+      assert.equal(readFileSync(join(runtime, helperName), 'utf8'), helperSource);
+      assert.equal(readFileSync(join(runtime, 'desktop-language.mjs'), 'utf8'), languageSource);
+      assert.deepEqual(readFileSync(join(runtime, 'desktop-zh-Hans.json')), catalogSource);
+    }
+    if (options.installed || options.userApp) assert.equal(readFileSync(join(app, 'Contents/Resources/app.asar'), 'utf8'), 'original app');
     assert.equal(existsSync(join(home, 'Library/Application Support/Claude-3p')), false, 'skip and dispatch checks must not create Desktop user data');
   }
 
@@ -204,7 +202,7 @@ exit "\${CODESIGN_STATUS:-0}"
   assert.equal(existsSync(join(uninstallRuntime, 'desktop-zh-Hans.json')), false);
   assert.equal(readFileSync(join(uninstallRuntime, 'provider.json'), 'utf8'), 'user provider');
   assert.equal(readFileSync(join(backupDirectory, 'app.asar.orig-fixture'), 'utf8'), 'user Desktop backup', 'Desktop backups remain user-owned');
-  console.log('Desktop integration: absence/selection/platform guards, app dispatch, optional failures, sessions and uninstall ownership passed');
+  console.log('Desktop 自动增强暂停：全部安装/单选不执行，旧恢复助手保留，手动恢复及卸载归属检查通过');
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

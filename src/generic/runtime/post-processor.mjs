@@ -6664,8 +6664,7 @@ function parseStyledText(text, stylePool) {
     var code = token.code;
     if (code.slice(0, clawgodOsc8Prefix.length) === clawgodOsc8Prefix) {
       flush();
-      var uri = code.slice(clawgodOsc8Prefix.length, -1);
-      hyperlink = uri === "" ? void 0 : uri;
+      hyperlink = code.slice(clawgodOsc8Prefix.length, -1) || void 0;
       continue;
     }
     if (!clawgodSgr.test(code)) continue;
@@ -8078,8 +8077,9 @@ function localCellProfile(source, dependencies) {
         try {
           const edge = resolveImport(item.local.name);
           const contract = cellDeclarationContract(tabs.source, [tabs.local, edge.local]);
-          // 2.1.314 更新转义解析器，并把字符宽度函数拆成独立模块；两者按配套契约核验。
-          const updatedTabs = contract.digest === 'b76c5ad5f9d1740f35cdb27f8ec750b54815e62a306e6774607f9b5a9367ff83';
+          // 2.1.316 将单独 ESC 归为文本；沿用 2.1.314 的转义解析器和独立宽度模块配套核验。
+          const updatedTabs = ['b76c5ad5f9d1740f35cdb27f8ec750b54815e62a306e6774607f9b5a9367ff83',
+            '8d091decd22a6946e2abd1cc7a035c448cdb47f6390a600aabdc8bff17ad51bc'].includes(contract.digest);
           return (updatedTabs || contract.digest === '714287168495299b3b5a5d0c9ee451730c3b2d8cd4817813a6319661ce152c46')
             && verifyEdges(contract, [...[0,5,12,6,14,10].map(index => ['ea528a66e176e8d0e965ba61400fe5c041c2e03ab480314d3bdc64c31a87f1f8', index]),
               [updatedTabs ? 'a7d45c3881d9dd1eb2a53e264a0934324025377e3c0c216068870858ce375bef'
@@ -8108,8 +8108,10 @@ function localCellProfile(source, dependencies) {
       const segments = functions.filter(node => text.slice(node.start,node.end).includes(`${shared.local}(`));
       if (checks.length !== 1 || segments.length !== 1) continue;
       const contract = cellDeclarationContract(text, [checks[0].id.name, segments[0].id.name]);
-      if (contract.digest !== (splitBidi ? 'f87ed46c7161bc28cc0e9b541ce651086c16b1978f797286c6f0e4138d88fdd6'
-        : '806962f28be74e895c24d42d325ff581238ccc482c57443c68d12e6a93f51733')) continue;
+      // 2.1.316 预计算保留名称前缀并跳过重复归一化，仍保留原防冒充回退。
+      if (!(splitBidi ? ['f87ed46c7161bc28cc0e9b541ce651086c16b1978f797286c6f0e4138d88fdd6',
+        '7d44228648519fe31e07f35eb434a8e7a4d5c9351696af94b26ba490783785a7']
+        : ['806962f28be74e895c24d42d325ff581238ccc482c57443c68d12e6a93f51733']).includes(contract.digest)) continue;
       // 已允许的文本分块也不能通过别名新增契约外的原生调用路径。
       const factoryImport = parsed.body.find(node => node.type === 'ImportDeclaration'
         && node.specifiers.some(item => item.local.name === shared.local));
@@ -8269,7 +8271,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
     const imports = [...source.matchAll(/import\{([^}]*)\}from"([^"]+)";/g)]
       .filter(match => match[2] === shared.specifier);
     if (imports.length !== 1 || !imports[0][1].split(',').includes(shared.factory)
-      || [...source.matchAll(new RegExp(`\\b${shared.factory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g'))].length !== 2) return null;
+      || [...source.matchAll(new RegExp(`(?<![\\w$])${shared.factory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`, 'g'))].length !== 2) return null;
   }
   for (const name of CELL_RENDERER_NAMES) {
     if (source.includes(name)) return null;
