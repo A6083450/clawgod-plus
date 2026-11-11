@@ -16,7 +16,7 @@ set -e
 CLAWGOD_DIR="$HOME/.clawgod"
 BIN_DIR="$HOME/.local/bin"
 VERSION="${CLAWGOD_VERSION:-}"
-VERIFIED_VERSION="2.1.316"
+VERIFIED_VERSION="2.1.322"
 # 旧 updater 把无参更新标记为 latest；显式 --version 在后面的参数解析中恢复。
 if [ "$VERSION" = latest ] && [ "${CLAWGOD_UPDATE_PATCH_FAIL_OPEN:-}" = 1 ]; then VERSION=""; fi
 NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
@@ -1212,7 +1212,7 @@ function ancestors(pid, processes) {
   return result;
 }
 
-function acquireRuntime(root, ownerPid = process.pid) {
+function acquireRuntime(root, ownerPid = process.pid, allowActive = false) {
   if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0 || !alive(ownerPid)) throw Error('升级锁进程无效。');
   const token = randomUUID(), path = join(root, WRITE_LOCK);
   try { fs.writeFileSync(path, JSON.stringify({ pid: ownerPid, token }), { flag: 'wx', mode: 0o600 }); }
@@ -1232,7 +1232,10 @@ function acquireRuntime(root, ownerPid = process.pid) {
     }
     const active = activeRuntimeProcesses(root, processes).map(row => row.pid).filter(pid => !bootstraps.has(pid));
     const pids = [...new Set([...readers, ...active])];
-    if (pids.length) throw Error(`Claude 正在使用运行时（PID: ${pids.join(', ')}）。请先在所有会话中执行 /exit，并关闭仍使用 Claude 的浏览器连接或后台任务，再从普通终端运行 claude update；本次未替换运行时。`);
+    if (pids.length) {
+      if (!allowActive) throw Error(`Claude 正在使用运行时（PID: ${pids.join(', ')}）。请先在所有会话中执行 /exit，并关闭仍使用 Claude 的浏览器连接或后台任务，再重试维护/卸载；本次未替换运行时。`);
+      console.error(`[clawgod] Claude 正在使用运行时（PID: ${pids.join(', ')}），继续升级，不会主动结束进程。旧会话后续加载模块可能失败，请在升级完成后重新启动 Claude；成功后会清理旧版本。`);
+    }
     return token;
   } catch (error) { releaseRuntime(root, token); throw error; }
 }
@@ -1323,7 +1326,7 @@ if (require.main === module) {
   try {
     const [command, root, argument] = process.argv.slice(2);
     if (!root || !argument) throw new Error('runtime-state: command, runtime directory and transaction/version required');
-    if (command === 'lock') console.log(acquireRuntime(root, Number(argument)));
+    if (command === 'lock' || command === 'lock-update') console.log(acquireRuntime(root, Number(argument), command === 'lock-update'));
     else if (command === 'unlock') releaseRuntime(root, argument);
     else if (command === 'snapshot') snapshot(root, argument);
     else if (command === 'restore') restore(root, argument);
@@ -1337,7 +1340,7 @@ if (require.main === module) {
 }
 RUNTIME_STATE_EOF
   prepare_enhancement_config_directory
-  RUNTIME_WRITE_TOKEN=$("$BUN_BIN" "$RUNTIME_STATE_HELPER" lock "$CLAWGOD_DIR" "$$")
+  RUNTIME_WRITE_TOKEN=$("$BUN_BIN" "$RUNTIME_STATE_HELPER" "${1:-lock}" "$CLAWGOD_DIR" "$$")
   [[ "$RUNTIME_WRITE_TOKEN" =~ ^[a-f0-9-]{36}$ ]] || { err "Invalid runtime write lock token"; return 1; }
   RUNTIME_WRITE_RELEASE_SAFE=1
   export CLAWGOD_RUNTIME_WRITE_TOKEN="$RUNTIME_WRITE_TOKEN"
@@ -1540,7 +1543,7 @@ if [ -z "$BUN_VERSION_NUM" ] \
   exit 1
 fi
 
-acquire_runtime_write_lock
+acquire_runtime_write_lock lock-update
 RUNTIME_TRANSACTION_DIR=$(mktemp -d "$CLAWGOD_DIR/.runtime-rollback.XXXXXX")
 chmod 700 "$RUNTIME_TRANSACTION_DIR"
 "$BUN_BIN" "$RUNTIME_STATE_HELPER" snapshot "$CLAWGOD_DIR" "$RUNTIME_TRANSACTION_DIR"
@@ -15776,7 +15779,9 @@ function localCellProfile(source, dependencies) {
         || contract.imports.length !== 0) return null;
     }
     const chalk = resolveImport(names.bGt);
-    if (chalk.structure.digest !== '2fdd7ca5ded53c63977f6f7efb408920fd99b93e1fee3ce1f25a57d809c27aab'
+    // 2.1.322 颜色级别调整不再返回布尔值；级别赋值和 generation/样式导出不变。
+    if (!['2fdd7ca5ded53c63977f6f7efb408920fd99b93e1fee3ce1f25a57d809c27aab',
+      '6c15184aa43c240c72bcc18aec1cec314f759d31e748b0d7d3ee076de17dd8b8'].includes(chalk.structure.digest)
       || chalk.local !== chalk.structure.bindings[187]) return null;
     const styles = resolveImport(names.MNr), normalizedStyles = resolveImport(names.LNr);
     if (styles.specifier !== normalizedStyles.specifier
@@ -16249,7 +16254,7 @@ let vendorPublishAttempted = false;
 let snapshotted = false;
 const previousToken = process.env.CLAWGOD_RUNTIME_WRITE_TOKEN;
 try {
-  runtimeToken = state.acquireRuntime(here);
+  runtimeToken = state.acquireRuntime(here, process.pid, true);
   process.env.CLAWGOD_RUNTIME_WRITE_TOKEN = runtimeToken;
   transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
   const candidateDir = join(transactionDir, 'candidate');

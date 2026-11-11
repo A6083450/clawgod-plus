@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +39,7 @@ function transactionSpan(source, label) {
 }
 
 const lockFunctions = canonical.slice(canonical.indexOf('function Enter-RuntimeWriteLock {'), canonical.indexOf('function Resolve-Bun {'));
-assert.match(lockFunctions, /\$RuntimeStateHelper lock \$ClawDir \$PID/, 'Windows lock must belong to its installer process');
+assert.match(lockFunctions, /\$RuntimeStateHelper \$Command \$ClawDir \$PID/, 'Windows lock must belong to its installer process');
 assert.match(lockFunctions, /\$env:CLAWGOD_RUNTIME_WRITE_TOKEN = \$RuntimeWriteToken/, 'Windows startup checks must inherit the maintenance token');
 const canonicalSpan = transactionSpan(canonical, 'src/template/install.ps1');
 const generatedSpan = transactionSpan(generated, 'generated dist/win/install.ps1');
@@ -168,6 +169,14 @@ function Write-Warn { param([string]$Message); [Console]::Error.WriteLine($Messa
 function Write-Err { param([string]$Message); [Console]::Error.WriteLine($Message) }
 function Install-ChromeFixScript { return $true }
 function Invoke-ChromePostInstallFix { [System.IO.File]::WriteAllText((Join-Path $ClawDir 'chrome-ran'), 'yes') }
+if ($env:CLAWGOD_TEST_CLEANUP_FAIL -eq '1') {
+    function Remove-Item {
+        [CmdletBinding()]
+        param([string]$LiteralPath, [string]$Path, [switch]$Recurse, [switch]$Force)
+        if ($LiteralPath -eq $RuntimeRollbackDir) { Write-Error '测试注入：事务目录被占用'; return }
+        Microsoft.PowerShell.Management\\Remove-Item @PSBoundParameters
+    }
+}
 function Install-UpdateRuntimeHelpers {
   [System.IO.File]::WriteAllBytes((Join-Path $ClawDir 'self-update.cjs'), $SelfUpdateBytes)
   [System.IO.File]::WriteAllBytes((Join-Path $ClawDir 'patch-fallback.cjs'), $PatchFallbackBytes)
@@ -181,7 +190,7 @@ $RuntimeWriteToken = $null
 $RuntimeWriteReleaseSafe = $false
 $Caught = $null
 try {
-Enter-RuntimeWriteLock
+${canonical.match(/^Enter-RuntimeWriteLock[^\r\n]*/m)[0]}
 & $BunBin $RuntimeStateHelper snapshot $ClawDir $RuntimeRollbackDir
 if ($LASTEXITCODE -ne 0) { throw 'fixture snapshot failed' }
 $RuntimeWriteReleaseSafe = $false
@@ -320,6 +329,10 @@ $RuntimeWriteReleaseSafe = $true
   }
 
   for (const fixture of [
+    { label: 'cleanup-occupied-success', cleanupFail: true, active: true, prior: true, patchExit: 0, success: true, fallback: false, allow: false, chrome: true },
+    { label: 'cleanup-occupied-rollback', cleanupFail: true, active: true, prior: true, patchExit: 41, success: false, allow: false, retained: true },
+    { label: 'active-session-success', active: true, prior: true, patchExit: 0, success: true, fallback: false, allow: false, chrome: true },
+    { label: 'active-session-rollback', active: true, prior: true, patchExit: 41, success: false, allow: false },
     { label: 'no-upgrade-missing-clean', prior: true, noUpgrade: true, missingClean: true, patchExit: 0, success: true, fallback: false, allow: false, chrome: true, source: '2.1.225' },
     { label: 'extract-partial-failure', prior: true, extractExit: 37, early: true },
     { label: 'postprocess-partial-failure', prior: true, postProcessExit: 37, early: true },
@@ -335,44 +348,67 @@ $RuntimeWriteReleaseSafe = $true
     { label: 'vendor-status-22', prior: true, update: '1', noUpgrade: false, patchExit: 42, externalCandidate: true, success: false, allow: true, status: 22, retained: true },
   ]) {
     const paths = createCase(fixture);
-    const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', transactionScript], {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        HOME: paths.clawDir,
-        USERPROFILE: paths.clawDir,
-        TEMP: root,
-        TMP: root,
-        CLAWGOD_TEST_BUN: process.execPath,
-        CLAWGOD_TEST_DIR: paths.clawDir,
-        CLAWGOD_TEST_CANDIDATE_VENDOR: paths.candidateVendor,
-        CLAWGOD_TEST_NO_UPGRADE: String(Boolean(fixture.noUpgrade)),
-        CLAWGOD_UPDATE_PATCH_FAIL_OPEN: fixture.update || '',
-        CLAWGOD_UPDATE_ROLLBACK_RECEIPT: join(paths.clawDir, 'rollback-receipt'),
-        CLAWGOD_TOLERATE_STALE: fixture.stale ? '1' : '',
-        CLAWGOD_TEST_EXTRACT_EXIT: String(fixture.extractExit || 0),
-        CLAWGOD_TEST_POSTPROCESS_EXIT: String(fixture.postProcessExit || 0),
-        CLAWGOD_TEST_FETCH_PACKAGE: fakeFetchPackage,
-        CLAWGOD_TEST_EXTRACTOR: fakeExtractor,
-        CLAWGOD_TEST_POST_PROCESSOR: fakePostProcessor,
-        CLAWGOD_TEST_PATCHER: fakePatcher,
-        CLAWGOD_TEST_CLI: fakeCli,
-        CLAWGOD_TEST_PATCH_FALLBACK: patchFallback,
-        CLAWGOD_TEST_RUNTIME_STATE: readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url), 'utf8'),
-        CLAWGOD_TEST_STARTUP_CHECK: readFileSync(new URL('../src/generic/runtime/startup-check.cjs', import.meta.url), 'utf8'),
-        CLAWGOD_TEST_PATCH_ARGS: paths.patchArgs,
-        CLAWGOD_TEST_PATCH_EXIT: String(fixture.patchExit),
-        CLAWGOD_TEST_SANITY_EXIT: String(fixture.sanityExit || 0),
-        CLAWGOD_TEST_VENDOR_CONFLICT: fixture.conflict ? '1' : '0',
-        CLAWGOD_TEST_VENDOR_DIR: paths.vendor,
-        CLAWGOD_TEST_DISPLACED_VENDOR: paths.displacedVendor,
-        CLAWGOD_TEST_REPLACEMENT_SENTINEL: paths.replacementSentinel,
-      },
-    });
+    let reader, run;
+    try {
+      if (fixture.active) {
+        const helper = fileURLToPath(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url));
+        reader = spawn(process.execPath, ['-e', `require(${JSON.stringify(helper)}).enterRuntime(process.argv[1]);console.log('ready');process.stdin.once('data',()=>process.exit(0));`, paths.clawDir], { stdio: ['pipe', 'pipe', 'pipe'] });
+        await once(reader.stdout, 'data');
+      }
+      run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', transactionScript], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: paths.clawDir,
+          USERPROFILE: paths.clawDir,
+          TEMP: root,
+          TMP: root,
+          CLAWGOD_TEST_BUN: process.execPath,
+          CLAWGOD_TEST_DIR: paths.clawDir,
+          CLAWGOD_TEST_CANDIDATE_VENDOR: paths.candidateVendor,
+          CLAWGOD_TEST_NO_UPGRADE: String(Boolean(fixture.noUpgrade)),
+          CLAWGOD_TEST_CLEANUP_FAIL: fixture.cleanupFail ? '1' : '',
+          CLAWGOD_UPDATE_PATCH_FAIL_OPEN: fixture.update || '',
+          CLAWGOD_UPDATE_ROLLBACK_RECEIPT: join(paths.clawDir, 'rollback-receipt'),
+          CLAWGOD_TOLERATE_STALE: fixture.stale ? '1' : '',
+          CLAWGOD_TEST_EXTRACT_EXIT: String(fixture.extractExit || 0),
+          CLAWGOD_TEST_POSTPROCESS_EXIT: String(fixture.postProcessExit || 0),
+          CLAWGOD_TEST_FETCH_PACKAGE: fakeFetchPackage,
+          CLAWGOD_TEST_EXTRACTOR: fakeExtractor,
+          CLAWGOD_TEST_POST_PROCESSOR: fakePostProcessor,
+          CLAWGOD_TEST_PATCHER: fakePatcher,
+          CLAWGOD_TEST_CLI: fakeCli,
+          CLAWGOD_TEST_PATCH_FALLBACK: patchFallback,
+          CLAWGOD_TEST_RUNTIME_STATE: readFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url), 'utf8'),
+          CLAWGOD_TEST_STARTUP_CHECK: readFileSync(new URL('../src/generic/runtime/startup-check.cjs', import.meta.url), 'utf8'),
+          CLAWGOD_TEST_PATCH_ARGS: paths.patchArgs,
+          CLAWGOD_TEST_PATCH_EXIT: String(fixture.patchExit),
+          CLAWGOD_TEST_SANITY_EXIT: String(fixture.sanityExit || 0),
+          CLAWGOD_TEST_VENDOR_CONFLICT: fixture.conflict ? '1' : '0',
+          CLAWGOD_TEST_VENDOR_DIR: paths.vendor,
+          CLAWGOD_TEST_DISPLACED_VENDOR: paths.displacedVendor,
+          CLAWGOD_TEST_REPLACEMENT_SENTINEL: paths.replacementSentinel,
+        },
+      });
+      if (reader) {
+        assert.equal(reader.exitCode, null, 'Windows 更新不得主动终止已有会话');
+        assert.match(run.stderr, /继续升级/);
+      }
+    } finally {
+      if (reader && reader.exitCode === null) {
+        const exited = once(reader, 'exit'); reader.stdin.end('exit\n'); await exited;
+      }
+    }
     assert.equal(run.status, 0, `${fixture.label}: native harness must report after complete production finalizer:\n${run.stdout}${run.stderr}`);
     const resultLine = run.stdout.trim().split(/\r?\n/).findLast(line => line.startsWith('{'));
     assert.ok(resultLine, `${fixture.label}: native harness must emit transaction observations`);
     const result = JSON.parse(resultLine);
+    if (fixture.cleanupFail) {
+      assert.equal(result.transactionExists, true, '删除失败时必须保留残余目录');
+      assert.match(run.stderr, /transaction cleanup is incomplete/, '不能静默忽略旧版本清理失败');
+      assert.ok(run.stderr.includes(paths.rollback), '清理提示必须提供待处理目录');
+      assert.match(run.stderr, /Exit old sessions/);
+    }
     assert.equal(result.writeLocked, Boolean(fixture.conflict), `${fixture.label}: only unconfirmed rollback may retain the write lock`);
     assert.equal(result.lockTempExists, false, `${fixture.label}: finalizer must remove its temporary helper directory`);
     const receipt = join(paths.clawDir, 'rollback-receipt');
@@ -392,8 +428,8 @@ $RuntimeWriteReleaseSafe = $true
     if (fixture.success) {
       assert.equal(result.caught, null, `${fixture.label}: success must not throw`);
       assert.equal(result.committed, true, `${fixture.label}: production commit assignment must run`);
-      assert.equal(result.transactionExists, false, `${fixture.label}: production commit cleanup must remove transaction`);
-      assert.equal(observed.transactionExists, false, `${fixture.label}: committed transaction must not retain recovery data`);
+      assert.equal(result.transactionExists, Boolean(fixture.cleanupFail), `${fixture.label}: 清理失败才允许保留已提交的事务`);
+      assert.equal(observed.transactionExists, Boolean(fixture.cleanupFail), `${fixture.label}: 磁盘残留必须与清理结果一致`);
       assert.equal(observed.runtime, candidateRuntime, `${fixture.label}: success must retain candidate runtime`);
       assert.deepEqual(observed.sourceBytes, Buffer.from(candidateSourceForHost(fixture.source || '2.1.999'), 'ascii'), `${fixture.label}: success must retain exact host-native candidate source bytes`);
       assert.equal(observed.source, candidateSourceForHost(fixture.source || '2.1.999'), `${fixture.label}: success must retain exact candidate source version`);

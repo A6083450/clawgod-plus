@@ -40,14 +40,19 @@ try {
     const dummy = spawn(process.execPath, [join(runtime, 'cli.cjs')], { env, stdio: ['pipe', 'pipe', 'pipe'] });
     try {
       await once(dummy.stdout, 'data');
-      const blocked = spawnSync('/bin/bash', [installer, ...args], { env, cwd: home, encoding: 'utf8', timeout: 30000 });
-      assert.notEqual(blocked.status, 0, `${label}: real installer preflight must reject an active legacy cli.cjs`);
-      assert.match(blocked.stdout + blocked.stderr, /\/exit|正在使用运行时/, `${label}: rejection must explain how to leave active sessions`);
+      const active = spawnSync('/bin/bash', [installer, ...args], { env, cwd: home, encoding: 'utf8', timeout: 30000 });
+      if (label === 'uninstall') {
+        assert.notEqual(active.status, 0, '卸载仍须拒绝活跃会话');
+        assert.match(active.stdout + active.stderr, /\/exit|正在使用运行时/);
+      } else {
+        assert.equal(active.status, 0, `${label}: 活跃会话下仍须继续安装：${active.stdout}${active.stderr}`);
+        assert.match(active.stderr, /继续升级/);
+      }
       assert.equal(dummy.exitCode, null, `${label}: installer must not kill the active runtime`);
-      assert.equal(existsSync(stage), false, `${label}: blocked preflight must not reach runtime writes`);
-      assert.equal(readFileSync(join(runtime, 'runtime-state.cjs'), 'utf8'), 'prior helper\n', `${label}: preflight cannot overwrite the installed helper`);
+      assert.equal(existsSync(stage), label !== 'uninstall', `${label}: 只有卸载会被活跃进程阻止`);
+      assert.equal(readFileSync(join(runtime, 'runtime-state.cjs'), 'utf8'), 'prior helper\n', `${label}: 预检或回滚须保留已安装的 helper`);
       assert.equal(readFileSync(join(runtime, 'chunks', 'lazy.mjs'), 'utf8'), 'prior lazy chunk\n', `${label}: preflight must preserve lazy imports`);
-      assert.deepEqual(readdirSync(temp), [], `${label}: failed lock acquisition must clean its temporary helper`);
+      assert.deepEqual(readdirSync(temp), [], `${label}: 预检完成须清理临时 helper`);
       const exited = once(dummy, 'exit');
       dummy.stdin.end('exit\n');
       await exited;

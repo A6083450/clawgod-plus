@@ -57,7 +57,7 @@ acquire_runtime_write_lock() {
 @@CLAWGOD_RUNTIME_STATE_CJS@@
 RUNTIME_STATE_EOF
   prepare_enhancement_config_directory
-  RUNTIME_WRITE_TOKEN=$("$BUN_BIN" "$RUNTIME_STATE_HELPER" lock "$CLAWGOD_DIR" "$$")
+  RUNTIME_WRITE_TOKEN=$("$BUN_BIN" "$RUNTIME_STATE_HELPER" "${1:-lock}" "$CLAWGOD_DIR" "$$")
   [[ "$RUNTIME_WRITE_TOKEN" =~ ^[a-f0-9-]{36}$ ]] || { err "Invalid runtime write lock token"; return 1; }
   RUNTIME_WRITE_RELEASE_SAFE=1
   export CLAWGOD_RUNTIME_WRITE_TOKEN="$RUNTIME_WRITE_TOKEN"
@@ -260,7 +260,7 @@ if [ -z "$BUN_VERSION_NUM" ] \
   exit 1
 fi
 
-acquire_runtime_write_lock
+acquire_runtime_write_lock lock-update
 RUNTIME_TRANSACTION_DIR=$(mktemp -d "$CLAWGOD_DIR/.runtime-rollback.XXXXXX")
 chmod 700 "$RUNTIME_TRANSACTION_DIR"
 "$BUN_BIN" "$RUNTIME_STATE_HELPER" snapshot "$CLAWGOD_DIR" "$RUNTIME_TRANSACTION_DIR"

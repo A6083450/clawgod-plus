@@ -108,12 +108,13 @@ function Write-Warn($msg) { Write-Host "  ! $msg" -ForegroundColor Yellow }
 function Write-Dim($msg)  { Write-Host "  $msg" -ForegroundColor DarkGray }
 
 function Enter-RuntimeWriteLock {
+    param([string]$Command = 'lock')
     $script:RuntimeLockTempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("clawgod-runtime-lock-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $RuntimeLockTempDir | Out-Null
     $script:RuntimeStateHelper = Join-Path $RuntimeLockTempDir 'runtime-state.cjs'
     [System.IO.File]::WriteAllBytes($RuntimeStateHelper, $RuntimeStateBytes)
     New-Item -ItemType Directory -Force -Path $ClawDir | Out-Null
-    $token = & $BunBin $RuntimeStateHelper lock $ClawDir $PID
+    $token = & $BunBin $RuntimeStateHelper $Command $ClawDir $PID
     if ($LASTEXITCODE -ne 0) { throw 'Could not acquire runtime write lock; runtime was not changed.' }
     $script:RuntimeWriteToken = "$token".Trim()
     if ($RuntimeWriteToken -cnotmatch '^[a-f0-9-]{36}$') { throw 'Invalid runtime write lock token.' }
@@ -428,7 +429,7 @@ if (-not $BunVersionOk) {
 }
 
 # --- Handle -NoUpgrade (skip download, re-patch only) ----------------
-Enter-RuntimeWriteLock
+Enter-RuntimeWriteLock -Command lock-update
 $RuntimeTarget = Join-Path $ClawDir "cli.original.cjs"
 $RuntimeSourceVersion = Join-Path $ClawDir ".source-version"
 $RuntimeRollbackDir = Join-Path $ClawDir (".runtime-rollback." + [Guid]::NewGuid().ToString("N"))
@@ -817,7 +818,10 @@ if (Test-Path -LiteralPath $RuntimeRollbackDir) {
     }
     if ($RuntimeTransactionCommitted -or ($VendorRollbackComplete -and $RuntimeTransactionCleanupSafe)) {
         Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
-        if (-not $RuntimeTransactionCommitted -and -not (Test-Path -LiteralPath $RuntimeRollbackDir) -and $env:CLAWGOD_UPDATE_ROLLBACK_RECEIPT) {
+        if (Test-Path -LiteralPath $RuntimeRollbackDir) {
+            $runtimeState = if ($RuntimeTransactionCommitted) { 'New runtime installed' } else { 'Prior runtime restored' }
+            Write-Warn "$runtimeState, but transaction cleanup is incomplete (files may be in use): $RuntimeRollbackDir. Exit old sessions, then inspect and remove this directory; retained transactions block automatic stable retry after a future update failure."
+        } elseif (-not $RuntimeTransactionCommitted -and $env:CLAWGOD_UPDATE_ROLLBACK_RECEIPT) {
             [System.IO.File]::WriteAllText($env:CLAWGOD_UPDATE_ROLLBACK_RECEIPT, "restored`n", [System.Text.Encoding]::ASCII)
         }
     } elseif ($VendorRollbackComplete) {

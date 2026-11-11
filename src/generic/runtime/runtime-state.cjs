@@ -129,7 +129,7 @@ function ancestors(pid, processes) {
   return result;
 }
 
-function acquireRuntime(root, ownerPid = process.pid) {
+function acquireRuntime(root, ownerPid = process.pid, allowActive = false) {
   if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0 || !alive(ownerPid)) throw Error('升级锁进程无效。');
   const token = randomUUID(), path = join(root, WRITE_LOCK);
   try { fs.writeFileSync(path, JSON.stringify({ pid: ownerPid, token }), { flag: 'wx', mode: 0o600 }); }
@@ -149,7 +149,10 @@ function acquireRuntime(root, ownerPid = process.pid) {
     }
     const active = activeRuntimeProcesses(root, processes).map(row => row.pid).filter(pid => !bootstraps.has(pid));
     const pids = [...new Set([...readers, ...active])];
-    if (pids.length) throw Error(`Claude 正在使用运行时（PID: ${pids.join(', ')}）。请先在所有会话中执行 /exit，并关闭仍使用 Claude 的浏览器连接或后台任务，再从普通终端运行 claude update；本次未替换运行时。`);
+    if (pids.length) {
+      if (!allowActive) throw Error(`Claude 正在使用运行时（PID: ${pids.join(', ')}）。请先在所有会话中执行 /exit，并关闭仍使用 Claude 的浏览器连接或后台任务，再重试维护/卸载；本次未替换运行时。`);
+      console.error(`[clawgod] Claude 正在使用运行时（PID: ${pids.join(', ')}），继续升级，不会主动结束进程。旧会话后续加载模块可能失败，请在升级完成后重新启动 Claude；成功后会清理旧版本。`);
+    }
     return token;
   } catch (error) { releaseRuntime(root, token); throw error; }
 }
@@ -240,7 +243,7 @@ if (require.main === module) {
   try {
     const [command, root, argument] = process.argv.slice(2);
     if (!root || !argument) throw new Error('runtime-state: command, runtime directory and transaction/version required');
-    if (command === 'lock') console.log(acquireRuntime(root, Number(argument)));
+    if (command === 'lock' || command === 'lock-update') console.log(acquireRuntime(root, Number(argument), command === 'lock-update'));
     else if (command === 'unlock') releaseRuntime(root, argument);
     else if (command === 'snapshot') snapshot(root, argument);
     else if (command === 'restore') restore(root, argument);

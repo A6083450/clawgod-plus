@@ -8053,7 +8053,9 @@ function localCellProfile(source, dependencies) {
         || contract.imports.length !== 0) return null;
     }
     const chalk = resolveImport(names.bGt);
-    if (chalk.structure.digest !== '2fdd7ca5ded53c63977f6f7efb408920fd99b93e1fee3ce1f25a57d809c27aab'
+    // 2.1.322 颜色级别调整不再返回布尔值；级别赋值和 generation/样式导出不变。
+    if (!['2fdd7ca5ded53c63977f6f7efb408920fd99b93e1fee3ce1f25a57d809c27aab',
+      '6c15184aa43c240c72bcc18aec1cec314f759d31e748b0d7d3ee076de17dd8b8'].includes(chalk.structure.digest)
       || chalk.local !== chalk.structure.bindings[187]) return null;
     const styles = resolveImport(names.MNr), normalizedStyles = resolveImport(names.LNr);
     if (styles.specifier !== normalizedStyles.specifier

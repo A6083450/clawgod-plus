@@ -24,6 +24,7 @@ assert.notEqual(contract('var mask=3,limit=1<<mask;function draw(){return limit}
   contract('var limit=1<<mask,mask=3;function draw(){return limit}', ['draw']).digest, '初始化顺序必须进入契约');
 
 for (const [version, platform, renderFile] of [
+  ['2.1.322', 'darwin', 'chunk-ntfeg5fy.js'], ['2.1.322', 'linux', 'chunk-x0hgq1sw.js'], ['2.1.322', 'win32', 'chunk-c36q54w2.js'],
   ['2.1.316', 'darwin', 'chunk-94gy2hwx.js'], ['2.1.316', 'linux', 'chunk-bzr73sfg.js'], ['2.1.316', 'win32', 'chunk-y4v019ax.js'],
   ['2.1.314', 'darwin', 'chunk-xsq68wek.js'], ['2.1.314', 'linux', 'chunk-x7qf93mw.js'], ['2.1.314', 'win32', 'chunk-m6k5tg8b.js'],
   ['2.1.310', 'darwin', 'chunk-pma0w0g1.js'], ['2.1.310', 'linux', 'chunk-rwaeax2b.js'], ['2.1.310', 'win32', 'chunk-abp9eptc.js'],
@@ -37,7 +38,7 @@ const files = new Map(JSON.parse(readFileSync(new URL(`./fixtures/cell-contract-
 const source = files.get(renderFile);
 const adapted = processor.adaptCellRenderer(source, undefined, files);
 assert.notEqual(adapted, null, `${version}/${platform} 相同渲染接口必须兼容分块重组`);
-if (['2.1.310', '2.1.314', '2.1.316'].includes(version)) {
+if (['2.1.310', '2.1.314', '2.1.316', '2.1.322'].includes(version)) {
   const ansiImport = processor.structuralModule(adapted).ast.body[0];
   const ansi = files.get(basename(ansiImport.source.value));
   const [tokenizer, normalize] = ansiImport.specifiers.map(item => item.imported.name);
@@ -53,7 +54,7 @@ if (['2.1.310', '2.1.314', '2.1.316'].includes(version)) {
     { type: 'ansi', code: '\x1b[0m', endCode: '\x1b[0m' },
   ]), [], `${platform}: 样式归一化必须正确处理 reset`);
 }
-if (['2.1.314', '2.1.316'].includes(version)) {
+if (['2.1.314', '2.1.316', '2.1.322'].includes(version)) {
   const expander = adapted.match(/=([\w$]+)\(\[" "\.repeat\(clawgodTabOffset\)/)[1];
   const tabImport = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration'
     && node.specifiers.some(item => item.local.name === expander));
@@ -70,7 +71,7 @@ if (['2.1.314', '2.1.316'].includes(version)) {
     [['\x1b[31m中\x1b[0m\tX'], ['\x1b[31m中\x1b[0m      X']],
     [['\x1b]8;;https://example.com\x1b\\中\x1b]8;;\x1b\\\tX'], ['\x1b]8;;https://example.com\x1b\\中\x1b]8;;\x1b\\      X']],
   ]) assert.deepEqual(expand(input), expected, `${platform}: 新版转义解析必须保留正确制表符列宽`);
-  if (version === '2.1.316') {
+  if (version === '2.1.316' || version === '2.1.322') {
     assert.deepEqual(expand(['\x1b\x1b[31m中\x1b[0m\tX']), ['\x18\x1b[31m中\x1b[0m      X'],
       `${platform}: 单独 ESC 必须按上游新逻辑作为文本净化`);
     const modules = new Map(files);
@@ -122,8 +123,9 @@ const sharedAst = processor.structuralModule(sharedSource).ast;
 const factory = sharedAst.body.find(node => node.id && sharedSource.slice(node.start, node.end).includes('new Bun.ant.CellSegmenter')).id.name;
 const sharedSpecifier = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration' && basename(node.source.value) === sharedFile).source.value;
 for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias-caller', 'text-alias-caller', 'text-drift', 'ansi-drift',
-  ...(version === '2.1.316' ? ['text-prefix-drift'] : []),
-  ...(['2.1.307', '2.1.308', '2.1.310', '2.1.314', '2.1.316'].includes(version) ? ['direction-drift', 'direction-import', 'direction-missing', 'direction-method-write', 'direction-range-write', 'text-direction-import'] : [])]) {
+  ...(version === '2.1.322' ? ['chalk-generation-drift', 'chalk-level-drift', 'chalk-import'] : []),
+  ...(version === '2.1.316' || version === '2.1.322' ? ['text-prefix-drift'] : []),
+  ...(['2.1.307', '2.1.308', '2.1.310', '2.1.314', '2.1.316', '2.1.322'].includes(version) ? ['direction-drift', 'direction-import', 'direction-missing', 'direction-method-write', 'direction-range-write', 'text-direction-import'] : [])]) {
   const modules = new Map(variant === 'renamed' ? renamedFiles : files);
   if (variant === 'unrelated') for (const [file, text] of modules) {
     if (text.includes('stylePool;charPool;native=') || text.includes('.trimEnd()')) modules.set(file, text + '\nfunction unrelatedNewFeature(){return 123}'
@@ -144,6 +146,21 @@ for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias
       const changed = text.replace(/\[([\w$]+),([\w$]+)\(`\$\{\1\}:`\)\]/, '[$1,$2(`${$1}/`)]');
       assert.notEqual(changed, text, '必须改写真正的预计算保留名称前缀');
       modules.set(file, changed);
+    }
+  }
+  if (variant.startsWith('chalk-')) {
+    const [chalkFile, chalkSource] = [...modules].find(([, text]) => /function [\w$]+\(\)\{return [\w$]+\.levelGeneration\}/.test(text));
+    const structure = processor.structuralModule(chalkSource);
+    if (variant === 'chalk-import') {
+      const binding = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration'
+        && basename(node.source.value) === chalkFile).specifiers[1];
+      modules.set(renderFile, source.slice(0, binding.start) + `${structure.bindings[176]} as ${binding.local.name}` + source.slice(binding.end));
+    } else {
+      const changed = variant === 'chalk-generation-drift'
+        ? chalkSource.replace('return p.levelGeneration', 'return p.levelGeneration+1')
+        : chalkSource.replace('.level=3', '.level=2');
+      assert.notEqual(changed, chalkSource, '必须修改真实颜色级别或缓存代数逻辑');
+      modules.set(chalkFile, changed);
     }
   }
   if (variant === 'ansi-drift') for (const [file, text] of modules) {
@@ -188,7 +205,7 @@ for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias
       assert.equal(result.status, 0, `${platform}/${variant}: ${result.stderr}`);
       const factoryFile = variant === 'renamed' ? sharedFile.replace('chunk-', 'chunk-renamed-') : sharedFile;
       assert.doesNotMatch(readFileSync(join(dir, 'chunks', factoryFile), 'utf8'), /new Bun\.ant\.CellSegmenter/);
-      if (version === '2.1.316') {
+      if (version === '2.1.316' || version === '2.1.322') {
         const textFile = [...modules].find(([, text]) => text.includes('.trimEnd()') && !text.includes('stylePool;charPool;native='))[0];
         const output = readFileSync(join(dir, 'chunks', textFile), 'utf8');
         const check = processor.structuralModule(output).ast.body.find(node => node.type === 'FunctionDeclaration'

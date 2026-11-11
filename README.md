@@ -51,18 +51,18 @@ macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行�
 
 ## 安装 ClawGod Plus
 
-安装命令下载固定版本（v2026.10.30-claude.2.1.314）的 ClawGod Plus Release 资产。
+安装命令下载固定版本（v2026.11.11-claude.2.1.322）的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.30-claude.2.1.314/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.11-claude.2.1.322/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.10.30-claude.2.1.314/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.11-claude.2.1.322/install.ps1 | iex
 ```
 
 常用安装参数（不传版本时默认使用安装器已验证的 Claude Code 版本，保留较新的已装版本）：
@@ -414,7 +414,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 渲染器按相关声明及依赖的局部结构契约识别，变量改名、分块路径变化和无关声明改动不再要求逐版本添加指纹；真实布局或调用接口变化仍拒绝安装。未知渲染器不能靠 `--tolerate-stale` 或 clean-runtime 回退绕过。
 
-**先退出会话，再升级：** 在所有 Claude 会话中正常执行 `/exit`，并关闭仍使用 Claude 的浏览器连接或后台任务，然后从普通终端执行以下命令。安装、重补丁和卸载会先检查运行时占用；仍有活跃会话时拒绝覆盖，列出 PID，不强杀进程。升级期间的新启动也会被拒绝，避免旧会话退出时缺少分块或新会话加载半成品。
+**有进程也可升级：** 安装、更新和重补丁发现活跃会话时会列出 PID、提示风险并继续，不强杀进程。升级成功后清理本次事务的旧运行时备份，不保留旧版本供现有会话使用；旧会话后续加载模块（包括退出流程）可能失败，请在升级完成后重新启动 Claude。若需避免打断任务，仍建议先正常 `/exit` 并关闭浏览器连接或后台任务。卸载仍要求先退出活跃会话；并发升级和升级期间的新启动仍会被拒绝，避免同时写入或加载半成品。
 
 ```bash
 claude update
@@ -426,7 +426,7 @@ claude update
 
 另可显式使用 `claude update --tolerate-stale`、`bash install.sh --tolerate-stale`、PowerShell `-TolerateStale`，或环境变量 `CLAWGOD_TOLERATE_STALE=1`：只跳过失配的补丁，保留其上游行为，继续应用其他成功补丁并列出跳过项。该选项不忽略语法错误、歧义或运行时失败，也不改变默认的整包兼容回退策略。
 
-升级失败会恢复上一套 CLI、wrapper、资源与 clean-source 备份；Provider、运行时开关和插件用户配置不属于回滚范围。`--no-upgrade` 校验并恢复当前版本的完整 clean-source 后重新打补丁，缺失或损坏的备份不得与其他版本混用。
+升级失败会恢复上一套 CLI、wrapper、资源与 clean-source 备份；Provider、运行时开关和插件用户配置不属于回滚范围。Windows 若因文件占用或权限问题无法清理本次事务，会明确提示残留目录：新版安装或旧版恢复结果不变，但需退出旧会话后检查并清理该目录；残留 `.runtime-rollback.*` 会阻止后续失败升级的自动稳定版重试。不会为清理残留而强杀进程或删除其他恢复事务。`--no-upgrade` 校验并恢复当前版本的完整 clean-source 后重新打补丁，缺失或损坏的备份不得与其他版本混用。
 
 ```bash
 claude update --version latest # 显式尝试 npm 最新版，仍必须通过兼容检查

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 
 const repatcherSource = readFileSync(new URL('../src/generic/runtime/repatcher.mjs', import.meta.url), 'utf8');
 const vendorTransactionSource = readFileSync(new URL('../src/generic/runtime/vendor-transaction.mjs', import.meta.url), 'utf8');
@@ -124,8 +125,17 @@ try {
   assert.equal(readFileSync(target, 'utf8'), priorRuntime, 'startup failure must restore prior runtime');
   assert.equal(readFileSync(join(fixtureRoot, 'assets', 'prior.txt'), 'utf8'), 'prior asset', 'startup failure must restore prior assets');
   assert.deepEqual(readFileSync(oldNative), oldNativeBytes, 'startup failure must restore vendor before prior runtime');
-  const passed = run(0);
-  assert.equal(passed.status, 0, `${passed.stdout}${passed.stderr}`);
+  const reader = spawn(process.execPath, ['-e', `require('./runtime-state.cjs').enterRuntime(process.cwd());console.log('ready');process.stdin.once('data',()=>process.exit(0));`], { cwd: fixtureRoot, stdio: ['pipe', 'pipe', 'pipe'] });
+  let passed;
+  try {
+    await once(reader.stdout, 'data');
+    passed = run(0);
+    assert.equal(passed.status, 0, `${passed.stdout}${passed.stderr}`);
+    assert.match(passed.stderr, /继续升级/);
+    assert.equal(reader.exitCode, null, '成功重补丁不得主动终止已有会话');
+  } finally {
+    const exited = once(reader, 'exit'); reader.stdin.end('exit\n'); await exited;
+  }
   assert.deepEqual(JSON.parse(readFileSync(patchArgs, 'utf8')), ['--enhancements-file', enhancementsFile], 'successful repatch must reuse exact saved config argv');
   assert.equal(readFileSync(target, 'utf8'), candidateRuntime, 'successful repatch must publish candidate runtime');
   assert.equal(readFileSync(sourceVersion, 'utf8'), '2.1.226\n', 'successful repatch must publish candidate source marker');

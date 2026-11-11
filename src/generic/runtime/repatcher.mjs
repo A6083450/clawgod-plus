@@ -25,7 +25,7 @@ let vendorPublishAttempted = false;
 let snapshotted = false;
 const previousToken = process.env.CLAWGOD_RUNTIME_WRITE_TOKEN;
 try {
-  runtimeToken = state.acquireRuntime(here);
+  runtimeToken = state.acquireRuntime(here, process.pid, true);
   process.env.CLAWGOD_RUNTIME_WRITE_TOKEN = runtimeToken;
   transactionDir = mkdtempSync(join(here, '.runtime-rollback.'));
   const candidateDir = join(transactionDir, 'candidate');
