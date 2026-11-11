@@ -201,7 +201,7 @@ jobs:
           done
 
       - name: Publish supported-Claude-version badge
-        if: success() && matrix.platform == 'linux' && github.event_name != 'pull_request'
+        if: success() && matrix.platform == 'linux' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
