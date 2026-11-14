@@ -24,6 +24,7 @@ assert.notEqual(contract('var mask=3,limit=1<<mask;function draw(){return limit}
   contract('var limit=1<<mask,mask=3;function draw(){return limit}', ['draw']).digest, '初始化顺序必须进入契约');
 
 for (const [version, platform, renderFile] of [
+  ['2.1.325', 'darwin', 'chunk-wc3psek1.js'], ['2.1.325', 'linux', 'chunk-1fpwqakg.js'], ['2.1.325', 'win32', 'chunk-bwpteswa.js'],
   ['2.1.322', 'darwin', 'chunk-ntfeg5fy.js'], ['2.1.322', 'linux', 'chunk-x0hgq1sw.js'], ['2.1.322', 'win32', 'chunk-c36q54w2.js'],
   ['2.1.316', 'darwin', 'chunk-94gy2hwx.js'], ['2.1.316', 'linux', 'chunk-bzr73sfg.js'], ['2.1.316', 'win32', 'chunk-y4v019ax.js'],
   ['2.1.314', 'darwin', 'chunk-xsq68wek.js'], ['2.1.314', 'linux', 'chunk-x7qf93mw.js'], ['2.1.314', 'win32', 'chunk-m6k5tg8b.js'],
@@ -38,7 +39,56 @@ const files = new Map(JSON.parse(readFileSync(new URL(`./fixtures/cell-contract-
 const source = files.get(renderFile);
 const adapted = processor.adaptCellRenderer(source, undefined, files);
 assert.notEqual(adapted, null, `${version}/${platform} 相同渲染接口必须兼容分块重组`);
-if (['2.1.310', '2.1.314', '2.1.316', '2.1.322'].includes(version)) {
+if (version === '2.1.325') {
+  function loadExport(edge) {
+    const text = files.get(basename(edge.specifier));
+    const parsed = processor.structuralModule(text);
+    const exported = parsed.ast.body.flatMap(node => node.type === 'ExportNamedDeclaration' ? node.specifiers : [])
+      .find(item => item.exported.name === edge.imported);
+    if (text.includes('levelGeneration')) return () => 0;
+    if (['clawgodAnsiTokens', 'clawgodNormalizeStyles'].includes(edge.local)) return new Function(
+      text.replace(/import\{[^}]*\}from"[^"]+";/g, '').replace(/export\{[^}]*\};/, `return ${edge.imported};`))();
+    const closure = contract(text, [exported.local.name]);
+    const declarations = parsed.ast.body.flatMap(node => node.type === 'VariableDeclaration'
+      ? node.declarations.filter(item => closure.declarations.has(item.id.name)).map(item => `${node.kind} ${text.slice(item.start, item.end)};`)
+      : closure.declarations.has(node.id?.name) ? [text.slice(node.start, node.end)] : []).join('\n');
+    return new Function(...closure.imports.map(item => item.local), declarations + `;return ${exported.local.name};`)(...closure.imports.map(loadExport));
+  }
+  const parser = contract(adapted, ['parseStyledText']);
+  const parse = new Function(...parser.imports.map(edge => edge.local),
+    parser.source.replace(/import\{[^}]*\}from"[^"]+";/g, '') + ';return parseStyledText;')(...parser.imports.map(loadExport));
+  const styles = { intern() { return 0; } };
+  for (const text of ['á', '́A', '‍👩', '👩‍💻', '中']) {
+    const cells = parse(text, styles);
+    assert.equal(cells.map(cell => cell.value).join(''), text, `${platform}: 组合字符和 ZWJ 不得丢失`);
+    assert.equal(cells.reduce((sum, cell) => sum + cell.width, 0), Bun.stringWidth(text, { ambiguousIsNarrow: true }));
+  }
+  // 注入解析器须实际调用上游归一化；仅接受新摘要却忽略 helper 会漏掉该断言。
+  const normalize = parser.imports.find(edge => {
+    const text = files.get(basename(edge.specifier));
+    return text.includes('new Bun.ant.CellSegmenter') && !['clawgodAnsiTokens', 'clawgodNormalizeStyles'].includes(edge.local);
+  });
+  assert.ok(normalize);
+  let calls = 0;
+  const dependencies = parser.imports.map(edge => edge === normalize ? value => { calls++; return value.toUpperCase(); } : loadExport(edge));
+  const instrumented = new Function(...parser.imports.map(edge => edge.local),
+    parser.source.replace(/import\{[^}]*\}from"[^"]+";/g, '') + ';return parseStyledText;')(...dependencies);
+  assert.equal(instrumented('ab', styles).map(cell => cell.value).join(''), 'AB');
+  assert.equal(calls, 2);
+  for (const name of ['cmr', 'value']) {
+    const modules = new Map([...files].map(([file, text]) => [file, text.replace(new RegExp(`(?<![\\w$])${normalize.imported.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`, 'g'), name)]));
+    const output = processor.adaptCellRenderer(modules.get(renderFile), undefined, modules);
+    assert.ok(output);
+    const renamedParser = contract(output, ['parseStyledText']);
+    const helper = renamedParser.imports.find(edge => edge.imported === name);
+    assert.ok(helper, `${platform}: 上游字素 helper 名 ${name} 不得被模板映射或局部变量遮蔽`);
+    const parse = new Function(...renamedParser.imports.map(edge => edge.local),
+      renamedParser.source.replace(/import\{[^}]*\}from"[^"]+";/g, '') + ';return parseStyledText;')(
+      ...renamedParser.imports.map(edge => edge === helper ? loadExport(normalize) : loadExport(edge)));
+    assert.equal(parse('中-á-👩‍💻', styles).map(cell => cell.value).join(''), '中-á-👩‍💻');
+  }
+}
+if (['2.1.310', '2.1.314', '2.1.316', '2.1.322', '2.1.325'].includes(version)) {
   const ansiImport = processor.structuralModule(adapted).ast.body[0];
   const ansi = files.get(basename(ansiImport.source.value));
   const [tokenizer, normalize] = ansiImport.specifiers.map(item => item.imported.name);
@@ -54,7 +104,7 @@ if (['2.1.310', '2.1.314', '2.1.316', '2.1.322'].includes(version)) {
     { type: 'ansi', code: '\x1b[0m', endCode: '\x1b[0m' },
   ]), [], `${platform}: 样式归一化必须正确处理 reset`);
 }
-if (['2.1.314', '2.1.316', '2.1.322'].includes(version)) {
+if (['2.1.314', '2.1.316', '2.1.322', '2.1.325'].includes(version)) {
   const expander = adapted.match(/=([\w$]+)\(\[" "\.repeat\(clawgodTabOffset\)/)[1];
   const tabImport = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration'
     && node.specifiers.some(item => item.local.name === expander));
@@ -71,7 +121,7 @@ if (['2.1.314', '2.1.316', '2.1.322'].includes(version)) {
     [['\x1b[31m中\x1b[0m\tX'], ['\x1b[31m中\x1b[0m      X']],
     [['\x1b]8;;https://example.com\x1b\\中\x1b]8;;\x1b\\\tX'], ['\x1b]8;;https://example.com\x1b\\中\x1b]8;;\x1b\\      X']],
   ]) assert.deepEqual(expand(input), expected, `${platform}: 新版转义解析必须保留正确制表符列宽`);
-  if (version === '2.1.316' || version === '2.1.322') {
+  if (['2.1.316', '2.1.322', '2.1.325'].includes(version)) {
     assert.deepEqual(expand(['\x1b\x1b[31m中\x1b[0m\tX']), ['\x18\x1b[31m中\x1b[0m      X'],
       `${platform}: 单独 ESC 必须按上游新逻辑作为文本净化`);
     const modules = new Map(files);
@@ -123,9 +173,10 @@ const sharedAst = processor.structuralModule(sharedSource).ast;
 const factory = sharedAst.body.find(node => node.id && sharedSource.slice(node.start, node.end).includes('new Bun.ant.CellSegmenter')).id.name;
 const sharedSpecifier = processor.structuralModule(source).ast.body.find(node => node.type === 'ImportDeclaration' && basename(node.source.value) === sharedFile).source.value;
 for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias-caller', 'text-alias-caller', 'text-drift', 'ansi-drift',
-  ...(version === '2.1.322' ? ['chalk-generation-drift', 'chalk-level-drift', 'chalk-import'] : []),
-  ...(version === '2.1.316' || version === '2.1.322' ? ['text-prefix-drift'] : []),
-  ...(['2.1.307', '2.1.308', '2.1.310', '2.1.314', '2.1.316', '2.1.322'].includes(version) ? ['direction-drift', 'direction-import', 'direction-missing', 'direction-method-write', 'direction-range-write', 'text-direction-import'] : [])]) {
+  ...(['2.1.322', '2.1.325'].includes(version) ? ['chalk-generation-drift', 'chalk-level-drift', 'chalk-import'] : []),
+  ...(version === '2.1.325' ? ['grapheme-drift', 'grapheme-import', 'grapheme-missing', 'text-grapheme-import'] : []),
+  ...(['2.1.316', '2.1.322', '2.1.325'].includes(version) ? ['text-prefix-drift'] : []),
+  ...(['2.1.307', '2.1.308', '2.1.310', '2.1.314', '2.1.316', '2.1.322', '2.1.325'].includes(version) ? ['direction-drift', 'direction-import', 'direction-missing', 'direction-method-write', 'direction-range-write', 'text-direction-import'] : [])]) {
   const modules = new Map(variant === 'renamed' ? renamedFiles : files);
   if (variant === 'unrelated') for (const [file, text] of modules) {
     if (text.includes('stylePool;charPool;native=') || text.includes('.trimEnd()')) modules.set(file, text + '\nfunction unrelatedNewFeature(){return 123}'
@@ -161,6 +212,33 @@ for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias
         : chalkSource.replace('.level=3', '.level=2');
       assert.notEqual(changed, chalkSource, '必须修改真实颜色级别或缓存代数逻辑');
       modules.set(chalkFile, changed);
+    }
+  }
+  if (variant.startsWith('grapheme-') || variant === 'text-grapheme-import') {
+    const helper = contract(adapted, ['parseStyledText']).imports.find(edge => edge.specifier === sharedSpecifier
+      && !['clawgodAnsiTokens', 'clawgodNormalizeStyles'].includes(edge.local));
+    const closure = contract(sharedSource, [helper.imported]);
+    const edge = closure.imports.find(item => files.get(basename(item.specifier)).includes('new Intl.Segmenter'));
+    const helperFile = basename(edge.specifier);
+    if (variant === 'grapheme-missing') modules.delete(helperFile);
+    if (variant === 'grapheme-drift') {
+      const text = modules.get(helperFile), changed = text.replace('granularity:"grapheme"', 'granularity:"word"');
+      assert.notEqual(changed, text);
+      modules.set(helperFile, changed);
+    }
+    if (variant === 'grapheme-import') {
+      const binding = processor.structuralModule(sharedSource).ast.body.filter(node => node.type === 'ImportDeclaration')
+        .flatMap(node => node.specifiers).find(item => item.local.name === edge.local);
+      const changed = sharedSource.slice(0, binding.start) + `missingGrapheme as ${edge.local}` + sharedSource.slice(binding.end);
+      assert.notEqual(changed, sharedSource);
+      modules.set(sharedFile, changed);
+    }
+    if (variant === 'text-grapheme-import') for (const [file, text] of modules) {
+      if (text.includes('.trimEnd()') && !text.includes('stylePool;charPool;native=')) {
+        const changed = text.replace(`,${helper.imported},`, `,${factory} as ${helper.local},`);
+        assert.notEqual(changed, text);
+        modules.set(file, changed);
+      }
     }
   }
   if (variant === 'ansi-drift') for (const [file, text] of modules) {
@@ -205,7 +283,7 @@ for (const variant of ['valid', 'renamed', 'unrelated', 'unknown-caller', 'alias
       assert.equal(result.status, 0, `${platform}/${variant}: ${result.stderr}`);
       const factoryFile = variant === 'renamed' ? sharedFile.replace('chunk-', 'chunk-renamed-') : sharedFile;
       assert.doesNotMatch(readFileSync(join(dir, 'chunks', factoryFile), 'utf8'), /new Bun\.ant\.CellSegmenter/);
-      if (version === '2.1.316' || version === '2.1.322') {
+      if (['2.1.316', '2.1.322', '2.1.325'].includes(version)) {
         const textFile = [...modules].find(([, text]) => text.includes('.trimEnd()') && !text.includes('stylePool;charPool;native='))[0];
         const output = readFileSync(join(dir, 'chunks', textFile), 'utf8');
         const check = processor.structuralModule(output).ast.body.find(node => node.type === 'FunctionDeclaration'

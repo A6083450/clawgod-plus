@@ -562,7 +562,7 @@ if (name === 'install-ripgrep.mjs') {
   assert.notEqual(directCompatibilityFailure.run.status, 0, 'direct install must fail closed for an unauthorized compatibility fallback');
   assert.deepEqual(directCompatibilityFailure.patchArgs, ['--enhancements-file', directCompatibilityFailure.configPath], 'direct install must not authorize the compatibility fallback patch argument');
   assertPriorRuntimeRestored(directCompatibilityFailure, 'direct compatibility failure');
-  assert.equal(directCompatibilityFailure.rollbackReceipt, 'restored\n', '只有恢复完成才允许 updater 重试稳定版');
+  assert.equal(directCompatibilityFailure.rollbackReceipt, 'restored\n', '只有恢复完成才允许 updater 确认原运行时已保留');
 
   const updateCompatibilityFallback = runLifecycleCase('update-compatibility-fallback', [], {
     updateFailOpen: true,

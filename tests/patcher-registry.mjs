@@ -13,6 +13,7 @@ const expectedManifest = [
   { id: 'planning', kind: 'patch' },
   { id: 'voice', kind: 'patch' },
   { id: 'auto-mode', kind: 'patch' },
+  { id: 'code-mode', kind: 'patch' },
   { id: 'unrestricted-tools', kind: 'patch' },
   { id: 'paste-images', kind: 'patch' },
   { id: 'privacy', kind: 'patch' },
@@ -26,7 +27,6 @@ const expectedManifest = [
   { id: 'unlock-ultracode', kind: 'patch' },
   { id: 'claude-hud', kind: 'plugin' },
   { id: 'claude-mem', kind: 'plugin' },
-  { id: 'superpowers', kind: 'plugin' },
 ];
 
 const expectedTask5Source = {
@@ -125,7 +125,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   manifest.filter(entry => entry.kind === 'plugin').map(entry => entry.id),
-  ['claude-hud', 'claude-mem', 'superpowers'],
+  ['claude-hud', 'claude-mem'],
   'plugin-only enhancements remain manifest entries without patch registries',
 );
 assert.equal(patchRegistries[0].id, 'core', 'core registry must remain independent of enhancement selection');
@@ -134,7 +134,7 @@ const ownedDescriptors = patchRegistries.flatMap(registry => [
   ...registry.patches.map(descriptor => ({ descriptor, owner: registry.id })),
   ...registry.customPatches.map(descriptor => ({ descriptor, owner: registry.id })),
 ]);
-assert.equal(ownedDescriptors.length, 84, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(ownedDescriptors.length, 85, 'every regex and custom patch descriptor must retain exactly one owner');
 assert.equal(Object.keys(runtimeFeatureMetadata).length, 50, 'all upstream runtime feature patch IDs must be exported');
 assert.equal(
   new Set(ownedDescriptors.map(({ descriptor }) => descriptor)).size,
@@ -173,6 +173,7 @@ assert.deepEqual(
     { name: 'GrowthBook env overrides (graph dead-code fix)', type: 'custom', order: 92 },
     { name: 'Disable enterprise remote settings', type: 'custom', order: 93 },
     { name: 'Design canvas local fallback (replace cloud hub)', type: 'regex', order: 94 },
+    { name: 'Code Mode local eligibility', type: 'custom', order: 95 },
     { name: 'Voice hold input: clean warmup once, consume recording repeats', type: 'custom', order: 99 },
   ],
   'runtime and terminal descriptors must have stable post-canonical order values',

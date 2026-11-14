@@ -30,7 +30,17 @@ globalThis.reload=reload;`;
   assert.deepEqual(Array.from(runtime.reload({ CLAUDE_CODE_CONTEXT_LIMIT: '1000000' })), [1000000, 1000000, 1000000, 32000, 128000]);
   assert.equal((await contextPatch.apply(result.code, {})).status, 'already', 'reordered constants must remain idempotent');
 }
-for (const tail of ['sE=32000,r0=32000', 'sE=128000,r0=128000', 'sE=32000,r0=128000,n0=128000']) {
+{
+  const source = 'var bat=200000,cD=200000,S1=1e6,E1=1e6,v1=32000,w1=128000;'
+    + 'function reload(e){Object.assign(process.env,e);return [bat,cD,S1,E1,v1,w1]}globalThis.reload=reload;';
+  const result = await contextPatch.apply(source, {});
+  assert.equal(result.status, 'applied', '2.1.325 的两项百万 token 常量不得阻止上下文补丁');
+  const runtime = evaluate(result.code);
+  assert.deepEqual(Array.from(runtime.reload({})), [200000, 200000, 1000000, 1000000, 32000, 128000]);
+  assert.deepEqual(Array.from(runtime.reload({ CLAUDE_CODE_CONTEXT_LIMIT: '500000' })), [500000, 500000, 1000000, 1000000, 32000, 128000]);
+  assert.equal((await contextPatch.apply(result.code, {})).status, 'already');
+}
+for (const tail of ['sE=32000,r0=32000', 'sE=128000,r0=128000', 'sE=32000,r0=128000,n0=128000', 'a=1e6,b=1e6,sE=32000,r0=32000']) {
   assert.equal((await contextPatch.apply(`var MCe=200000,c6=200000,${tail};`, {})).status, 'stale', 'ambiguous constants must still stop patching');
 }
 

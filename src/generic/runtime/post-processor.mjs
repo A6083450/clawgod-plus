@@ -8004,13 +8004,15 @@ function localCellProfile(source, dependencies) {
       one(text => /^function [\w$]+\(([\w$]+)\)\{return [\w$]+\.test\(\1\)\?\1\.replace\([\w$]+,"\\uFFFD"\):\1\}$/.test(text)),
     ];
     const renderer = cellDeclarationContract(source, roots);
-    const splitBidiWindows = renderer.digest === '14c0524e2ffffed0c7b54c8ff72ed5b132368b5f14d91fad4826cd071669542d';
-    const splitBidi = splitBidiWindows || renderer.digest === 'ae2075eaf8e325578ef1ffeaa46b2e14c0b027d58c423861c0f9a31f92da3902';
+    const normalizedWindows = renderer.digest === '9512f3cfbcebee9c2dd2e4c675c27af6d42ab9ed8b70484966497823c365ab47';
+    const normalizedGraphemes = normalizedWindows || renderer.digest === '738c6749821a9bcc06ea5e58bc14e8e745334d8878b49207c21fcc1714612f40';
+    const splitBidiWindows = normalizedWindows || renderer.digest === '14c0524e2ffffed0c7b54c8ff72ed5b132368b5f14d91fad4826cd071669542d';
+    const splitBidi = normalizedGraphemes || splitBidiWindows || renderer.digest === 'ae2075eaf8e325578ef1ffeaa46b2e14c0b027d58c423861c0f9a31f92da3902';
     const windows = splitBidiWindows || renderer.digest === '5662354f359aff6215a218c960def8daa016b665a826182ca74f7f7a3931e976';
     if (!splitBidi && !windows && renderer.digest !== '81d0cbf0d426ae6b3b29b279988115f7135d920654b90201a9e235e36851b6a5') return null;
     const names = Object.fromEntries(Object.entries({ Ns:12, Dd:23, Cx:81, xC:110, Dc:137,
       bn:14, wo:15, Xf:16, jn:17, hht:1, Rx:90, xx:93, bGt:3, LNr:5, MNr:6 })
-      .map(([key, index]) => [key, renderer.bindings[index - (windows && index >= 12 ? 1 : 0)]]));
+      .map(([key, index]) => [key, renderer.bindings[index + (normalizedGraphemes && index >= 5 ? 1 : 0) - (windows && index >= 12 ? 1 : 0)]]));
     names.cmr = 'clawgodAnsiTokens';
     names.Kf = 'clawgodMergeStyles';
     const imports = ast.body.filter(node => node.type === 'ImportDeclaration');
@@ -8028,12 +8030,14 @@ function localCellProfile(source, dependencies) {
     };
     const shared = resolveImport(renderer.bindings[0]);
     // 2.1.310 合入 tmux 检测，原 ANSI/工厂不变，但新增导入使绑定后移四位。
-    const tmuxAnsi = splitBidi && shared.structure.digest === '8ec4f78979e912faa4b865c3205b6b299bdb7b223f94ebf9b51f048e01b11c92';
+    // 2.1.325 新增字素归一化，沿用原 ANSI 算法并新增两个导入绑定。
+    if (normalizedGraphemes && shared.structure.digest !== '5937962119d4ecd4a455e99ff1360e285f4e597a3e4b3f66355140fc66ee890e') return null;
+    const tmuxAnsi = normalizedGraphemes || splitBidi && shared.structure.digest === '8ec4f78979e912faa4b865c3205b6b299bdb7b223f94ebf9b51f048e01b11c92';
     // 2.1.304 将原样的 ANSI 模块与共享工厂合并；工厂绑定整体后移 128 位。
     const mergedAnsi = tmuxAnsi || shared.structure.digest === (splitBidi
       ? 'be8ac874e539c2753fddac24c4af4af0268c14e276b29a1e1835f19d96e94e71'
       : '9eba98324a241b2dc9316c8d9bc30ffd2ed64f8acbf7c1c971d7c53ea010a0bb');
-    const sharedOffset = tmuxAnsi ? 127 : splitBidi ? 123 : mergedAnsi ? 128 : 0;
+    const sharedOffset = normalizedGraphemes ? 129 : tmuxAnsi ? 127 : splitBidi ? 123 : mergedAnsi ? 128 : 0;
     if (!mergedAnsi && shared.structure.digest !== 'a4df63c44a7007f50b1418b8f808f8600771ce2003d94c291174145ec3ba36f6'
       || shared.local !== shared.structure.bindings[sharedOffset + 6]) return null;
     for (const [local, upstream] of (splitBidi ? [[4,5]] : [[2,0],[4,5],[windows ? 9 : 10,1],[windows ? 10 : 11,2]])) {
@@ -8044,8 +8048,8 @@ function localCellProfile(source, dependencies) {
     let bidi;
     if (splitBidi) {
       bidi = resolveImport(renderer.bindings[2]);
-      const pattern = resolveImport(renderer.bindings[windows ? 9 : 10]);
-      const regex = resolveImport(renderer.bindings[windows ? 10 : 11]);
+      const pattern = resolveImport(renderer.bindings[(windows ? 9 : 10) + (normalizedGraphemes ? 1 : 0)]);
+      const regex = resolveImport(renderer.bindings[(windows ? 10 : 11) + (normalizedGraphemes ? 1 : 0)]);
       if (bidi.structure.digest !== 'd64dedaa92eb5fed6f31d07b1ea5bf194f7335b9e5158f3954d2daf120ff263d'
         || bidi.specifier !== pattern.specifier || bidi.specifier !== regex.specifier) return null;
       const contract = cellDeclarationContract(bidi.source, [bidi.local, pattern.local, regex.local]);
@@ -8073,6 +8077,16 @@ function localCellProfile(source, dependencies) {
       });
     }
     if (!verifyEdges(cellDeclarationContract(styles.source, [styles.local, normalizedStyles.local]), [[chalk.structure.digest, 176]])) return null;
+    let rendererSource = CELL_RENDERER_SOURCE;
+    if (normalizedGraphemes) {
+      const normalizer = resolveImport(renderer.bindings[5]);
+      const contract = cellDeclarationContract(normalizer.source, [normalizer.local]);
+      if (normalizer.specifier !== shared.specifier || normalizer.local !== shared.structure.bindings[140]
+        || contract.digest !== 'f2e91101b5346e72ebcb5c4cecf2b8e18c6de54820d22e183a0172caebde099f'
+        || !verifyEdges(contract, [['a7d45c3881d9dd1eb2a53e264a0934324025377e3c0c216068870858ce375bef', 1],
+          ['ca7e8d33b404ed73726f061679bdaac9a5910060a73755a352f1617e62f52497', 5]])) return null;
+      rendererSource = rendererSource.replace('var value = segment.segment;', 'var value = clawgodNormalizeGrapheme(segment.segment);');
+    }
     const tabs = resolveImport(names.hht);
     const expanders = imports.filter(node => node.source.value === tabs.specifier).flatMap(node => node.specifiers)
       .filter(item => item.local.name !== names.hht).filter(item => {
@@ -8112,7 +8126,8 @@ function localCellProfile(source, dependencies) {
       const contract = cellDeclarationContract(text, [checks[0].id.name, segments[0].id.name]);
       // 2.1.316 预计算保留名称前缀并跳过重复归一化，仍保留原防冒充回退。
       if (!(splitBidi ? ['f87ed46c7161bc28cc0e9b541ce651086c16b1978f797286c6f0e4138d88fdd6',
-        '7d44228648519fe31e07f35eb434a8e7a4d5c9351696af94b26ba490783785a7']
+        '7d44228648519fe31e07f35eb434a8e7a4d5c9351696af94b26ba490783785a7',
+        ...(normalizedGraphemes ? ['23b9190e7c6977d0b2a3c7daef6edd82807f100cbe303610652eea8c6b196a05'] : [])]
         : ['806962f28be74e895c24d42d325ff581238ccc482c57443c68d12e6a93f51733']).includes(contract.digest)) continue;
       // 已允许的文本分块也不能通过别名新增契约外的原生调用路径。
       const factoryImport = parsed.body.find(node => node.type === 'ImportDeclaration'
@@ -8123,6 +8138,10 @@ function localCellProfile(source, dependencies) {
       for (const [local, upstream] of (splitBidi ? [[3,5],[4,6]] : [[3,5],[4,6],[5,0]])) {
         const edge = contract.imports.find(item => item.local === contract.bindings[local]);
         if (edge?.specifier !== shared.specifier || edge.imported !== shared.structure.bindings[upstream + sharedOffset]) return null;
+      }
+      if (normalizedGraphemes) {
+        const edge = contract.imports.find(item => item.local === contract.bindings[6]);
+        if (edge?.specifier !== shared.specifier || edge.imported !== shared.structure.bindings[140]) return null;
       }
       if (splitBidi) {
         const edge = contract.imports.find(item => item.local === contract.bindings[5]);
@@ -8147,9 +8166,9 @@ function localCellProfile(source, dependencies) {
     const call = line.body.body.at(-1)?.argument?.alternate;
     if (call?.type !== 'CallExpression') return null;
     const writeLineSource = source.slice(line.start,call.start) + `paintCells(${screen},${cells}.cells,${x},${y})` + source.slice(call.end,line.end);
-    return { shape, names, writeLineSource, mappedWriteLine: true, tabAnchor,
+    return { shape, names, rendererSource, graphemeNormalizer: normalizedGraphemes ? renderer.bindings[5] : undefined, writeLineSource, mappedWriteLine: true, tabAnchor,
       tabReplacement: `let ${out}=${sanitize}(${input});if(${out}.indexOf(String.fromCharCode(9))>=0){let clawgodTabOffset=((${col}%${names.hht})+${names.hht})%${names.hht};${out}=${names.C8}([" ".repeat(clawgodTabOffset)+${out}]).join("").slice(clawgodTabOffset)}let ${width}=${box}.x2-${col}`,
-      dependency: { specifier: ansi.specifier, digest: hash(ansi.source), tokenizer: ansi.structure.bindings[tmuxAnsi ? 119 : 115], normalizeStyles: ansi.structure.bindings[tmuxAnsi ? 67 : 63] },
+      dependency: { specifier: ansi.specifier, digest: hash(ansi.source), tokenizer: ansi.structure.bindings[normalizedGraphemes ? 121 : tmuxAnsi ? 119 : 115], normalizeStyles: ansi.structure.bindings[normalizedGraphemes ? 69 : tmuxAnsi ? 67 : 63] },
       shared: { specifier: shared.specifier, digest: hash(shared.source), factory: shared.local,
         text: text.file, textDigest: hash(text.source), textBranch: text.branch },
     };
@@ -8266,7 +8285,7 @@ export function adaptCellRenderer(source, shape, dependencies = new Map()) {
   return null;
 }
 
-function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, writeLineSource = CELL_WRITE_LINE_SOURCE, mappedWriteLine = false, oscDeclaration = OSC8_DECLARATION }, dependencies) {
+function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, graphemeNormalizer, rendererSource = CELL_RENDERER_SOURCE, writeLineSource = CELL_WRITE_LINE_SOURCE, mappedWriteLine = false, oscDeclaration = OSC8_DECLARATION }, dependencies) {
   if (shared) {
     const factory = dependencies.get(basename(shared.specifier));
     if (typeof factory !== 'string' || createHash('sha256').update(factory).digest('hex') !== shared.digest) return null;
@@ -8279,6 +8298,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
     if (source.includes(name)) return null;
   }
   let ansiImport = '';
+  if (graphemeNormalizer && source.includes('clawgodNormalizeGrapheme')) return null;
   if (dependency) {
     // 2.1.285 把 ANSI 分词和样式合并拆到独立模块；冻结整个依赖，不能只信导出名。
     const ansi = dependencies.get(basename(dependency.specifier));
@@ -8306,7 +8326,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
     spans.push({ start, end: end + 1 });
   }
   const replacements = [
-    [spans[0], CELL_RENDERER_SOURCE],
+    [spans[0], rendererSource],
     [spans[1], CELL_LINE_CELLS_SOURCE],
     [spans[2], CELL_SET_CELL_SOURCE],
     [spans[3], writeLineSource],
@@ -8318,7 +8338,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
       : text.replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
     adapted = adapted.slice(0, span.start) + mapped + adapted.slice(span.end);
   }
-  return ansiImport + adapted.replace(tabAnchor, tabReplacement);
+  return ansiImport + (graphemeNormalizer ? `const clawgodNormalizeGrapheme=${graphemeNormalizer};\n` : '') + adapted.replace(tabAnchor, tabReplacement);
 }
 
 // 2.1.269+ 渲染器硬依赖私有 Bun.ant.CellSegmenter。公开 Bun 给不了，所以在

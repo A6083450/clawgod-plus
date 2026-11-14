@@ -151,9 +151,17 @@ export function parseStoredEnhancementConfig(source, manifest) {
   } catch {
     throw new Error('Invalid enhancement config JSON');
   }
-  const config = validateStoredEnhancementConfig(value, manifest);
+  // 历史清单以 Superpowers 结尾；移除前先按旧 schema 和顺序校验原始字节。
+  // 仅兼容持久化配置读取，对象校验与显式输入仍保持严格。
+  const migrateSuperpowers = !manifestIds(manifest).includes('superpowers');
+  const storedManifest = migrateSuperpowers
+    ? [...manifest, { id: 'superpowers', kind: 'plugin' }]
+    : manifest;
+  const config = validateStoredEnhancementConfig(value, storedManifest);
   if (text !== canonicalJson(config)) throw new Error('Non-canonical enhancement config JSON');
-  return config;
+  return migrateSuperpowers
+    ? selectionToStoredEnhancementConfig({ mode: config.mode, enabled: config.enabled.filter(id => id !== 'superpowers') }, manifest)
+    : config;
 }
 
 export function selectionToStoredEnhancementConfig(selection, manifest) {

@@ -820,7 +820,7 @@ if (Test-Path -LiteralPath $RuntimeRollbackDir) {
         Remove-Item -LiteralPath $RuntimeRollbackDir -Recurse -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $RuntimeRollbackDir) {
             $runtimeState = if ($RuntimeTransactionCommitted) { 'New runtime installed' } else { 'Prior runtime restored' }
-            Write-Warn "$runtimeState, but transaction cleanup is incomplete (files may be in use): $RuntimeRollbackDir. Exit old sessions, then inspect and remove this directory; retained transactions block automatic stable retry after a future update failure."
+            Write-Warn "$runtimeState, but transaction cleanup is incomplete (files may be in use): $RuntimeRollbackDir. Exit old sessions, then inspect and remove this directory; retained transactions prevent confirmation of a safe rollback after a future update failure."
         } elseif (-not $RuntimeTransactionCommitted -and $env:CLAWGOD_UPDATE_ROLLBACK_RECEIPT) {
             [System.IO.File]::WriteAllText($env:CLAWGOD_UPDATE_ROLLBACK_RECEIPT, "restored`n", [System.Text.Encoding]::ASCII)
         }
@@ -1100,7 +1100,7 @@ Write-Dim "  claude            -- Start patched Claude Code (green logo)"
 Write-Dim "  claude.orig       -- Run original unpatched Claude Code"
 Write-Host ""
 Write-Dim "  Updates: 'claude update' is patched to route through this installer."
-Write-Dim "  Tries npm latest first; retries stable after a confirmed rollback"
+Write-Dim "  Tries npm latest; retains the original runtime after a confirmed rollback"
 Write-Dim "  in one step. Extra options:"
 Write-Dim "    claude update --version 2.1.180   (install a specific version)"
 Write-Dim "    claude update --no-upgrade        (re-patch without downloading)"

@@ -152,14 +152,8 @@ function runSelfUpdate(argv, options = {}) {
       stderr.write('[clawgod] 升级失败，但未确认已安全恢复或仍有恢复事务；为保护原安装，不自动重试。\n');
       return first;
     }
-    stderr.write('[clawgod] 最新版升级失败，已恢复原运行时；正在尝试安装器内置的稳定版本。\n');
-    childEnv.CLAWGOD_UPDATE_STABLE_FALLBACK = '1';
-    const fallback = outcomeFromResult(
-      spawn(command[0], command.slice(1), { stdio: 'inherit', env: childEnv }),
-      'stable installer process did not return an exit status',
-    );
-    if (fallback.status === 0 && !fallback.signal) stderr.write('[clawgod] 已安装稳定版本；最新版尚未升级成功。\n');
-    return fallback;
+    stderr.write('[clawgod] 最新版升级失败，已恢复并保留原运行时。\n');
+    return first;
   } catch (error) {
     stderr.write(`[clawgod] update failed: ${error && error.message ? error.message : String(error)}\n`);
     return { status: 1, signal: null };

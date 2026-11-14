@@ -51,18 +51,18 @@ The installer fetches the current platform-specific official `@anthropic-ai/clau
 
 ## Install ClawGod Plus
 
-These commands download the pinned ClawGod Plus release assets (v2026.11.11-claude.2.1.322).
+These commands download the pinned ClawGod Plus release assets (v2026.11.14-claude.2.1.325).
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.11-claude.2.1.322/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.14-claude.2.1.325/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.11-claude.2.1.322/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.14-claude.2.1.325/install.ps1 | iex
 ```
 
 Useful installer options (with no version specified, the installer uses its verified Claude Code version and preserves a newer installed version):
@@ -84,8 +84,8 @@ ClawGod Plus offers 21 optional enhancements, all enabled by default. The enhanc
 
 | Kind | Enhancement ID |
 |---|---|
-| Patch | `chrome`, `computer-use`, `design-canvas`, `agents`, `planning`, `voice`, `auto-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding`, `classifier-fail-open`, `cleanup-period`, `disable-collapse-read-search`, `enable-keybindings`, `file-read-limit`, `transcript-dialog-replay`, `unlock-ultracode` |
-| Plugin | `claude-hud`, `claude-mem`, `superpowers` |
+| Patch | `chrome`, `computer-use`, `design-canvas`, `agents`, `planning`, `voice`, `auto-mode`, `code-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding`, `classifier-fail-open`, `cleanup-period`, `disable-collapse-read-search`, `enable-keybindings`, `file-read-limit`, `transcript-dialog-replay`, `unlock-ultracode` |
+| Plugin | `claude-hud`, `claude-mem` |
 
 With no option and no interactive terminal (piped installs, CI, `claude update`), all 21 enhancements are enabled by default. The selection is persisted as strict JSON in `~/.clawgod/enhancements.json`:
 
@@ -127,7 +127,7 @@ Windows PowerShell equivalents:
 .\install.ps1 -Enhancements none
 ```
 
-A later `claude update` reuses the saved selection from `~/.clawgod/enhancements.json` and never prompts. Disabling `claude-hud` or `claude-mem` restores the configuration ClawGod owns, while disabling `superpowers` only stops management and never deletes the plugin you installed.
+A later `claude update` reuses the saved selection from `~/.clawgod/enhancements.json` and never prompts. Disabling `claude-hud` or `claude-mem` restores the configuration ClawGod owns. Other installed plugins are left unchanged.
 
 **Claude Desktop automatic enhancements are paused:** Installation and updates built from the current source no longer modify `Claude.app`. Selecting all enhancements or explicitly enabling `computer-use` does not apply Desktop CU/built-in browser patches or Simplified Chinese language enhancements. CLI Computer Use is unaffected. Existing Desktop modifications and backups remain in place without automatic rollback. Previously published installers are unchanged.
 
@@ -214,7 +214,6 @@ Every install and update automatically ensures these optional Claude Code plugin
 |---|---|---|
 | Claude HUD | `claude-hud@claude-hud` | `0.7.0` |
 | claude-mem | `claude-mem@thedotmack` | `13.14.0` |
-| Superpowers | `superpowers@superpowers-marketplace` | `6.2.0` |
 
 ClawGod Plus installs a missing or older plugin at the baseline, but preserves any installed newer version. Public fixed archives are downloaded directly from GitHub and are accepted only after their exact byte length and fixed SHA-256 match. Bun remains the only installed JavaScript runtime dependency.
 
@@ -386,7 +385,7 @@ These scripts create backups before applying changes. Use their `--restore` opti
 6. Applies the integrated Chrome, Computer Use, context-limit, worker, paste, provider, and feature patches.
 7. Verifies that Bun can load the patched CLI.
 8. Backs up the original launcher and writes `claude` plus `clawgod` launchers.
-9. Uses the generated `plugin-dependencies.mjs` to ensure the three optional plugin baselines, then applies their managed HUD and claude-mem integrations.
+9. Uses the generated `plugin-dependencies.mjs` to ensure the two optional plugin baselines, then applies their managed HUD and claude-mem integrations.
 
 `~/.clawgod/.source-version` records the patched native version. Upgrades run explicitly through `claude update`; the wrapper does not scan older native installations for drift. Native background updates are disabled to protect the ClawGod launcher.
 

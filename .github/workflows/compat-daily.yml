@@ -159,10 +159,10 @@ jobs:
             exit 1
           }
           for contract in \
-            'Optional plugins: 3 ready, 0 disabled, 0 warnings' \
+            'Optional plugins: 2 ready, 0 disabled, 0 warnings' \
             'HUD statusline: bun-only current-style=exact' \
             'claude-mem entrypoints: hooks=bun mcp=bun' \
-            'plugin retention: hud=present memory=present superpowers=present'; do
+            'plugin retention: hud=present memory=present'; do
             grep -q "^${contract}$" "$log" || {
               echo "::error::missing plugin lifecycle contract: ${contract}"
               exit 1
@@ -179,7 +179,7 @@ jobs:
             'enhancement config initial: mode=custom enabled=3' \
             'enhancement config no-upgrade: mode=custom enabled=3' \
             'enhancements summary: 3 enabled, 18 disabled' \
-            'Optional plugins: 1 ready, 2 disabled, 0 warnings' \
+            'Optional plugins: 1 ready, 1 disabled, 0 warnings' \
             'no prompt: selection resolved without interaction'; do
             grep -q "^${contract}$" "$subset_log" || {
               echo "::error::missing subset selection contract: ${contract}"
@@ -192,7 +192,7 @@ jobs:
             'enhancement config initial: mode=custom enabled=0' \
             'enhancement config no-upgrade: mode=custom enabled=0' \
             'enhancements summary: 0 enabled, 21 disabled' \
-            'Optional plugins: 0 ready, 3 disabled, 0 warnings' \
+            'Optional plugins: 0 ready, 2 disabled, 0 warnings' \
             'no prompt: selection resolved without interaction'; do
             grep -q "^${contract}$" "$none_log" || {
               echo "::error::missing core-only selection contract: ${contract}"
@@ -283,7 +283,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($test in @('runtime-session-guard', 'wrapper-provider-lean', 'openai-proxy', 'patcher-terminal-replies', 'patcher-voice-input', 'patcher-design-canvas', 'patcher-design-local', 'runtime-cell-segmenter', 'runtime-cell-contract', 'installer-version-policy')) {
+          foreach ($test in @('runtime-session-guard', 'wrapper-provider-lean', 'openai-proxy', 'patcher-terminal-replies', 'patcher-voice-input', 'patcher-design-canvas', 'patcher-design-local', 'patcher-code-mode', 'runtime-cell-segmenter', 'runtime-cell-contract', 'installer-version-policy')) {
             & bun "$env:GITHUB_WORKSPACE\tests\$test.mjs"
             if ($LASTEXITCODE -ne 0) { throw "$test failed" }
           }
@@ -389,7 +389,7 @@ jobs:
           function Assert-PluginSummary([string]$Label, [object[]]$Output) {
             $lines = @(($Output | Out-String) -split '\r?\n' | Where-Object { $_.Contains('Optional plugins:') })
             if ($lines.Count -ne 1) { throw "$Label expected exactly one optional plugin summary, found $($lines.Count)" }
-            if ($lines[0].Trim() -cne 'Optional plugins: 3 ready, 0 disabled, 0 warnings') {
+            if ($lines[0].Trim() -cne 'Optional plugins: 2 ready, 0 disabled, 0 warnings') {
               throw "$Label did not report all three optional plugins ready"
             }
           }
@@ -405,8 +405,7 @@ jobs:
 
           $pluginSpecs = @(
             [pscustomobject]@{ Key = 'hud'; Id = 'claude-hud@claude-hud'; Marketplace = 'claude-hud'; Plugin = 'claude-hud'; Version = '0.7.0' },
-            [pscustomobject]@{ Key = 'memory'; Id = 'claude-mem@thedotmack'; Marketplace = 'thedotmack'; Plugin = 'claude-mem'; Version = '13.14.0' },
-            [pscustomobject]@{ Key = 'superpowers'; Id = 'superpowers@superpowers-marketplace'; Marketplace = 'superpowers-marketplace'; Plugin = 'superpowers'; Version = '6.2.0' }
+            [pscustomobject]@{ Key = 'memory'; Id = 'claude-mem@thedotmack'; Marketplace = 'thedotmack'; Plugin = 'claude-mem'; Version = '13.14.0' }
           )
 
           function Read-JsonFile([string]$Path) {
@@ -418,8 +417,7 @@ jobs:
               tempHome = $env:USERPROFILE
               expectedCanonicalIds = @(
                 'claude-hud@claude-hud',
-                'claude-mem@thedotmack',
-                'superpowers@superpowers-marketplace'
+                'claude-mem@thedotmack'
               )
             } | ConvertTo-Json -Depth 10 -Compress
             $contractScript = Join-Path $env:GITHUB_WORKSPACE 'tests\installer-e2e.mjs'
@@ -435,7 +433,7 @@ jobs:
               Remove-Item Env:CLAWGOD_E2E_CONTRACT -ErrorAction SilentlyContinue
               Remove-Item Env:CLAWGOD_E2E_CONTRACT_INPUT -ErrorAction SilentlyContinue
             }
-            if ($retentionExitCode -ne 0 -or ($retentionOutput | Out-String).Trim() -cne 'plugin retention: hud=present memory=present superpowers=present') {
+            if ($retentionExitCode -ne 0 -or ($retentionOutput | Out-String).Trim() -cne 'plugin retention: hud=present memory=present') {
               throw "$Label failed the shared Bun plugin validator: $($retentionOutput | Out-String)"
             }
             if ($selectionExitCode -ne 0) { throw "$Label failed the shared Bun plugin selection: $($selectionOutput | Out-String)" }
@@ -749,7 +747,7 @@ jobs:
             throw 'Uninstall did not restore only the managed statusLine field'
           }
           $null = Assert-PluginState 'post-uninstall retention'
-          Write-Host 'plugin retention: hud=present memory=present superpowers=present'
+          Write-Host 'plugin retention: hud=present memory=present'
           if ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes($claudeMemSentinelPath)) -cne [Convert]::ToBase64String($claudeMemSentinel)) {
             throw 'Uninstall changed claude-mem sentinel data'
           }

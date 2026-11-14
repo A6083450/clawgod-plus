@@ -30,7 +30,7 @@ export function inspectPatcherSource(source) {
 
 async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   const ENV_EXPR = '(+process.env.CLAUDE_CODE_CONTEXT_LIMIT||+process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS||200000)';
-  const constantTail = '((?:\\s*,\\s*[\\w$]+\\s*=\\s*(?:32000|128000|1e6)){2,3})(?=\\s*;)';
+  const constantTail = '((?:\\s*,\\s*[\\w$]+\\s*=\\s*(?:32000|128000|1e6)){2,4})(?=\\s*;)';
   const dualRe = new RegExp('var\\s+([\\w$]+)\\s*=\\s*200000\\s*,\\s*([\\w$]+)\\s*=\\s*200000' + constantTail);
   const alreadyRe = new RegExp('var\\s+([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)' + constantTail);
 
@@ -44,7 +44,7 @@ async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   const match = dualMatch || alreadyMatch;
   const [, varA, varB, tail] = match;
   const constants = [...tail.matchAll(/=\s*(32000|128000|1e6)/g)].map(entry => entry[1]);
-  if (new Set(constants).size !== constants.length || !constants.includes('32000') || !constants.includes('128000')) {
+  if (constants.filter(value => value === '32000').length !== 1 || constants.filter(value => value === '128000').length !== 1) {
     return { status: 'stale', detail: 'context default constants are ambiguous' };
   }
   const replacements = [];

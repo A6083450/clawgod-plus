@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { runInNewContext } from 'node:vm';
+import { createAgentsRegistry } from '../src/generic/patcher/enhancements/agents.mjs';
 import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const allConfig = '{\n  "schemaVersion": 1,\n  "mode": "all",\n  "enabled": []\n}\n';
@@ -46,6 +48,37 @@ function teamGate(){if(!enabled(process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 function defaultView(){let mode="chat",allowed=["chat","agents"];return mode}
 function chromeState(){return settings()?.claudeInChrome?.enabled??false}
 `;
+
+// Code Mode 请求不得被 ClawGod 隐式启用的 Teams 拒绝，显式 Teams 仍由上游判断。
+for (const source of [
+  agentsFixture,
+  agentsFixture.replace('!enabled(process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)', '!options.agentTeams'),
+]) {
+  for (const codeModeEnabled of [false, true]) {
+    const descriptor = createAgentsRegistry({ chromeEnabled: false, codeModeEnabled }).patches[0];
+    const patched = source.replace(descriptor.pattern, descriptor.replacer);
+    for (const [request, requested] of [[undefined, false], ['', false], ['0', false], ['false', false], ['no', false], ['off', false], ['invalid', false], ['1', true], ['true', true], ['yes', true], ['on', true], [' TRUE ', true], ['\tYeS\n', true]]) {
+      for (const [explicitTeams, cliTeams, upstreamFlag, originalEnabled] of [
+        [false, false, true, false],
+        [true, false, true, true],
+        [false, true, true, true],
+        [true, true, false, false],
+      ]) {
+        for (const runtimeEnabled of [false, true]) {
+          const teams = runInNewContext(`${patched}\nteamGate()`, {
+            process: { env: { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: request, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: explicitTeams ? '1' : undefined } },
+            enabled: value => value === '1',
+            options: { agentTeams: explicitTeams },
+            local: () => cliTeams,
+            flag: () => upstreamFlag,
+            globalThis: { __clawgodPatches: { 'agent-teams': runtimeEnabled } },
+          });
+          assert.equal(teams, originalEnabled || (runtimeEnabled && !(codeModeEnabled && requested)), `Teams 互斥边界：Code Mode selected=${codeModeEnabled}, request=${request}, explicitTeams=${explicitTeams}, cliTeams=${cliTeams}, upstreamFlag=${upstreamFlag}, runtime=${runtimeEnabled}`);
+        }
+      }
+    }
+  }
+}
 
 function runSelectionCase(name, patcherSource, label, configBytes, source, extraArgs = []) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), `clawgod patch selection ${label} `));
@@ -91,13 +124,36 @@ function runSelectionCase(name, patcherSource, label, configBytes, source, extra
   }
 }
 
+const codeModeFixture = readFileSync(new URL('./fixtures/code-mode-2.1.325.js', import.meta.url), 'utf8');
+const codeModeMarker = '/*__clawgod_code_mode_local_v1__*/';
+
 for (const [name, patcherSource] of await getPatcherSources()) {
+  for (const [label, config, selected] of [
+    ['code-mode-all', allConfig, true],
+    ['code-mode-custom', customConfig(['code-mode']), true],
+    ['code-mode-unselected', customConfig(['agents']), false],
+  ]) {
+    const result = runSelectionCase(name, patcherSource, label, config, codeModeFixture);
+    try {
+      assert.equal(result.run.status, 0, `${name}: ${label} 必须成功：${result.output}`);
+      if (selected) {
+        assert.ok(result.patched.includes(codeModeMarker), `${name}: ${label} 必须应用 Code Mode 本地资格补丁`);
+        assert.match(result.patched, /if\(vs\(\)\)return"agent_teams"/, `${name}: 必须保留原生 Teams 互斥`);
+        assert.match(result.output, /Code Mode local eligibility/, `${name}: 必须报告独立 descriptor`);
+      } else {
+        assert.equal(result.patched, codeModeFixture, `${name}: 未选择 Code Mode 必须保持上游模块不变`);
+        assert.doesNotMatch(result.output, /Code Mode local eligibility/, `${name}: 未选择时不得查找 Code Mode descriptor`);
+      }
+    } finally {
+      rmSync(result.fixtureRoot, { recursive: true, force: true });
+    }
+  }
   {
     const result = runSelectionCase(name, patcherSource, 'all', allConfig, representativeFixture);
     try {
       assert.equal(result.run.status, 0, `${name}: all selection must patch cleanly: ${result.output}`);
       assert.match(result.output, /Enhancements: 21 enabled, 0 disabled/, `${name}: all summary must be exact`);
-      assert.match(result.patched, /function teams\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]!==!1\)return!0;/, `${name}: all must runtime-gate agents`);
+      assert.match(result.patched, /function teams\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]!==!1&&!\["1","true","yes","on"\]/, `${name}: all must runtime-gate agents`);
       assert.match(result.patched, /clawd_body:globalThis\.__clawgodPatches\?\.\["theme-logo-rgb"\]!==!1\?"rgb\(34,197,94\)":"rgb\(215,119,87\)"/, `${name}: all must runtime-gate branding`);
     } finally {
       rmSync(result.fixtureRoot, { recursive: true, force: true });

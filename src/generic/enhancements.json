@@ -6,6 +6,7 @@
   { "id": "planning", "kind": "patch" },
   { "id": "voice", "kind": "patch" },
   { "id": "auto-mode", "kind": "patch" },
+  { "id": "code-mode", "kind": "patch" },
   { "id": "unrestricted-tools", "kind": "patch" },
   { "id": "paste-images", "kind": "patch" },
   { "id": "privacy", "kind": "patch" },
@@ -18,6 +19,5 @@
   { "id": "transcript-dialog-replay", "kind": "patch" },
   { "id": "unlock-ultracode", "kind": "patch" },
   { "id": "claude-hud", "kind": "plugin" },
-  { "id": "claude-mem", "kind": "plugin" },
-  { "id": "superpowers", "kind": "plugin" }
+  { "id": "claude-mem", "kind": "plugin" }
 ]

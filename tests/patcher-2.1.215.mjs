@@ -89,7 +89,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     const patched = readFileSync(join(dir, 'cli.original.cjs'), 'utf8');
     assert.equal(
       createHash('sha256').update(patched).digest('hex'),
-      '03661184620bbca8151db09232ef4fe21eaaf9311139d7ab3fa13fd863fff64c',
+      '4896c54118bc561d43ef7e6d533bcdb78b362d969cc449c485672a4b5f2d5602',
       `${name}: default-all representative output bytes must retain the reviewed compliance-first parity fingerprint`,
     );
     assert.match(patched, /function Bot\(\)\{return et\(ulu,null\)\}/, `${name}: getter must survive`);
@@ -110,7 +110,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       /function AA6\(\)\{if\(vo5\("hipaa"\)\)return!1;if\(globalThis\.__clawgodPatches\?\.\["computer-use"\]!==!1&&process\.env\.CLAUDE_CODE_COMPUTER_USE\)return!0;if\(globalThis\.__clawgodPatches\?\.\["computer-use-gate"\]!==!1\)return!0;\/\*__clawgod_computer_use_gate_v2__\*\/return zQ\(\)&&oL8\(\)\.enabled\}/,
       `${name}: Computer Use gate must retain exact disabled semantics`,
     );
-    assert.match(patched, /function teams\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]!==!1\)return!0;/, `${name}: Agent Teams must be runtime gated`);
+    assert.match(patched, /function teams\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]!==!1&&!\["1","true","yes","on"\]/, `${name}: Agent Teams must be runtime gated`);
     assert.match(patched, /argumentHint:"<prompt>",isEnabled:\(\)=>\(globalThis\.__clawgodPatches\?\.\["ultraplan"\]!==!1\?!0:\(!1\)\)/, `${name}: planning must be runtime gated`);
     assert.match(patched, /function voice\(\)\{return\(globalThis\.__clawgodPatches\?\.\["voice-mode"\]!==!1\?!0:/, `${name}: voice mode must be runtime gated`);
     assert.match(patched, /function autoProvider\(e\)\{if\(globalThis\.__clawgodPatches\?\.\["auto-mode-provider-opt-in"\]!==!1\)return!0;/, `${name}: auto mode must be runtime gated`);
@@ -127,7 +127,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       /(?:⚠️|!!) Computer Use gate bypass/,
       `${name}: no unverifiable Computer Use alternative`,
     );
-    assert.match(firstOutput, /Result: 24 applied, 60 skipped, 0 failed/, `${name}: default-all summary must include optional classifier, terminal and voice input descriptors`);
+    assert.match(firstOutput, /Result: 24 applied, 61 skipped, 0 failed/, `${name}: default-all summary must include optional classifier, terminal and voice input descriptors`);
     assert.match(firstOutput, /Enhancements: 21 enabled, 0 disabled/, `${name}: default-all enhancement summary must be stable`);
 
 

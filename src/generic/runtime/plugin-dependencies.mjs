@@ -42,19 +42,11 @@ export const PLUGIN_BASELINES = Object.freeze({
     sha256: 'a64f7dd038308da0db52f10d8f4fc2b3b3acfec5d9ddfdcfea9f6e473e54bed0',
     url: 'https://github.com/thedotmack/claude-mem/archive/refs/tags/v13.14.0.tar.gz',
   }),
-  superpowers: Object.freeze({
-    key: 'superpowers', id: 'superpowers@superpowers-marketplace', marketplace: 'superpowers-marketplace', plugin: 'superpowers',
-    archiveMarketplace: 'superpowers-dev',
-    version: '6.2.0', bytes: 516401,
-    sha256: '468246a7b4981d4c014c2b58d9ee538700ffded075279d5810059cdc1abeb5f3',
-    url: 'https://github.com/obra/superpowers/archive/refs/tags/v6.2.0.tar.gz',
-  }),
 });
 
 export const PLUGIN_ENHANCEMENT_IDS = Object.freeze({
   hud: 'claude-hud',
   memory: 'claude-mem',
-  superpowers: 'superpowers',
 });
 
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
@@ -1568,7 +1560,6 @@ function containedRelativeSource(sourceRoot, source, spec) {
   if (parts.includes('..')) throw new Error(`${spec.key}: plugin source is invalid`);
   const normalized = parts.filter(part => part && part !== '.').join('/');
   if (spec.key === 'memory' && normalized !== 'plugin') throw new Error(`${spec.key}: declared plugin source must be plugin/`);
-  if (spec.key === 'superpowers' && source !== './') throw new Error(`${spec.key}: declared plugin source must be ./`);
   const pluginRoot = normalized ? join(sourceRoot, ...normalized.split('/')) : sourceRoot;
   let status;
   try {
@@ -1602,8 +1593,7 @@ export async function extractPluginArchive(bytes, spec, destination) {
     for (const entry of linkEntries) materializeArchiveLink(stagingRoot, entry, spec);
     const sourceRoot = join(stagingRoot, archive.root);
     const manifest = readJson(join(sourceRoot, '.claude-plugin', 'marketplace.json'), spec);
-    const expectedArchiveMarketplace = spec.archiveMarketplace || spec.marketplace;
-    if (manifest.name !== expectedArchiveMarketplace) throw new Error(`${spec.key}: marketplace name mismatch`);
+    if (manifest.name !== spec.marketplace) throw new Error(`${spec.key}: marketplace name mismatch`);
     const entry = manifest.plugins?.find(plugin => plugin.name === spec.plugin);
     if (!entry) throw new Error(`${spec.key}: plugin entry is missing`);
     const pluginRoot = containedRelativeSource(sourceRoot, entry.source, spec);
@@ -1981,25 +1971,7 @@ function materializePersistentSource(sourceRoot, spec, context) {
   let result = null;
   let failure = null;
   try {
-    if (spec.key === 'superpowers') {
-      mkdirSync(staged, 0o700);
-      safeDirectoryStatus(staged, spec);
-      const manifestDirectory = join(staged, '.claude-plugin');
-      mkdirSync(manifestDirectory, 0o700);
-      const sourceManifest = readJson(join(sourceRoot, '.claude-plugin', 'marketplace.json'), spec);
-      const wrapperManifest = {
-        name: 'superpowers-marketplace',
-        plugins: [{ name: 'superpowers', version: '6.2.0', source: './plugin' }],
-      };
-      if (sourceManifest.owner) wrapperManifest.owner = sourceManifest.owner;
-      writeExclusive(
-        join(manifestDirectory, 'marketplace.json'),
-        new TextEncoder().encode(JSON.stringify(wrapperManifest)),
-        false,
-        spec,
-      );
-      copyValidatedDirectory(sourceRoot, join(staged, 'plugin'), spec);
-    } else copyValidatedDirectory(sourceRoot, staged, spec);
+    copyValidatedDirectory(sourceRoot, staged, spec);
     assertDirectoryIdentity(sourceParent, parentIdentity, spec, 'persistent source');
     transaction = prepareDirectoryReplacement(persistentSource, spec, 'persistent source', sourceParentGuard);
     try {
@@ -2011,9 +1983,7 @@ function materializePersistentSource(sourceRoot, spec, context) {
       const manifest = readJson(join(persistentSource, '.claude-plugin', 'marketplace.json'), spec);
       const entry = manifest.plugins?.find(candidate => candidate.name === spec.plugin);
       if (!entry) throw new Error(`${spec.key}: persistent plugin entry is missing`);
-      const pluginSource = spec.key === 'superpowers'
-        ? join(persistentSource, 'plugin')
-        : containedRelativeSource(persistentSource, entry.source, spec);
+      const pluginSource = containedRelativeSource(persistentSource, entry.source, spec);
       result = { persistentSource, pluginSource, transaction };
       completed = true;
     } catch (error) {
@@ -2642,9 +2612,6 @@ async function resolvePluginSelection(context) {
 }
 
 async function deselectedPluginResult(spec, context) {
-  if (spec.key === 'superpowers') {
-    return pluginResult(spec, 'disabled', false, null, 'management disabled; user installation retained');
-  }
   let restoration;
   try {
     restoration = spec.key === 'hud'
@@ -2666,7 +2633,7 @@ async function deselectedPluginResult(spec, context) {
 }
 
 export async function ensurePluginDependencies(context, selection) {
-  const specs = [PLUGIN_BASELINES.hud, PLUGIN_BASELINES.memory, PLUGIN_BASELINES.superpowers];
+  const specs = [PLUGIN_BASELINES.hud, PLUGIN_BASELINES.memory];
   const enabled = enabledPluginKeys(selection);
   const state = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
   const results = [];
@@ -2684,7 +2651,7 @@ export async function ensurePluginDependencies(context, selection) {
     } catch (error) {
       marketplace = warningResult(spec, error);
     }
-    if (!shouldConfigurePluginDependency(marketplace) || spec.key === 'superpowers') {
+    if (!shouldConfigurePluginDependency(marketplace)) {
       results.push(marketplace);
       continue;
     }

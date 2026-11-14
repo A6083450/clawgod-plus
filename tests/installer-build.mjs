@@ -878,6 +878,7 @@ try {
     'src/generic/patcher/enhancements/planning.mjs',
     'src/generic/patcher/enhancements/voice.mjs',
     'src/generic/patcher/enhancements/auto-mode.mjs',
+    'src/generic/patcher/enhancements/code-mode.mjs',
     'src/generic/patcher/enhancements/unrestricted-tools.mjs',
     'src/generic/patcher/enhancements/paste-images.mjs',
     'src/generic/patcher/enhancements/privacy.mjs',

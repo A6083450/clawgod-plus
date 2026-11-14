@@ -6,6 +6,7 @@ import { createAgentsRegistry } from './enhancements/agents.mjs';
 import { autoModeRegistry } from './enhancements/auto-mode.mjs';
 import { brandingRegistry } from './enhancements/branding.mjs';
 import { chromeRegistry } from './enhancements/chrome.mjs';
+import { codeModeRegistry } from './enhancements/code-mode.mjs';
 import { computerUseRegistry } from './enhancements/computer-use.mjs';
 import { designCanvasRegistry } from './enhancements/design-canvas.mjs';
 import { pasteImagesRegistry } from './enhancements/paste-images.mjs';
@@ -30,6 +31,7 @@ const registryById = new Map([
   [planningRegistry.id, planningRegistry],
   [voiceRegistry.id, voiceRegistry],
   [autoModeRegistry.id, autoModeRegistry],
+  [codeModeRegistry.id, codeModeRegistry],
   [unrestrictedToolsRegistry.id, unrestrictedToolsRegistry],
   [pasteImagesRegistry.id, pasteImagesRegistry],
   [privacyRegistry.id, privacyRegistry],
@@ -43,7 +45,7 @@ for (const { enhancement } of cometixPatches) {
 }
 
 function enhancementRegistry(id, enabledIds) {
-  if (id === 'agents') return createAgentsRegistry({ chromeEnabled: enabledIds.has('chrome') });
+  if (id === 'agents') return createAgentsRegistry({ chromeEnabled: enabledIds.has('chrome'), codeModeEnabled: enabledIds.has('code-mode') });
   const registry = registryById.get(id);
   if (!registry) throw new Error(`Missing patch registry for enhancement: ${id}`);
   return extendWithCometix(registry);

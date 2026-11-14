@@ -51,18 +51,18 @@ macOS/Linux では Shell、Windows では PowerShell を OS のコマンド入�
 
 ## ClawGod Plus をインストール
 
-以下のコマンドは、固定バージョン（v2026.11.11-claude.2.1.322）の ClawGod Plus Release アセットをダウンロードします。
+以下のコマンドは、固定バージョン（v2026.11.14-claude.2.1.325）の ClawGod Plus Release アセットをダウンロードします。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.11-claude.2.1.322/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.14-claude.2.1.325/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.11-claude.2.1.322/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.14-claude.2.1.325/install.ps1 | iex
 ```
 
 主なインストーラオプション（バージョン未指定時はインストーラの検証済み Claude Code バージョンを使用し、より新しいインストール済みバージョンは維持）：
@@ -84,8 +84,8 @@ ClawGod Plus は 21 の任意拡張機能を提供し、デフォルトで全て
 
 | 種類 | 拡張機能 ID |
 |---|---|
-| パッチ | `chrome`、`computer-use`、`design-canvas`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding`、`classifier-fail-open`、`cleanup-period`、`disable-collapse-read-search`、`enable-keybindings`、`file-read-limit`、`transcript-dialog-replay`、`unlock-ultracode` |
-| プラグイン | `claude-hud`、`claude-mem`、`superpowers` |
+| パッチ | `chrome`、`computer-use`、`design-canvas`、`agents`、`planning`、`voice`、`auto-mode`、`code-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding`、`classifier-fail-open`、`cleanup-period`、`disable-collapse-read-search`、`enable-keybindings`、`file-read-limit`、`transcript-dialog-replay`、`unlock-ultracode` |
+| プラグイン | `claude-hud`、`claude-mem` |
 
 非対話環境（パイプインストール、CI、`claude update`）でオプションを指定しない場合、デフォルトで 21 の拡張機能がすべて有効になります。選択内容は厳密な JSON として `~/.clawgod/enhancements.json` に保存されます。
 
@@ -127,7 +127,7 @@ Windows PowerShell では次の引数になります。
 .\install.ps1 -Enhancements none
 ```
 
-その後の `claude update` は `~/.clawgod/enhancements.json` に保存済みの選択を再利用し、一切プロンプトを表示しません。`claude-hud` または `claude-mem` を無効化すると ClawGod が管理する設定を復元し、`superpowers` を無効化しても管理を停止するだけで、ユーザーがインストールしたプラグインは削除しません。
+その後の `claude update` は `~/.clawgod/enhancements.json` に保存済みの選択を再利用し、一切プロンプトを表示しません。`claude-hud` または `claude-mem` を無効化すると ClawGod が管理する設定を復元します。その他のインストール済みプラグインは変更しません。
 
 **Claude Desktop の自動拡張は一時停止中です：** 現在のソースから生成したインストーラは、インストール・更新時に `Claude.app` を自動変更しません。すべての拡張を選択した場合も、`computer-use` を個別に有効化した場合も、Desktop の CU／内蔵ブラウザパッチと簡体字中国語の言語拡張は適用しません。CLI の Computer Use には影響しません。既存の Desktop の変更とバックアップは保持し、自動復元しません。公開済みのインストーラは変更されません。
 
@@ -214,7 +214,6 @@ ClawGod Plus のマルチエージェント処理や長時間タスクには、�
 |---|---|---|
 | Claude HUD | `claude-hud@claude-hud` | `0.7.0` |
 | claude-mem | `claude-mem@thedotmack` | `13.14.0` |
-| Superpowers | `superpowers@superpowers-marketplace` | `6.2.0` |
 
 未導入またはベースライン未満なら固定ベースラインを導入し、インストール済みの新しいバージョンを維持します。公開固定アーカイブは GitHub から直接ダウンロードし、正確なバイト長と固定 SHA-256 の両方が一致した場合だけ展開します。インストールが必要な JavaScript ランタイムは引き続き Bun だけです。
 
@@ -386,7 +385,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 6. 統合済みの Chrome、Computer Use、コンテキスト上限、Worker、貼り付け、Provider、機能パッチを適用します。
 7. Bun がパッチ済み CLI を読み込めることを検証します。
 8. 元の Launcher をバックアップし、`claude` と `clawgod` Launcher を作成します。
-9. 生成した `plugin-dependencies.mjs` で 3 つの任意プラグインのベースラインを確保し、管理対象の HUD と claude-mem 統合を適用します。
+9. 生成した `plugin-dependencies.mjs` で 2 つの任意プラグインのベースラインを確保し、管理対象の HUD と claude-mem 統合を適用します。
 
 `~/.clawgod/.source-version` はパッチ対象のネイティブ版を記録します。更新は `claude update` で明示的に実行し、Wrapper は古いネイティブ版を走査して再パッチしません。ClawGod Launcher を保護するため、ネイティブのバックグラウンド更新は無効です。
 

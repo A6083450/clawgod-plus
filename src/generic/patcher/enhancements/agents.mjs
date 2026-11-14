@@ -1,13 +1,13 @@
 import { gate } from '../runtime-features.mjs';
 
-const agentTeamsPatch = {
+const agentTeamsPatch = (codeModeEnabled) => ({
   order: 5,
   name: 'Agent Teams always enabled',
   pattern: /function ([\w$]+)\(\)\{if\(![\w$]+\(process\.env\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\)&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}|function ([\w$]+)\(\)\{if\(![\w$]+\.[\w$]+&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}/g,
-  replacer: (match, firstFn, secondFn) => `function ${firstFn || secondFn}(){if(${gate('agent-teams')})return!0;${match.slice(match.indexOf('{') + 1, -1)}}`,
+  replacer: (match, firstFn, secondFn) => `function ${firstFn || secondFn}(){if(${gate('agent-teams')}${codeModeEnabled ? '&&!["1","true","yes","on"].includes((process.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE??"").toLowerCase().trim())' : ''})return!0;${match.slice(match.indexOf('{') + 1, -1)}}`,
   sentinel: 'tengu_amber_flint',
   appliedMarker: /function [\w$]+\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]/,
-};
+});
 
 const sessionMetadataPatch = {
   order: 6,
@@ -84,7 +84,6 @@ const collapsedRowsPatch = {
 };
 
 const independentPatches = [
-  agentTeamsPatch,
   sessionMetadataPatch,
   terminalHeightPatch,
   overflowPatch,
@@ -92,10 +91,10 @@ const independentPatches = [
   collapsedRowsPatch,
 ];
 
-export function createAgentsRegistry({ chromeEnabled }) {
-  const patches = chromeEnabled
-    ? [...independentPatches, defaultAgentsViewPatch].sort((left, right) => left.order - right.order)
-    : [...independentPatches];
+export function createAgentsRegistry({ chromeEnabled, codeModeEnabled = false }) {
+  const patches = [agentTeamsPatch(codeModeEnabled), ...independentPatches];
+  if (chromeEnabled) patches.push(defaultAgentsViewPatch);
+  patches.sort((left, right) => left.order - right.order);
   return Object.freeze({
     id: 'agents',
     patches: Object.freeze(patches),

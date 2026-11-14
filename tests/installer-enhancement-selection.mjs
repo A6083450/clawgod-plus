@@ -58,6 +58,7 @@ const expectedIds = [
   'planning',
   'voice',
   'auto-mode',
+  'code-mode',
   'unrestricted-tools',
   'paste-images',
   'privacy',
@@ -71,7 +72,6 @@ const expectedIds = [
   'unlock-ultracode',
   'claude-hud',
   'claude-mem',
-  'superpowers',
 ];
 assert.deepEqual(manifest.map(entry => entry.id), expectedIds, 'selection fixtures must follow manifest order');
 
@@ -85,6 +85,14 @@ const noneConfig = `{
   "schemaVersion": 1,
   "mode": "custom",
   "enabled": []
+}
+`;
+const codeModeConfig = `{
+  "schemaVersion": 1,
+  "mode": "custom",
+  "enabled": [
+    "code-mode"
+  ]
 }
 `;
 const chromeBrandingConfig = `{
@@ -105,6 +113,7 @@ const withoutFirstTwoConfig = `{
     "planning",
     "voice",
     "auto-mode",
+    "code-mode",
     "unrestricted-tools",
     "paste-images",
     "privacy",
@@ -117,8 +126,7 @@ const withoutFirstTwoConfig = `{
     "transcript-dialog-replay",
     "unlock-ultracode",
     "claude-hud",
-    "claude-mem",
-    "superpowers"
+    "claude-mem"
   ]
 }
 `;
@@ -132,6 +140,7 @@ const withoutFirstConfig = `{
     "planning",
     "voice",
     "auto-mode",
+    "code-mode",
     "unrestricted-tools",
     "paste-images",
     "privacy",
@@ -144,8 +153,7 @@ const withoutFirstConfig = `{
     "transcript-dialog-replay",
     "unlock-ultracode",
     "claude-hud",
-    "claude-mem",
-    "superpowers"
+    "claude-mem"
   ]
 }
 `;
@@ -159,6 +167,7 @@ const withoutSecondConfig = `{
     "planning",
     "voice",
     "auto-mode",
+    "code-mode",
     "unrestricted-tools",
     "paste-images",
     "privacy",
@@ -171,8 +180,7 @@ const withoutSecondConfig = `{
     "transcript-dialog-replay",
     "unlock-ultracode",
     "claude-hud",
-    "claude-mem",
-    "superpowers"
+    "claude-mem"
   ]
 }
 `;
@@ -382,6 +390,16 @@ function cleanup(result) {
 }
 
 {
+  const result = runUnix(['--enhancements', 'code-mode']);
+  try {
+    assert.equal(result.run.status, 0, result.run.stderr);
+    assertOnlyConfig(result.fixture.home, codeModeConfig);
+  } finally {
+    cleanup(result);
+  }
+}
+
+{
   const result = runUnix(['--enhancements', 'branding,chrome']);
   try {
     assert.equal(result.run.status, 0, result.run.stderr);
@@ -463,6 +481,28 @@ function cleanup(result) {
     const after = statSync(configPath);
     assert.equal(after.mode & 0o7777, before.mode & 0o7777, 'saved selection must preserve config mode');
     assert.equal(after.ino, before.ino, 'saved selection must preserve config identity');
+  } finally {
+    rmSync(fixture.fixtureRoot, { recursive: true, force: true });
+  }
+}
+
+{
+  const fixture = createUnixFixture('clawgod-selection-saved-full-legacy-');
+  try {
+    const clawgod = join(fixture.home, '.clawgod');
+    const configPath = join(clawgod, 'enhancements.json');
+    const original = JSON.stringify({ schemaVersion: 1, mode: 'custom', enabled: expectedIds }, null, 2) + '\n';
+    mkdirSync(clawgod, { mode: 0o700 });
+    writeFileSync(configPath, original, { mode: 0o600 });
+    const before = statSync(configPath);
+    const rerun = spawnSync('/bin/bash', [fixture.script], {
+      encoding: 'utf8',
+      env: selectionEnvironment(fixture, { CLAWGOD_NONINTERACTIVE: '1' }),
+    });
+    assert.equal(rerun.status, 0, rerun.stderr);
+    assertOnlyConfig(fixture.home, original);
+    const after = statSync(configPath);
+    assert.deepEqual({ dev: after.dev, ino: after.ino, mode: after.mode }, { dev: before.dev, ino: before.ino, mode: before.mode }, 'saved full-custom21 upgrades must preserve original bytes, inode and mode, not persist the in-memory all normalization');
   } finally {
     rmSync(fixture.fixtureRoot, { recursive: true, force: true });
   }
@@ -580,6 +620,7 @@ function runUnixTtyCase(label, lines, expected, {
     if (expectedMenuCount > 0) {
       const promptIndex = output.indexOf('  ↑/↓ 移动');
       const firstMenu = promptIndex === -1 ? output : output.slice(0, promptIndex);
+      assert.match(firstMenu, /code-mode[^\r\n]*Code Mode/, `${label}: 菜单必须展示 Code Mode 标签`);
       let cursor = -1;
       for (const [index, id] of expectedIds.entries()) {
         const next = firstMenu.indexOf(`${index + 1})`, cursor + 1);
@@ -864,6 +905,7 @@ function runPowerShell(pwsh, label, args, expected, { keySequence = null, prepar
 
 const pwsh = findPwsh();
 if (pwsh) {
+  runPowerShell(pwsh, 'code-mode-explicit', ['-Enhancements', 'code-mode'], codeModeConfig);
   let output = runPowerShell(pwsh, 'explicit', ['-Enhancements', 'branding,chrome'], chromeBrandingConfig);
   assert.doesNotMatch(output, /Choice|interactive enhancement selection unavailable/i, 'PowerShell explicit CSV must not prompt');
   output = runPowerShell(pwsh, 'explicit-precedence', ['-ChooseEnhancements', '-Enhancements', 'none'], noneConfig, {
@@ -894,6 +936,26 @@ if (pwsh) {
     },
   });
 
+  {
+    const fixture = createPowerShellFixture('clawgod-selection-pwsh-saved-full-legacy-');
+    try {
+      const clawgod = join(fixture.home, '.clawgod');
+      const configPath = join(clawgod, 'enhancements.json');
+      const original = JSON.stringify({ schemaVersion: 1, mode: 'custom', enabled: expectedIds }, null, 2) + '\n';
+      mkdirSync(clawgod, { mode: 0o700 });
+      writeFileSync(configPath, original, { mode: 0o600 });
+      const before = statSync(configPath);
+      const baseline = initializePowerShell(pwsh, fixture, { CLAWGOD_NONINTERACTIVE: '1' });
+      const run = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fixture.script], { encoding: 'utf8', env: baseline.env });
+      assert.equal(run.status, 0, run.stdout + run.stderr);
+      assertOnlyConfig(fixture.home, original, [...new Set([...baseline.entries, '.clawgod'])].sort());
+      const after = statSync(configPath);
+      assert.deepEqual({ dev: after.dev, ino: after.ino, mode: after.mode }, { dev: before.dev, ino: before.ino, mode: before.mode }, 'PowerShell saved full-custom21 upgrades must preserve original bytes, inode and mode');
+    } finally {
+      rmSync(fixture.fixtureRoot, { recursive: true, force: true });
+    }
+  }
+
   output = runPowerShell(pwsh, 'no-tty', ['-ChooseEnhancements'], allConfig);
   assert.equal((output.match(/interactive enhancement selection unavailable/gi) || []).length, 1, 'PowerShell choose without a console must warn exactly once');
   output = runPowerShell(pwsh, 'saved-no-tty', ['-ChooseEnhancements'], chromeBrandingConfig, {
@@ -916,6 +978,7 @@ if (pwsh) {
     output = runPowerShell(pwsh, `prompt-${label}`, ['-ChooseEnhancements'], expected, { keySequence });
     assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, `PowerShell ${label} prompt must not fall back`);
     assert.equal(countOccurrences(output, '  Enhancements'), keySequence.filter(k => k !== 'Enter').length + 1, `PowerShell ${label} exact menu count`);
+    assert.match(output, /code-mode[^\r\n]*Code Mode/, `PowerShell ${label}: 菜单必须展示 Code Mode 标签`);
     for (const warning of warnings) assert.equal(countOccurrences(output, warning), 1, `PowerShell ${label} exact warning count`);
   }
 

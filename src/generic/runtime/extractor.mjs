@@ -277,9 +277,16 @@ function parseModules(payload, offsets) {
     const nameSize   = rec.readUInt32LE(4);
     const contentOff = rec.readUInt32LE(8);
     const contentSize= rec.readUInt32LE(12);
+    const encoding   = rec.readUInt8(48);
     const loaderId   = rec.readUInt8(49);
     const name = decodeName(checkedSlice(payload, nameOff, nameSize, `module[${i}].name`));
-    const content = checkedSlice(payload, contentOff, contentSize, `module[${i}].content`);
+    let content = checkedSlice(payload, contentOff, contentSize, `module[${i}].content`);
+    if ((loaderId === 1 || loaderId === 13) && encoding !== 0) {
+      if (encoding !== 1 && encoding !== 2) die(`module[${i}] unsupported string encoding: ${encoding}`);
+      if (encoding === 2 && content.length % 2 !== 0) die(`module[${i}] UTF-16LE content has odd byte length: ${content.length}`);
+      // Bun 字符串按记录编码存储；本地 JS 和文本加载器读取 UTF-8，二进制资源保持原样。
+      content = Buffer.from(content.toString(encoding === 2 ? 'utf16le' : 'latin1'), 'utf8');
+    }
     out.push({
       index: i,
       entry: i === offsets.entry_point_id,

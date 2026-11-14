@@ -30,7 +30,7 @@ const forbiddenText = 'forbidden dependency invoked:';
 const ENHANCEMENT_IDS = Object.freeze(JSON.parse(
   readFileSync(new URL('../src/generic/enhancements.json', import.meta.url), 'utf8'),
 ).map(({ id }) => id));
-const PLUGIN_ENHANCEMENT_IDS = Object.freeze(['claude-hud', 'claude-mem', 'superpowers']);
+const PLUGIN_ENHANCEMENT_IDS = Object.freeze(['claude-hud', 'claude-mem']);
 // '' = default all-enabled, 'none' = core-only, otherwise a CSV subset.
 const e2eEnhancements = process.env.CLAWGOD_E2E_ENHANCEMENTS ?? '';
 
@@ -228,7 +228,6 @@ function executePersistedHudCommand({ settings, shell, cwd, env, inputBase64, ex
 const canonicalPluginRetentionSpecs = [
   { key: 'hud', id: 'claude-hud@claude-hud', marketplace: 'claude-hud', plugin: 'claude-hud', version: '0.7.0' },
   { key: 'memory', id: 'claude-mem@thedotmack', marketplace: 'thedotmack', plugin: 'claude-mem', version: '13.14.0' },
-  { key: 'superpowers', id: 'superpowers@superpowers-marketplace', marketplace: 'superpowers-marketplace', plugin: 'superpowers', version: '6.2.0' },
 ];
 
 const strictSemverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
@@ -334,7 +333,7 @@ function validatePluginRetention(tempHome, expectedCanonicalIds, returnSelection
   assert.deepEqual(
     [...expectedCanonicalIds].sort(),
     canonicalPluginRetentionSpecs.map(spec => spec.id).sort(),
-    'plugin retention must use the three canonical plugin IDs',
+    'plugin retention must use the two canonical plugin IDs',
   );
   const pluginRoot = join(resolve(tempHome), '.claude', 'plugins');
   assertTrustedDirectoryPath(tempHome, pluginRoot, 'canonical plugin root');
@@ -360,7 +359,7 @@ function validatePluginRetention(tempHome, expectedCanonicalIds, returnSelection
     assert.equal(resolve(marketplace.installLocation), resolve(persistentSource), `retained marketplace must reference the canonical persistent source for ${spec.id}`);
     selected[spec.key] = record;
   }
-  return returnSelection ? selected : 'plugin retention: hud=present memory=present superpowers=present';
+  return returnSelection ? selected : 'plugin retention: hud=present memory=present';
 }
 
 function validateClaudeMemEntrypoints(hooksJson, mcpJson, bunPath) {
@@ -495,7 +494,7 @@ if (process.env.CLAWGOD_E2E_CONTRACT) {
     if (process.env.CLAWGOD_E2E_CONTRACT === 'plugin-summary') {
       const fixture = JSON.parse(input);
       const result = validatePluginSummary(fixture.output, {
-        ready: fixture.ready ?? 3,
+        ready: fixture.ready ?? 2,
         disabled: fixture.disabled ?? 0,
         warnings: fixture.warnings ?? 0,
       });

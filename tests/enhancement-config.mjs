@@ -47,6 +47,7 @@ const EXPECTED_IDS = [
   'planning',
   'voice',
   'auto-mode',
+  'code-mode',
   'unrestricted-tools',
   'paste-images',
   'privacy',
@@ -60,7 +61,6 @@ const EXPECTED_IDS = [
   'unlock-ultracode',
   'claude-hud',
   'claude-mem',
-  'superpowers',
 ];
 const EXPECTED_MANIFEST = [
   { id: 'chrome', kind: 'patch' },
@@ -70,6 +70,7 @@ const EXPECTED_MANIFEST = [
   { id: 'planning', kind: 'patch' },
   { id: 'voice', kind: 'patch' },
   { id: 'auto-mode', kind: 'patch' },
+  { id: 'code-mode', kind: 'patch' },
   { id: 'unrestricted-tools', kind: 'patch' },
   { id: 'paste-images', kind: 'patch' },
   { id: 'privacy', kind: 'patch' },
@@ -83,7 +84,6 @@ const EXPECTED_MANIFEST = [
   { id: 'unlock-ultracode', kind: 'patch' },
   { id: 'claude-hud', kind: 'plugin' },
   { id: 'claude-mem', kind: 'plugin' },
-  { id: 'superpowers', kind: 'plugin' },
 ];
 const CONFIG_ALL = { schemaVersion: 1, mode: 'all', enabled: [] };
 const CONFIG_CUSTOM = { schemaVersion: 1, mode: 'custom', enabled: ['chrome', 'branding'] };

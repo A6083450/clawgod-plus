@@ -16,7 +16,7 @@ set -e
 CLAWGOD_DIR="$HOME/.clawgod"
 BIN_DIR="$HOME/.local/bin"
 VERSION="${CLAWGOD_VERSION:-}"
-VERIFIED_VERSION="2.1.322"
+VERIFIED_VERSION="2.1.325"
 # 旧 updater 把无参更新标记为 latest；显式 --version 在后面的参数解析中恢复。
 if [ "$VERSION" = latest ] && [ "${CLAWGOD_UPDATE_PATCH_FAIL_OPEN:-}" = 1 ]; then VERSION=""; fi
 NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
@@ -54,7 +54,7 @@ done
 # 默认只采用随安装器验证的版本；保留较新的已装版本，绝不静默降级。
 if [ -z "$VERSION" ] && [ "${UNINSTALL:-}" != 1 ] && [ "$NO_UPGRADE" != 1 ]; then
   VERSION="$VERIFIED_VERSION"
-  if [ "${CLAWGOD_UPDATE_STABLE_FALLBACK:-}" != 1 ] && [ -f "$CLAWGOD_DIR/.source-version" ]; then
+  if [ -f "$CLAWGOD_DIR/.source-version" ]; then
     _pinned="$(tr -d '\r\n' < "$CLAWGOD_DIR/.source-version")"
     if [[ ! "$_pinned" =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]]; then
       printf '%s\n' 'clawgod: invalid .source-version; specify --version explicitly' >&2
@@ -74,6 +74,7 @@ CLAWGOD_ENHANCEMENT_IDS=(
   planning
   voice
   auto-mode
+  code-mode
   unrestricted-tools
   paste-images
   privacy
@@ -87,7 +88,6 @@ CLAWGOD_ENHANCEMENT_IDS=(
   unlock-ultracode
   claude-hud
   claude-mem
-  superpowers
 )
 
 CLAWGOD_ENHANCEMENT_LABELS=(
@@ -98,6 +98,7 @@ CLAWGOD_ENHANCEMENT_LABELS=(
   'Planning'
   'Voice'
   'Auto Mode'
+  'Code Mode'
   'Tools'
   'Paste Images'
   'Privacy'
@@ -111,7 +112,6 @@ CLAWGOD_ENHANCEMENT_LABELS=(
   'Ultracode'
   'Claude HUD'
   'claude-mem'
-  'Superpowers'
 )
 
 enhancement_warn() {
@@ -772,14 +772,8 @@ function runSelfUpdate(argv, options = {}) {
       stderr.write('[clawgod] 升级失败，但未确认已安全恢复或仍有恢复事务；为保护原安装，不自动重试。\n');
       return first;
     }
-    stderr.write('[clawgod] 最新版升级失败，已恢复原运行时；正在尝试安装器内置的稳定版本。\n');
-    childEnv.CLAWGOD_UPDATE_STABLE_FALLBACK = '1';
-    const fallback = outcomeFromResult(
-      spawn(command[0], command.slice(1), { stdio: 'inherit', env: childEnv }),
-      'stable installer process did not return an exit status',
-    );
-    if (fallback.status === 0 && !fallback.signal) stderr.write('[clawgod] 已安装稳定版本；最新版尚未升级成功。\n');
-    return fallback;
+    stderr.write('[clawgod] 最新版升级失败，已恢复并保留原运行时。\n');
+    return first;
   } catch (error) {
     stderr.write(`[clawgod] update failed: ${error && error.message ? error.message : String(error)}\n`);
     return { status: 1, signal: null };
@@ -1731,9 +1725,17 @@ export function parseStoredEnhancementConfig(source, manifest) {
   } catch {
     throw new Error('Invalid enhancement config JSON');
   }
-  const config = validateStoredEnhancementConfig(value, manifest);
+  // 历史清单以 Superpowers 结尾；移除前先按旧 schema 和顺序校验原始字节。
+  // 仅兼容持久化配置读取，对象校验与显式输入仍保持严格。
+  const migrateSuperpowers = !manifestIds(manifest).includes('superpowers');
+  const storedManifest = migrateSuperpowers
+    ? [...manifest, { id: 'superpowers', kind: 'plugin' }]
+    : manifest;
+  const config = validateStoredEnhancementConfig(value, storedManifest);
   if (text !== canonicalJson(config)) throw new Error('Non-canonical enhancement config JSON');
-  return config;
+  return migrateSuperpowers
+    ? selectionToStoredEnhancementConfig({ mode: config.mode, enabled: config.enabled.filter(id => id !== 'superpowers') }, manifest)
+    : config;
 }
 
 export function selectionToStoredEnhancementConfig(selection, manifest) {
@@ -2897,6 +2899,7 @@ cat > "$CLAWGOD_DIR/enhancement-manifest.json" << 'ENHANCEMENT_MANIFEST_EOF'
   { "id": "planning", "kind": "patch" },
   { "id": "voice", "kind": "patch" },
   { "id": "auto-mode", "kind": "patch" },
+  { "id": "code-mode", "kind": "patch" },
   { "id": "unrestricted-tools", "kind": "patch" },
   { "id": "paste-images", "kind": "patch" },
   { "id": "privacy", "kind": "patch" },
@@ -2909,8 +2912,7 @@ cat > "$CLAWGOD_DIR/enhancement-manifest.json" << 'ENHANCEMENT_MANIFEST_EOF'
   { "id": "transcript-dialog-replay", "kind": "patch" },
   { "id": "unlock-ultracode", "kind": "patch" },
   { "id": "claude-hud", "kind": "plugin" },
-  { "id": "claude-mem", "kind": "plugin" },
-  { "id": "superpowers", "kind": "plugin" }
+  { "id": "claude-mem", "kind": "plugin" }
 ]
 ENHANCEMENT_MANIFEST_EOF
 chmod 600 "$CLAWGOD_DIR/enhancement-manifest.json"
@@ -3330,19 +3332,11 @@ export const PLUGIN_BASELINES = Object.freeze({
     sha256: 'a64f7dd038308da0db52f10d8f4fc2b3b3acfec5d9ddfdcfea9f6e473e54bed0',
     url: 'https://github.com/thedotmack/claude-mem/archive/refs/tags/v13.14.0.tar.gz',
   }),
-  superpowers: Object.freeze({
-    key: 'superpowers', id: 'superpowers@superpowers-marketplace', marketplace: 'superpowers-marketplace', plugin: 'superpowers',
-    archiveMarketplace: 'superpowers-dev',
-    version: '6.2.0', bytes: 516401,
-    sha256: '468246a7b4981d4c014c2b58d9ee538700ffded075279d5810059cdc1abeb5f3',
-    url: 'https://github.com/obra/superpowers/archive/refs/tags/v6.2.0.tar.gz',
-  }),
 });
 
 export const PLUGIN_ENHANCEMENT_IDS = Object.freeze({
   hud: 'claude-hud',
   memory: 'claude-mem',
-  superpowers: 'superpowers',
 });
 
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
@@ -4856,7 +4850,6 @@ function containedRelativeSource(sourceRoot, source, spec) {
   if (parts.includes('..')) throw new Error(`${spec.key}: plugin source is invalid`);
   const normalized = parts.filter(part => part && part !== '.').join('/');
   if (spec.key === 'memory' && normalized !== 'plugin') throw new Error(`${spec.key}: declared plugin source must be plugin/`);
-  if (spec.key === 'superpowers' && source !== './') throw new Error(`${spec.key}: declared plugin source must be ./`);
   const pluginRoot = normalized ? join(sourceRoot, ...normalized.split('/')) : sourceRoot;
   let status;
   try {
@@ -4890,8 +4883,7 @@ export async function extractPluginArchive(bytes, spec, destination) {
     for (const entry of linkEntries) materializeArchiveLink(stagingRoot, entry, spec);
     const sourceRoot = join(stagingRoot, archive.root);
     const manifest = readJson(join(sourceRoot, '.claude-plugin', 'marketplace.json'), spec);
-    const expectedArchiveMarketplace = spec.archiveMarketplace || spec.marketplace;
-    if (manifest.name !== expectedArchiveMarketplace) throw new Error(`${spec.key}: marketplace name mismatch`);
+    if (manifest.name !== spec.marketplace) throw new Error(`${spec.key}: marketplace name mismatch`);
     const entry = manifest.plugins?.find(plugin => plugin.name === spec.plugin);
     if (!entry) throw new Error(`${spec.key}: plugin entry is missing`);
     const pluginRoot = containedRelativeSource(sourceRoot, entry.source, spec);
@@ -5269,25 +5261,7 @@ function materializePersistentSource(sourceRoot, spec, context) {
   let result = null;
   let failure = null;
   try {
-    if (spec.key === 'superpowers') {
-      mkdirSync(staged, 0o700);
-      safeDirectoryStatus(staged, spec);
-      const manifestDirectory = join(staged, '.claude-plugin');
-      mkdirSync(manifestDirectory, 0o700);
-      const sourceManifest = readJson(join(sourceRoot, '.claude-plugin', 'marketplace.json'), spec);
-      const wrapperManifest = {
-        name: 'superpowers-marketplace',
-        plugins: [{ name: 'superpowers', version: '6.2.0', source: './plugin' }],
-      };
-      if (sourceManifest.owner) wrapperManifest.owner = sourceManifest.owner;
-      writeExclusive(
-        join(manifestDirectory, 'marketplace.json'),
-        new TextEncoder().encode(JSON.stringify(wrapperManifest)),
-        false,
-        spec,
-      );
-      copyValidatedDirectory(sourceRoot, join(staged, 'plugin'), spec);
-    } else copyValidatedDirectory(sourceRoot, staged, spec);
+    copyValidatedDirectory(sourceRoot, staged, spec);
     assertDirectoryIdentity(sourceParent, parentIdentity, spec, 'persistent source');
     transaction = prepareDirectoryReplacement(persistentSource, spec, 'persistent source', sourceParentGuard);
     try {
@@ -5299,9 +5273,7 @@ function materializePersistentSource(sourceRoot, spec, context) {
       const manifest = readJson(join(persistentSource, '.claude-plugin', 'marketplace.json'), spec);
       const entry = manifest.plugins?.find(candidate => candidate.name === spec.plugin);
       if (!entry) throw new Error(`${spec.key}: persistent plugin entry is missing`);
-      const pluginSource = spec.key === 'superpowers'
-        ? join(persistentSource, 'plugin')
-        : containedRelativeSource(persistentSource, entry.source, spec);
+      const pluginSource = containedRelativeSource(persistentSource, entry.source, spec);
       result = { persistentSource, pluginSource, transaction };
       completed = true;
     } catch (error) {
@@ -5930,9 +5902,6 @@ async function resolvePluginSelection(context) {
 }
 
 async function deselectedPluginResult(spec, context) {
-  if (spec.key === 'superpowers') {
-    return pluginResult(spec, 'disabled', false, null, 'management disabled; user installation retained');
-  }
   let restoration;
   try {
     restoration = spec.key === 'hud'
@@ -5954,7 +5923,7 @@ async function deselectedPluginResult(spec, context) {
 }
 
 export async function ensurePluginDependencies(context, selection) {
-  const specs = [PLUGIN_BASELINES.hud, PLUGIN_BASELINES.memory, PLUGIN_BASELINES.superpowers];
+  const specs = [PLUGIN_BASELINES.hud, PLUGIN_BASELINES.memory];
   const enabled = enabledPluginKeys(selection);
   const state = { schemaVersion: 1, hud: {}, claudeMem: { files: {} } };
   const results = [];
@@ -5972,7 +5941,7 @@ export async function ensurePluginDependencies(context, selection) {
     } catch (error) {
       marketplace = warningResult(spec, error);
     }
-    if (!shouldConfigurePluginDependency(marketplace) || spec.key === 'superpowers') {
+    if (!shouldConfigurePluginDependency(marketplace)) {
       results.push(marketplace);
       continue;
     }
@@ -7570,9 +7539,16 @@ function parseModules(payload, offsets) {
     const nameSize   = rec.readUInt32LE(4);
     const contentOff = rec.readUInt32LE(8);
     const contentSize= rec.readUInt32LE(12);
+    const encoding   = rec.readUInt8(48);
     const loaderId   = rec.readUInt8(49);
     const name = decodeName(checkedSlice(payload, nameOff, nameSize, `module[${i}].name`));
-    const content = checkedSlice(payload, contentOff, contentSize, `module[${i}].content`);
+    let content = checkedSlice(payload, contentOff, contentSize, `module[${i}].content`);
+    if ((loaderId === 1 || loaderId === 13) && encoding !== 0) {
+      if (encoding !== 1 && encoding !== 2) die(`module[${i}] unsupported string encoding: ${encoding}`);
+      if (encoding === 2 && content.length % 2 !== 0) die(`module[${i}] UTF-16LE content has odd byte length: ${content.length}`);
+      // Bun 字符串按记录编码存储；本地 JS 和文本加载器读取 UTF-8，二进制资源保持原样。
+      content = Buffer.from(content.toString(encoding === 2 ? 'utf16le' : 'latin1'), 'utf8');
+    }
     out.push({
       index: i,
       entry: i === offsets.entry_point_id,
@@ -15730,13 +15706,15 @@ function localCellProfile(source, dependencies) {
       one(text => /^function [\w$]+\(([\w$]+)\)\{return [\w$]+\.test\(\1\)\?\1\.replace\([\w$]+,"\\uFFFD"\):\1\}$/.test(text)),
     ];
     const renderer = cellDeclarationContract(source, roots);
-    const splitBidiWindows = renderer.digest === '14c0524e2ffffed0c7b54c8ff72ed5b132368b5f14d91fad4826cd071669542d';
-    const splitBidi = splitBidiWindows || renderer.digest === 'ae2075eaf8e325578ef1ffeaa46b2e14c0b027d58c423861c0f9a31f92da3902';
+    const normalizedWindows = renderer.digest === '9512f3cfbcebee9c2dd2e4c675c27af6d42ab9ed8b70484966497823c365ab47';
+    const normalizedGraphemes = normalizedWindows || renderer.digest === '738c6749821a9bcc06ea5e58bc14e8e745334d8878b49207c21fcc1714612f40';
+    const splitBidiWindows = normalizedWindows || renderer.digest === '14c0524e2ffffed0c7b54c8ff72ed5b132368b5f14d91fad4826cd071669542d';
+    const splitBidi = normalizedGraphemes || splitBidiWindows || renderer.digest === 'ae2075eaf8e325578ef1ffeaa46b2e14c0b027d58c423861c0f9a31f92da3902';
     const windows = splitBidiWindows || renderer.digest === '5662354f359aff6215a218c960def8daa016b665a826182ca74f7f7a3931e976';
     if (!splitBidi && !windows && renderer.digest !== '81d0cbf0d426ae6b3b29b279988115f7135d920654b90201a9e235e36851b6a5') return null;
     const names = Object.fromEntries(Object.entries({ Ns:12, Dd:23, Cx:81, xC:110, Dc:137,
       bn:14, wo:15, Xf:16, jn:17, hht:1, Rx:90, xx:93, bGt:3, LNr:5, MNr:6 })
-      .map(([key, index]) => [key, renderer.bindings[index - (windows && index >= 12 ? 1 : 0)]]));
+      .map(([key, index]) => [key, renderer.bindings[index + (normalizedGraphemes && index >= 5 ? 1 : 0) - (windows && index >= 12 ? 1 : 0)]]));
     names.cmr = 'clawgodAnsiTokens';
     names.Kf = 'clawgodMergeStyles';
     const imports = ast.body.filter(node => node.type === 'ImportDeclaration');
@@ -15754,12 +15732,14 @@ function localCellProfile(source, dependencies) {
     };
     const shared = resolveImport(renderer.bindings[0]);
     // 2.1.310 合入 tmux 检测，原 ANSI/工厂不变，但新增导入使绑定后移四位。
-    const tmuxAnsi = splitBidi && shared.structure.digest === '8ec4f78979e912faa4b865c3205b6b299bdb7b223f94ebf9b51f048e01b11c92';
+    // 2.1.325 新增字素归一化，沿用原 ANSI 算法并新增两个导入绑定。
+    if (normalizedGraphemes && shared.structure.digest !== '5937962119d4ecd4a455e99ff1360e285f4e597a3e4b3f66355140fc66ee890e') return null;
+    const tmuxAnsi = normalizedGraphemes || splitBidi && shared.structure.digest === '8ec4f78979e912faa4b865c3205b6b299bdb7b223f94ebf9b51f048e01b11c92';
     // 2.1.304 将原样的 ANSI 模块与共享工厂合并；工厂绑定整体后移 128 位。
     const mergedAnsi = tmuxAnsi || shared.structure.digest === (splitBidi
       ? 'be8ac874e539c2753fddac24c4af4af0268c14e276b29a1e1835f19d96e94e71'
       : '9eba98324a241b2dc9316c8d9bc30ffd2ed64f8acbf7c1c971d7c53ea010a0bb');
-    const sharedOffset = tmuxAnsi ? 127 : splitBidi ? 123 : mergedAnsi ? 128 : 0;
+    const sharedOffset = normalizedGraphemes ? 129 : tmuxAnsi ? 127 : splitBidi ? 123 : mergedAnsi ? 128 : 0;
     if (!mergedAnsi && shared.structure.digest !== 'a4df63c44a7007f50b1418b8f808f8600771ce2003d94c291174145ec3ba36f6'
       || shared.local !== shared.structure.bindings[sharedOffset + 6]) return null;
     for (const [local, upstream] of (splitBidi ? [[4,5]] : [[2,0],[4,5],[windows ? 9 : 10,1],[windows ? 10 : 11,2]])) {
@@ -15770,8 +15750,8 @@ function localCellProfile(source, dependencies) {
     let bidi;
     if (splitBidi) {
       bidi = resolveImport(renderer.bindings[2]);
-      const pattern = resolveImport(renderer.bindings[windows ? 9 : 10]);
-      const regex = resolveImport(renderer.bindings[windows ? 10 : 11]);
+      const pattern = resolveImport(renderer.bindings[(windows ? 9 : 10) + (normalizedGraphemes ? 1 : 0)]);
+      const regex = resolveImport(renderer.bindings[(windows ? 10 : 11) + (normalizedGraphemes ? 1 : 0)]);
       if (bidi.structure.digest !== 'd64dedaa92eb5fed6f31d07b1ea5bf194f7335b9e5158f3954d2daf120ff263d'
         || bidi.specifier !== pattern.specifier || bidi.specifier !== regex.specifier) return null;
       const contract = cellDeclarationContract(bidi.source, [bidi.local, pattern.local, regex.local]);
@@ -15799,6 +15779,16 @@ function localCellProfile(source, dependencies) {
       });
     }
     if (!verifyEdges(cellDeclarationContract(styles.source, [styles.local, normalizedStyles.local]), [[chalk.structure.digest, 176]])) return null;
+    let rendererSource = CELL_RENDERER_SOURCE;
+    if (normalizedGraphemes) {
+      const normalizer = resolveImport(renderer.bindings[5]);
+      const contract = cellDeclarationContract(normalizer.source, [normalizer.local]);
+      if (normalizer.specifier !== shared.specifier || normalizer.local !== shared.structure.bindings[140]
+        || contract.digest !== 'f2e91101b5346e72ebcb5c4cecf2b8e18c6de54820d22e183a0172caebde099f'
+        || !verifyEdges(contract, [['a7d45c3881d9dd1eb2a53e264a0934324025377e3c0c216068870858ce375bef', 1],
+          ['ca7e8d33b404ed73726f061679bdaac9a5910060a73755a352f1617e62f52497', 5]])) return null;
+      rendererSource = rendererSource.replace('var value = segment.segment;', 'var value = clawgodNormalizeGrapheme(segment.segment);');
+    }
     const tabs = resolveImport(names.hht);
     const expanders = imports.filter(node => node.source.value === tabs.specifier).flatMap(node => node.specifiers)
       .filter(item => item.local.name !== names.hht).filter(item => {
@@ -15838,7 +15828,8 @@ function localCellProfile(source, dependencies) {
       const contract = cellDeclarationContract(text, [checks[0].id.name, segments[0].id.name]);
       // 2.1.316 预计算保留名称前缀并跳过重复归一化，仍保留原防冒充回退。
       if (!(splitBidi ? ['f87ed46c7161bc28cc0e9b541ce651086c16b1978f797286c6f0e4138d88fdd6',
-        '7d44228648519fe31e07f35eb434a8e7a4d5c9351696af94b26ba490783785a7']
+        '7d44228648519fe31e07f35eb434a8e7a4d5c9351696af94b26ba490783785a7',
+        ...(normalizedGraphemes ? ['23b9190e7c6977d0b2a3c7daef6edd82807f100cbe303610652eea8c6b196a05'] : [])]
         : ['806962f28be74e895c24d42d325ff581238ccc482c57443c68d12e6a93f51733']).includes(contract.digest)) continue;
       // 已允许的文本分块也不能通过别名新增契约外的原生调用路径。
       const factoryImport = parsed.body.find(node => node.type === 'ImportDeclaration'
@@ -15849,6 +15840,10 @@ function localCellProfile(source, dependencies) {
       for (const [local, upstream] of (splitBidi ? [[3,5],[4,6]] : [[3,5],[4,6],[5,0]])) {
         const edge = contract.imports.find(item => item.local === contract.bindings[local]);
         if (edge?.specifier !== shared.specifier || edge.imported !== shared.structure.bindings[upstream + sharedOffset]) return null;
+      }
+      if (normalizedGraphemes) {
+        const edge = contract.imports.find(item => item.local === contract.bindings[6]);
+        if (edge?.specifier !== shared.specifier || edge.imported !== shared.structure.bindings[140]) return null;
       }
       if (splitBidi) {
         const edge = contract.imports.find(item => item.local === contract.bindings[5]);
@@ -15873,9 +15868,9 @@ function localCellProfile(source, dependencies) {
     const call = line.body.body.at(-1)?.argument?.alternate;
     if (call?.type !== 'CallExpression') return null;
     const writeLineSource = source.slice(line.start,call.start) + `paintCells(${screen},${cells}.cells,${x},${y})` + source.slice(call.end,line.end);
-    return { shape, names, writeLineSource, mappedWriteLine: true, tabAnchor,
+    return { shape, names, rendererSource, graphemeNormalizer: normalizedGraphemes ? renderer.bindings[5] : undefined, writeLineSource, mappedWriteLine: true, tabAnchor,
       tabReplacement: `let ${out}=${sanitize}(${input});if(${out}.indexOf(String.fromCharCode(9))>=0){let clawgodTabOffset=((${col}%${names.hht})+${names.hht})%${names.hht};${out}=${names.C8}([" ".repeat(clawgodTabOffset)+${out}]).join("").slice(clawgodTabOffset)}let ${width}=${box}.x2-${col}`,
-      dependency: { specifier: ansi.specifier, digest: hash(ansi.source), tokenizer: ansi.structure.bindings[tmuxAnsi ? 119 : 115], normalizeStyles: ansi.structure.bindings[tmuxAnsi ? 67 : 63] },
+      dependency: { specifier: ansi.specifier, digest: hash(ansi.source), tokenizer: ansi.structure.bindings[normalizedGraphemes ? 121 : tmuxAnsi ? 119 : 115], normalizeStyles: ansi.structure.bindings[normalizedGraphemes ? 69 : tmuxAnsi ? 67 : 63] },
       shared: { specifier: shared.specifier, digest: hash(shared.source), factory: shared.local,
         text: text.file, textDigest: hash(text.source), textBranch: text.branch },
     };
@@ -15992,7 +15987,7 @@ export function adaptCellRenderer(source, shape, dependencies = new Map()) {
   return null;
 }
 
-function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, writeLineSource = CELL_WRITE_LINE_SOURCE, mappedWriteLine = false, oscDeclaration = OSC8_DECLARATION }, dependencies) {
+function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, graphemeNormalizer, rendererSource = CELL_RENDERER_SOURCE, writeLineSource = CELL_WRITE_LINE_SOURCE, mappedWriteLine = false, oscDeclaration = OSC8_DECLARATION }, dependencies) {
   if (shared) {
     const factory = dependencies.get(basename(shared.specifier));
     if (typeof factory !== 'string' || createHash('sha256').update(factory).digest('hex') !== shared.digest) return null;
@@ -16005,6 +16000,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
     if (source.includes(name)) return null;
   }
   let ansiImport = '';
+  if (graphemeNormalizer && source.includes('clawgodNormalizeGrapheme')) return null;
   if (dependency) {
     // 2.1.285 把 ANSI 分词和样式合并拆到独立模块；冻结整个依赖，不能只信导出名。
     const ansi = dependencies.get(basename(dependency.specifier));
@@ -16032,7 +16028,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
     spans.push({ start, end: end + 1 });
   }
   const replacements = [
-    [spans[0], CELL_RENDERER_SOURCE],
+    [spans[0], rendererSource],
     [spans[1], CELL_LINE_CELLS_SOURCE],
     [spans[2], CELL_SET_CELL_SOURCE],
     [spans[3], writeLineSource],
@@ -16044,7 +16040,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
       : text.replace(/\b(?:Ns|Dd|Cx|xC|cmr|Kf|Dc|bn|wo|Xf|jn|Rx|xx|hht|C8|MNr|LNr|bGt)\b/g, name => names[name] ?? name);
     adapted = adapted.slice(0, span.start) + mapped + adapted.slice(span.end);
   }
-  return ansiImport + adapted.replace(tabAnchor, tabReplacement);
+  return ansiImport + (graphemeNormalizer ? `const clawgodNormalizeGrapheme=${graphemeNormalizer};\n` : '') + adapted.replace(tabAnchor, tabReplacement);
 }
 
 // 2.1.269+ 渲染器硬依赖私有 Bun.ant.CellSegmenter。公开 Bun 给不了，所以在
@@ -22597,10 +22593,12 @@ function parseStoredEnhancementConfig(source, manifest) {
   } catch {
     throw new Error("Invalid enhancement config JSON");
   }
-  const config = validateStoredEnhancementConfig(value, manifest);
+  const migrateSuperpowers = !manifestIds(manifest).includes("superpowers");
+  const storedManifest = migrateSuperpowers ? [...manifest, { id: "superpowers", kind: "plugin" }] : manifest;
+  const config = validateStoredEnhancementConfig(value, storedManifest);
   if (text !== canonicalJson(config))
     throw new Error("Non-canonical enhancement config JSON");
-  return config;
+  return migrateSuperpowers ? selectionToStoredEnhancementConfig({ mode: config.mode, enabled: config.enabled.filter((id) => id !== "superpowers") }, manifest) : config;
 }
 function selectionToStoredEnhancementConfig(selection, manifest) {
   if (!isPlainRecord(selection))
@@ -23550,7 +23548,7 @@ function inspectPatcherSource(source) {
 }
 async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   const ENV_EXPR = "(+process.env.CLAUDE_CODE_CONTEXT_LIMIT||+process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS||200000)";
-  const constantTail = "((?:\\s*,\\s*[\\w$]+\\s*=\\s*(?:32000|128000|1e6)){2,3})(?=\\s*;)";
+  const constantTail = "((?:\\s*,\\s*[\\w$]+\\s*=\\s*(?:32000|128000|1e6)){2,4})(?=\\s*;)";
   const dualRe = new RegExp("var\\s+([\\w$]+)\\s*=\\s*200000\\s*,\\s*([\\w$]+)\\s*=\\s*200000" + constantTail);
   const alreadyRe = new RegExp("var\\s+([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)\\s*,\\s*([\\w$]+)\\s*=\\s*\\(\\+process\\.env\\.CLAUDE_CODE_CONTEXT_LIMIT\\|\\|\\+process\\.env\\.CLAUDE_CODE_MAX_CONTEXT_TOKENS\\|\\|200000\\)" + constantTail);
   const dualMatch = dualRe.exec(source);
@@ -23563,7 +23561,7 @@ async function applyContextLimitPatch(source, { dryRun, verify, rootDir }) {
   const match = dualMatch || alreadyMatch;
   const [, varA, varB, tail] = match;
   const constants = [...tail.matchAll(/=\s*(32000|128000|1e6)/g)].map((entry) => entry[1]);
-  if (new Set(constants).size !== constants.length || !constants.includes("32000") || !constants.includes("128000")) {
+  if (constants.filter((value) => value === "32000").length !== 1 || constants.filter((value) => value === "128000").length !== 1) {
     return { status: "stale", detail: "context default constants are ambiguous" };
   }
   const replacements = [];
@@ -23809,6 +23807,7 @@ var enhancements_default = `[
   { "id": "planning", "kind": "patch" },
   { "id": "voice", "kind": "patch" },
   { "id": "auto-mode", "kind": "patch" },
+  { "id": "code-mode", "kind": "patch" },
   { "id": "unrestricted-tools", "kind": "patch" },
   { "id": "paste-images", "kind": "patch" },
   { "id": "privacy", "kind": "patch" },
@@ -23821,8 +23820,7 @@ var enhancements_default = `[
   { "id": "transcript-dialog-replay", "kind": "patch" },
   { "id": "unlock-ultracode", "kind": "patch" },
   { "id": "claude-hud", "kind": "plugin" },
-  { "id": "claude-mem", "kind": "plugin" },
-  { "id": "superpowers", "kind": "plugin" }
+  { "id": "claude-mem", "kind": "plugin" }
 ]
 `;
 
@@ -24519,14 +24517,14 @@ function extendWithCometix(registry) {
 }
 
 // src/generic/patcher/enhancements/agents.mjs
-var agentTeamsPatch = {
+var agentTeamsPatch = (codeModeEnabled) => ({
   order: 5,
   name: "Agent Teams always enabled",
   pattern: /function ([\w$]+)\(\)\{if\(![\w$]+\(process\.env\.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\)&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}|function ([\w$]+)\(\)\{if\(![\w$]+\.[\w$]+&&![\w$]+\(\)\)return!1;if\(![\w$]+\("tengu_amber_flint",!0\)\)return!1;return!0\}/g,
-  replacer: (match, firstFn, secondFn) => `function ${firstFn || secondFn}(){if(${gate2("agent-teams")})return!0;${match.slice(match.indexOf("{") + 1, -1)}}`,
+  replacer: (match, firstFn, secondFn) => `function ${firstFn || secondFn}(){if(${gate2("agent-teams")}${codeModeEnabled ? '&&!["1","true","yes","on"].includes((process.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE??"").toLowerCase().trim())' : ""})return!0;${match.slice(match.indexOf("{") + 1, -1)}}`,
   sentinel: "tengu_amber_flint",
   appliedMarker: /function [\w$]+\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]/
-};
+});
 var sessionMetadataPatch = {
   order: 6,
   name: "Agents view session metadata",
@@ -24591,15 +24589,17 @@ var collapsedRowsPatch = {
   unique: true
 };
 var independentPatches = [
-  agentTeamsPatch,
   sessionMetadataPatch,
   terminalHeightPatch,
   overflowPatch,
   collapsedStatePatch,
   collapsedRowsPatch
 ];
-function createAgentsRegistry({ chromeEnabled }) {
-  const patches = chromeEnabled ? [...independentPatches, defaultAgentsViewPatch].sort((left, right) => left.order - right.order) : [...independentPatches];
+function createAgentsRegistry({ chromeEnabled, codeModeEnabled = false }) {
+  const patches = [agentTeamsPatch(codeModeEnabled), ...independentPatches];
+  if (chromeEnabled)
+    patches.push(defaultAgentsViewPatch);
+  patches.sort((left, right) => left.order - right.order);
   return Object.freeze({
     id: "agents",
     patches: Object.freeze(patches),
@@ -24991,6 +24991,133 @@ var chromeRegistry = Object.freeze({
   id: "chrome",
   patches: Object.freeze(patches4),
   customPatches: Object.freeze(customPatches2)
+});
+
+// src/generic/patcher/enhancements/code-mode.mjs
+import { createHash } from "crypto";
+var separator2 = `
+/*__CLAWGOD_MODULE_BOUNDARY__*/
+`;
+var marker = "/*__clawgod_code_mode_local_v1__*/";
+var feature = "tengu_rustling_blossom";
+var originalContract = "3f00dbe7afc7f51e22d03551b6990394c8624ebe160060a3da05ac78fd799a85";
+var patchedContract = "6f8b4849154cc8dad782c83b9210a8509ff6441a2bcb57ef50ef5820a86df8d1";
+var interfaceContracts = new Set([
+  "989a868f9a4de1f7e118de4389bfc11f2b9173a4c2f3fb1feb7c0619942279bc",
+  "5798f6f581d706317d12706c3c2ffb2eb9488ddd6bd7d059c2f8b2619951a6aa",
+  "a9596d763460f38124c284b083074ea7c97dd0000fd0085ed28dcedac5fd833b"
+]);
+var digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+function interfaceContract(ast) {
+  return digest([
+    ast.body.filter((node) => node.type === "ImportDeclaration").map((node) => [
+      node.source.value.replace(/^(?:\/\$bunfs\/root\/|[A-Z]:\/~BUN\/root\/|\.\/)/, ""),
+      node.specifiers.map((specifier) => [specifier.type, specifier.imported?.name])
+    ]),
+    ast.body.filter((node) => node.type === "ExportNamedDeclaration").map((node) => node.specifiers.map((specifier) => specifier.exported.name))
+  ]);
+}
+function contract(ast) {
+  const names = new Map;
+  const globals = new Set(["process", "Object", "String", "Promise", "Bun"]);
+  function normalize(node, parent, key) {
+    if (Array.isArray(node))
+      return node.map((child) => normalize(child, parent, key));
+    if (!node || typeof node !== "object")
+      return node;
+    if (node.type === "Identifier") {
+      const publicName = parent?.type === "MemberExpression" && key === "property" && !parent.computed || parent?.type === "Property" && key === "key" && !parent.computed || globals.has(node.name);
+      if (!publicName && !names.has(node.name))
+        names.set(node.name, names.size);
+      return { type: node.type, name: publicName ? node.name : names.get(node.name) };
+    }
+    return Object.fromEntries(Object.entries(node).filter(([field]) => !["start", "end", "raw"].includes(field) && !(node.type === "ImportDeclaration" && field === "source") && !(node.type === "ImportSpecifier" && field === "imported") && !(node.type === "ExportSpecifier" && field === "exported")).map(([field, value]) => [field, normalize(value, node, field)]));
+  }
+  return createHash("sha256").update(JSON.stringify(normalize(ast))).digest("hex");
+}
+async function apply(source, { dryRun = false, verify = false } = {}) {
+  const modules = source.split(separator2);
+  if (!source.includes(feature))
+    return { status: "skipped", detail: "Code Mode not present in this version" };
+  try {
+    const candidates = modules.map((code, index) => ({ code, index })).filter(({ code }) => code.includes(feature)).map((candidate) => ({ ...candidate, ast: parsePatchSource(candidate.code) })).filter(({ ast }) => {
+      const keys = findNodes(ast, (node) => node.type === "VariableDeclarator" && node.id.type === "Identifier" && node.init?.value === feature).map((node) => node.id.name);
+      return ast.body.some((node) => node.type === "ExportNamedDeclaration" && node.specifiers.some((specifier) => keys.includes(specifier.local.name)));
+    });
+    if (candidates.length !== 1)
+      throw new Error(`Code Mode opt-in module: expected one exported feature declaration, found ${candidates.length}`);
+    const { code, index, ast } = candidates[0];
+    const header = code.match(/^(?:[ \t]*\/\/[^\r\n]*(?:\r?\n|$)|\s)*/)[0];
+    const versions = [...header.matchAll(/^[ \t]*\/\/[ \t]*Version:([^\r\n]*)/gm)].map((match) => match[1].trim());
+    if (!versions.length || versions.some((version) => !/^\d+\.\d+\.\d+$/.test(version)) || new Set(versions).size !== 1)
+      throw new Error("Code Mode source version is missing, invalid or conflicting");
+    const version = versions[0].split(".").map(Number), minimum = [2, 1, 323];
+    if (version.some((part) => !Number.isSafeInteger(part)))
+      throw new Error("Code Mode source version is invalid");
+    const different = version.findIndex((part, index) => part !== minimum[index]);
+    if (different !== -1 && version[different] < minimum[different])
+      return { status: "skipped", detail: "local Code Mode requires Claude Code >= 2.1.323" };
+    const edges = interfaceContract(ast);
+    if (!interfaceContracts.has(edges))
+      throw new Error(`Code Mode interface contract drift: ${edges}`);
+    const signature = contract(ast);
+    if (code.includes(marker)) {
+      if (signature !== patchedContract)
+        throw new Error(`patched Code Mode contract drift: ${signature}`);
+      return { status: "already", detail: "local Code Mode eligibility already applied" };
+    }
+    if (signature !== originalContract)
+      throw new Error(`Code Mode opt-in contract drift: ${signature}`);
+    const declarations = ast.body.filter((node) => node.type === "FunctionDeclaration");
+    const exported = ast.body.find((node) => node.type === "ExportNamedDeclaration").specifiers.map((node) => node.local.name);
+    const fn = (name) => declarations.find((node) => node.id.name === name);
+    const model = fn(exported[1]), start = fn(exported[3]), finalize = fn(exported[7]), stable = fn(exported[8]);
+    const eligibility = fn(findNodes(start, (node) => node.type === "CallExpression" && node.arguments.length === 2 && node.arguments[1]?.operator === "!")[0].callee.name);
+    const calledBefore = (reason) => {
+      const branch = eligibility.body.body.find((node) => node.type === "IfStatement" && node.consequent.argument?.value === reason);
+      return fn(findNodes(branch.test, (node) => node.type === "CallExpression")[0].callee.name);
+    };
+    const runtime = calledBefore("runtime"), provider = calledBefore("provider"), credentials = calledBefore("credentials");
+    const gate = fn(fn(exported[4]).body.body.filter((node) => node.type === "VariableDeclaration").at(-1).declarations[0].init.callee.name);
+    const setup = declarations.find((node) => node.async && findNodes(node, (child) => child.type === "Literal" && child.value === "opt-in wait").length);
+    const setupReturn = setup.body.body.at(-1);
+    const compliance = calledBefore("compliance");
+    const otel = calledBefore("otel");
+    const setupAdmin = setup.body.body.find((node) => node.type === "IfStatement" && node.consequent.argument?.value === "admin");
+    const adminName = findNodes(setupAdmin.test, (node) => node.type === "CallExpression")[0].callee.name;
+    const policyCall = findNodes(fn(exported[5]), (node) => node.type === "AssignmentExpression" && node.left.property?.name === "policyPrincipal")[0].right;
+    const principal = fn(policyCall.callee.name);
+    const edits = [];
+    const replaceBody = (node, value) => edits.push({ start: node.body.start, end: node.body.end, value: `{${value}}` });
+    replaceBody(runtime, 'return typeof Bun!=="undefined";');
+    for (const node of [model, provider, gate])
+      replaceBody(node, "return!0;");
+    replaceBody(credentials, "return!1;");
+    replaceBody(setup, `if(${adminName}())return"admin";if(${compliance.id.name}())return"compliance";if(${otel.id.name}())return"otel";${code.slice(setupReturn.start, setupReturn.end)}`);
+    replaceBody(principal, "return{read:!0};");
+    const restart = findNodes(finalize, (node) => node.type === "ReturnStatement" && node.argument?.type === "CallExpression" && node.argument.arguments[1]?.value === "restart_without_mode")[0];
+    const reviewed = findNodes(finalize, (node) => node.type === "MemberExpression" && node.property.name === "reviewed")[0];
+    const state = code.slice(reviewed.object.start, reviewed.object.end);
+    const precondition = finalize.body.body[0];
+    replaceBody(finalize, `${code.slice(precondition.start, precondition.end)}let __clawgodReason=!${state}.reviewed?"no_setup":${adminName}()?"admin":${compliance.id.name}()?"compliance":${otel.id.name}()?"otel":void 0;if(__clawgodReason===void 0){${state}.signedInAs={};return"none"}return ${restart.argument.callee.name}(__clawgodReason,"restart_without_mode");`);
+    replaceBody(stable, `return ${state}.signedInAs!==void 0;`);
+    let next = code;
+    for (const edit of edits.sort((a, b) => b.start - a.start))
+      next = next.slice(0, edit.start) + edit.value + next.slice(edit.end);
+    const outputSignature = contract(parsePatchSource(next));
+    if (outputSignature !== patchedContract)
+      throw new Error(`patched Code Mode contract drift: ${outputSignature}`);
+    modules[index] = `${next}
+${marker}`;
+    return { status: verify ? "verify" : "applied", count: edits.length, code: dryRun || verify ? source : modules.join(separator2) };
+  } catch (error) {
+    return { status: "stale", detail: `${error.message}; no writes` };
+  }
+}
+var codeModeRegistry = Object.freeze({
+  id: "code-mode",
+  patches: Object.freeze([]),
+  customPatches: Object.freeze([{ order: 95, name: "Code Mode local eligibility", apply }])
 });
 
 // src/generic/patcher/enhancements/computer-use.mjs
@@ -25905,6 +26032,7 @@ var registryById = new Map([
   [planningRegistry.id, planningRegistry],
   [voiceRegistry.id, voiceRegistry],
   [autoModeRegistry.id, autoModeRegistry],
+  [codeModeRegistry.id, codeModeRegistry],
   [unrestrictedToolsRegistry.id, unrestrictedToolsRegistry],
   [pasteImagesRegistry.id, pasteImagesRegistry],
   [privacyRegistry.id, privacyRegistry],
@@ -25917,7 +26045,7 @@ for (const { enhancement } of cometixPatches) {
 }
 function enhancementRegistry(id, enabledIds) {
   if (id === "agents")
-    return createAgentsRegistry({ chromeEnabled: enabledIds.has("chrome") });
+    return createAgentsRegistry({ chromeEnabled: enabledIds.has("chrome"), codeModeEnabled: enabledIds.has("code-mode") });
   const registry = registryById.get(id);
   if (!registry)
     throw new Error(`Missing patch registry for enhancement: ${id}`);
@@ -27694,7 +27822,7 @@ dim "  claude            — Start patched Claude Code (green logo)"
 dim "  claude.orig       — Run original unpatched Claude Code"
 echo ""
 dim "  Updates: 'claude update' is patched to route through this installer."
-dim "  Tries npm latest first; retries stable after a confirmed rollback"
+dim "  Tries npm latest; retains the original runtime after a confirmed rollback"
 dim "  in one step. Extra options:"
 dim "    claude update --version 2.1.180   (install a specific version)"
 dim "    claude update --no-upgrade        (re-patch without downloading)"

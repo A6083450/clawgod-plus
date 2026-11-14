@@ -487,8 +487,8 @@ for (const path of ['README.md', 'README_EN.md', 'README_JP.md']) {
   assert.match(source, /bun "\$test_file"/, `${path} must show Bun test commands`);
   assert.doesNotMatch(source, /包含 8 个针对性回归脚本|includes eight focused regression scripts|8 本の回帰スクリプト/, `${path} must not hard-code the stale focused-test count`);
   for (const marker of [
-    'claude-hud@claude-hud', 'claude-mem@thedotmack', 'superpowers@superpowers-marketplace',
-    '0.7.0', '13.14.0', '6.2.0', 'statusLine',
+    'claude-hud@claude-hud', 'claude-mem@thedotmack',
+    '0.7.0', '13.14.0', 'statusLine',
   ]) {
     assert.ok(source.includes(marker), `${path} must document managed plugin dependency marker ${marker}`);
   }
@@ -520,14 +520,14 @@ for (const [path, markers] of Object.entries(localizedPluginContracts)) {
 }
 
 const enhancementIds = [
-  'chrome', 'computer-use', 'agents', 'planning', 'voice', 'auto-mode',
+  'chrome', 'computer-use', 'agents', 'planning', 'voice', 'auto-mode', 'code-mode',
   'unrestricted-tools', 'paste-images', 'privacy', 'branding',
-  'claude-hud', 'claude-mem', 'superpowers',
+  'claude-hud', 'claude-mem',
 ];
 const enhancementSemanticMarkers = {
-  'README.md': ['默认启用全部', 'claude update', '不会删除'],
-  'README_EN.md': ['all 21 enhancements are enabled by default', 'claude update', 'never deletes'],
-  'README_JP.md': ['デフォルトで 21', 'claude update', '削除しません'],
+  'README.md': ['默认启用全部', 'claude update', '其他已安装插件保持不变'],
+  'README_EN.md': ['all 21 enhancements are enabled by default', 'claude update', 'Other installed plugins are left unchanged'],
+  'README_JP.md': ['デフォルトで 21', 'claude update', 'その他のインストール済みプラグインは変更しません'],
 };
 for (const path of ['README.md', 'README_EN.md', 'README_JP.md']) {
   const source = read(path);
@@ -567,7 +567,7 @@ assert.match(installerE2E, /claude-hud-current-style\.json/, 'Unix installer E2E
 for (const marker of [
   'HUD statusline: bun-only current-style=exact',
   'claude-mem entrypoints: hooks=bun mcp=bun',
-  'plugin retention: hud=present memory=present superpowers=present',
+  'plugin retention: hud=present memory=present',
 ]) {
   assert.ok(installerE2E.includes(marker), `Unix installer E2E must produce ${marker}`);
 }
@@ -670,10 +670,10 @@ assert.match(workflow, /mcpSearch\.args\.Count\s+-ne\s+2/, 'Windows claude-mem c
 assert.match(workflow, /Assert-ClaudeMemMcpConsumer[\s\S]{0,4000}claude-mem: mcp server not found/, 'Windows smoke must execute the saved MCP command in its safe missing-server branch');
 assert.match(workflow, /expectedSettingsAfterUninstall/, 'Windows smoke must derive settings by removing only managed statusLine');
 for (const marker of [
-  'Optional plugins: 3 ready, 0 disabled, 0 warnings',
+  'Optional plugins: 2 ready, 0 disabled, 0 warnings',
   'HUD statusline: bun-only current-style=exact',
   'claude-mem entrypoints: hooks=bun mcp=bun',
-  'plugin retention: hud=present memory=present superpowers=present',
+  'plugin retention: hud=present memory=present',
 ]) {
   assert.ok(workflow.includes(marker), `Windows smoke must assert ${marker}`);
 }

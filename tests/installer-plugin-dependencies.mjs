@@ -32,7 +32,7 @@ async function pluginArchive(base, overrides = {}) {
   const pluginRoot = source.replace(/^\.\//, '').replace(/\/$/, '');
   const pluginPrefix = pluginRoot ? `${root}/${pluginRoot}` : root;
   const marketplace = {
-    name: overrides.marketplaceName ?? base.archiveMarketplace ?? base.marketplace,
+    name: overrides.marketplaceName ?? base.marketplace,
     plugins: [{ name: base.plugin, source }],
   };
   if (overrides.owner !== undefined) marketplace.owner = overrides.owner;
@@ -163,13 +163,6 @@ const expected = {
     sha256: 'a64f7dd038308da0db52f10d8f4fc2b3b3acfec5d9ddfdcfea9f6e473e54bed0',
     url: 'https://github.com/thedotmack/claude-mem/archive/refs/tags/v13.14.0.tar.gz',
   },
-  superpowers: {
-    key: 'superpowers', id: 'superpowers@superpowers-marketplace', marketplace: 'superpowers-marketplace', plugin: 'superpowers',
-    archiveMarketplace: 'superpowers-dev',
-    version: '6.2.0', bytes: 516401,
-    sha256: '468246a7b4981d4c014c2b58d9ee538700ffded075279d5810059cdc1abeb5f3',
-    url: 'https://github.com/obra/superpowers/archive/refs/tags/v6.2.0.tar.gz',
-  },
 };
 
 const fixtureRoot = realpathSync(mkdtempSync(join(tmpdir(), 'clawgod-plugin-deps-')));
@@ -238,7 +231,7 @@ try {
     const pluginRoot = join(claudeConfigDir, 'plugins');
     const hudInstall = join(pluginRoot, 'cache', 'claude-hud', 'claude-hud', PLUGIN_BASELINES.hud.version);
     const memoryInstall = join(pluginRoot, 'cache', 'thedotmack', 'claude-mem', PLUGIN_BASELINES.memory.version);
-    const superpowersInstall = join(pluginRoot, 'cache', 'superpowers-marketplace', 'superpowers', PLUGIN_BASELINES.superpowers.version);
+    const superpowersInstall = join(pluginRoot, 'cache', 'superpowers-marketplace', 'superpowers', '6.2.0');
     mkdirSync(join(hudInstall, 'src'), { recursive: true });
     mkdirSync(join(memoryInstall, 'hooks'), { recursive: true });
     mkdirSync(superpowersInstall, { recursive: true });
@@ -251,7 +244,7 @@ try {
       plugins: {
         [PLUGIN_BASELINES.hud.id]: [{ scope: 'user', version: hudVersion, installPath: hudInstall }],
         [PLUGIN_BASELINES.memory.id]: [{ scope: 'user', version: PLUGIN_BASELINES.memory.version, installPath: memoryInstall }],
-        [PLUGIN_BASELINES.superpowers.id]: [{ scope: 'user', version: PLUGIN_BASELINES.superpowers.version, installPath: superpowersInstall }],
+        ['superpowers@superpowers-marketplace']: [{ scope: 'user', version: '6.2.0', installPath: superpowersInstall }],
       },
     }, null, 2)}\n`);
     const lifecycleModule = join(clawgodDir, 'plugin-dependencies.mjs');
@@ -325,8 +318,8 @@ try {
   const readyLifecycle = makeLifecycleFixture('ready');
   const readyEnsure = runLifecycleCommand(readyLifecycle, 'ensure');
   assert.equal(readyEnsure.exitCode, 0, new TextDecoder().decode(readyEnsure.stderr));
-  assert.deepEqual(outputLines(readyEnsure).slice(-1), ['Optional plugins: 3 ready, 0 disabled, 0 warnings'], new TextDecoder().decode(readyEnsure.stdout));
-  assert.equal(outputLines(readyEnsure).length, 4, 'ensure must print exactly three plugin lines and one summary');
+  assert.deepEqual(outputLines(readyEnsure).slice(-1), ['Optional plugins: 2 ready, 0 disabled, 0 warnings'], new TextDecoder().decode(readyEnsure.stdout));
+  assert.equal(outputLines(readyEnsure).length, 3, 'ensure must print exactly two plugin lines and one summary');
   for (const id of Object.values(PLUGIN_BASELINES).map(spec => spec.id)) {
     assert.equal(outputLines(readyEnsure).filter(line => line.includes(id)).length, 1, `${id} must have exactly one result line`);
   }
@@ -334,8 +327,8 @@ try {
   const warningLifecycle = makeLifecycleFixture('warning', 'latest');
   const warningEnsure = runLifecycleCommand(warningLifecycle, 'ensure');
   assert.equal(warningEnsure.exitCode, 0, new TextDecoder().decode(warningEnsure.stderr));
-  assert.deepEqual(outputLines(warningEnsure).slice(-1), ['Optional plugins: 2 ready, 0 disabled, 1 warnings']);
-  assert.equal(outputLines(warningEnsure).length, 4, 'a warning must retain exactly three plugin lines and one summary');
+  assert.deepEqual(outputLines(warningEnsure).slice(-1), ['Optional plugins: 1 ready, 0 disabled, 1 warnings']);
+  assert.equal(outputLines(warningEnsure).length, 3, 'a warning must retain exactly two plugin lines and one summary');
   assert.equal(existsSync(warningLifecycle.hudConfig), false, 'a marketplace warning must skip only its dependent HUD configuration');
   const warningState = JSON.parse(readFileSync(warningLifecycle.statePath, 'utf8'));
   assert.equal(Object.keys(warningState.claudeMem.files).length, 2, 'a HUD warning must not stop claude-mem configuration');
@@ -348,21 +341,21 @@ try {
   writeEnhancementSelection(hudOnlyLifecycle, 'custom', ['claude-hud']);
   const hudOnlyEnsure = runLifecycleCommand(hudOnlyLifecycle, 'ensure');
   assert.equal(hudOnlyEnsure.exitCode, 0, new TextDecoder().decode(hudOnlyEnsure.stderr));
-  assert.deepEqual(outputLines(hudOnlyEnsure).slice(-1), ['Optional plugins: 1 ready, 2 disabled, 0 warnings'], new TextDecoder().decode(hudOnlyEnsure.stdout));
-  assert.equal(outputLines(hudOnlyEnsure).length, 4, 'HUD-only selection must print exactly three plugin lines and one summary');
+  assert.deepEqual(outputLines(hudOnlyEnsure).slice(-1), ['Optional plugins: 1 ready, 1 disabled, 0 warnings'], new TextDecoder().decode(hudOnlyEnsure.stdout));
+  assert.equal(outputLines(hudOnlyEnsure).length, 3, 'HUD-only selection must print exactly two plugin lines and one summary');
   assert.match(outputLines(hudOnlyEnsure).find(line => line.includes(PLUGIN_BASELINES.hud.id)), /: ready\b/, 'HUD-only selection must leave HUD ready');
   assert.match(outputLines(hudOnlyEnsure).find(line => line.includes(PLUGIN_BASELINES.memory.id)), /: disabled\b.*restored/, 'HUD-only selection must disable and restore claude-mem');
-  assert.match(outputLines(hudOnlyEnsure).find(line => line.includes(PLUGIN_BASELINES.superpowers.id)), /: disabled\b.*retained/, 'HUD-only selection must disable and retain superpowers');
+  assert.equal(outputLines(hudOnlyEnsure).some(line => line.includes('superpowers')), false, 'HUD-only selection must leave user Superpowers unmanaged');
 
   const noneLifecycle = makeLifecycleFixture('selection-none');
   writeEnhancementSelection(noneLifecycle, 'custom', []);
   const noneEnsure = runLifecycleCommand(noneLifecycle, 'ensure');
   assert.equal(noneEnsure.exitCode, 0, new TextDecoder().decode(noneEnsure.stderr));
-  assert.deepEqual(outputLines(noneEnsure).slice(-1), ['Optional plugins: 0 ready, 3 disabled, 0 warnings'], new TextDecoder().decode(noneEnsure.stdout));
-  assert.equal(outputLines(noneEnsure).length, 4, 'empty selection must print exactly three plugin lines and one summary');
+  assert.deepEqual(outputLines(noneEnsure).slice(-1), ['Optional plugins: 0 ready, 2 disabled, 0 warnings'], new TextDecoder().decode(noneEnsure.stdout));
+  assert.equal(outputLines(noneEnsure).length, 3, 'empty selection must print exactly two plugin lines and one summary');
   assert.match(outputLines(noneEnsure).find(line => line.includes(PLUGIN_BASELINES.hud.id)), /: disabled\b.*restored/, 'empty selection must disable and restore HUD');
   assert.match(outputLines(noneEnsure).find(line => line.includes(PLUGIN_BASELINES.memory.id)), /: disabled\b.*restored/, 'empty selection must disable and restore claude-mem');
-  assert.match(outputLines(noneEnsure).find(line => line.includes(PLUGIN_BASELINES.superpowers.id)), /: disabled\b.*retained/, 'empty selection must disable and retain superpowers');
+  assert.equal(outputLines(noneEnsure).some(line => line.includes('superpowers')), false, 'empty selection must leave user Superpowers unmanaged');
 
   const corruptConfigLifecycle = makeLifecycleFixture('selection-corrupt-config');
   writeFileSync(join(corruptConfigLifecycle.clawgodDir, 'enhancements.json'), '{"schemaVersion":1,"mode":"custom","enabled":["claude-hud"],\n');
@@ -370,14 +363,14 @@ try {
   assert.equal(corruptConfigEnsure.exitCode, 0, new TextDecoder().decode(corruptConfigEnsure.stderr));
   assert.deepEqual(
     outputLines(corruptConfigEnsure).slice(-1),
-    ['Optional plugins: 0 ready, 3 disabled, 1 warnings'],
+    ['Optional plugins: 0 ready, 2 disabled, 1 warnings'],
     new TextDecoder().decode(corruptConfigEnsure.stdout),
   );
   const corruptConfigSelectionWarning = outputLines(corruptConfigEnsure).find(line => line.includes('plugin-selection'));
   assert.ok(corruptConfigSelectionWarning, 'corrupt enhancement config must surface a selection warning');
   assert.match(corruptConfigSelectionWarning, /: warning\b/, 'the selection warning must be reported as a warning');
   assert.match(corruptConfigSelectionWarning, /enhancement config is invalid/i, 'the selection warning must describe the corrupt config');
-  for (const id of [PLUGIN_BASELINES.hud.id, PLUGIN_BASELINES.memory.id, PLUGIN_BASELINES.superpowers.id]) {
+  for (const id of [PLUGIN_BASELINES.hud.id, PLUGIN_BASELINES.memory.id]) {
     assert.match(
       outputLines(corruptConfigEnsure).find(line => line.includes(id)),
       /: disabled\b/,
@@ -388,20 +381,20 @@ try {
   const deselectLifecycle = makeLifecycleFixture('selection-deselect-restores');
   const memoryHookPath = join(deselectLifecycle.claudeConfigDir, 'plugins', 'cache', 'thedotmack', 'claude-mem', PLUGIN_BASELINES.memory.version, 'hooks', 'hooks.json');
   const memoryMcpPath = join(deselectLifecycle.claudeConfigDir, 'plugins', 'cache', 'thedotmack', 'claude-mem', PLUGIN_BASELINES.memory.version, '.mcp.json');
-  const superpowersInstallPath = join(deselectLifecycle.claudeConfigDir, 'plugins', 'cache', 'superpowers-marketplace', 'superpowers', PLUGIN_BASELINES.superpowers.version);
+  const superpowersInstallPath = join(deselectLifecycle.claudeConfigDir, 'plugins', 'cache', 'superpowers-marketplace', 'superpowers', '6.2.0');
   writeFileSync(join(superpowersInstallPath, 'user-sentinel.txt'), 'user superpowers data\n');
   const originalMemoryHook = readFileSync(memoryHookPath);
   const originalMemoryMcp = readFileSync(memoryMcpPath);
   const superpowersBefore = snapshotTree(superpowersInstallPath);
   const deselectFirst = runLifecycleCommand(deselectLifecycle, 'ensure');
   assert.equal(deselectFirst.exitCode, 0, new TextDecoder().decode(deselectFirst.stderr));
-  assert.deepEqual(outputLines(deselectFirst).slice(-1), ['Optional plugins: 3 ready, 0 disabled, 0 warnings'], new TextDecoder().decode(deselectFirst.stdout));
+  assert.deepEqual(outputLines(deselectFirst).slice(-1), ['Optional plugins: 2 ready, 0 disabled, 0 warnings'], new TextDecoder().decode(deselectFirst.stdout));
   assert.equal(existsSync(deselectLifecycle.hudConfig), true, 'all-enabled ensure must configure the HUD');
   assert.notDeepEqual(readFileSync(memoryHookPath), originalMemoryHook, 'all-enabled ensure must rewrite claude-mem hooks');
   writeEnhancementSelection(deselectLifecycle, 'custom', []);
   const deselectSecond = runLifecycleCommand(deselectLifecycle, 'ensure');
   assert.equal(deselectSecond.exitCode, 0, new TextDecoder().decode(deselectSecond.stderr));
-  assert.deepEqual(outputLines(deselectSecond).slice(-1), ['Optional plugins: 0 ready, 3 disabled, 0 warnings'], new TextDecoder().decode(deselectSecond.stdout));
+  assert.deepEqual(outputLines(deselectSecond).slice(-1), ['Optional plugins: 0 ready, 2 disabled, 0 warnings'], new TextDecoder().decode(deselectSecond.stdout));
   assert.equal(existsSync(deselectLifecycle.hudConfig), false, 'deselection must restore the originally absent HUD config');
   assert.deepEqual(readFileSync(memoryHookPath), originalMemoryHook, 'deselection must restore owned claude-mem hooks');
   assert.deepEqual(readFileSync(memoryMcpPath), originalMemoryMcp, 'deselection must restore owned claude-mem MCP');
@@ -1542,24 +1535,22 @@ process.exit(37);
   };
   assert.equal(selectInstalledRecord(multiVersion, 'claude-hud@claude-hud').version, '0.8.0', 'the highest valid user version must be selected');
 
-  const duplicateSuperpowers = {
+  const duplicateHud = {
     plugins: {
-      'superpowers@superpowers-marketplace': [{ scope: 'user', version: '6.1.0' }],
-      'superpowers@claude-plugins-official': [{ scope: 'user', version: '99.0.0', metadata: { keep: true } }],
+      'claude-hud@claude-hud': [{ scope: 'user', version: '0.6.0' }],
+      'claude-hud@claude-plugins-official': [{ scope: 'user', version: '99.0.0', metadata: { keep: true } }],
     },
   };
-  const officialBefore = JSON.stringify(duplicateSuperpowers.plugins['superpowers@claude-plugins-official']);
-  assert.equal(classifyPlugin(duplicateSuperpowers, PLUGIN_BASELINES.superpowers), 'older', 'only the configured Superpowers plugin id may satisfy the dependency');
-  assert.equal(JSON.stringify(duplicateSuperpowers.plugins['superpowers@claude-plugins-official']), officialBefore, 'the official Superpowers record must remain byte-identical');
+  const officialBefore = JSON.stringify(duplicateHud.plugins['claude-hud@claude-plugins-official']);
+  assert.equal(classifyPlugin(duplicateHud, PLUGIN_BASELINES.hud), 'older', 'only the configured HUD plugin id may satisfy the dependency');
+  assert.equal(JSON.stringify(duplicateHud.plugins['claude-hud@claude-plugins-official']), officialBefore, 'the official HUD record must remain byte-identical');
 
   const validArchives = {};
   const verifiedSourceTrees = {};
   assert.equal(sha256(new TextEncoder().encode('abc')), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'SHA-256 must match the standard abc vector');
-  for (const key of ['hud', 'memory', 'superpowers']) {
+  for (const key of ['hud', 'memory']) {
     const base = PLUGIN_BASELINES[key];
-    const bytes = await pluginArchive(base, key === 'superpowers'
-      ? { owner: { name: 'Jesse Vincent', email: 'jesse@fsck.com' } }
-      : {});
+    const bytes = await pluginArchive(base, { owner: { name: 'Fixture owner', email: 'owner@example.test' } });
     validArchives[key] = bytes;
     const spec = archiveSpec(base, bytes);
     assert.equal(sha256(bytes), spec.sha256, `${key} fixtures must use the exported SHA-256 implementation`);
@@ -1640,14 +1631,14 @@ process.exit(37);
   assert.equal(readFileSync(join(metadataRoot, 'README.md'), 'utf8'), 'fixture only\n', 'valid PAX and GNU long-name metadata must extract safely');
 
   const executableArchive = rawTar([
-    { name: 'executable-repo/.claude-plugin/marketplace.json', data: JSON.stringify({ name: 'superpowers-dev', plugins: [{ name: 'superpowers', source: './' }] }), mode: 0o644 },
-    { name: 'executable-repo/.claude-plugin/plugin.json', data: JSON.stringify({ name: 'superpowers', version: '6.2.0' }), mode: 0o644 },
+    { name: 'executable-repo/.claude-plugin/marketplace.json', data: JSON.stringify({ name: 'claude-hud', plugins: [{ name: 'claude-hud', source: './' }] }), mode: 0o644 },
+    { name: 'executable-repo/.claude-plugin/plugin.json', data: JSON.stringify({ name: 'claude-hud', version: '0.7.0' }), mode: 0o644 },
     { name: 'executable-repo/hooks/run-hook.cmd', data: '#!/bin/sh\nexit 0\n', mode: 0o755 },
     { name: 'executable-repo/README.md', data: 'not executable\n', mode: 0o644 },
   ]);
   const executableRoot = await extractPluginArchive(
     executableArchive,
-    archiveSpec(PLUGIN_BASELINES.superpowers, executableArchive),
+    archiveSpec(PLUGIN_BASELINES.hud, executableArchive),
     join(fixtureRoot, 'valid-executable'),
   );
   assert.equal(statSync(join(executableRoot, 'hooks', 'run-hook.cmd')).mode & 0o777, 0o700, 'tar executable bits must produce an executable staged hook');
@@ -1828,12 +1819,10 @@ process.exit(37);
     ['plugin name mismatch', { pluginName: 'wrong-plugin' }, /plugin manifest mismatch/i],
     ['plugin version mismatch', { pluginVersion: '0.0.0' }, /plugin manifest mismatch/i],
     ['claude-mem source mismatch', { source: './' }, /declared.*plugin.*source|plugin.*source/i],
-    ['Superpowers source mismatch', { source: './plugin/' }, /declared.*source|plugin.*source/i],
-    ['Superpowers empty source alias', { source: '' }, /declared.*source|plugin.*source/i],
+    ['claude-mem nested source mismatch', { source: './plugin/nested/' }, /declared.*source|plugin.*source/i],
+    ['claude-mem empty source alias', { source: '' }, /declared.*source|plugin.*source/i],
   ]) {
-    const base = label.startsWith('claude-mem') ? PLUGIN_BASELINES.memory
-      : label.startsWith('Superpowers') ? PLUGIN_BASELINES.superpowers
-        : PLUGIN_BASELINES.hud;
+    const base = label.startsWith('claude-mem') ? PLUGIN_BASELINES.memory : PLUGIN_BASELINES.hud;
     const bytes = await pluginArchive(base, overrides);
     await rejectsArchive(extractPluginArchive, bytes, base, fixtureRoot, label, expected);
   }
@@ -2163,7 +2152,7 @@ process.exit(67);
   chmodSync(fakeCliPath, 0o700);
 
   function olderVersion(spec) {
-    return spec.key === 'memory' ? '13.13.0' : spec.key === 'superpowers' ? '6.1.0' : '0.6.0';
+    return spec.key === 'memory' ? '13.13.0' : '0.6.0';
   }
 
   function transactionSnapshot(fixture) {
@@ -2201,8 +2190,8 @@ process.exit(67);
 
     const plugins = {
       'unrelated@fixture': [{ scope: 'user', version: '1.0.0', metadata: { preserve: true } }],
-      ...(spec.key === 'superpowers' ? {
-        'superpowers@claude-plugins-official': [{ scope: 'user', version: '99.0.0', metadata: { exact: 'official-record' } }],
+      ...(options.protectOtherMarketplace ? {
+        'claude-hud@claude-plugins-official': [{ scope: 'user', version: '99.0.0', metadata: { exact: 'official-record' } }],
       } : {}),
     };
     if (classification !== 'missing') {
@@ -2236,8 +2225,8 @@ process.exit(67);
       mkdirSync(persistentSource, { recursive: true });
       writeFileSync(join(persistentSource, 'old-source.txt'), 'restore old persistent source\n');
     }
-    if (spec.key === 'superpowers') {
-      const officialCache = join(pluginRoot, 'cache', 'claude-plugins-official', 'superpowers', '99.0.0');
+    if (options.protectOtherMarketplace) {
+      const officialCache = join(pluginRoot, 'cache', 'claude-plugins-official', 'claude-hud', '99.0.0');
       mkdirSync(officialCache, { recursive: true });
       writeFileSync(join(officialCache, 'official.txt'), 'official bytes must remain exact\n');
     }
@@ -2335,22 +2324,21 @@ process.exit(67);
   ], 'an older plugin must replace the stale canonical marketplace before update');
   assert.equal(existsSync(join(updateFixture.marketplaceInstall, 'old-marketplace.txt')), false, 'a stale canonical marketplace install must not survive success');
 
-  const superSpec = archiveSpec(PLUGIN_BASELINES.superpowers, validArchives.superpowers);
-  const superFixture = makeTransactionFixture('superpowers-wrapper', superSpec, 'missing', { known: false });
-  const officialRecordBefore = JSON.stringify(JSON.parse(readFileSync(superFixture.installedPath, 'utf8')).plugins['superpowers@claude-plugins-official']);
-  const officialCacheBefore = snapshotTree(join(superFixture.pluginRoot, 'cache', 'claude-plugins-official', 'superpowers'));
-  const superResult = await ensureMarketplacePlugin(superSpec, superFixture.context);
-  assert.equal(superResult.status, 'installed');
-  assert.deepEqual(JSON.parse(readFileSync(join(superFixture.persistentSource, '.claude-plugin', 'marketplace.json'), 'utf8')), {
-    name: 'superpowers-marketplace',
-    owner: { name: 'Jesse Vincent', email: 'jesse@fsck.com' },
-    plugins: [{ name: 'superpowers', version: '6.2.0', source: './plugin' }],
-  }, 'Superpowers wrapper manifest must preserve the source marketplace owner');
-  assert.deepEqual(snapshotContentTree(join(superFixture.persistentSource, 'plugin')), verifiedSourceTrees.superpowers, 'the complete verified Superpowers repository must remain nested byte-for-byte with exact file modes');
-  const installedSuperpowers = JSON.parse(readFileSync(superFixture.installedPath, 'utf8'));
-  assert.equal(JSON.stringify(installedSuperpowers.plugins['superpowers@claude-plugins-official']), officialRecordBefore, 'the official Superpowers record must remain byte-identical');
-  assert.deepEqual(snapshotTree(join(superFixture.pluginRoot, 'cache', 'claude-plugins-official', 'superpowers')), officialCacheBefore, 'the official Superpowers cache must remain byte-identical');
-  assert.equal(readCliLog(superFixture).some(entry => entry.args.join(' ').includes('superpowers@claude-plugins-official')), false, 'no command may target official Superpowers');
+  const sourceFixture = makeTransactionFixture('hud-persistent-source', hudSpec, 'missing', { known: false, protectOtherMarketplace: true });
+  const officialRecordBefore = JSON.stringify(JSON.parse(readFileSync(sourceFixture.installedPath, 'utf8')).plugins['claude-hud@claude-plugins-official']);
+  const officialCacheBefore = snapshotTree(join(sourceFixture.pluginRoot, 'cache', 'claude-plugins-official', 'claude-hud'));
+  const sourceResult = await ensureMarketplacePlugin(hudSpec, sourceFixture.context);
+  assert.equal(sourceResult.status, 'installed');
+  assert.deepEqual(JSON.parse(readFileSync(join(sourceFixture.persistentSource, '.claude-plugin', 'marketplace.json'), 'utf8')), {
+    name: 'claude-hud',
+    plugins: [{ name: 'claude-hud', source: './' }],
+    owner: { name: 'Fixture owner', email: 'owner@example.test' },
+  }, 'persistent source must preserve the source marketplace owner and declared plugin path');
+  assert.deepEqual(snapshotContentTree(sourceFixture.persistentSource), verifiedSourceTrees.hud, 'the complete verified HUD repository must remain byte-for-byte with exact file modes');
+  const installedSource = JSON.parse(readFileSync(sourceFixture.installedPath, 'utf8'));
+  assert.equal(JSON.stringify(installedSource.plugins['claude-hud@claude-plugins-official']), officialRecordBefore, 'another marketplace record must remain byte-identical');
+  assert.deepEqual(snapshotTree(join(sourceFixture.pluginRoot, 'cache', 'claude-plugins-official', 'claude-hud')), officialCacheBefore, 'another marketplace cache must remain byte-identical');
+  assert.equal(readCliLog(sourceFixture).some(entry => entry.args.join(' ').includes('claude-hud@claude-plugins-official')), false, 'no command may target a plugin from another marketplace');
 
   const lockfileArchive = await pluginArchive(PLUGIN_BASELINES.hud, {
     root: 'lockfile-repo',
@@ -2396,22 +2384,22 @@ process.exit(67);
   assert.equal(existsSync(noncanonicalFixture.fetchLogPath), false, 'a noncanonical plugin id must not fetch archives');
 
   const protectedOfficialSpec = {
-    ...superSpec,
-    id: 'superpowers@claude-plugins-official',
+    ...hudSpec,
+    id: 'claude-hud@claude-plugins-official',
     marketplace: 'claude-plugins-official',
   };
-  const protectedOfficialFixture = makeTransactionFixture('protected-official-tuple', superSpec, 'missing', { known: false });
+  const protectedOfficialFixture = makeTransactionFixture('protected-official-tuple', hudSpec, 'missing', { known: false });
   const protectedOfficialInstalled = JSON.parse(readFileSync(protectedOfficialFixture.installedPath, 'utf8'));
-  delete protectedOfficialInstalled.plugins['superpowers@claude-plugins-official'];
+  delete protectedOfficialInstalled.plugins['claude-hud@claude-plugins-official'];
   writeFileSync(protectedOfficialFixture.installedPath, `${JSON.stringify(protectedOfficialInstalled, null, 2)}\n`);
   chmodSync(protectedOfficialFixture.installedPath, 0o640);
   const protectedOfficialBefore = transactionSnapshot(protectedOfficialFixture);
   const protectedOfficialResult = await ensureMarketplacePlugin(protectedOfficialSpec, protectedOfficialFixture.context);
-  assert.equal(protectedOfficialResult.status, 'warning', 'a self-consistent protected official Superpowers tuple must be rejected');
-  assert.equal(protectedOfficialResult.ready, false, 'a protected official Superpowers tuple must not report readiness');
-  assertTransactionSnapshot(protectedOfficialFixture, protectedOfficialBefore, 'a protected official Superpowers tuple must preserve every byte and mode');
-  assert.equal(existsSync(protectedOfficialFixture.cliLog), false, 'a protected official Superpowers tuple must spawn no CLI command');
-  assert.equal(existsSync(protectedOfficialFixture.fetchLogPath), false, 'a protected official Superpowers tuple must not fetch archives');
+  assert.equal(protectedOfficialResult.status, 'warning', 'a self-consistent protected official HUD tuple must be rejected');
+  assert.equal(protectedOfficialResult.ready, false, 'a protected official HUD tuple must not report readiness');
+  assertTransactionSnapshot(protectedOfficialFixture, protectedOfficialBefore, 'a protected official HUD tuple must preserve every byte and mode');
+  assert.equal(existsSync(protectedOfficialFixture.cliLog), false, 'a protected official HUD tuple must spawn no CLI command');
+  assert.equal(existsSync(protectedOfficialFixture.fetchLogPath), false, 'a protected official HUD tuple must not fetch archives');
 
   for (const [field, value] of [
     ['key', 'hud-copy'],
@@ -2699,7 +2687,7 @@ process.exit(67);
   }
 
   const forbiddenCommands = ['git', 'node', 'npm', 'npx', 'curl', 'wget'];
-  for (const fixture of [installFixture, updateFixture, superFixture]) {
+  for (const fixture of [installFixture, updateFixture, sourceFixture]) {
     for (const entry of readCliLog(fixture)) {
       assert.equal(forbiddenCommands.some(command => entry.args.includes(command)), false, 'the transaction CLI must not invoke PATH tools or network commands');
     }

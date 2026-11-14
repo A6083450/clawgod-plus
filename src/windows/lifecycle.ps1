@@ -29,7 +29,7 @@ $ClawDir = Join-Path $env:USERPROFILE ".clawgod"
 if (-not $Version -and -not $Uninstall -and -not $NoUpgrade) {
     $Version = $VerifiedVersion
     $srcVer = Join-Path $ClawDir ".source-version"
-    if ($env:CLAWGOD_UPDATE_STABLE_FALLBACK -ne '1' -and (Test-Path $srcVer)) {
+    if (Test-Path $srcVer) {
         $pinned = (Get-Content $srcVer -Raw) -replace '[\r\n]', ''
         if ($pinned -notmatch '^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$') {
             throw 'Invalid .source-version; specify -Version explicitly'
@@ -49,6 +49,7 @@ $EnhancementIds = @(
     'planning',
     'voice',
     'auto-mode',
+    'code-mode',
     'unrestricted-tools',
     'paste-images',
     'privacy',
@@ -61,8 +62,7 @@ $EnhancementIds = @(
     'transcript-dialog-replay',
     'unlock-ultracode',
     'claude-hud',
-    'claude-mem',
-    'superpowers'
+    'claude-mem'
 )
 
 $EnhancementLabels = @(
@@ -73,6 +73,7 @@ $EnhancementLabels = @(
     'Planning',
     'Voice',
     'Auto Mode',
+    'Code Mode',
     'Tools',
     'Paste Images',
     'Privacy',
@@ -85,8 +86,7 @@ $EnhancementLabels = @(
     'Replay Dialogs',
     'Ultracode',
     'Claude HUD',
-    'claude-mem',
-    'Superpowers'
+    'claude-mem'
 )
 
 function Test-EnhancementInteractionAvailable {

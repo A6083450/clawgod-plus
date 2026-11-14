@@ -44,47 +44,49 @@ const pluginSummary = runContract('plugin-summary', {
   output: [
     'claude-hud@claude-hud: ready - installed 0.7.0',
     'claude-mem@thedotmack: ready - installed 13.14.0',
-    'superpowers@superpowers-marketplace: ready - installed 6.2.0',
-    'Optional plugins: 3 ready, 0 disabled, 0 warnings',
+    'Optional plugins: 2 ready, 0 disabled, 0 warnings',
     '',
   ].join('\n'),
-  ready: 3,
+  ready: 2,
   disabled: 0,
   warnings: 0,
 });
 assert.equal(pluginSummary.status, 0, pluginSummary.stderr);
-assert.match(pluginSummary.stdout, /^plugin summary: ready=3 disabled=0 warnings=0$/m);
+const defaultPluginSummary = runContract('plugin-summary', { output: 'Optional plugins: 2 ready, 0 disabled, 0 warnings\n' });
+assert.equal(defaultPluginSummary.status, 0, defaultPluginSummary.stderr);
+assert.match(defaultPluginSummary.stdout, /^plugin summary: ready=2 disabled=0 warnings=0$/m);
+assert.ok(compatWorkflow.includes('Optional plugins: 1 ready, 1 disabled, 0 warnings'), 'CI subset must expect only one disabled retained plugin');
+assert.match(pluginSummary.stdout, /^plugin summary: ready=2 disabled=0 warnings=0$/m);
 
 const subsetPluginSummary = runContract('plugin-summary', {
   output: [
     'claude-hud@claude-hud: ready - installed 0.7.0',
     'claude-mem@thedotmack: disabled - not selected',
-    'superpowers@superpowers-marketplace: disabled - not selected',
-    'Optional plugins: 1 ready, 2 disabled, 0 warnings',
+    'Optional plugins: 1 ready, 1 disabled, 0 warnings',
     '',
   ].join('\n'),
   ready: 1,
-  disabled: 2,
+  disabled: 1,
   warnings: 0,
 });
 assert.equal(subsetPluginSummary.status, 0, subsetPluginSummary.stderr);
-assert.match(subsetPluginSummary.stdout, /^plugin summary: ready=1 disabled=2 warnings=0$/m);
+assert.match(subsetPluginSummary.stdout, /^plugin summary: ready=1 disabled=1 warnings=0$/m);
 
 const nonePluginSummary = runContract('plugin-summary', {
-  output: 'Optional plugins: 0 ready, 3 disabled, 0 warnings\n',
+  output: 'Optional plugins: 0 ready, 2 disabled, 0 warnings\n',
   ready: 0,
-  disabled: 3,
+  disabled: 2,
   warnings: 0,
 });
 assert.equal(nonePluginSummary.status, 0, nonePluginSummary.stderr);
-assert.match(nonePluginSummary.stdout, /^plugin summary: ready=0 disabled=3 warnings=0$/m);
+assert.match(nonePluginSummary.stdout, /^plugin summary: ready=0 disabled=2 warnings=0$/m);
 
 for (const [label, fixture] of [
-  ['missing summary', { output: 'all plugin detail lines only\n', ready: 3, disabled: 0, warnings: 0 }],
-  ['duplicate summary', { output: 'Optional plugins: 3 ready, 0 disabled, 0 warnings\nOptional plugins: 3 ready, 0 disabled, 0 warnings\n', ready: 3, disabled: 0, warnings: 0 }],
-  ['two ready', { output: 'Optional plugins: 2 ready, 1 disabled, 0 warnings\n', ready: 3, disabled: 0, warnings: 0 }],
-  ['warning summary', { output: 'Optional plugins: 2 ready, 0 disabled, 1 warning\n', ready: 3, disabled: 0, warnings: 0 }],
-  ['legacy two-way summary', { output: 'Optional plugins: 3 ready, 0 warnings\n', ready: 3, disabled: 0, warnings: 0 }],
+  ['missing summary', { output: 'all plugin detail lines only\n', ready: 2, disabled: 0, warnings: 0 }],
+  ['duplicate summary', { output: 'Optional plugins: 2 ready, 0 disabled, 0 warnings\nOptional plugins: 2 ready, 0 disabled, 0 warnings\n', ready: 2, disabled: 0, warnings: 0 }],
+  ['one ready', { output: 'Optional plugins: 1 ready, 1 disabled, 0 warnings\n', ready: 2, disabled: 0, warnings: 0 }],
+  ['warning summary', { output: 'Optional plugins: 1 ready, 0 disabled, 1 warning\n', ready: 2, disabled: 0, warnings: 0 }],
+  ['legacy two-way summary', { output: 'Optional plugins: 2 ready, 0 warnings\n', ready: 2, disabled: 0, warnings: 0 }],
 ]) {
   const run = runContract('plugin-summary', fixture);
   assert.notEqual(run.status, 0, `${label} must fail plugin summary validation`);
@@ -194,12 +196,10 @@ try {
 const canonicalPluginIds = [
   'claude-hud@claude-hud',
   'claude-mem@thedotmack',
-  'superpowers@superpowers-marketplace',
 ];
 const retentionSpecs = [
   { id: canonicalPluginIds[0], marketplace: 'claude-hud', plugin: 'claude-hud', version: '0.7.0' },
   { id: canonicalPluginIds[1], marketplace: 'thedotmack', plugin: 'claude-mem', version: '13.14.0' },
-  { id: canonicalPluginIds[2], marketplace: 'superpowers-marketplace', plugin: 'superpowers', version: '6.2.0' },
 ];
 const retentionHome = mkdtempSync(join(realpathSync(tmpdir()), 'clawgod-plugin-retention-contract-'));
 const retentionOutside = mkdtempSync(join(realpathSync(tmpdir()), 'clawgod-plugin-retention-outside-'));
@@ -238,7 +238,7 @@ try {
   writeRetentionFixture();
   const retained = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
   assert.equal(retained.status, 0, retained.stderr);
-  assert.match(retained.stdout, /^plugin retention: hud=present memory=present superpowers=present$/m);
+  assert.match(retained.stdout, /^plugin retention: hud=present memory=present$/m);
 
   const wrongIdState = JSON.parse(String(await Bun.file(retentionInstalledPath).text()));
   wrongIdState.plugins['claude-hud@wrong-marketplace'] = wrongIdState.plugins[canonicalPluginIds[0]];
@@ -256,17 +256,17 @@ try {
 
   writeRetentionFixture();
   const knownAfterRemoval = JSON.parse(readFileSync(join(retentionPluginRoot, 'known_marketplaces.json'), 'utf8'));
-  delete knownAfterRemoval['superpowers-marketplace'];
+  delete knownAfterRemoval['claude-hud'];
   writeFileSync(join(retentionPluginRoot, 'known_marketplaces.json'), `${JSON.stringify(knownAfterRemoval, null, 2)}\n`);
   const missingMarketplace = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
   assert.notEqual(missingMarketplace.status, 0, 'a removed marketplace registration must fail retention validation');
-  assert.match(missingMarketplace.stderr, /marketplace|superpowers|plugin/i);
+  assert.match(missingMarketplace.stderr, /marketplace|claude-hud|plugin/i);
 
   writeRetentionFixture();
-  rmSync(join(retentionPluginRoot, 'clawgod-marketplaces', 'superpowers-marketplace', '6.2.0'), { recursive: true });
+  rmSync(join(retentionPluginRoot, 'clawgod-marketplaces', 'claude-hud', '0.7.0'), { recursive: true });
   const missingPersistentSource = runContract('plugin-retention', { tempHome: retentionHome, expectedCanonicalIds: canonicalPluginIds });
   assert.notEqual(missingPersistentSource.status, 0, 'a removed persistent marketplace source must fail retention validation');
-  assert.match(missingPersistentSource.stderr, /persistent source|superpowers|plugin/i);
+  assert.match(missingPersistentSource.stderr, /persistent source|claude-hud|plugin/i);
 
   writeRetentionFixture();
   mutateRetentionState(installed => { installed.version = '2'; });

@@ -39,7 +39,7 @@ done
 # 默认只采用随安装器验证的版本；保留较新的已装版本，绝不静默降级。
 if [ -z "$VERSION" ] && [ "${UNINSTALL:-}" != 1 ] && [ "$NO_UPGRADE" != 1 ]; then
   VERSION="$VERIFIED_VERSION"
-  if [ "${CLAWGOD_UPDATE_STABLE_FALLBACK:-}" != 1 ] && [ -f "$CLAWGOD_DIR/.source-version" ]; then
+  if [ -f "$CLAWGOD_DIR/.source-version" ]; then
     _pinned="$(tr -d '\r\n' < "$CLAWGOD_DIR/.source-version")"
     if [[ ! "$_pinned" =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]]; then
       printf '%s\n' 'clawgod: invalid .source-version; specify --version explicitly' >&2
@@ -59,6 +59,7 @@ CLAWGOD_ENHANCEMENT_IDS=(
   planning
   voice
   auto-mode
+  code-mode
   unrestricted-tools
   paste-images
   privacy
@@ -72,7 +73,6 @@ CLAWGOD_ENHANCEMENT_IDS=(
   unlock-ultracode
   claude-hud
   claude-mem
-  superpowers
 )
 
 CLAWGOD_ENHANCEMENT_LABELS=(
@@ -83,6 +83,7 @@ CLAWGOD_ENHANCEMENT_LABELS=(
   'Planning'
   'Voice'
   'Auto Mode'
+  'Code Mode'
   'Tools'
   'Paste Images'
   'Privacy'
@@ -96,7 +97,6 @@ CLAWGOD_ENHANCEMENT_LABELS=(
   'Ultracode'
   'Claude HUD'
   'claude-mem'
-  'Superpowers'
 )
 
 enhancement_warn() {

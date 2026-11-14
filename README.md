@@ -51,18 +51,18 @@ macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行�
 
 ## 安装 ClawGod Plus
 
-安装命令下载固定版本（v2026.11.11-claude.2.1.322）的 ClawGod Plus Release 资产。
+安装命令下载固定版本（v2026.11.14-claude.2.1.325）的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.11-claude.2.1.322/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.14-claude.2.1.325/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.11-claude.2.1.322/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.14-claude.2.1.325/install.ps1 | iex
 ```
 
 常用安装参数（不传版本时默认使用安装器已验证的 Claude Code 版本，保留较新的已装版本）：
@@ -84,8 +84,8 @@ ClawGod Plus 提供 21 项可选增强，默认启用全部。增强 ID 固定�
 
 | 类型 | 增强 ID |
 |---|---|
-| 补丁 | `chrome`、`computer-use`、`design-canvas`、`agents`、`planning`、`voice`、`auto-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding`、`classifier-fail-open`、`cleanup-period`、`disable-collapse-read-search`、`enable-keybindings`、`file-read-limit`、`transcript-dialog-replay`、`unlock-ultracode` |
-| 插件 | `claude-hud`、`claude-mem`、`superpowers` |
+| 补丁 | `chrome`、`computer-use`、`design-canvas`、`agents`、`planning`、`voice`、`auto-mode`、`code-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding`、`classifier-fail-open`、`cleanup-period`、`disable-collapse-read-search`、`enable-keybindings`、`file-read-limit`、`transcript-dialog-replay`、`unlock-ultracode` |
+| 插件 | `claude-hud`、`claude-mem` |
 
 非交互环境（管道安装、CI、`claude update`）不传任何选项时，默认启用全部 21 项增强。选择会以严格 JSON 形式保存到 `~/.clawgod/enhancements.json`：
 
@@ -127,7 +127,9 @@ Windows PowerShell 对应参数：
 .\install.ps1 -Enhancements none
 ```
 
-后续运行 `claude update` 会复用 `~/.clawgod/enhancements.json` 中已保存的选择，并且从不主动询问。关闭 `claude-hud` 或 `claude-mem` 会恢复由 ClawGod 托管的对应配置；关闭 `superpowers` 只会停止托管，不会删除你已安装的插件。
+后续运行 `claude update` 会复用 `~/.clawgod/enhancements.json` 中已保存的选择，并且从不主动询问。关闭 `claude-hud` 或 `claude-mem` 会恢复由 ClawGod 托管的对应配置。其他已安装插件保持不变。
+
+**Code Mode：** 需要包含 Code Mode 的官方版本；当前已验证 2.1.325，旧版 2.1.322 不支持。`code-mode` 增强默认包含在“全部”中，自定义安装需勾选 `Code Mode`；未选择时保留上游行为。安装后，Unix/macOS 用 `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 claude` 启动；PowerShell 先执行 `$env:CLAUDE_CODE_EXPERIMENTAL_CODE_MODE='1'`，再运行 `claude`。首次仍需在官方界面确认风险说明，不会自动接受或写入用户同意。此补丁仅将 Code Mode 资格判断本地化、不再为此访问官方资格服务；**模型请求仍通过现有 API 配置联网，并非离线模型**。保留本地管理员、合规和工具限制，显式启用 Agent Teams（环境变量或 `--agent-teams`）仍与 Code Mode 互斥；后台或远控入口暂不支持。请求 Code Mode 时，`agents` 增强不会隐式强开 Teams；未请求或未安装 `code-mode` 时保留原有 Agents 行为。
 
 **Claude Desktop 自动增强已暂停：** 当前源码的安装和更新流程不再自动修改 `Claude.app`，选择“全部安装”或单独启用 `computer-use` 也不包含 Desktop 的 CU/内置浏览器补丁及简体中文语言增强。CLI 的 Computer Use 功能不受影响。已有 Desktop 修改和备份保留，不自动回滚；此变更不影响此前发布的安装器。
 
@@ -218,7 +220,6 @@ CLAWGOD_NO_AUTO_CHROME=1 claude
 |---|---|---|
 | Claude HUD | `claude-hud@claude-hud` | `0.7.0` |
 | claude-mem | `claude-mem@thedotmack` | `13.14.0` |
-| Superpowers | `superpowers@superpowers-marketplace` | `6.2.0` |
 
 缺失或低于基线时，ClawGod Plus 会安装固定基线；如果已经安装了更新版本，则保留已安装的更高版本。公开固定归档直接从 GitHub 拉取，只有字节长度和固定 SHA-256 都精确匹配才会解压。Bun 仍是唯一需要安装的 JavaScript 运行时。
 
@@ -400,7 +401,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 6. 应用已融合的 Chrome、Computer Use、上下文上限、Worker、粘贴、Provider 和功能补丁。
 7. 验证 Bun 可以加载修改后的 CLI。
 8. 备份原始 Launcher，并写入 `claude` 和 `clawgod` Launcher。
-9. 使用生成的 `plugin-dependencies.mjs` 确保三个可选插件基线，再应用托管的 HUD 与 claude-mem 集成。
+9. 使用生成的 `plugin-dependencies.mjs` 确保两个可选插件基线，再应用托管的 HUD 与 claude-mem 集成。
 
 `~/.clawgod/.source-version` 记录被修改的原生版本。升级由 `claude update` 显式执行，Wrapper 不扫描旧原生安装自动重打，也不会让原生后台更新覆盖 ClawGod Launcher。
 
@@ -410,7 +411,7 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 直接运行 `claude` 时自动检查 ClawGod 正式 Release（缓存 24 小时，联网最多等待 3 秒），发现新版可选择「安装更新 / 稍后提醒 / 跳过此版本」。跳过记录保存在 `~/.clawgod/.update-check`，更高版本仍会提醒；手动 `claude update` 不受影响。非交互、带任务参数及子命令不弹菜单。安装完成后重新启动 `claude`。
 
-普通 `claude update` 先获取最新 ClawGod 安装器，再尝试 npm `latest`。若候选升级失败且安装器确认已安全恢复旧运行时，则复用同一安装器重试内置的**已验证稳定版本**（`src/generic/verified-version.txt`），即使这意味着回到较低的稳定版本。稳定重试仍失败会报错并执行原有回滚。用户中断、恢复冲突或未确认恢复的失败不自动重试。直接运行安装器的新装默认仍为已验证版本。
+普通 `claude update` 先获取最新 ClawGod 安装器，再尝试 npm `latest`。若升级失败且安装器确认已安全恢复旧运行时，则保留原运行时，不再重新安装，并返回升级失败状态。用户中断、恢复冲突或未确认恢复的失败也不自动重试。直接运行安装器的新装默认仍为已验证版本（`src/generic/verified-version.txt`）。
 
 渲染器按相关声明及依赖的局部结构契约识别，变量改名、分块路径变化和无关声明改动不再要求逐版本添加指纹；真实布局或调用接口变化仍拒绝安装。未知渲染器不能靠 `--tolerate-stale` 或 clean-runtime 回退绕过。
 
@@ -422,11 +423,11 @@ claude update
 
 新版 updater 会拒绝缺少会话保护的旧安装器；遇到该提示时，请使用上方安装命令获取新版 Release 安装器。若安装器被强制终止或回滚无法确认，`.runtime-write.lock` 会保留并阻止启动：先检查安装日志和 `.runtime-rollback.*` 恢复数据，不要直接删除锁或混回旧 chunks。
 
-`claude update` 由 wrapper 直接交给 ClawGod updater，不依赖上游 bundle 的 update action 形状。普通更新的两次尝试都要求补丁成功，不再把无增强 clean runtime 当作最新版升级成功。显式 `--version` 只尝试指定版本，不自动换稳定版，并保留原有带警告的整包兼容回退。插件基线独立管理：更新不会把 Claude Code 固定到插件版本。
+`claude update` 由 wrapper 直接交给 ClawGod updater，不依赖上游 bundle 的 update action 形状。普通更新要求补丁成功，不再把无增强 clean runtime 当作最新版升级成功。显式 `--version` 只尝试指定版本，并保留原有带警告的整包兼容回退。插件基线独立管理：更新不会把 Claude Code 固定到插件版本。
 
 另可显式使用 `claude update --tolerate-stale`、`bash install.sh --tolerate-stale`、PowerShell `-TolerateStale`，或环境变量 `CLAWGOD_TOLERATE_STALE=1`：只跳过失配的补丁，保留其上游行为，继续应用其他成功补丁并列出跳过项。该选项不忽略语法错误、歧义或运行时失败，也不改变默认的整包兼容回退策略。
 
-升级失败会恢复上一套 CLI、wrapper、资源与 clean-source 备份；Provider、运行时开关和插件用户配置不属于回滚范围。Windows 若因文件占用或权限问题无法清理本次事务，会明确提示残留目录：新版安装或旧版恢复结果不变，但需退出旧会话后检查并清理该目录；残留 `.runtime-rollback.*` 会阻止后续失败升级的自动稳定版重试。不会为清理残留而强杀进程或删除其他恢复事务。`--no-upgrade` 校验并恢复当前版本的完整 clean-source 后重新打补丁，缺失或损坏的备份不得与其他版本混用。
+升级失败会恢复上一套 CLI、wrapper、资源与 clean-source 备份；Provider、运行时开关和插件用户配置不属于回滚范围。Windows 若因文件占用或权限问题无法清理本次事务，会明确提示残留目录：新版安装或旧版恢复结果不变，但需退出旧会话后检查并清理该目录；残留 `.runtime-rollback.*` 会使后续失败升级无法确认安全回滚，并显示警告。不会为清理残留而强杀进程或删除其他恢复事务。`--no-upgrade` 校验并恢复当前版本的完整 clean-source 后重新打补丁，缺失或损坏的备份不得与其他版本混用。
 
 ```bash
 claude update --version latest # 显式尝试 npm 最新版，仍必须通过兼容检查
