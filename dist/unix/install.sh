@@ -16,7 +16,7 @@ set -e
 CLAWGOD_DIR="$HOME/.clawgod"
 BIN_DIR="$HOME/.local/bin"
 VERSION="${CLAWGOD_VERSION:-}"
-VERIFIED_VERSION="2.1.325"
+VERIFIED_VERSION="2.1.330"
 # 旧 updater 把无参更新标记为 latest；显式 --version 在后面的参数解析中恢复。
 if [ "$VERSION" = latest ] && [ "${CLAWGOD_UPDATE_PATCH_FAIL_OPEN:-}" = 1 ]; then VERSION=""; fi
 NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
@@ -1240,28 +1240,15 @@ function releaseRuntime(root, token) {
   fs.unlinkSync(path);
 }
 
-function assertRuntimeAvailable(root) {
-  const lock = readLock(join(root, WRITE_LOCK));
-  if (!lock) return;
-  // 仅持锁安装器的后代可运行候选启动检查，继承字符串本身不授予访问权。
-  if (process.env.CLAWGOD_RUNTIME_WRITE_TOKEN === lock.token && alive(lock.pid)) {
-    if (ancestors(process.ppid, processList()).has(lock.pid)) return;
-  }
-  throw Error('ClawGod 正在升级/维护，暂时不能启动 Claude；请等待完成后重试。');
-}
-
 function enterRuntime(root, bootstrap = false) {
-  assertRuntimeAvailable(root);
+  // 写锁只协调维护进程；中断升级留下的锁不能永久阻止用户启动。
   const file = join(root, `${READER_PREFIX}${process.pid}.${randomUUID()}`);
   const record = { pid: process.pid, token: randomUUID(), bootstrap };
   fs.writeFileSync(file, JSON.stringify(record), { flag: 'wx', mode: 0o600 });
-  try { assertRuntimeAvailable(root); }
-  catch (error) { fs.unlinkSync(file); throw error; }
   process.once('exit', () => { try { fs.unlinkSync(file); } catch {} });
   return () => {
     record.bootstrap = false;
     fs.writeFileSync(file, JSON.stringify(record), { mode: 0o600 });
-    assertRuntimeAvailable(root);
   };
 }
 
@@ -15689,6 +15676,175 @@ function structuralCellProfile(source, dependencies) {
   };
 }
 
+// 2.1.330 的测宽/剪裁共用这一字素表；保留上游的宽度修正和同一轮缓存。
+function publicCellWidth330({ source, structure }) {
+  const b = structure.bindings;
+  const method = structure.ast.body.find(node => node.id?.name === b[62]);
+  const reset = structure.ast.body.find(node => node.id?.name === b[72]);
+  const [validUnicode, stripAnsi, invalidUnicode, table, extraWidths, cache, adjust, collect, clear, widthOptions] =
+    [0, 1, 13, 15, 16, 19, 26, 62, 72, 75].map(index => b[index]);
+  const replacement = `
+var clawgodWidthSegmenter;
+function ${collect}(text) {
+  if (${cache}?.text === text) return ${cache};
+  if (!${cache}) queueMicrotask(${clear});
+  clawgodWidthSegmenter ??= new Intl.Segmenter(void 0, {granularity:"grapheme"});
+  const clean = ${stripAnsi}(${validUnicode}(text) ? text : text.replace(${invalidUnicode}, "\uDC00"));
+  const graphemes = [], corrections = [], cells = new Int32Array(2 * clean.length);
+  let count = 0, extra = 0;
+  for (const {segment} of clawgodWidthSegmenter.segment(clean)) {
+    const width = Bun.stringWidth(segment, ${widthOptions});
+    const correction = ${adjust}(segment, width);
+    graphemes.push(segment);
+    corrections.push(correction);
+    cells[2 * count] = count++;
+    cells[2 * count - 1] = width;
+    extra += correction;
+  }
+  ${table} = {graphemes};
+  ${extraWidths} = corrections;
+  return ${cache} = {text,cells,count,extra};
+}
+function ${clear}() { ${cache} = ${table} = ${extraWidths} = void 0; }
+`;
+  return source.slice(0, method.start) + replacement + source.slice(reset.end);
+}
+
+// 2.1.330 把 ANSI 分词、共享测宽和画格拆开：单独冻结新契约，不放宽旧形态。
+function cellProfile330(source, ast, roots, renderer, dependencies) {
+  const windows = renderer.digest === '26a8113e812510d50521dfbf05b116da286fcb71edaa4690c24cabcbf71e634b';
+  if (!windows && renderer.digest !== '50ca962a65ba1c1dc9e5b9276e2bd547811133070bed4242150cfffb1ea71744') return null;
+  const hash = text => createHash('sha256').update(text).digest('hex');
+  const sharedDigest = '7a65764ee19863e57c3ce21f602cdc602e75b65ba71a67cf7cb6cf6458dcd995';
+  const chalkDigest = windows ? 'bf7fe0b124d50885cb32152840f9ba3ca9d319f81e891d86833d7d3ec3b43a64'
+    : '26b10a499095cf831a9e77df0a09fb6db1b1b8d12dc1a937e19a61dbefd3f44c';
+  const parsed = new Map();
+  function resolve(edge) {
+    const file = basename(edge.specifier);
+    const text = dependencies.get(file);
+    if (typeof text !== 'string') throw Error('缺少 2.1.330 字符格依赖');
+    if (!parsed.has(file)) parsed.set(file, structuralModule(text));
+    const structure = parsed.get(file);
+    const target = structure.ast.body.flatMap(node => node.type === 'ExportNamedDeclaration' ? node.specifiers : [])
+      .find(specifier => specifier.exported.name === edge.imported);
+    return { file, source: text, structure, specifier: edge.specifier, local: target?.local.name, imported: edge.imported };
+  }
+  const at = n => resolve(renderer.imports.find(edge => edge.local === renderer.bindings[n]));
+  const matches = (edge, digest, index) => edge.structure.digest === digest && edge.local === edge.structure.bindings[index];
+  function verify(edges, expected) {
+    return edges.length === expected.length && edges.every((edge, i) => matches(resolve(edge), ...expected[i]));
+  }
+  const shared = at(0);
+  if (!matches(shared, sharedDigest, 3) || [4, 5, 6].some((i, n) => {
+    const edge = at(i);
+    return edge.file !== shared.file || !matches(edge, sharedDigest, [2, 22, 26][n]);
+  })) return null;
+  const edges = nodes => nodes.filter(n => n.type === 'ImportDeclaration').flatMap(node => node.specifiers
+    .map(item => ({ local: item.local.name, imported: item.imported?.name, specifier: node.source.value, node })));
+  if (!verify(edges(shared.structure.ast.body), [
+    ['d1236e4e26cb4d6d690dca3db9f203c4c009233e2ba2025e4c85259807610b2f', 52],
+    ['ca9c06193809792f894f462447585961af7e7ebd1070f524f76a145a6e309849', 1],
+  ])) return null;
+  const tabs = at(1), chalk = at(3), normalizer = at(7), styles = at(8), colorStyles = at(9);
+  if (!matches(tabs, '6eedfaa3e565a8aff2b13a91fd8f64b981153b3df85d72d0c5fa2562a4766275', 69)
+    || !matches(chalk, chalkDigest, windows ? 122 : 121) || styles.file !== colorStyles.file) return null;
+  const names = Object.fromEntries(Object.entries({ Ns:16, Dd:27, Cx:89, xC:117, Dc:144,
+    bn:18, wo:19, Xf:20, jn:21, Rx:98, xx:101, hht:1, bGt:3, MNr:8, LNr:9 })
+    .map(([key, index]) => [key, renderer.bindings[index - (windows && index >= 13 ? 1 : 0)]]));
+  const rendererEdges = edges(ast.body);
+  function findImport(module, index) {
+    const found = rendererEdges.filter(edge => basename(edge.specifier) === module.file
+      && resolve(edge).local === module.structure.bindings[index]);
+    if (found.length !== 1) throw Error('字符格依赖绑定不唯一');
+    return found[0].local;
+  }
+  const tokenize = findImport(tabs, 32);
+  names.C8 = findImport(tabs, 79);
+  const sliceAnsi = findImport(shared, 44);
+  const tabContract = cellDeclarationContract(tabs.source, [tabs.local, tabs.structure.bindings[32], tabs.structure.bindings[79]]);
+  const styleContract = cellDeclarationContract(styles.source, [styles.local, colorStyles.local]);
+  const graphemeContract = cellDeclarationContract(normalizer.source, [normalizer.local]);
+  if (tabContract.digest !== 'e7892e5577a0036c43a3e3ce9586aec5bb9c82d3b98255ef88851238a60a9fb6'
+    || !verify(tabContract.imports, [...[0,5,12,6,14,10].map(index => ['595863d9207c1d28b62286aa0de38d14015ee5d54b48723cdfb4a360d659467c', index]), [sharedDigest, 76]])
+    || styleContract.digest !== '81ef0b199edb6b0e94cfad4d620bb92e05de9919834d3754cde9a62d170f778a'
+    || !verify(styleContract.imports, [['07931a7435f1b6946753a82b539738bc12a27ce65da75b63cc20e124ef22687c', 11], [chalkDigest, windows ? 114 : 113]])
+    || graphemeContract.digest !== 'f2e91101b5346e72ebcb5c4cecf2b8e18c6de54820d22e183a0172caebde099f'
+    || !verify(graphemeContract.imports, [[sharedDigest, 76], ['ca7e8d33b404ed73726f061679bdaac9a5910060a73755a352f1617e62f52497', 5]])) return null;
+
+  // 剪裁方法不在画行闭包内；单独核验，且在 ANSI 剪裁前按原起始列展开制表符。
+  const [cut, ...otherCuts] = ast.body.flatMap(node => node.type === 'ClassDeclaration' ? node.body.body : [])
+    .filter(node => node.key?.name === 'cutToColumns');
+  if (!cut || otherCuts.length) return null;
+  const tabAnchor = source.slice(cut.start, cut.end);
+  const [, column] = cut.value.params.map(param => param.name);
+  const init = cut.value.body.body[1]?.declarations;
+  if (init?.[0]?.init?.callee?.name !== names.Dc || init[3]?.init?.callee?.name !== sliceAnsi) return null;
+  const cutDigest = structuralModule('class ClawgodCut{' + tabAnchor + '}').digest;
+  if (!['c0ace4f7d0aae2039b57ed75e091ba0118efede9824d6104fd4f9be0f91737e3',
+    '06c3d5eb5ca98baa68dcbd6e523b886c3884c87070fedbcfb5db14cad1eed08c',
+    'b8e4f58da95f10f1702711655229f10546d2971c6310afea5fcce61c1599ccc7'].includes(cutDigest)) return null;
+  const sanitizeEnd = init[0].init.end - cut.start;
+  const tabReplacement = tabAnchor.slice(0, sanitizeEnd)
+    + ',clawgodTabOffset=((' + column + '%' + names.hht + ')+' + names.hht + ')%' + names.hht
+    + ',clawgodClipText=' + init[0].id.name + '.includes(String.fromCharCode(9))?'
+    + names.C8 + '([" ".repeat(clawgodTabOffset)+' + init[0].id.name + ']).join("").slice(clawgodTabOffset):' + init[0].id.name
+    + tabAnchor.slice(sanitizeEnd).replaceAll(sliceAnsi + '(' + init[0].id.name + ',', sliceAnsi + '(clawgodClipText,');
+
+  const textCandidates = [];
+  for (const [file, text] of dependencies) {
+    if (!text.includes(shared.specifier) || !text.includes('.trimEnd()') || text === source) continue;
+    const module = structuralModule(text);
+    const edge = edges(module.ast.body).find(edge => basename(edge.specifier) === shared.file && edge.imported === shared.imported);
+    if (!edge) continue;
+    const functions = module.ast.body.filter(node => node.type === 'FunctionDeclaration');
+    const check = functions.find(node => text.slice(node.start, node.end).includes('.trimEnd()') && text.slice(node.start, node.end).includes('.indexOf('));
+    const segment = functions.find(node => text.slice(node.start, node.end).includes(edge.local + '('));
+    if (!check || !segment || module.identifiers.some(item => item.binding === module.topBindings[edge.local]
+      && ![edge.node, segment].some(node => item.start >= node.start && item.end <= node.end))) return null;
+    const contract = cellDeclarationContract(text, [check.id.name, segment.id.name]);
+    const branch = text.slice(check.start, check.end).match(/if\(![\w$]+\.test\([\w$]+\)\)return [\w$]+\([\w$]+\([\w$]+\)\);/)?.[0];
+    if (!branch || contract.digest !== '02a20ad049b036e4736c5815d30a0cd9d9ecf7442b3c3a10bc605188b12f3960'
+      || !matches(resolve(contract.imports[4]), sharedDigest, 2)
+      || contract.imports[5].local !== edge.local) return null;
+    textCandidates.push({ file, source: text, branch });
+  }
+  if (textCandidates.length !== 1) return null;
+  const text = textCandidates[0];
+  const shape = roots.map(name => {
+    const node = ast.body.find(node => node.id?.name === name);
+    const declaration = source.slice(node.start, node.end);
+    return { header: declaration.slice(0, declaration.indexOf('{') + 1), digest: hash(declaration) };
+  });
+  const line = ast.body.find(node => node.id?.name === names.xC);
+  const [screen,, x, y, cells] = line.params.map(param => param.name);
+  const call = line.body.body.at(-1)?.argument?.alternate;
+  if (call?.type !== 'CallExpression') return null;
+  const writeLineSource = source.slice(line.start, call.start) + 'paintCells(' + [screen, cells + '.cells', x, y].join(',') + ')' + source.slice(call.end, line.end);
+  const rendererSource = CELL_RENDERER_SOURCE
+    .replace('var styles = [];', 'var styles = clawgodSgrState();')
+    .replace('MNr(LNr(styles))', 'MNr(LNr(clawgodStyleEntries(styles)))')
+    .replace('var value = segment.segment;', 'var value = clawgodNormalizeGrapheme(segment.segment);\n      var width = Bun.stringWidth(segment.segment, clawgodAmbiguousNarrow);')
+    .replace('width: Bun.stringWidth(value, clawgodAmbiguousNarrow),', 'width: width + (clawgodNeedsWidthCorrection(segment.segment) ? clawgodExtraWidth(segment.segment, width) : 0),')
+    .replace('for (var token of cmr(text))', 'for (var token of clawgodTokenize(text))')
+    .replace('token.type === "char"', 'token.type === "text"')
+    .replace('var code = token.code;', 'var code = token.value;')
+    .replace('styles = Kf(styles, [token]);', 'clawgodUpdateSgr(code, styles);');
+  const rendererImports = 'import{clawgodSgrState,clawgodUpdateSgr,clawgodStyleEntries}from' + JSON.stringify(tabs.specifier) + ';\n'
+    + 'const clawgodTokenize=' + tokenize + ',clawgodNeedsWidthCorrection=' + renderer.bindings[5]
+    + ',clawgodExtraWidth=' + renderer.bindings[6] + ';\n';
+  const tabBindings = tabs.structure.bindings;
+  const tabsUpdate = '\nexport{' + tabBindings[205] + ' as clawgodSgrState,' + tabBindings[206] + ' as clawgodUpdateSgr};\n'
+    + 'export function clawgodStyleEntries(styles){return styles.flatMap((value,index)=>{const end=' + tabBindings[132]
+    + '[index];return value&&end!==28?[{type:"ansi",code:"\\x1b["+value+"m",endCode:"\\x1b["+end+"m"}]:[]})}\n';
+  return { shape, names, tabAnchor, tabReplacement, rendererSource, writeLineSource, mappedWriteLine: true,
+    graphemeNormalizer: renderer.bindings[7], rendererImports, lineCellsSource: CELL_LINE_CELLS_SOURCE.replace('trailingSpaces() {', 'trailingSpaces(text) {\n    this.segment(text);'),
+    shared: { specifier: shared.specifier, digest: hash(shared.source), factory: shared.imported,
+      text: text.file, textDigest: hash(text.source), textBranch: text.branch,
+      widthSource: publicCellWidth330(shared),
+      tabs: tabs.file, tabsUpdate },
+  };
+}
+
 // 七参数字符格 ABI：冻结可达声明而非整个 renderer，绑定名和分块路径不属于接口。
 function localCellProfile(source, dependencies) {
   try {
@@ -15706,6 +15862,10 @@ function localCellProfile(source, dependencies) {
       one(text => /^function [\w$]+\(([\w$]+)\)\{return [\w$]+\.test\(\1\)\?\1\.replace\([\w$]+,"\\uFFFD"\):\1\}$/.test(text)),
     ];
     const renderer = cellDeclarationContract(source, roots);
+    if (['50ca962a65ba1c1dc9e5b9276e2bd547811133070bed4242150cfffb1ea71744',
+      '26a8113e812510d50521dfbf05b116da286fcb71edaa4690c24cabcbf71e634b'].includes(renderer.digest)) {
+      return cellProfile330(source, ast, roots, renderer, dependencies);
+    }
     const normalizedWindows = renderer.digest === '9512f3cfbcebee9c2dd2e4c675c27af6d42ab9ed8b70484966497823c365ab47';
     const normalizedGraphemes = normalizedWindows || renderer.digest === '738c6749821a9bcc06ea5e58bc14e8e745334d8878b49207c21fcc1714612f40';
     const splitBidiWindows = normalizedWindows || renderer.digest === '14c0524e2ffffed0c7b54c8ff72ed5b132368b5f14d91fad4826cd071669542d';
@@ -15987,7 +16147,7 @@ export function adaptCellRenderer(source, shape, dependencies = new Map()) {
   return null;
 }
 
-function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, graphemeNormalizer, rendererSource = CELL_RENDERER_SOURCE, writeLineSource = CELL_WRITE_LINE_SOURCE, mappedWriteLine = false, oscDeclaration = OSC8_DECLARATION }, dependencies) {
+function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, graphemeNormalizer, rendererSource = CELL_RENDERER_SOURCE, writeLineSource = CELL_WRITE_LINE_SOURCE, lineCellsSource = CELL_LINE_CELLS_SOURCE, rendererImports, mappedWriteLine = false, oscDeclaration = OSC8_DECLARATION }, dependencies) {
   if (shared) {
     const factory = dependencies.get(basename(shared.specifier));
     if (typeof factory !== 'string' || createHash('sha256').update(factory).digest('hex') !== shared.digest) return null;
@@ -16010,6 +16170,8 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
     if (imports.length !== 1) return null;
     ansiImport = `import{${dependency.tokenizer} as clawgodAnsiTokens,${dependency.normalizeStyles} as clawgodNormalizeStyles}from${JSON.stringify(dependency.specifier)};\n`
       + 'function clawgodMergeStyles(styles,codes){return clawgodNormalizeStyles([...styles,...codes])}\n';
+  } else if (rendererImports) {
+    ansiImport = rendererImports;
   } else if (!source.includes(oscDeclaration)) return null;
   for (const binding of CELL_SEGMENTER_BINDINGS) {
     const local = names[binding] ?? binding;
@@ -16029,7 +16191,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
   }
   const replacements = [
     [spans[0], rendererSource],
-    [spans[1], CELL_LINE_CELLS_SOURCE],
+    [spans[1], lineCellsSource],
     [spans[2], CELL_SET_CELL_SOURCE],
     [spans[3], writeLineSource],
   ].sort((first, second) => second[0].start - first[0].start);
@@ -16078,7 +16240,7 @@ function installPublicCellRenderer(modulePaths) {
       || createHash('sha256').update(text).digest('hex') !== shared.textDigest) {
       throw new Error('共享 CellSegmenter 的渲染器或名称校验分块发生漂移；已拒绝安装。');
     }
-    const factorySource = targets[0].source;
+    const factorySource = shared.widthSource ?? targets[0].source;
     const factoryHeader = `function ${shared.factory}(`;
     const factoryStart = factorySource.indexOf(factoryHeader);
     const factoryEnd = findDeclarationEnd(factorySource, factorySource.indexOf('{', factoryStart));
@@ -16105,6 +16267,10 @@ function installPublicCellRenderer(modulePaths) {
         + `function ${shared.factory}(){throw Error("ClawGod 已替换私有 CellSegmenter；不支持新增的原生调用路径。")}`
         + factorySource.slice(factoryEnd + 1)],
     ]);
+    if (shared.tabs) {
+      const tabPath = modulePaths.find(path => basename(path) === shared.tabs);
+      updates.set(tabPath, dependencies.get(shared.tabs) + shared.tabsUpdate);
+    }
     for (const [path, source] of updates) writeFileSync(path, source);
     console.log('已用公开 Bun 字符格渲染器替换共享私有实现，并保留技能名称防冒充校验。');
     return;
@@ -17107,6 +17273,7 @@ var require_acorn = __commonJS(function(exports, module) {
   (function(global, factory) {
     typeof exports === "object" && typeof module !== "undefined" ? factory(exports) : typeof define === "function" && define.amd ? define(["exports"], factory) : (global = typeof globalThis !== "undefined" ? globalThis : global || self, factory(global.acorn = {}));
   })(exports, function(exports2) {
+    "use strict";
     var astralIdentifierCodes = [509, 0, 227, 0, 150, 4, 294, 9, 1368, 2, 2, 1, 6, 3, 41, 2, 5, 0, 166, 1, 574, 3, 9, 9, 7, 9, 32, 4, 318, 1, 78, 5, 71, 10, 50, 3, 123, 2, 54, 14, 32, 10, 3, 1, 11, 3, 46, 10, 8, 0, 46, 9, 7, 2, 37, 13, 2, 9, 6, 1, 45, 0, 13, 2, 49, 13, 9, 3, 2, 11, 83, 11, 7, 0, 3, 0, 158, 11, 6, 9, 7, 3, 56, 1, 2, 6, 3, 1, 3, 2, 10, 0, 11, 1, 3, 6, 4, 4, 68, 8, 2, 0, 3, 0, 2, 3, 2, 4, 2, 0, 15, 1, 83, 17, 10, 9, 5, 0, 82, 19, 13, 9, 214, 6, 3, 8, 28, 1, 83, 16, 16, 9, 82, 12, 9, 9, 7, 19, 58, 14, 5, 9, 243, 14, 166, 9, 71, 5, 2, 1, 3, 3, 2, 0, 2, 1, 13, 9, 120, 6, 3, 6, 4, 0, 29, 9, 41, 6, 2, 3, 9, 0, 10, 10, 47, 15, 199, 7, 137, 9, 54, 7, 2, 7, 17, 9, 57, 21, 2, 13, 123, 5, 4, 0, 2, 1, 2, 6, 2, 0, 9, 9, 49, 4, 2, 1, 2, 4, 9, 9, 55, 9, 266, 3, 10, 1, 2, 0, 49, 6, 4, 4, 14, 10, 5350, 0, 7, 14, 11465, 27, 2343, 9, 87, 9, 39, 4, 60, 6, 26, 9, 535, 9, 470, 0, 2, 54, 8, 3, 82, 0, 12, 1, 19628, 1, 4178, 9, 519, 45, 3, 22, 543, 4, 4, 5, 9, 7, 3, 6, 31, 3, 149, 2, 1418, 49, 513, 54, 5, 49, 9, 0, 15, 0, 23, 4, 2, 14, 1361, 6, 2, 16, 3, 6, 2, 1, 2, 4, 101, 0, 161, 6, 10, 9, 357, 0, 62, 13, 499, 13, 245, 1, 2, 9, 233, 0, 3, 0, 8, 1, 6, 0, 475, 6, 110, 6, 6, 9, 4759, 9, 787719, 239];
     var astralIdentifierStartCodes = [0, 11, 2, 25, 2, 18, 2, 1, 2, 14, 3, 13, 35, 122, 70, 52, 268, 28, 4, 48, 48, 31, 14, 29, 6, 37, 11, 29, 3, 35, 5, 7, 2, 4, 43, 157, 19, 35, 5, 35, 5, 39, 9, 51, 13, 10, 2, 14, 2, 6, 2, 1, 2, 10, 2, 14, 2, 6, 2, 1, 4, 51, 13, 310, 10, 21, 11, 7, 25, 5, 2, 41, 2, 8, 70, 5, 3, 0, 2, 43, 2, 1, 4, 0, 3, 22, 11, 22, 10, 30, 66, 18, 2, 1, 11, 21, 11, 25, 7, 25, 39, 55, 7, 1, 65, 0, 16, 3, 2, 2, 2, 28, 43, 28, 4, 28, 36, 7, 2, 27, 28, 53, 11, 21, 11, 18, 14, 17, 111, 72, 56, 50, 14, 50, 14, 35, 39, 27, 10, 22, 251, 41, 7, 1, 17, 5, 57, 28, 11, 0, 9, 21, 43, 17, 47, 20, 28, 22, 13, 52, 58, 1, 3, 0, 14, 44, 33, 24, 27, 35, 30, 0, 3, 0, 9, 34, 4, 0, 13, 47, 15, 3, 22, 0, 2, 0, 36, 17, 2, 24, 20, 1, 64, 6, 2, 0, 2, 3, 2, 14, 2, 9, 8, 46, 39, 7, 3, 1, 3, 21, 2, 6, 2, 1, 2, 4, 4, 0, 19, 0, 13, 4, 31, 9, 2, 0, 3, 0, 2, 37, 2, 0, 26, 0, 2, 0, 45, 52, 19, 3, 21, 2, 31, 47, 21, 1, 2, 0, 185, 46, 42, 3, 37, 47, 21, 0, 60, 42, 14, 0, 72, 26, 38, 6, 186, 43, 117, 63, 32, 7, 3, 0, 3, 7, 2, 1, 2, 23, 16, 0, 2, 0, 95, 7, 3, 38, 17, 0, 2, 0, 29, 0, 11, 39, 8, 0, 22, 0, 12, 45, 20, 0, 19, 72, 200, 32, 32, 8, 2, 36, 18, 0, 50, 29, 113, 6, 2, 1, 2, 37, 22, 0, 26, 5, 2, 1, 2, 31, 15, 0, 24, 43, 261, 18, 16, 0, 2, 12, 2, 33, 125, 0, 80, 921, 103, 110, 18, 195, 2637, 96, 16, 1071, 18, 5, 26, 3994, 6, 582, 6842, 29, 1763, 568, 8, 30, 18, 78, 18, 29, 19, 47, 17, 3, 32, 20, 6, 18, 433, 44, 212, 63, 33, 24, 3, 24, 45, 74, 6, 0, 67, 12, 65, 1, 2, 0, 15, 4, 10, 7381, 42, 31, 98, 114, 8702, 3, 2, 6, 2, 1, 2, 290, 16, 0, 30, 2, 3, 0, 15, 3, 9, 395, 2309, 106, 6, 12, 4, 8, 8, 9, 5991, 84, 2, 70, 2, 1, 3, 0, 3, 1, 3, 3, 2, 11, 2, 0, 2, 6, 2, 64, 2, 3, 3, 7, 2, 6, 2, 27, 2, 3, 2, 4, 2, 0, 4, 6, 2, 339, 3, 24, 2, 24, 2, 30, 2, 24, 2, 30, 2, 24, 2, 30, 2, 24, 2, 30, 2, 24, 2, 7, 1845, 30, 7, 5, 262, 61, 147, 44, 11, 6, 17, 0, 322, 29, 19, 43, 485, 27, 229, 29, 3, 0, 208, 30, 2, 2, 2, 1, 2, 6, 3, 4, 10, 1, 225, 6, 2, 3, 2, 1, 2, 14, 2, 196, 60, 67, 8, 0, 1205, 3, 2, 26, 2, 1, 2, 0, 3, 0, 2, 9, 2, 3, 2, 0, 2, 0, 7, 0, 5, 0, 2, 0, 2, 0, 2, 2, 2, 1, 2, 0, 3, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 1, 2, 0, 3, 3, 2, 6, 2, 3, 2, 3, 2, 0, 2, 9, 2, 16, 6, 2, 2, 4, 2, 16, 4421, 42719, 33, 4381, 3, 5773, 3, 7472, 16, 621, 2467, 541, 1507, 4938, 6, 8489];
     var nonASCIIidentifierChars = "\u200C\u200D\xB7\u0300-\u036F\u0387\u0483-\u0487\u0591-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7\u0610-\u061A\u064B-\u0669\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u06F0-\u06F9\u0711\u0730-\u074A\u07A6-\u07B0\u07C0-\u07C9\u07EB-\u07F3\u07FD\u0816-\u0819\u081B-\u0823\u0825-\u0827\u0829-\u082D\u0859-\u085B\u0897-\u089F\u08CA-\u08E1\u08E3-\u0903\u093A-\u093C\u093E-\u094F\u0951-\u0957\u0962\u0963\u0966-\u096F\u0981-\u0983\u09BC\u09BE-\u09C4\u09C7\u09C8\u09CB-\u09CD\u09D7\u09E2\u09E3\u09E6-\u09EF\u09FE\u0A01-\u0A03\u0A3C\u0A3E-\u0A42\u0A47\u0A48\u0A4B-\u0A4D\u0A51\u0A66-\u0A71\u0A75\u0A81-\u0A83\u0ABC\u0ABE-\u0AC5\u0AC7-\u0AC9\u0ACB-\u0ACD\u0AE2\u0AE3\u0AE6-\u0AEF\u0AFA-\u0AFF\u0B01-\u0B03\u0B3C\u0B3E-\u0B44\u0B47\u0B48\u0B4B-\u0B4D\u0B55-\u0B57\u0B62\u0B63\u0B66-\u0B6F\u0B82\u0BBE-\u0BC2\u0BC6-\u0BC8\u0BCA-\u0BCD\u0BD7\u0BE6-\u0BEF\u0C00-\u0C04\u0C3C\u0C3E-\u0C44\u0C46-\u0C48\u0C4A-\u0C4D\u0C55\u0C56\u0C62\u0C63\u0C66-\u0C6F\u0C81-\u0C83\u0CBC\u0CBE-\u0CC4\u0CC6-\u0CC8\u0CCA-\u0CCD\u0CD5\u0CD6\u0CE2\u0CE3\u0CE6-\u0CEF\u0CF3\u0D00-\u0D03\u0D3B\u0D3C\u0D3E-\u0D44\u0D46-\u0D48\u0D4A-\u0D4D\u0D57\u0D62\u0D63\u0D66-\u0D6F\u0D81-\u0D83\u0DCA\u0DCF-\u0DD4\u0DD6\u0DD8-\u0DDF\u0DE6-\u0DEF\u0DF2\u0DF3\u0E31\u0E34-\u0E3A\u0E47-\u0E4E\u0E50-\u0E59\u0EB1\u0EB4-\u0EBC\u0EC8-\u0ECE\u0ED0-\u0ED9\u0F18\u0F19\u0F20-\u0F29\u0F35\u0F37\u0F39\u0F3E\u0F3F\u0F71-\u0F84\u0F86\u0F87\u0F8D-\u0F97\u0F99-\u0FBC\u0FC6\u102B-\u103E\u1040-\u1049\u1056-\u1059\u105E-\u1060\u1062-\u1064\u1067-\u106D\u1071-\u1074\u1082-\u108D\u108F-\u109D\u135D-\u135F\u1369-\u1371\u1712-\u1715\u1732-\u1734\u1752\u1753\u1772\u1773\u17B4-\u17D3\u17DD\u17E0-\u17E9\u180B-\u180D\u180F-\u1819\u18A9\u1920-\u192B\u1930-\u193B\u1946-\u194F\u19D0-\u19DA\u1A17-\u1A1B\u1A55-\u1A5E\u1A60-\u1A7C\u1A7F-\u1A89\u1A90-\u1A99\u1AB0-\u1ABD\u1ABF-\u1ADD\u1AE0-\u1AEB\u1B00-\u1B04\u1B34-\u1B44\u1B50-\u1B59\u1B6B-\u1B73\u1B80-\u1B82\u1BA1-\u1BAD\u1BB0-\u1BB9\u1BE6-\u1BF3\u1C24-\u1C37\u1C40-\u1C49\u1C50-\u1C59\u1CD0-\u1CD2\u1CD4-\u1CE8\u1CED\u1CF4\u1CF7-\u1CF9\u1DC0-\u1DFF\u200C\u200D\u203F\u2040\u2054\u20D0-\u20DC\u20E1\u20E5-\u20F0\u2CEF-\u2CF1\u2D7F\u2DE0-\u2DFF\u302A-\u302F\u3099\u309A\u30FB\uA620-\uA629\uA66F\uA674-\uA67D\uA69E\uA69F\uA6F0\uA6F1\uA802\uA806\uA80B\uA823-\uA827\uA82C\uA880\uA881\uA8B4-\uA8C5\uA8D0-\uA8D9\uA8E0-\uA8F1\uA8FF-\uA909\uA926-\uA92D\uA947-\uA953\uA980-\uA983\uA9B3-\uA9C0\uA9D0-\uA9D9\uA9E5\uA9F0-\uA9F9\uAA29-\uAA36\uAA43\uAA4C\uAA4D\uAA50-\uAA59\uAA7B-\uAA7D\uAAB0\uAAB2-\uAAB4\uAAB7\uAAB8\uAABE\uAABF\uAAC1\uAAEB-\uAAEF\uAAF5\uAAF6\uABE3-\uABEA\uABEC\uABED\uABF0-\uABF9\uFB1E\uFE00-\uFE0F\uFE20-\uFE2F\uFE33\uFE34\uFE4D-\uFE4F\uFF10-\uFF19\uFF3F\uFF65";
@@ -24393,8 +24560,35 @@ function transform(id, source, ast) {
     }
     if (classifier.length) {
       const classify = one(classifier, "tool classifier");
-      const condition = one(nodes("IfStatement", (n) => n.test.operator === "||" && n.test.left.operator === "&&" && n.test.left.left.type === "CallExpression" && n.test.left.right.operator === "===" && text(n.consequent).includes("popsOutOnError"), classify), "ToolSearch branch");
-      replace(condition.test.left, choose(text(condition.test.left.right), condition.test.left));
+      const legacy = nodes("IfStatement", (n) => n.test.operator === "||" && n.test.left.operator === "&&" && n.test.left.left.type === "CallExpression" && n.test.left.right.operator === "===" && text(n.consequent).includes("popsOutOnError"), classify);
+      const callTo = (n, name, args) => n?.type === "CallExpression" && n.callee.name === name && n.arguments.length === args.length && args.every((arg, i) => n.arguments[i]?.name === arg);
+      const includes = (n, argument) => n?.type === "CallExpression" && member2(n.callee, "includes") && !n.callee.computed && n.callee.object.type === "Identifier" && n.arguments.length === 1 && n.arguments[0]?.name === argument;
+      const toolImports = new Set(["chunk-t99xdws4.js", "chunk-qhdcfsp4.js", "chunk-m47rkk3y.js"]);
+      const toolSearch = (name) => nodes("VariableDeclarator", (n) => n.id.name === name && literal2(n.init, "ToolSearch")).length === 1 || ast.body.some((n) => n.type === "ImportDeclaration" && toolImports.has(n.source.value.split("/").at(-1)) && n.specifiers.some((s) => s.imported?.name === "co" && s.local.name === name));
+      const modern = [];
+      const tool = classify.params[0].name;
+      for (const branch of classify.body.body) {
+        if (branch.type !== "IfStatement" || branch.consequent.type !== "ReturnStatement")
+          continue;
+        const target = branch.consequent.argument;
+        const pops = target?.type === "ObjectExpression" && prop(target, "popsOutOnError")?.value;
+        const absorbed = prop(target, "isAbsorbedSilently")?.value;
+        const trueValue = (node) => literal2(node, true) || node?.operator === "!" && literal2(node.argument, 0);
+        if (!includes(pops, tool) || !trueValue(absorbed) || !trueValue(prop(target, "isCollapsible")?.value))
+          continue;
+        const name = branch.test.callee?.name;
+        if (!name || !callTo(branch.test, name, [tool]))
+          continue;
+        const [helper, ...duplicates] = ast.body.filter((n) => n.type === "FunctionDeclaration" && n.id.name === name);
+        const arg = helper?.params[0]?.name;
+        const result = helper?.body.body[0]?.type === "ReturnStatement" && helper.body.body[0].argument;
+        const and = result?.left;
+        if (duplicates.length || !arg || helper.async || helper.generator || helper.params.length !== 1 || helper.body.body.length !== 1 || result?.operator !== "||" || and?.operator !== "&&" || !includes(result.right, arg) || result.right.callee.object.name !== pops.callee.object.name || !and.left.callee?.name || !callTo(and.left, and.left.callee.name, []) || and.right.operator !== "===" || and.right.left.name !== arg || and.right.right.type !== "Identifier" || !toolSearch(and.right.right.name))
+          continue;
+        modern.push({ node: branch.test, whenEnabled: text(and.right.right) + "===" + tool + "||" + text(branch.test) });
+      }
+      const condition = one([...legacy.map((n) => ({ node: n.test.left, whenEnabled: text(n.test.left.right) })), ...modern], "ToolSearch branch");
+      replace(condition.node, choose(condition.whenEnabled, condition.node));
     }
     for (const scanner of scanners)
       for (const call of nodes("MemberExpression", (n) => n.property.name === "isCollapsible" && n.object.type === "CallExpression", scanner)) {
@@ -25007,6 +25201,12 @@ var interfaceContracts = new Set([
   "5798f6f581d706317d12706c3c2ffb2eb9488ddd6bd7d059c2f8b2619951a6aa",
   "a9596d763460f38124c284b083074ea7c97dd0000fd0085ed28dcedac5fd833b"
 ]);
+var upstream330Contract = "0d1a517d1056e265da254e773a9afb08ab262e814a486bc3a1a4e0d77b480946";
+var upstream330Interfaces = new Set([
+  "2dca65a4bb050550cbec6f0fcd199a3b7f87fd29167fd80df65ae36a33d165c4",
+  "ff50cc1f86c571ea0f21b2b117648c2bae869f4da4de21ae19644863592ab8d9",
+  "0246f6d5c38af4848e6c2d652a550bda0d071306b8555e3123cd7dacdd60db19"
+]);
 var digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function interfaceContract(ast) {
   return digest([
@@ -25058,6 +25258,11 @@ async function apply(source, { dryRun = false, verify = false } = {}) {
     if (different !== -1 && version[different] < minimum[different])
       return { status: "skipped", detail: "local Code Mode requires Claude Code >= 2.1.323" };
     const edges = interfaceContract(ast);
+    if (versions[0] === "2.1.330" && upstream330Interfaces.has(edges)) {
+      if (code.includes(marker) || contract(ast) !== upstream330Contract)
+        throw new Error("Code Mode 2.1.330 upstream contract drift");
+      return { status: "skipped", warning: "2.1.330 local eligibility not supported; upstream Code Mode preserved" };
+    }
     if (!interfaceContracts.has(edges))
       throw new Error(`Code Mode interface contract drift: ${edges}`);
     const signature = contract(ast);
@@ -26319,6 +26524,10 @@ ${"\u2550".repeat(55)}`);
       applied++;
     } else if (result.status === "skipped") {
       skipped++;
+      if (result.warning) {
+        console.log(`  \u26A0\uFE0F  ${descriptor.name} \u2014 ${result.warning}`);
+        warnings++;
+      }
     } else if (result.status === "stale") {
       stale(descriptor.name, result.detail);
     } else {

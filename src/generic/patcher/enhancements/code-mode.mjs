@@ -14,6 +14,13 @@ const interfaceContracts = new Set([
   '5798f6f581d706317d12706c3c2ffb2eb9488ddd6bd7d059c2f8b2619951a6aa', // linux-x64
   'a9596d763460f38124c284b083074ea7c97dd0000fd0085ed28dcedac5fd833b', // win32-x64
 ]);
+// 2.1.330 重写了 SDK/headless 准入。本地补丁暂未核验这些路径；只对已知契约保留上游实现。
+const upstream330Contract = '0d1a517d1056e265da254e773a9afb08ab262e814a486bc3a1a4e0d77b480946';
+const upstream330Interfaces = new Set([
+  '2dca65a4bb050550cbec6f0fcd199a3b7f87fd29167fd80df65ae36a33d165c4',
+  'ff50cc1f86c571ea0f21b2b117648c2bae869f4da4de21ae19644863592ab8d9',
+  '0246f6d5c38af4848e6c2d652a550bda0d071306b8555e3123cd7dacdd60db19',
+]);
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function interfaceContract(ast) {
   return digest([
@@ -64,6 +71,10 @@ async function apply(source, { dryRun = false, verify = false } = {}) {
     const different = version.findIndex((part, index) => part !== minimum[index]);
     if (different !== -1 && version[different] < minimum[different]) return { status: 'skipped', detail: 'local Code Mode requires Claude Code >= 2.1.323' };
     const edges = interfaceContract(ast);
+    if (versions[0] === '2.1.330' && upstream330Interfaces.has(edges)) {
+      if (code.includes(marker) || contract(ast) !== upstream330Contract) throw new Error('Code Mode 2.1.330 upstream contract drift');
+      return { status: 'skipped', warning: '2.1.330 local eligibility not supported; upstream Code Mode preserved' };
+    }
     if (!interfaceContracts.has(edges)) throw new Error(`Code Mode interface contract drift: ${edges}`);
     const signature = contract(ast);
     if (code.includes(marker)) {

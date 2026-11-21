@@ -113,6 +113,25 @@ function settle(message,tools,extra){if(message.type==="redacted_thinking"||mess
   assert.equal(folding.settle({name:'ToolSearch'},[]),-1);
   assert.ok(evaluate(fold,{}, {'disable-collapse-read-search':false}).admit({name:'Read'},[]));
 
+  // 2.1.330 把 ToolSearch 和错误弹出名单移入同一个 helper。
+  const splitClassifier = foldFixture.replace('function classify(name,input,tools){if(fullscreen()&&name==="ToolSearch"||name==="Task")return{isCollapsible:true,isAbsorbedSilently:true,popsOutOnError:true}',
+    'const toolSearch="ToolSearch", errors=["Task"];function silently(name){return fullscreen()&&name===toolSearch||errors.includes(name)}function classify(name,input,tools){if(silently(name))return{isCollapsible:true,isAbsorbedSilently:true,popsOutOnError:errors.includes(name)}');
+  const exportedHelper = await patch('disable-collapse-read-search', splitClassifier + '\nexport{silently};');
+  assert.match(exportedHelper, /function silently\(name\)\{return fullscreen\(\)&&name===toolSearch\|\|errors.includes\(name\)\}/);
+  const newFold = await patch('disable-collapse-read-search', splitClassifier);
+  const newCtx = evaluate(newFold);
+  assert.equal(newCtx.admit({name:'ToolSearch'},[]).popsOutOnError,false);
+  assert.equal(newCtx.admit({name:'Task'},[]).popsOutOnError,true);
+  assert.equal(newCtx.admit({name:'Read'},[]),null);
+  assert.equal(newCtx.settle({name:'ToolSearch'},[]),-1);
+  const foldOff = evaluate(newFold,{}, {'disable-collapse-read-search':false});
+  assert.equal(foldOff.classify('ToolSearch',{},[]).isAbsorbedSilently,false);
+  assert.equal(foldOff.classify('Task',{},[]).popsOutOnError,true);
+  const unknownHelper = await cometixPatches.find(d=>d.id==='disable-collapse-read-search').apply(
+    splitClassifier.replace('popsOutOnError:errors.includes(name)', 'popsOutOnError:other.includes(name)'), { rootDir });
+  assert.equal(unknownHelper.status,'failed');
+  assert.equal(unknownHelper.code,undefined);
+
   const voice = await patch('enable-voice-mode', `
 function flags(){return false}function permitted(){return false}function voiceFlag(){return flags("allow_voice_mode")}function voiceGate(){return permitted()&&voiceFlag()}
 function buildConfig(input){let{settingsData:settings,setSettingsData:setSettings,setAppState:setApp,changeLog:changes}=input;function save(value){return input.write("userSettings",value)}return[{id:"autoCompact",value:true}]}

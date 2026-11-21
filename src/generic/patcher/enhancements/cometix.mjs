@@ -154,8 +154,42 @@ function transform(id, source, ast) {
     }
     if (classifier.length) {
       const classify = one(classifier, 'tool classifier');
-      const condition = one(nodes('IfStatement', n => n.test.operator === '||' && n.test.left.operator === '&&' && n.test.left.left.type === 'CallExpression' && n.test.left.right.operator === '===' && text(n.consequent).includes('popsOutOnError'), classify), 'ToolSearch branch');
-      replace(condition.test.left, choose(text(condition.test.left.right), condition.test.left));
+      const legacy = nodes('IfStatement', n => n.test.operator === '||' && n.test.left.operator === '&&' && n.test.left.left.type === 'CallExpression' && n.test.left.right.operator === '===' && text(n.consequent).includes('popsOutOnError'), classify);
+      const callTo = (n, name, args) => n?.type === 'CallExpression' && n.callee.name === name
+        && n.arguments.length === args.length && args.every((arg, i) => n.arguments[i]?.name === arg);
+      const includes = (n, argument) => n?.type === 'CallExpression' && member(n.callee, 'includes')
+        && !n.callee.computed && n.callee.object.type === 'Identifier' && n.arguments.length === 1
+        && n.arguments[0]?.name === argument;
+      // 2.1.330：helper 同时处理 ToolSearch 与保留独立错误行的工具名单。
+      const toolImports = new Set(['chunk-t99xdws4.js', 'chunk-qhdcfsp4.js', 'chunk-m47rkk3y.js']);
+      const toolSearch = name => nodes('VariableDeclarator', n => n.id.name === name && literal(n.init, 'ToolSearch')).length === 1
+        || ast.body.some(n => n.type === 'ImportDeclaration' && toolImports.has(n.source.value.split('/').at(-1))
+          && n.specifiers.some(s => s.imported?.name === 'co' && s.local.name === name));
+      const modern = [];
+      const tool = classify.params[0].name;
+      for (const branch of classify.body.body) {
+        if (branch.type !== 'IfStatement' || branch.consequent.type !== 'ReturnStatement') continue;
+        const target = branch.consequent.argument;
+        const pops = target?.type === 'ObjectExpression' && prop(target, 'popsOutOnError')?.value;
+        const absorbed = prop(target, 'isAbsorbedSilently')?.value;
+        const trueValue = node => literal(node, true) || node?.operator === '!' && literal(node.argument, 0);
+        if (!includes(pops, tool) || !trueValue(absorbed) || !trueValue(prop(target, 'isCollapsible')?.value)) continue;
+        const name = branch.test.callee?.name;
+        if (!name || !callTo(branch.test, name, [tool])) continue;
+        const [helper, ...duplicates] = ast.body.filter(n => n.type === 'FunctionDeclaration' && n.id.name === name);
+        const arg = helper?.params[0]?.name;
+        const result = helper?.body.body[0]?.type === 'ReturnStatement' && helper.body.body[0].argument;
+        const and = result?.left;
+        if (duplicates.length || !arg || helper.async || helper.generator || helper.params.length !== 1 || helper.body.body.length !== 1
+          || result?.operator !== '||' || and?.operator !== '&&' || !includes(result.right, arg)
+          || result.right.callee.object.name !== pops.callee.object.name || !and.left.callee?.name
+          || !callTo(and.left, and.left.callee.name, []) || and.right.operator !== '===' || and.right.left.name !== arg
+          || and.right.right.type !== 'Identifier' || !toolSearch(and.right.right.name)) continue;
+        // helper 还会导出给其他调用方，仅改变折叠分类器的调用点。
+        modern.push({ node: branch.test, whenEnabled: text(and.right.right) + '===' + tool + '||' + text(branch.test) });
+      }
+      const condition = one([...legacy.map(n => ({ node: n.test.left, whenEnabled: text(n.test.left.right) })), ...modern], 'ToolSearch branch');
+      replace(condition.node, choose(condition.whenEnabled, condition.node));
     }
     // The settle scanner may live in a different chunk from admission/classification.
     // Older bundles have no dedicated scanner; do not invent one.

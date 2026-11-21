@@ -292,3 +292,21 @@ for (const source of [
 ]) assert.equal((await patch.apply(source)).status, 'stale', 'unknown/无效/冲突版本有feature仍failclosed');
 assert.equal((await patch.apply(legacyCodeMode.replace('2.1.322', '2.1.323'))).status, 'stale', '新版本未知形态不能全局忽略drift');
 console.log('Code Mode 真实模块行为、拒绝条件、改名、漂移、幂等及只读检查通过');
+
+
+// 新版 SDK/headless 准入尚未适配，仅允许精确核验过的版本原样保留。
+for (const platform of ['darwin-arm64', 'linux-x64', 'win32-x64']) {
+  const current = readFileSync(new URL('./fixtures/code-mode-2.1.330-' + platform + '.js', import.meta.url), 'utf8');
+  for (const source of [current, current.replace(/(?:\/\$bunfs\/root\/|[A-Z]:\/~BUN\/root\/)/g, './')]) {
+    for (const options of [{}, { dryRun: true }, { verify: true }]) {
+      const result = await patch.apply(source, options);
+      assert.equal(result.status, 'skipped', result.detail);
+      assert.match(result.warning, /2\.1\.330.*preserv/i);
+      assert.equal(result.code, undefined);
+    }
+  }
+  for (const drift of [current.replace('2.1.330', '2.1.331'), current.replace('toolsLeaveReplOut', 'changedGuard'),
+    current.replace(/chunk-[a-z0-9]+\.js/, 'chunk-drift.js')]) {
+    assert.equal((await patch.apply(drift)).status, 'stale');
+  }
+}

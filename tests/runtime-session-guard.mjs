@@ -9,13 +9,18 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import state from '../src/generic/runtime/runtime-state.cjs';
 
 assert.equal(typeof state.acquireRuntime, 'function', '升级必须先取得独占运行时锁');
-assert.equal(typeof state.enterRuntime, 'function', '会话必须登记并检查正在进行的升级');
+assert.equal(typeof state.enterRuntime, 'function', '会话必须登记以供维护检查');
 const dir = mkdtempSync(join(tmpdir(), 'clawgod-session-guard-'));
 const root = join(dir, 'home with spaces', '.clawgod');
 mkdirSync(root, { recursive: true });
 const helper = join(root, 'runtime-state.cjs');
 copyFileSync(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url), helper);
 const children = [];
+function startSession() {
+  return spawnSync(process.execPath, ['-e', `require(${JSON.stringify(helper)}).enterRuntime(${JSON.stringify(root)}, true)();`], {
+    encoding: 'utf8', env: { ...process.env, CLAWGOD_RUNTIME_WRITE_TOKEN: '' },
+  });
+}
 async function start(source, name = 'reader.cjs', args = [], relative = false) {
   const script = join(root, name);
   writeFileSync(script, source);
@@ -51,7 +56,8 @@ try {
   assert.ok(updating.stderr.includes(String(reader.pid)), '警告必须列出占用进程');
   assert.equal(reader.exitCode, null, '升级不能主动终止已有会话');
   assert.throws(() => state.acquireRuntime(root, process.pid, true), /升级|维护/, '允许活跃会话仍不能并发升级');
-  assert.throws(() => state.enterRuntime(root), /升级|维护/, '升级期间仍不能启动新会话');
+  const updatingSession = startSession();
+  assert.equal(updatingSession.status, 0, `升级期间新会话也应能完成启动：${updatingSession.stderr}`);
   state.releaseRuntime(root, updating.stdout.trim());
   const output = [];
   reader.stdout.on('data', data => output.push(data.toString()));
@@ -60,26 +66,25 @@ try {
   assert.equal(readdirSync(root).some(name => name.startsWith('.runtime-reader.')), false);
 
   const token = state.acquireRuntime(root, process.pid);
-  assert.throws(() => state.enterRuntime(root), /升级|维护/);
+  assert.equal(startSession().status, 0, '维护锁不应阻止新会话启动');
   assert.throws(() => state.acquireRuntime(root, process.pid), /升级|维护/);
   assert.throws(() => state.releaseRuntime(root, 'wrong-token'), /锁|token/);
   const probe = spawnSync(process.execPath, ['-e', `require(${JSON.stringify(helper)}).enterRuntime(${JSON.stringify(root)});console.log('probe')`], {
-    encoding: 'utf8', env: { ...process.env, CLAWGOD_RUNTIME_WRITE_TOKEN: token },
+    encoding: 'utf8', env: { ...process.env, CLAWGOD_RUNTIME_WRITE_TOKEN: '' },
   });
   assert.equal(probe.status, 0, probe.stderr);
-  assert.equal(probe.stdout.trim(), 'probe', '安装器直属子进程可做启动检查');
+  assert.equal(probe.stdout.trim(), 'probe', '不继承维护 token 也能做启动检查');
   state.releaseRuntime(root, token);
   assert.equal(existsSync(join(root, '.runtime-write.lock')), false);
 
   copyFileSync(new URL('../src/generic/runtime/wrapper.cjs', import.meta.url), join(root, 'cli.cjs'));
   writeFileSync(join(root, 'cli.original.cjs'), 'console.log("upstream loaded")');
   const maintenance = state.acquireRuntime(root, process.pid);
-  const blocked = spawnSync(process.execPath, [join(root, 'cli.cjs'), '--help'], {
+  const duringMaintenance = spawnSync(process.execPath, [join(root, 'cli.cjs'), '--help'], {
     encoding: 'utf8', env: { HOME: join(dir, 'home with spaces'), USERPROFILE: join(dir, 'home with spaces'), PATH: process.env.PATH },
   });
-  assert.notEqual(blocked.status, 0, '真实 wrapper 在维护期间必须拒绝启动');
-  assert.doesNotMatch(blocked.stdout, /upstream loaded/);
-  assert.equal(existsSync(join(root, 'provider.json')), false, '必须在 provider 副作用之前拒绝');
+  assert.equal(duringMaintenance.status, 0, `真实 wrapper 在维护期间仍须启动：${duringMaintenance.stderr}`);
+  assert.match(duringMaintenance.stdout, /upstream loaded/);
   state.releaseRuntime(root, maintenance);
 
   const legacy = await start(idle, 'cli.cjs');
@@ -132,19 +137,14 @@ try {
 
   const foreignWriter = await start(`const s=require('./runtime-state.cjs');console.log('ready '+s.acquireRuntime(__dirname));process.stdin.once('data',()=>process.exit(0));`);
   const foreignToken = foreignWriter.ready.trim().split(' ').at(-1);
-  const forgedScript = join(root, 'foreign-token.cjs');
-  writeFileSync(forgedScript, `try { require('./runtime-state.cjs').enterRuntime(__dirname); process.exit(0); } catch (error) { require('node:fs').writeSync(2, error.message); process.exit(17); }`);
-  const forged = spawnSync(process.execPath, [forgedScript], {
-    encoding: 'utf8', env: { ...process.env, CLAWGOD_RUNTIME_WRITE_TOKEN: foreignToken },
-  });
-  assert.equal(forged.status, 17, '不是安装器后代的进程即使知道 token 也不能启动');
-  assert.match(forged.stderr, /升级|维护/, '必须确认为维护锁拒绝，而不是脚本加载失败');
+  const foreignSession = startSession();
+  assert.equal(foreignSession.status, 0, `其他进程持有维护锁时仍须启动：${foreignSession.stderr}`);
   await stop(foreignWriter);
   state.releaseRuntime(root, foreignToken);
 
   const orphanWriter = await start(`const s=require('./runtime-state.cjs');s.acquireRuntime(__dirname);${idle}`);
   const writerExit = once(orphanWriter, 'exit'); orphanWriter.kill('SIGKILL'); await writerExit;
-  assert.throws(() => state.enterRuntime(root), /升级|维护/, '安装器异常终止后不得加载可能半写的运行时');
+  assert.equal(startSession().status, 0, '安装器异常终止留下的锁不得永久阻止启动');
   assert.throws(() => state.acquireRuntime(root), /升级|维护/, '不自动回收未验证恢复的写锁');
   rmSync(join(root, '.runtime-write.lock'));
 
@@ -164,13 +164,13 @@ try {
   assert.equal(readdirSync(root).some(name => name.startsWith('.runtime-reader.')), false, '已退出会话的登记可清理');
 
   writeFileSync(join(root, '.runtime-write.lock'), 'incomplete');
-  assert.throws(() => state.enterRuntime(root), /锁|升级|维护/);
+  assert.equal(startSession().status, 0, '锁文件内容不完整也不得阻止启动');
   assert.throws(() => state.acquireRuntime(root, process.pid), /锁|升级|维护/);
   rmSync(join(root, '.runtime-write.lock'));
   if (process.platform !== 'win32') {
     const outside = join(dir, 'outside'); writeFileSync(outside, 'keep');
     symlinkSync(outside, join(root, '.runtime-write.lock'));
-    assert.throws(() => state.enterRuntime(root), /锁|升级|维护/);
+    assert.equal(startSession().status, 0, '启动无需读取维护锁或其链接目标');
     assert.equal(readFileSync(outside, 'utf8'), 'keep');
     rmSync(join(root, '.runtime-write.lock'));
   }
@@ -180,4 +180,4 @@ try {
   }
   rmSync(dir, { recursive: true, force: true });
 }
-console.log('运行会话/升级互斥：旧版进程、延迟退出、维护期启动、并发升级、崩溃登记与锁校验通过');
+console.log('运行会话登记与升级互斥：维护和残留锁不阻止启动，并发升级、卸载保护与锁校验通过');

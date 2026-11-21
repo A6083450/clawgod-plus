@@ -51,18 +51,18 @@ macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行�
 
 ## 安装 ClawGod Plus
 
-安装命令下载固定版本（v2026.11.14-claude.2.1.325）的 ClawGod Plus Release 资产。
+安装命令下载固定版本（v2026.11.21-claude.2.1.330）的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.14-claude.2.1.325/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.21-claude.2.1.330/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.14-claude.2.1.325/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.21-claude.2.1.330/install.ps1 | iex
 ```
 
 常用安装参数（不传版本时默认使用安装器已验证的 Claude Code 版本，保留较新的已装版本）：
@@ -129,7 +129,7 @@ Windows PowerShell 对应参数：
 
 后续运行 `claude update` 会复用 `~/.clawgod/enhancements.json` 中已保存的选择，并且从不主动询问。关闭 `claude-hud` 或 `claude-mem` 会恢复由 ClawGod 托管的对应配置。其他已安装插件保持不变。
 
-**Code Mode：** 需要包含 Code Mode 的官方版本；当前已验证 2.1.325，旧版 2.1.322 不支持。`code-mode` 增强默认包含在“全部”中，自定义安装需勾选 `Code Mode`；未选择时保留上游行为。安装后，Unix/macOS 用 `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 claude` 启动；PowerShell 先执行 `$env:CLAUDE_CODE_EXPERIMENTAL_CODE_MODE='1'`，再运行 `claude`。首次仍需在官方界面确认风险说明，不会自动接受或写入用户同意。此补丁仅将 Code Mode 资格判断本地化、不再为此访问官方资格服务；**模型请求仍通过现有 API 配置联网，并非离线模型**。保留本地管理员、合规和工具限制，显式启用 Agent Teams（环境变量或 `--agent-teams`）仍与 Code Mode 互斥；后台或远控入口暂不支持。请求 Code Mode 时，`agents` 增强不会隐式强开 Teams；未请求或未安装 `code-mode` 时保留原有 Agents 行为。
+**Code Mode：** 需要包含 Code Mode 的官方版本；本地资格增强已验证 2.1.325，旧版 2.1.322 不支持。2.1.330 可正常安装，但新版 SDK/后台准入暂未适配，安装器会提示并保留官方 Code Mode 行为。`code-mode` 增强默认包含在“全部”中，自定义安装需勾选 `Code Mode`；未选择时保留上游行为。安装后，Unix/macOS 用 `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 claude` 启动；PowerShell 先执行 `$env:CLAUDE_CODE_EXPERIMENTAL_CODE_MODE='1'`，再运行 `claude`。首次仍需在官方界面确认风险说明，不会自动接受或写入用户同意。此补丁仅将 Code Mode 资格判断本地化、不再为此访问官方资格服务；**模型请求仍通过现有 API 配置联网，并非离线模型**。保留本地管理员、合规和工具限制，显式启用 Agent Teams（环境变量或 `--agent-teams`）仍与 Code Mode 互斥；后台或远控入口暂不支持。请求 Code Mode 时，`agents` 增强不会隐式强开 Teams；未请求或未安装 `code-mode` 时保留原有 Agents 行为。
 
 **Claude Desktop 自动增强已暂停：** 当前源码的安装和更新流程不再自动修改 `Claude.app`，选择“全部安装”或单独启用 `computer-use` 也不包含 Desktop 的 CU/内置浏览器补丁及简体中文语言增强。CLI 的 Computer Use 功能不受影响。已有 Desktop 修改和备份保留，不自动回滚；此变更不影响此前发布的安装器。
 
@@ -415,13 +415,13 @@ bash apply-claude-code-context-limit-patch/apply-claude-code-context-limit-patch
 
 渲染器按相关声明及依赖的局部结构契约识别，变量改名、分块路径变化和无关声明改动不再要求逐版本添加指纹；真实布局或调用接口变化仍拒绝安装。未知渲染器不能靠 `--tolerate-stale` 或 clean-runtime 回退绕过。
 
-**有进程也可升级：** 安装、更新和重补丁发现活跃会话时会列出 PID、提示风险并继续，不强杀进程。升级成功后清理本次事务的旧运行时备份，不保留旧版本供现有会话使用；旧会话后续加载模块（包括退出流程）可能失败，请在升级完成后重新启动 Claude。若需避免打断任务，仍建议先正常 `/exit` 并关闭浏览器连接或后台任务。卸载仍要求先退出活跃会话；并发升级和升级期间的新启动仍会被拒绝，避免同时写入或加载半成品。
+**有进程也可升级：** 安装、更新和重补丁发现活跃会话时会列出 PID、提示风险并继续，不强杀进程。升级成功后清理本次事务的旧运行时备份，不保留旧版本供现有会话使用；旧会话后续加载模块（包括退出流程）可能失败，请在升级完成后重新启动 Claude。若需避免打断任务，仍建议先正常 `/exit` 并关闭浏览器连接或后台任务。卸载仍要求先退出活跃会话；并发升级仍会被拒绝，避免同时写入。维护锁不再拦截 Claude 启动；升级期间启动仍可能遇到尚未写完的运行文件，建议升级结束后再启动。
 
 ```bash
 claude update
 ```
 
-新版 updater 会拒绝缺少会话保护的旧安装器；遇到该提示时，请使用上方安装命令获取新版 Release 安装器。若安装器被强制终止或回滚无法确认，`.runtime-write.lock` 会保留并阻止启动：先检查安装日志和 `.runtime-rollback.*` 恢复数据，不要直接删除锁或混回旧 chunks。
+新版 updater 会拒绝缺少会话保护的旧安装器；遇到该提示时，请使用上方安装命令获取新版 Release 安装器。若安装器被强制终止或回滚无法确认，`.runtime-write.lock` 会保留并阻止下一次维护，但不再阻止 Claude 启动。下次维护前先检查安装日志和 `.runtime-rollback.*` 恢复数据，再清理已退出安装器的残留锁，不要混回旧 chunks。
 
 `claude update` 由 wrapper 直接交给 ClawGod updater，不依赖上游 bundle 的 update action 形状。普通更新要求补丁成功，不再把无增强 clean runtime 当作最新版升级成功。显式 `--version` 只尝试指定版本，并保留原有带警告的整包兼容回退。插件基线独立管理：更新不会把 Claude Code 固定到插件版本。
 

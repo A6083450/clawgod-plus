@@ -254,6 +254,10 @@ export async function runPatcher({ rootDir = DEFAULT_ROOT, args = process.argv.s
       applied++;
     } else if (result.status === 'skipped') {
       skipped++;
+      if (result.warning) {
+        console.log(`  ⚠️  ${descriptor.name} — ${result.warning}`);
+        warnings++;
+      }
     } else if (result.status === 'stale') {
       stale(descriptor.name, result.detail);
     } else {

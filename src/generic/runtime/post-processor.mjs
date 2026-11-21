@@ -7987,6 +7987,175 @@ function structuralCellProfile(source, dependencies) {
   };
 }
 
+// 2.1.330 的测宽/剪裁共用这一字素表；保留上游的宽度修正和同一轮缓存。
+function publicCellWidth330({ source, structure }) {
+  const b = structure.bindings;
+  const method = structure.ast.body.find(node => node.id?.name === b[62]);
+  const reset = structure.ast.body.find(node => node.id?.name === b[72]);
+  const [validUnicode, stripAnsi, invalidUnicode, table, extraWidths, cache, adjust, collect, clear, widthOptions] =
+    [0, 1, 13, 15, 16, 19, 26, 62, 72, 75].map(index => b[index]);
+  const replacement = `
+var clawgodWidthSegmenter;
+function ${collect}(text) {
+  if (${cache}?.text === text) return ${cache};
+  if (!${cache}) queueMicrotask(${clear});
+  clawgodWidthSegmenter ??= new Intl.Segmenter(void 0, {granularity:"grapheme"});
+  const clean = ${stripAnsi}(${validUnicode}(text) ? text : text.replace(${invalidUnicode}, "\uDC00"));
+  const graphemes = [], corrections = [], cells = new Int32Array(2 * clean.length);
+  let count = 0, extra = 0;
+  for (const {segment} of clawgodWidthSegmenter.segment(clean)) {
+    const width = Bun.stringWidth(segment, ${widthOptions});
+    const correction = ${adjust}(segment, width);
+    graphemes.push(segment);
+    corrections.push(correction);
+    cells[2 * count] = count++;
+    cells[2 * count - 1] = width;
+    extra += correction;
+  }
+  ${table} = {graphemes};
+  ${extraWidths} = corrections;
+  return ${cache} = {text,cells,count,extra};
+}
+function ${clear}() { ${cache} = ${table} = ${extraWidths} = void 0; }
+`;
+  return source.slice(0, method.start) + replacement + source.slice(reset.end);
+}
+
+// 2.1.330 把 ANSI 分词、共享测宽和画格拆开：单独冻结新契约，不放宽旧形态。
+function cellProfile330(source, ast, roots, renderer, dependencies) {
+  const windows = renderer.digest === '26a8113e812510d50521dfbf05b116da286fcb71edaa4690c24cabcbf71e634b';
+  if (!windows && renderer.digest !== '50ca962a65ba1c1dc9e5b9276e2bd547811133070bed4242150cfffb1ea71744') return null;
+  const hash = text => createHash('sha256').update(text).digest('hex');
+  const sharedDigest = '7a65764ee19863e57c3ce21f602cdc602e75b65ba71a67cf7cb6cf6458dcd995';
+  const chalkDigest = windows ? 'bf7fe0b124d50885cb32152840f9ba3ca9d319f81e891d86833d7d3ec3b43a64'
+    : '26b10a499095cf831a9e77df0a09fb6db1b1b8d12dc1a937e19a61dbefd3f44c';
+  const parsed = new Map();
+  function resolve(edge) {
+    const file = basename(edge.specifier);
+    const text = dependencies.get(file);
+    if (typeof text !== 'string') throw Error('缺少 2.1.330 字符格依赖');
+    if (!parsed.has(file)) parsed.set(file, structuralModule(text));
+    const structure = parsed.get(file);
+    const target = structure.ast.body.flatMap(node => node.type === 'ExportNamedDeclaration' ? node.specifiers : [])
+      .find(specifier => specifier.exported.name === edge.imported);
+    return { file, source: text, structure, specifier: edge.specifier, local: target?.local.name, imported: edge.imported };
+  }
+  const at = n => resolve(renderer.imports.find(edge => edge.local === renderer.bindings[n]));
+  const matches = (edge, digest, index) => edge.structure.digest === digest && edge.local === edge.structure.bindings[index];
+  function verify(edges, expected) {
+    return edges.length === expected.length && edges.every((edge, i) => matches(resolve(edge), ...expected[i]));
+  }
+  const shared = at(0);
+  if (!matches(shared, sharedDigest, 3) || [4, 5, 6].some((i, n) => {
+    const edge = at(i);
+    return edge.file !== shared.file || !matches(edge, sharedDigest, [2, 22, 26][n]);
+  })) return null;
+  const edges = nodes => nodes.filter(n => n.type === 'ImportDeclaration').flatMap(node => node.specifiers
+    .map(item => ({ local: item.local.name, imported: item.imported?.name, specifier: node.source.value, node })));
+  if (!verify(edges(shared.structure.ast.body), [
+    ['d1236e4e26cb4d6d690dca3db9f203c4c009233e2ba2025e4c85259807610b2f', 52],
+    ['ca9c06193809792f894f462447585961af7e7ebd1070f524f76a145a6e309849', 1],
+  ])) return null;
+  const tabs = at(1), chalk = at(3), normalizer = at(7), styles = at(8), colorStyles = at(9);
+  if (!matches(tabs, '6eedfaa3e565a8aff2b13a91fd8f64b981153b3df85d72d0c5fa2562a4766275', 69)
+    || !matches(chalk, chalkDigest, windows ? 122 : 121) || styles.file !== colorStyles.file) return null;
+  const names = Object.fromEntries(Object.entries({ Ns:16, Dd:27, Cx:89, xC:117, Dc:144,
+    bn:18, wo:19, Xf:20, jn:21, Rx:98, xx:101, hht:1, bGt:3, MNr:8, LNr:9 })
+    .map(([key, index]) => [key, renderer.bindings[index - (windows && index >= 13 ? 1 : 0)]]));
+  const rendererEdges = edges(ast.body);
+  function findImport(module, index) {
+    const found = rendererEdges.filter(edge => basename(edge.specifier) === module.file
+      && resolve(edge).local === module.structure.bindings[index]);
+    if (found.length !== 1) throw Error('字符格依赖绑定不唯一');
+    return found[0].local;
+  }
+  const tokenize = findImport(tabs, 32);
+  names.C8 = findImport(tabs, 79);
+  const sliceAnsi = findImport(shared, 44);
+  const tabContract = cellDeclarationContract(tabs.source, [tabs.local, tabs.structure.bindings[32], tabs.structure.bindings[79]]);
+  const styleContract = cellDeclarationContract(styles.source, [styles.local, colorStyles.local]);
+  const graphemeContract = cellDeclarationContract(normalizer.source, [normalizer.local]);
+  if (tabContract.digest !== 'e7892e5577a0036c43a3e3ce9586aec5bb9c82d3b98255ef88851238a60a9fb6'
+    || !verify(tabContract.imports, [...[0,5,12,6,14,10].map(index => ['595863d9207c1d28b62286aa0de38d14015ee5d54b48723cdfb4a360d659467c', index]), [sharedDigest, 76]])
+    || styleContract.digest !== '81ef0b199edb6b0e94cfad4d620bb92e05de9919834d3754cde9a62d170f778a'
+    || !verify(styleContract.imports, [['07931a7435f1b6946753a82b539738bc12a27ce65da75b63cc20e124ef22687c', 11], [chalkDigest, windows ? 114 : 113]])
+    || graphemeContract.digest !== 'f2e91101b5346e72ebcb5c4cecf2b8e18c6de54820d22e183a0172caebde099f'
+    || !verify(graphemeContract.imports, [[sharedDigest, 76], ['ca7e8d33b404ed73726f061679bdaac9a5910060a73755a352f1617e62f52497', 5]])) return null;
+
+  // 剪裁方法不在画行闭包内；单独核验，且在 ANSI 剪裁前按原起始列展开制表符。
+  const [cut, ...otherCuts] = ast.body.flatMap(node => node.type === 'ClassDeclaration' ? node.body.body : [])
+    .filter(node => node.key?.name === 'cutToColumns');
+  if (!cut || otherCuts.length) return null;
+  const tabAnchor = source.slice(cut.start, cut.end);
+  const [, column] = cut.value.params.map(param => param.name);
+  const init = cut.value.body.body[1]?.declarations;
+  if (init?.[0]?.init?.callee?.name !== names.Dc || init[3]?.init?.callee?.name !== sliceAnsi) return null;
+  const cutDigest = structuralModule('class ClawgodCut{' + tabAnchor + '}').digest;
+  if (!['c0ace4f7d0aae2039b57ed75e091ba0118efede9824d6104fd4f9be0f91737e3',
+    '06c3d5eb5ca98baa68dcbd6e523b886c3884c87070fedbcfb5db14cad1eed08c',
+    'b8e4f58da95f10f1702711655229f10546d2971c6310afea5fcce61c1599ccc7'].includes(cutDigest)) return null;
+  const sanitizeEnd = init[0].init.end - cut.start;
+  const tabReplacement = tabAnchor.slice(0, sanitizeEnd)
+    + ',clawgodTabOffset=((' + column + '%' + names.hht + ')+' + names.hht + ')%' + names.hht
+    + ',clawgodClipText=' + init[0].id.name + '.includes(String.fromCharCode(9))?'
+    + names.C8 + '([" ".repeat(clawgodTabOffset)+' + init[0].id.name + ']).join("").slice(clawgodTabOffset):' + init[0].id.name
+    + tabAnchor.slice(sanitizeEnd).replaceAll(sliceAnsi + '(' + init[0].id.name + ',', sliceAnsi + '(clawgodClipText,');
+
+  const textCandidates = [];
+  for (const [file, text] of dependencies) {
+    if (!text.includes(shared.specifier) || !text.includes('.trimEnd()') || text === source) continue;
+    const module = structuralModule(text);
+    const edge = edges(module.ast.body).find(edge => basename(edge.specifier) === shared.file && edge.imported === shared.imported);
+    if (!edge) continue;
+    const functions = module.ast.body.filter(node => node.type === 'FunctionDeclaration');
+    const check = functions.find(node => text.slice(node.start, node.end).includes('.trimEnd()') && text.slice(node.start, node.end).includes('.indexOf('));
+    const segment = functions.find(node => text.slice(node.start, node.end).includes(edge.local + '('));
+    if (!check || !segment || module.identifiers.some(item => item.binding === module.topBindings[edge.local]
+      && ![edge.node, segment].some(node => item.start >= node.start && item.end <= node.end))) return null;
+    const contract = cellDeclarationContract(text, [check.id.name, segment.id.name]);
+    const branch = text.slice(check.start, check.end).match(/if\(![\w$]+\.test\([\w$]+\)\)return [\w$]+\([\w$]+\([\w$]+\)\);/)?.[0];
+    if (!branch || contract.digest !== '02a20ad049b036e4736c5815d30a0cd9d9ecf7442b3c3a10bc605188b12f3960'
+      || !matches(resolve(contract.imports[4]), sharedDigest, 2)
+      || contract.imports[5].local !== edge.local) return null;
+    textCandidates.push({ file, source: text, branch });
+  }
+  if (textCandidates.length !== 1) return null;
+  const text = textCandidates[0];
+  const shape = roots.map(name => {
+    const node = ast.body.find(node => node.id?.name === name);
+    const declaration = source.slice(node.start, node.end);
+    return { header: declaration.slice(0, declaration.indexOf('{') + 1), digest: hash(declaration) };
+  });
+  const line = ast.body.find(node => node.id?.name === names.xC);
+  const [screen,, x, y, cells] = line.params.map(param => param.name);
+  const call = line.body.body.at(-1)?.argument?.alternate;
+  if (call?.type !== 'CallExpression') return null;
+  const writeLineSource = source.slice(line.start, call.start) + 'paintCells(' + [screen, cells + '.cells', x, y].join(',') + ')' + source.slice(call.end, line.end);
+  const rendererSource = CELL_RENDERER_SOURCE
+    .replace('var styles = [];', 'var styles = clawgodSgrState();')
+    .replace('MNr(LNr(styles))', 'MNr(LNr(clawgodStyleEntries(styles)))')
+    .replace('var value = segment.segment;', 'var value = clawgodNormalizeGrapheme(segment.segment);\n      var width = Bun.stringWidth(segment.segment, clawgodAmbiguousNarrow);')
+    .replace('width: Bun.stringWidth(value, clawgodAmbiguousNarrow),', 'width: width + (clawgodNeedsWidthCorrection(segment.segment) ? clawgodExtraWidth(segment.segment, width) : 0),')
+    .replace('for (var token of cmr(text))', 'for (var token of clawgodTokenize(text))')
+    .replace('token.type === "char"', 'token.type === "text"')
+    .replace('var code = token.code;', 'var code = token.value;')
+    .replace('styles = Kf(styles, [token]);', 'clawgodUpdateSgr(code, styles);');
+  const rendererImports = 'import{clawgodSgrState,clawgodUpdateSgr,clawgodStyleEntries}from' + JSON.stringify(tabs.specifier) + ';\n'
+    + 'const clawgodTokenize=' + tokenize + ',clawgodNeedsWidthCorrection=' + renderer.bindings[5]
+    + ',clawgodExtraWidth=' + renderer.bindings[6] + ';\n';
+  const tabBindings = tabs.structure.bindings;
+  const tabsUpdate = '\nexport{' + tabBindings[205] + ' as clawgodSgrState,' + tabBindings[206] + ' as clawgodUpdateSgr};\n'
+    + 'export function clawgodStyleEntries(styles){return styles.flatMap((value,index)=>{const end=' + tabBindings[132]
+    + '[index];return value&&end!==28?[{type:"ansi",code:"\\x1b["+value+"m",endCode:"\\x1b["+end+"m"}]:[]})}\n';
+  return { shape, names, tabAnchor, tabReplacement, rendererSource, writeLineSource, mappedWriteLine: true,
+    graphemeNormalizer: renderer.bindings[7], rendererImports, lineCellsSource: CELL_LINE_CELLS_SOURCE.replace('trailingSpaces() {', 'trailingSpaces(text) {\n    this.segment(text);'),
+    shared: { specifier: shared.specifier, digest: hash(shared.source), factory: shared.imported,
+      text: text.file, textDigest: hash(text.source), textBranch: text.branch,
+      widthSource: publicCellWidth330(shared),
+      tabs: tabs.file, tabsUpdate },
+  };
+}
+
 // 七参数字符格 ABI：冻结可达声明而非整个 renderer，绑定名和分块路径不属于接口。
 function localCellProfile(source, dependencies) {
   try {
@@ -8004,6 +8173,10 @@ function localCellProfile(source, dependencies) {
       one(text => /^function [\w$]+\(([\w$]+)\)\{return [\w$]+\.test\(\1\)\?\1\.replace\([\w$]+,"\\uFFFD"\):\1\}$/.test(text)),
     ];
     const renderer = cellDeclarationContract(source, roots);
+    if (['50ca962a65ba1c1dc9e5b9276e2bd547811133070bed4242150cfffb1ea71744',
+      '26a8113e812510d50521dfbf05b116da286fcb71edaa4690c24cabcbf71e634b'].includes(renderer.digest)) {
+      return cellProfile330(source, ast, roots, renderer, dependencies);
+    }
     const normalizedWindows = renderer.digest === '9512f3cfbcebee9c2dd2e4c675c27af6d42ab9ed8b70484966497823c365ab47';
     const normalizedGraphemes = normalizedWindows || renderer.digest === '738c6749821a9bcc06ea5e58bc14e8e745334d8878b49207c21fcc1714612f40';
     const splitBidiWindows = normalizedWindows || renderer.digest === '14c0524e2ffffed0c7b54c8ff72ed5b132368b5f14d91fad4826cd071669542d';
@@ -8285,7 +8458,7 @@ export function adaptCellRenderer(source, shape, dependencies = new Map()) {
   return null;
 }
 
-function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, graphemeNormalizer, rendererSource = CELL_RENDERER_SOURCE, writeLineSource = CELL_WRITE_LINE_SOURCE, mappedWriteLine = false, oscDeclaration = OSC8_DECLARATION }, dependencies) {
+function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacement, dependency, shared, graphemeNormalizer, rendererSource = CELL_RENDERER_SOURCE, writeLineSource = CELL_WRITE_LINE_SOURCE, lineCellsSource = CELL_LINE_CELLS_SOURCE, rendererImports, mappedWriteLine = false, oscDeclaration = OSC8_DECLARATION }, dependencies) {
   if (shared) {
     const factory = dependencies.get(basename(shared.specifier));
     if (typeof factory !== 'string' || createHash('sha256').update(factory).digest('hex') !== shared.digest) return null;
@@ -8308,6 +8481,8 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
     if (imports.length !== 1) return null;
     ansiImport = `import{${dependency.tokenizer} as clawgodAnsiTokens,${dependency.normalizeStyles} as clawgodNormalizeStyles}from${JSON.stringify(dependency.specifier)};\n`
       + 'function clawgodMergeStyles(styles,codes){return clawgodNormalizeStyles([...styles,...codes])}\n';
+  } else if (rendererImports) {
+    ansiImport = rendererImports;
   } else if (!source.includes(oscDeclaration)) return null;
   for (const binding of CELL_SEGMENTER_BINDINGS) {
     const local = names[binding] ?? binding;
@@ -8327,7 +8502,7 @@ function adaptCellRendererShape(source, { shape, names, tabAnchor, tabReplacemen
   }
   const replacements = [
     [spans[0], rendererSource],
-    [spans[1], CELL_LINE_CELLS_SOURCE],
+    [spans[1], lineCellsSource],
     [spans[2], CELL_SET_CELL_SOURCE],
     [spans[3], writeLineSource],
   ].sort((first, second) => second[0].start - first[0].start);
@@ -8376,7 +8551,7 @@ function installPublicCellRenderer(modulePaths) {
       || createHash('sha256').update(text).digest('hex') !== shared.textDigest) {
       throw new Error('共享 CellSegmenter 的渲染器或名称校验分块发生漂移；已拒绝安装。');
     }
-    const factorySource = targets[0].source;
+    const factorySource = shared.widthSource ?? targets[0].source;
     const factoryHeader = `function ${shared.factory}(`;
     const factoryStart = factorySource.indexOf(factoryHeader);
     const factoryEnd = findDeclarationEnd(factorySource, factorySource.indexOf('{', factoryStart));
@@ -8403,6 +8578,10 @@ function installPublicCellRenderer(modulePaths) {
         + `function ${shared.factory}(){throw Error("ClawGod 已替换私有 CellSegmenter；不支持新增的原生调用路径。")}`
         + factorySource.slice(factoryEnd + 1)],
     ]);
+    if (shared.tabs) {
+      const tabPath = modulePaths.find(path => basename(path) === shared.tabs);
+      updates.set(tabPath, dependencies.get(shared.tabs) + shared.tabsUpdate);
+    }
     for (const [path, source] of updates) writeFileSync(path, source);
     console.log('已用公开 Bun 字符格渲染器替换共享私有实现，并保留技能名称防冒充校验。');
     return;

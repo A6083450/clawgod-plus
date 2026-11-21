@@ -163,28 +163,15 @@ function releaseRuntime(root, token) {
   fs.unlinkSync(path);
 }
 
-function assertRuntimeAvailable(root) {
-  const lock = readLock(join(root, WRITE_LOCK));
-  if (!lock) return;
-  // 仅持锁安装器的后代可运行候选启动检查，继承字符串本身不授予访问权。
-  if (process.env.CLAWGOD_RUNTIME_WRITE_TOKEN === lock.token && alive(lock.pid)) {
-    if (ancestors(process.ppid, processList()).has(lock.pid)) return;
-  }
-  throw Error('ClawGod 正在升级/维护，暂时不能启动 Claude；请等待完成后重试。');
-}
-
 function enterRuntime(root, bootstrap = false) {
-  assertRuntimeAvailable(root);
+  // 写锁只协调维护进程；中断升级留下的锁不能永久阻止用户启动。
   const file = join(root, `${READER_PREFIX}${process.pid}.${randomUUID()}`);
   const record = { pid: process.pid, token: randomUUID(), bootstrap };
   fs.writeFileSync(file, JSON.stringify(record), { flag: 'wx', mode: 0o600 });
-  try { assertRuntimeAvailable(root); }
-  catch (error) { fs.unlinkSync(file); throw error; }
   process.once('exit', () => { try { fs.unlinkSync(file); } catch {} });
   return () => {
     record.bootstrap = false;
     fs.writeFileSync(file, JSON.stringify(record), { mode: 0o600 });
-    assertRuntimeAvailable(root);
   };
 }
 
