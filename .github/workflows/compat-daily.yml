@@ -72,7 +72,7 @@ jobs:
             platform: macos
             arch: arm64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 60
     env:
       SMOKE_PLATFORM: ${{ matrix.platform }}
       SMOKE_RUNNER: ${{ matrix.os }}
