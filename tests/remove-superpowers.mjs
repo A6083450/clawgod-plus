@@ -16,7 +16,7 @@ const all = { schemaVersion: 1, mode: 'all', enabled: [] };
 
 assert.deepEqual(Object.keys(PLUGIN_BASELINES), ['hud', 'memory'], 'only HUD and memory remain managed baselines');
 assert.deepEqual(PLUGIN_ENHANCEMENT_IDS, { hud: 'claude-hud', memory: 'claude-mem' });
-assert.equal(manifest.length, 21, 'removing Superpowers must retain Code Mode and the other twenty enhancements');
+assert.equal(manifest.length, 22, 'removing Superpowers must retain Code Mode, local Ship, and the other twenty enhancements');
 assert.equal(manifest.some(entry => entry.id === 'superpowers'), false);
 assert.equal(ids.includes('code-mode'), true);
 assert.doesNotMatch(readFileSync(join(root, 'src/generic/runtime/plugin-dependencies.mjs'), 'utf8'), /superpowers|archiveMarketplace/i, 'the plugin runtime must have no retired baseline, wrapper, source alias or management branch');

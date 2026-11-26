@@ -57,6 +57,7 @@ CLAWGOD_ENHANCEMENT_IDS=(
   design-canvas
   agents
   planning
+  ship
   voice
   auto-mode
   code-mode
@@ -81,6 +82,7 @@ CLAWGOD_ENHANCEMENT_LABELS=(
   'Design Canvas'
   'Agents'
   'Planning'
+  'Ship (Local PR Review/Watch)'
   'Voice'
   'Auto Mode'
   'Code Mode'

@@ -11,6 +11,7 @@ const expectedManifest = [
   { id: 'design-canvas', kind: 'patch' },
   { id: 'agents', kind: 'patch' },
   { id: 'planning', kind: 'patch' },
+  { id: 'ship', kind: 'patch' },
   { id: 'voice', kind: 'patch' },
   { id: 'auto-mode', kind: 'patch' },
   { id: 'code-mode', kind: 'patch' },
@@ -134,8 +135,8 @@ const ownedDescriptors = patchRegistries.flatMap(registry => [
   ...registry.patches.map(descriptor => ({ descriptor, owner: registry.id })),
   ...registry.customPatches.map(descriptor => ({ descriptor, owner: registry.id })),
 ]);
-assert.equal(ownedDescriptors.length, 85, 'every regex and custom patch descriptor must retain exactly one owner');
-assert.equal(Object.keys(runtimeFeatureMetadata).length, 50, 'all upstream runtime feature patch IDs must be exported');
+assert.equal(ownedDescriptors.length, 86, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(Object.keys(runtimeFeatureMetadata).length, 51, 'all upstream runtime feature patch IDs must be exported');
 assert.equal(
   new Set(ownedDescriptors.map(({ descriptor }) => descriptor)).size,
   ownedDescriptors.length,

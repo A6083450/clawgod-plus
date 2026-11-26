@@ -161,10 +161,14 @@ function transform(id, source, ast) {
         && !n.callee.computed && n.callee.object.type === 'Identifier' && n.arguments.length === 1
         && n.arguments[0]?.name === argument;
       // 2.1.330：helper 同时处理 ToolSearch 与保留独立错误行的工具名单。
-      const toolImports = new Set(['chunk-t99xdws4.js', 'chunk-qhdcfsp4.js', 'chunk-m47rkk3y.js']);
+      // ToolSearch 的真实模块与导出名按平台冻结，不接受任意同名导入。
+      const toolImports = new Map([
+        ['chunk-t99xdws4.js', 'co'], ['chunk-qhdcfsp4.js', 'co'], ['chunk-m47rkk3y.js', 'co'], // 2.1.330
+        ['chunk-4c3dh96d.js', 'Er'], ['chunk-bpyyz97z.js', 'Eo'], ['chunk-myx1aaz9.js', 'vo'], // 2.1.332
+      ]);
       const toolSearch = name => nodes('VariableDeclarator', n => n.id.name === name && literal(n.init, 'ToolSearch')).length === 1
         || ast.body.some(n => n.type === 'ImportDeclaration' && toolImports.has(n.source.value.split('/').at(-1))
-          && n.specifiers.some(s => s.imported?.name === 'co' && s.local.name === name));
+          && n.specifiers.some(s => s.imported?.name === toolImports.get(n.source.value.split('/').at(-1)) && s.local.name === name));
       const modern = [];
       const tool = classify.params[0].name;
       for (const branch of classify.body.body) {

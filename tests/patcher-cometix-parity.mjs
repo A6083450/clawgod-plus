@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -9,6 +9,7 @@ import { createPatchSelection, enhancementManifest } from '../src/generic/patche
 import { resolveEnhancementSelection } from '../src/generic/enhancement-config.mjs';
 import { runtimeFeatureMetadata } from '../src/generic/patcher/runtime-features.mjs';
 import { cometixPatches } from '../src/generic/patcher/enhancements/cometix.mjs';
+import { parsePatchSource } from '../src/generic/patcher/semantic.mjs';
 
 const rootDir = mkdtempSync(join(tmpdir(), 'clawgod-cometix-'));
 seedPatcherAcorn(rootDir);
@@ -131,6 +132,84 @@ function settle(message,tools,extra){if(message.type==="redacted_thinking"||mess
     splitClassifier.replace('popsOutOnError:errors.includes(name)', 'popsOutOnError:other.includes(name)'), { rootDir });
   assert.equal(unknownHelper.status,'failed');
   assert.equal(unknownHelper.code,undefined);
+
+  // 2.1.332 真实三平台声明切片；依赖仅在 VM harness 注入，不执行上游入口。
+  const foldPatch = cometixPatches.find(p => p.id === 'disable-collapse-read-search');
+  const moduleBoundary = '\n/*__CLAWGOD_MODULE_BOUNDARY__*/\n';
+  const foldPlatforms = [
+    ['darwin-arm64', 'q7e', 'Nwo', 'uXi', 'mTt', 'Er', 'chunk-4c3dh96d.js',
+      { ub: n => n === 'REPL', kp: () => false, oXi: () => false, rXi: () => false,
+        Ft: 'Write', st: 'Edit', Adt: input => input, Yke: (tools, n) => tools.find(t => t.name === n), RZ: n => n,
+        Fdn: () => undefined, hf: [], mXi: () => [], JQe: () => ['tool-1'], P3o: () => 1 }],
+    ['linux-x64', 'M7e', 'VSr', 'zXi', 'zvt', 'Eo', 'chunk-bpyyz97z.js',
+      { db: n => n === 'REPL', bp: () => false, wXi: () => false, TXi: () => false,
+        Ft: 'Write', st: 'Edit', ldt: input => input, Lke: (tools, n) => tools.find(t => t.name === n), gZ: n => n,
+        fdn: () => undefined, pf: [], XXi: () => [], XQe: () => ['tool-1'], G8o: () => 1 }],
+    ['win32-x64', 'N7e', 'JSr', 'OXi', 'VEt', 'vo', 'chunk-myx1aaz9.js',
+      { cw: n => n === 'REPL', bp: () => false, EXi: () => false, vXi: () => false,
+        Ht: 'Write', st: 'Edit', cdt: input => input, Fke: (tools, n) => tools.find(t => t.name === n), CZ: n => n,
+        hdn: () => undefined, pf: [], LXi: () => [], QQe: () => ['tool-1'], J8o: () => 1 }],
+  ];
+  for (const [platform, classifierName, helperName, admissionName, errorList, toolSearchName, toolModule, dependencies] of foldPlatforms) {
+    const original = readFileSync(new URL('./fixtures/cometix-fold-2.1.332-' + platform + '.js', import.meta.url), 'utf8');
+    const variants = [original, original.replace(/(?:\/\$bunfs\/root\/|[A-Z]:\/~BUN\/root\/)/g, './')];
+    const functionText = (source, name) => {
+      const code = source.split(moduleBoundary).find(code => code.includes('function ' + name + '('));
+      const declaration = parsePatchSource(code).body.find(node => node.type === 'FunctionDeclaration' && node.id.name === name);
+      return code.slice(declaration.start, declaration.end);
+    };
+    for (const source of variants) {
+      const result = await foldPatch.apply(source, { rootDir });
+      assert.equal(result.status, 'applied', platform + ': ' + result.detail);
+      assert.equal(result.count, 4, '真实 admission、classifier 与两处 scanner 条件都应命中');
+      assert.equal(functionText(result.code, helperName), functionText(source, helperName), '共享 helper 必须逐字保留');
+      assert.equal((await foldPatch.apply(result.code, { rootDir })).status, 'already');
+      for (const options of [{ dryRun: true }, { verify: true }]) {
+        const readOnly = await foldPatch.apply(source, { rootDir, ...options });
+        assert.equal(readOnly.status, options.verify ? 'verify' : 'applied', readOnly.detail);
+        assert.equal(readOnly.code, source);
+      }
+      // 只移除 imports/exports，保留真实声明；本地依赖由测试显式注入。
+      const executable = result.code.split(moduleBoundary).map(code => {
+        const ast = parsePatchSource(code);
+        return ast.body.filter(node => !['ImportDeclaration', 'ExportNamedDeclaration'].includes(node.type))
+          .map(node => code.slice(node.start, node.end)).join('\n');
+      }).join('\n');
+      for (const enabled of [true, false]) {
+        const ctx = { globalThis: undefined, __clawgodPatches: { 'disable-collapse-read-search': enabled },
+          ce: () => false, ...dependencies };
+        ctx.globalThis = ctx;
+        runInNewContext(executable, ctx);
+        const tools = [{ name: 'Read', isSearchOrReadCommand: () => ({ isRead: true, isSearch: false }) },
+          { name: 'ToolSearch' }];
+        const message = name => ({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input: {}, id: 'tool-1' }] } });
+        assert.equal(ctx[helperName]('ToolSearch'), false, '共享 helper 仍保留 fullscreen 约束');
+        assert.equal(ctx[classifierName]('ToolSearch', {}, tools).isAbsorbedSilently, enabled);
+        assert.equal(ctx[classifierName]('TaskCreate', {}, tools).popsOutOnError, true);
+        assert.equal(ctx[classifierName]('REPL', {}, tools).isREPL, true);
+        assert.equal(ctx[admissionName](message('Read'), tools) === null, enabled);
+        assert.equal(ctx[admissionName](message('REPL'), tools) === null, enabled);
+        assert.equal(ctx[admissionName](message('ToolSearch'), tools) !== null, enabled);
+        assert.ok(ctx[admissionName](message('TaskCreate'), tools), '错误弹出工具始终保留折叠');
+        assert.equal(ctx.hp([message('Read')], tools, new Set()), enabled ? 0 : -1);
+        assert.equal(ctx.hp([message('REPL')], tools, new Set()), enabled ? 0 : -1);
+        assert.equal(ctx.hp([message('ToolSearch')], tools, new Set()), enabled ? -1 : 0);
+        assert.equal(ctx.hp([message('TaskCreate')], tools, new Set()), -1);
+        assert.equal(ctx.hp([{ type: 'grouped_tool_use', toolName: 'Read', messages: [message('Read')] }], tools, new Set()), enabled ? 0 : -1);
+      }
+    }
+    const badImport = original.replace(toolModule, 'chunk-unknown.js');
+    const badExport = original.replace(new RegExp('(import\\{[^}]*?)\\b' + toolSearchName + '\\b(?=[,}])'), '$1wrongToolExport as ' + toolSearchName);
+    const badErrors = original.replace('popsOutOnError:' + errorList + '.includes', 'popsOutOnError:unknownErrors.includes');
+    for (const drift of [badImport, badExport, badErrors]) {
+      assert.notEqual(drift, original, '漂移必须真正改变夹具');
+      for (const options of [{}, { dryRun: true }, { verify: true }]) {
+        const rejected = await foldPatch.apply(drift, { rootDir, ...options });
+        assert.equal(rejected.status, 'failed', rejected.detail);
+        assert.equal(rejected.code, undefined, '拒绝漂移不能泄露先前 admission 改写');
+      }
+    }
+  }
 
   const voice = await patch('enable-voice-mode', `
 function flags(){return false}function permitted(){return false}function voiceFlag(){return flags("allow_voice_mode")}function voiceGate(){return permitted()&&voiceFlag()}

@@ -520,14 +520,14 @@ for (const [path, markers] of Object.entries(localizedPluginContracts)) {
 }
 
 const enhancementIds = [
-  'chrome', 'computer-use', 'agents', 'planning', 'voice', 'auto-mode', 'code-mode',
+  'chrome', 'computer-use', 'agents', 'planning', 'ship', 'voice', 'auto-mode', 'code-mode',
   'unrestricted-tools', 'paste-images', 'privacy', 'branding',
   'claude-hud', 'claude-mem',
 ];
 const enhancementSemanticMarkers = {
-  'README.md': ['默认启用全部', 'claude update', '其他已安装插件保持不变'],
-  'README_EN.md': ['all 21 enhancements are enabled by default', 'claude update', 'Other installed plugins are left unchanged'],
-  'README_JP.md': ['デフォルトで 21', 'claude update', 'その他のインストール済みプラグインは変更しません'],
+  'README.md': ['默认启用全部', 'claude update', '其他已安装插件保持不变', '复用内置 `ship-local`', '无需 Claude 云端会话或官方登录', '保留原有确认和权限流程'],
+  'README_EN.md': ['all 22 enhancements are enabled by default', 'claude update', 'Other installed plugins are left unchanged', 'reuses the built-in `ship-local`', 'without Claude cloud sessions or official Claude login', 'Original confirmation and permission flows remain intact'],
+  'README_JP.md': ['デフォルトで 22', 'claude update', 'その他のインストール済みプラグインは変更しません', '内蔵の `ship-local` を再利用', 'Claude のクラウドセッションや公式 Claude ログインは不要', '元の確認・権限フローを維持'],
 };
 for (const path of ['README.md', 'README_EN.md', 'README_JP.md']) {
   const source = read(path);

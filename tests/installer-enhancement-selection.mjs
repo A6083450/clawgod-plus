@@ -56,6 +56,7 @@ const expectedIds = [
   'design-canvas',
   'agents',
   'planning',
+  'ship',
   'voice',
   'auto-mode',
   'code-mode',
@@ -95,6 +96,14 @@ const codeModeConfig = `{
   ]
 }
 `;
+const shipConfig = `{
+  "schemaVersion": 1,
+  "mode": "custom",
+  "enabled": [
+    "ship"
+  ]
+}
+`;
 const chromeBrandingConfig = `{
   "schemaVersion": 1,
   "mode": "custom",
@@ -111,6 +120,7 @@ const withoutFirstTwoConfig = `{
     "design-canvas",
     "agents",
     "planning",
+    "ship",
     "voice",
     "auto-mode",
     "code-mode",
@@ -138,6 +148,7 @@ const withoutFirstConfig = `{
     "design-canvas",
     "agents",
     "planning",
+    "ship",
     "voice",
     "auto-mode",
     "code-mode",
@@ -165,6 +176,7 @@ const withoutSecondConfig = `{
     "design-canvas",
     "agents",
     "planning",
+    "ship",
     "voice",
     "auto-mode",
     "code-mode",
@@ -400,6 +412,16 @@ function cleanup(result) {
 }
 
 {
+  const result = runUnix(['--enhancements', 'ship']);
+  try {
+    assert.equal(result.run.status, 0, result.run.stderr);
+    assertOnlyConfig(result.fixture.home, shipConfig);
+  } finally {
+    cleanup(result);
+  }
+}
+
+{
   const result = runUnix(['--enhancements', 'branding,chrome']);
   try {
     assert.equal(result.run.status, 0, result.run.stderr);
@@ -502,7 +524,7 @@ function cleanup(result) {
     assert.equal(rerun.status, 0, rerun.stderr);
     assertOnlyConfig(fixture.home, original);
     const after = statSync(configPath);
-    assert.deepEqual({ dev: after.dev, ino: after.ino, mode: after.mode }, { dev: before.dev, ino: before.ino, mode: before.mode }, 'saved full-custom21 upgrades must preserve original bytes, inode and mode, not persist the in-memory all normalization');
+    assert.deepEqual({ dev: after.dev, ino: after.ino, mode: after.mode }, { dev: before.dev, ino: before.ino, mode: before.mode }, 'saved full-custom22 upgrades must preserve original bytes, inode and mode, not persist the in-memory all normalization');
   } finally {
     rmSync(fixture.fixtureRoot, { recursive: true, force: true });
   }
@@ -621,6 +643,7 @@ function runUnixTtyCase(label, lines, expected, {
       const promptIndex = output.indexOf('  ↑/↓ 移动');
       const firstMenu = promptIndex === -1 ? output : output.slice(0, promptIndex);
       assert.match(firstMenu, /code-mode[^\r\n]*Code Mode/, `${label}: 菜单必须展示 Code Mode 标签`);
+      assert.match(firstMenu, /ship[^\r\n]*Ship \(Local PR Review\/Watch\)/, `${label}: menu must show the local Ship label`);
       let cursor = -1;
       for (const [index, id] of expectedIds.entries()) {
         const next = firstMenu.indexOf(`${index + 1})`, cursor + 1);
@@ -906,6 +929,7 @@ function runPowerShell(pwsh, label, args, expected, { keySequence = null, prepar
 const pwsh = findPwsh();
 if (pwsh) {
   runPowerShell(pwsh, 'code-mode-explicit', ['-Enhancements', 'code-mode'], codeModeConfig);
+  runPowerShell(pwsh, 'ship-explicit', ['-Enhancements', 'ship'], shipConfig);
   let output = runPowerShell(pwsh, 'explicit', ['-Enhancements', 'branding,chrome'], chromeBrandingConfig);
   assert.doesNotMatch(output, /Choice|interactive enhancement selection unavailable/i, 'PowerShell explicit CSV must not prompt');
   output = runPowerShell(pwsh, 'explicit-precedence', ['-ChooseEnhancements', '-Enhancements', 'none'], noneConfig, {
@@ -950,7 +974,7 @@ if (pwsh) {
       assert.equal(run.status, 0, run.stdout + run.stderr);
       assertOnlyConfig(fixture.home, original, [...new Set([...baseline.entries, '.clawgod'])].sort());
       const after = statSync(configPath);
-      assert.deepEqual({ dev: after.dev, ino: after.ino, mode: after.mode }, { dev: before.dev, ino: before.ino, mode: before.mode }, 'PowerShell saved full-custom21 upgrades must preserve original bytes, inode and mode');
+      assert.deepEqual({ dev: after.dev, ino: after.ino, mode: after.mode }, { dev: before.dev, ino: before.ino, mode: before.mode }, 'PowerShell saved full-custom22 upgrades must preserve original bytes, inode and mode');
     } finally {
       rmSync(fixture.fixtureRoot, { recursive: true, force: true });
     }
@@ -979,6 +1003,7 @@ if (pwsh) {
     assert.doesNotMatch(output, /interactive enhancement selection unavailable/i, `PowerShell ${label} prompt must not fall back`);
     assert.equal(countOccurrences(output, '  Enhancements'), keySequence.filter(k => k !== 'Enter').length + 1, `PowerShell ${label} exact menu count`);
     assert.match(output, /code-mode[^\r\n]*Code Mode/, `PowerShell ${label}: 菜单必须展示 Code Mode 标签`);
+    assert.match(output, /ship[^\r\n]*Ship \(Local PR Review\/Watch\)/, `PowerShell ${label}: menu must show the local Ship label`);
     for (const warning of warnings) assert.equal(countOccurrences(output, warning), 1, `PowerShell ${label} exact warning count`);
   }
 

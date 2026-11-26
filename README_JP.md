@@ -51,18 +51,18 @@ macOS/Linux では Shell、Windows では PowerShell を OS のコマンド入�
 
 ## ClawGod Plus をインストール
 
-以下のコマンドは、固定バージョン（v2026.11.21-claude.2.1.330）の ClawGod Plus Release アセットをダウンロードします。
+以下のコマンドは、固定バージョン（v2026.11.26-claude.2.1.332）の ClawGod Plus Release アセットをダウンロードします。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.21-claude.2.1.330/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.21-claude.2.1.330/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.ps1 | iex
 ```
 
 主なインストーラオプション（バージョン未指定時はインストーラの検証済み Claude Code バージョンを使用し、より新しいインストール済みバージョンは維持）：
@@ -80,14 +80,14 @@ bash install.sh --lean-off        # 全ツールを復元。デフォルト
 
 ## 任意の拡張機能（Enhancements）
 
-ClawGod Plus は 21 の任意拡張機能を提供し、デフォルトで全て有効です。拡張機能 ID は固定されており、次の順序です。
+ClawGod Plus は 22 の任意拡張機能を提供し、デフォルトで全て有効です。拡張機能 ID は固定されており、次の順序です。
 
 | 種類 | 拡張機能 ID |
 |---|---|
-| パッチ | `chrome`、`computer-use`、`design-canvas`、`agents`、`planning`、`voice`、`auto-mode`、`code-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding`、`classifier-fail-open`、`cleanup-period`、`disable-collapse-read-search`、`enable-keybindings`、`file-read-limit`、`transcript-dialog-replay`、`unlock-ultracode` |
+| パッチ | `chrome`、`computer-use`、`design-canvas`、`agents`、`planning`、`ship`、`voice`、`auto-mode`、`code-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding`、`classifier-fail-open`、`cleanup-period`、`disable-collapse-read-search`、`enable-keybindings`、`file-read-limit`、`transcript-dialog-replay`、`unlock-ultracode` |
 | プラグイン | `claude-hud`、`claude-mem` |
 
-非対話環境（パイプインストール、CI、`claude update`）でオプションを指定しない場合、デフォルトで 21 の拡張機能がすべて有効になります。選択内容は厳密な JSON として `~/.clawgod/enhancements.json` に保存されます。
+非対話環境（パイプインストール、CI、`claude update`）でオプションを指定しない場合、デフォルトで 22 の拡張機能がすべて有効になります。選択内容は厳密な JSON として `~/.clawgod/enhancements.json` に保存されます。
 
 ```json
 {
@@ -103,7 +103,7 @@ ClawGod Plus は 21 の任意拡張機能を提供し、デフォルトで全て
 
 ```
   ClawGod Plus 拡張機能の選択
-   1) 全21項目（既定、Enter で選択）
+   1) 全22項目（既定、Enter で選択）
    2) コアのみ（拡張機能なし）
    3) カスタム（項目ごとに選択）
    Enter: 全項目 · Esc: 中止
@@ -128,6 +128,10 @@ Windows PowerShell では次の引数になります。
 ```
 
 その後の `claude update` は `~/.clawgod/enhancements.json` に保存済みの選択を再利用し、一切プロンプトを表示しません。`claude-hud` または `claude-mem` を無効化すると ClawGod が管理する設定を復元します。その他のインストール済みプラグインは変更しません。
+
+**Ship のローカル PR フロー：** `ship` 拡張は内蔵の `ship-local` を再利用し、`/ship` と `/ship-local` で PR review/watch をローカル実行します。Claude のクラウドセッションや公式 Claude ログインは不要ですが、設定済みのモデル provider、`git`、GitHub 認証済みの `gh`、GitHub へのネットワーク接続は引き続き必要です。オフラインモードではありません。元の確認・権限フローを維持し、確認の自動承認や権限の回避は行わず、PR の自動マージを保証しません。
+
+**ローカル Code Mode：** ローカル資格判定は 2.1.325 と 2.1.332 に対応し、2.1.330 は上流の動作を維持します。2.1.332 のローカル対話モードでは公式 Claude アカウント・公式モデル・クラウド資格サービスは不要です。「すべて」に含まれますが自動切り替えは行わず、`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 claude` で起動します（PowerShell は `$env:CLAUDE_CODE_EXPERIMENTAL_CODE_MODE='1'` の後に `claude`）。初回リスク確認と明示的な無効化は維持します。モデル API の通信は引き続き必要です。管理者・コンプライアンス・テレメトリー・ツール・エンジンの検査を維持し、SDK/headless・バックグラウンド・リモート入口は開放しません。
 
 **Claude Desktop の自動拡張は一時停止中です：** 現在のソースから生成したインストーラは、インストール・更新時に `Claude.app` を自動変更しません。すべての拡張を選択した場合も、`computer-use` を個別に有効化した場合も、Desktop の CU／内蔵ブラウザパッチと簡体字中国語の言語拡張は適用しません。CLI の Computer Use には影響しません。既存の Desktop の変更とバックアップは保持し、自動復元しません。公開済みのインストーラは変更されません。
 

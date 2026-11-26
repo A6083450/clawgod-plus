@@ -127,8 +127,8 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       /(?:⚠️|!!) Computer Use gate bypass/,
       `${name}: no unverifiable Computer Use alternative`,
     );
-    assert.match(firstOutput, /Result: 24 applied, 61 skipped, 0 failed/, `${name}: default-all summary must include optional classifier, terminal and voice input descriptors`);
-    assert.match(firstOutput, /Enhancements: 21 enabled, 0 disabled/, `${name}: default-all enhancement summary must be stable`);
+    assert.match(firstOutput, /Result: 24 applied, 62 skipped, 0 failed/, `${name}: default-all summary must include optional classifier, terminal and voice input descriptors`);
+    assert.match(firstOutput, /Enhancements: 22 enabled, 0 disabled/, `${name}: default-all enhancement summary must be stable`);
 
 
 

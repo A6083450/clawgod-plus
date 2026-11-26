@@ -51,18 +51,18 @@ The installer fetches the current platform-specific official `@anthropic-ai/clau
 
 ## Install ClawGod Plus
 
-These commands download the pinned ClawGod Plus release assets (v2026.11.21-claude.2.1.330).
+These commands download the pinned ClawGod Plus release assets (v2026.11.26-claude.2.1.332).
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.21-claude.2.1.330/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.21-claude.2.1.330/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.ps1 | iex
 ```
 
 Useful installer options (with no version specified, the installer uses its verified Claude Code version and preserves a newer installed version):
@@ -80,14 +80,14 @@ Green branding means the patched runtime is active. The original command is back
 
 ## Optional enhancements
 
-ClawGod Plus offers 21 optional enhancements, all enabled by default. The enhancement IDs are stable and ordered as follows:
+ClawGod Plus offers 22 optional enhancements, all enabled by default. The enhancement IDs are stable and ordered as follows:
 
 | Kind | Enhancement ID |
 |---|---|
-| Patch | `chrome`, `computer-use`, `design-canvas`, `agents`, `planning`, `voice`, `auto-mode`, `code-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding`, `classifier-fail-open`, `cleanup-period`, `disable-collapse-read-search`, `enable-keybindings`, `file-read-limit`, `transcript-dialog-replay`, `unlock-ultracode` |
+| Patch | `chrome`, `computer-use`, `design-canvas`, `agents`, `planning`, `ship`, `voice`, `auto-mode`, `code-mode`, `unrestricted-tools`, `paste-images`, `privacy`, `branding`, `classifier-fail-open`, `cleanup-period`, `disable-collapse-read-search`, `enable-keybindings`, `file-read-limit`, `transcript-dialog-replay`, `unlock-ultracode` |
 | Plugin | `claude-hud`, `claude-mem` |
 
-With no option and no interactive terminal (piped installs, CI, `claude update`), all 21 enhancements are enabled by default. The selection is persisted as strict JSON in `~/.clawgod/enhancements.json`:
+With no option and no interactive terminal (piped installs, CI, `claude update`), all 22 enhancements are enabled by default. The selection is persisted as strict JSON in `~/.clawgod/enhancements.json`:
 
 ```json
 {
@@ -103,7 +103,7 @@ Running the installer directly in a terminal asks automatically, no flags to rem
 
 ```
   ClawGod Plus enhancement selection
-   1) All 21 enhancements (default, Enter to select)
+   1) All 22 enhancements (default, Enter to select)
    2) Core only (no enhancements)
    3) Custom menu (toggle individual items)
    Enter: all enhancements · Esc: cancel
@@ -128,6 +128,10 @@ Windows PowerShell equivalents:
 ```
 
 A later `claude update` reuses the saved selection from `~/.clawgod/enhancements.json` and never prompts. Disabling `claude-hud` or `claude-mem` restores the configuration ClawGod owns. Other installed plugins are left unchanged.
+
+**Local Ship PR workflow:** The `ship` enhancement reuses the built-in `ship-local` flow so `/ship` and `/ship-local` run PR review/watch locally, without Claude cloud sessions or official Claude login. A configured model provider, `git`, GitHub-authenticated `gh`, and network access to GitHub are still required; this is not an offline mode. Original confirmation and permission flows remain intact: the enhancement neither accepts confirmations nor bypasses permissions, and does not promise automatic PR merging.
+
+**Local Code Mode:** Local eligibility is supported on 2.1.325 and 2.1.332; 2.1.330 retains upstream behavior. On 2.1.332, local interactive eligibility does not require official Claude credentials, official models, or cloud eligibility services. The enhancement is included in “all”, but does not switch modes automatically: launch with `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 claude` (PowerShell: `$env:CLAUDE_CODE_EXPERIMENTAL_CODE_MODE='1'`, then `claude`). First-use risk confirmation and explicit disabling remain intact. Configured model API requests still use the network. Local administrator, compliance, telemetry, tool and engine checks remain; SDK/headless, background and remote entrypoints are not unlocked.
 
 **Claude Desktop automatic enhancements are paused:** Installation and updates built from the current source no longer modify `Claude.app`. Selecting all enhancements or explicitly enabling `computer-use` does not apply Desktop CU/built-in browser patches or Simplified Chinese language enhancements. CLI Computer Use is unaffected. Existing Desktop modifications and backups remain in place without automatic rollback. Previously published installers are unchanged.
 

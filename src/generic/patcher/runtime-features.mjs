@@ -19,6 +19,7 @@ export const runtimeFeatureMetadata = Object.freeze({
   'computer-use-default': ['computer-use'],
   'computer-use-gate': ['computer-use'],
   ultraplan: ['ultraplan'],
+  'ship-local': ['ship'],
   'ultrareview-gate': ['ultrareview'],
   'ultrareview-direct': ['ultrareview'],
   'voice-mode': ['voice-mode'],

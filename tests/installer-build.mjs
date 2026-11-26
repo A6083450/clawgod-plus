@@ -876,6 +876,7 @@ try {
     'src/generic/patcher/enhancements/design-canvas-assets/LICENSE.md',
     'src/generic/patcher/enhancements/agents.mjs',
     'src/generic/patcher/enhancements/planning.mjs',
+    'src/generic/patcher/enhancements/ship.mjs',
     'src/generic/patcher/enhancements/voice.mjs',
     'src/generic/patcher/enhancements/auto-mode.mjs',
     'src/generic/patcher/enhancements/code-mode.mjs',
