@@ -43,5 +43,10 @@ export const privacyRegistry = Object.freeze({
     name: 'Disable enterprise remote settings',
     semanticId: 'remote-settings-off',
     apply: (source, options) => applySemanticPatch(source, { ...options, semanticId: 'remote-settings-off' }),
+  }, {
+    order: 96,
+    name: 'Block wiggly-dove Git/environment collection',
+    semanticId: 'wiggly-dove',
+    apply: (source, options) => applySemanticPatch(source, { ...options, semanticId: 'wiggly-dove' }),
   }]),
 });

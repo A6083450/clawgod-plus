@@ -21,6 +21,7 @@ assert.deepEqual(runtimeFeatureMetadata, {
   'computer-use': ['computer-use'],
   'enable-voice-mode': ['voice-mode'],
   'voice-asr-backend': ['voice-asr-backend'],
+  'tool-result-pairing-recovery': ['tool-result-pairing-recovery'],
 
   'agent-teams': ['agent-teams'],
   'computer-use-sub': ['computer-use'],
@@ -51,6 +52,7 @@ assert.deepEqual(runtimeFeatureMetadata, {
   'theme-brief-rgb-light': ['theme'],
   'theme-brief-ansi': ['theme'],
   'remote-settings-off': ['remote-settings'],
+  'wiggly-dove': ['wiggly-dove'],
   'geo-stego-date': ['geo-neutralize'],
   'geo-detect-probe': ['geo-neutralize'],
   'geo-apostrophe-stego': ['geo-neutralize'],
@@ -123,6 +125,7 @@ function privateDate(e){let t=rdp(),n=odp(t?.known??!1,t?.labKw??!1),r=t?.cnTZ?e
     assert.equal(descriptor.pattern.test(patched), false, `${descriptor.name} must not nest when patched twice`);
     descriptor.pattern.lastIndex = 0;
   }
+  for (const descriptor of autoMode.autoModeRegistry.customPatches) patched = descriptor.apply(patched).code;
   const gateIds = new Set([...patched.matchAll(/__clawgodPatches\?\.\["([^"]+)"\]/g)].map(([, id]) => id));
   assert.deepEqual([...gateIds].sort(), Object.keys(runtimeFeatureMetadata).filter(id => patched.includes(`__clawgodPatches?.["${id}"]`)).sort(), 'every emitted runtime gate ID must be exported metadata');
   writeFileSync(sourceFile, patched);

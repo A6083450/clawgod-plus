@@ -51,18 +51,18 @@ macOS/Linux では Shell、Windows では PowerShell を OS のコマンド入�
 
 ## ClawGod Plus をインストール
 
-以下のコマンドは、固定バージョン（v2026.11.26-claude.2.1.332）の ClawGod Plus Release アセットをダウンロードします。
+以下のコマンドは、固定バージョン（v2026.11.26-claude.2.1.332.1）の ClawGod Plus Release アセットをダウンロードします。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332.1/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332.1/install.ps1 | iex
 ```
 
 主なインストーラオプション（バージョン未指定時はインストーラの検証済み Claude Code バージョンを使用し、より新しいインストール済みバージョンは維持）：
@@ -163,9 +163,13 @@ Windows PowerShell では次の引数になります。
 追加パッチはモジュール単位で構文解析と生成コードの検証を行い、曖昧な形態やパーサー欠落時は書き込みません。対象外のバージョン形態はスキップします。`--dry-run` は変更せず、既存の `--revert` を維持します。変更はソースとローカル生成インストーラに含まれ、未公開の間は上記固定 Release のダウンロードには含まれません。
 
 
-### 上流 v2.2.0 との機能同期
+### 上流 v2.3.1 との機能同期
 
-[上流 v2.2.0](https://github.com/0Chencc/clawgod/releases/tag/v2.2.0)（`4038ca9`）に同期し、Bun-only、独自レンダラーと 2.1.300 ABI、拡張選択を維持します。主要パッチはモジュール単位の AST 意味解析と同梱オフラインパーサーを使用し、抽出テキストはソース文字列として読み込みます。
+ソースは v2.2.0 から [上流 v2.3.1](https://github.com/0Chencc/clawgod/releases/tag/v2.3.1)（`ad4de4d`）までの機能差分を取り込み、Bun-only、公開レンダラー、Claude Code 2.1.332、Ship、Code Mode、拡張選択を維持します。今回の同期は上記の固定バージョンを対象とし、公開状況はその Release ページで確認できます。
+
+- `privacy` に既定で有効な `wiggly-dove` を追加し、`x-claude-code-wiggly-dove` を生成する既知の Git origin・コンテナ・sandbox メタデータ収集経路を事前に停止します。`"wiggly-dove": false` または `CLAWGOD_FEATURE_WIGGLY_DOVE=false` で上流の動作に戻せます。`geo-neutralize` は位置・プロキシの日付信号を独立して制御します。全テレメトリーの遮断ではなく、通常のプロンプト・ツール結果・コードは設定したモデル接続先へ送信されます。明示的な `--tolerate-stale` は未認識の保護をスキップできます。
+- コアの `tool-result-pairing-recovery` は AST で孤立したツール結果を復元し、レキシカル束縛を維持します。同名の `patches.json` キーで無効化できます。Auto Mode の provider 判定は inline/helper/cached の AST 形態に対応し、モデル制限と実行時スイッチを維持します。
+- 元の `text`/`file` loader を記録し、実行可能な拡張子のデータもデータとして扱います。パッチ対象は entry/chunks のみで、スキルのテンプレートは変更しません。loader メタデータのない旧インストールでは、`--no-upgrade` は `latest` ではなく正確な導入済みバージョンを復元します。
 
 `privacy` 拡張には既定で有効な `remote-settings` が追加されます。企業のリモートポリシーとキャッシュを無視しますが、`~/.claude/remote-settings.json` は削除しません。**組織が配布する権限ルール、Remote Control 制限、バージョン固定は適用されなくなります。** `CLAWGOD_FEATURE_REMOTE_SETTINGS=false` または `patches.json` の `"remote-settings": false` で上流の動作に戻せます。ローカル設定と OS 管理ポリシーは変更しません。
 

@@ -13,6 +13,7 @@ export const runtimeFeatureMetadata = Object.freeze({
   'computer-use': ['computer-use'],
   'enable-voice-mode': ['voice-mode'],
   'voice-asr-backend': ['voice-asr-backend'],
+  'tool-result-pairing-recovery': ['tool-result-pairing-recovery'],
 
   'agent-teams': ['agent-teams'],
   'computer-use-sub': ['computer-use'],
@@ -43,6 +44,7 @@ export const runtimeFeatureMetadata = Object.freeze({
   'theme-brief-rgb-light': ['theme'],
   'theme-brief-ansi': ['theme'],
   'remote-settings-off': ['remote-settings'],
+  'wiggly-dove': ['wiggly-dove'],
   'geo-stego-date': ['geo-neutralize'],
   'geo-detect-probe': ['geo-neutralize'],
   'geo-apostrophe-stego': ['geo-neutralize'],

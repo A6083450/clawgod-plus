@@ -51,18 +51,18 @@ macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行�
 
 ## 安装 ClawGod Plus
 
-安装命令下载固定版本（v2026.11.26-claude.2.1.332）的 ClawGod Plus Release 资产。
+安装命令下载固定版本（v2026.11.26-claude.2.1.332.1）的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332.1/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332.1/install.ps1 | iex
 ```
 
 常用安装参数（不传版本时默认使用安装器已验证的 Claude Code 版本，保留较新的已装版本）：
@@ -167,9 +167,13 @@ Desktop 原始 asar 备份保留在 `~/Library/Application Support/Claude-3p/app
 新补丁按模块解析并验证生成语法，歧义和缺少解析器会阻止写入；不适用的版本形态会跳过。`--dry-run` 不写入，现有 `--revert` 恢复机制不变。源码和本地生成安装器包含这些改动，但未发布的改动不会自动出现在上方固定版本的 Release 下载中。
 
 
-### 上游 v2.2.0 功能同步
+### 上游 v2.3.1 功能同步
 
-本分支同步至 [上游 v2.2.0](https://github.com/0Chencc/clawgod/releases/tag/v2.2.0)（`4038ca9`），保留 Bun-only、公共字符格渲染器、2.1.300 ABI 与现有增强选择，不引入全局 standalone 伪装或原生 execPath 重写。
+源码已同步 [上游 v2.3.1](https://github.com/0Chencc/clawgod/releases/tag/v2.3.1)（`ad4de4d`）相对 v2.2.0 的功能增量，保留 Bun-only、公共字符格渲染器、Claude Code 2.1.332、Ship、Code Mode 与现有增强选择，不引入全局 standalone 伪装或原生 execPath 重写。本次同步对应上方固定版本；发布状态以该版本的 Release 页面为准。
+
+- `privacy` 增强新增默认开启的 `wiggly-dove`：在采集器运行前阻止已识别的 `x-claude-code-wiggly-dove` Git origin / 容器 / sandbox 等环境元数据采集；`"wiggly-dove": false` 或 `CLAWGOD_FEATURE_WIGGLY_DOVE=false` 可恢复上游路径。`geo-neutralize` 仍独立控制已识别的地理位置与代理日期信号。这不是全面禁遥测：正常提示词、工具结果和代码仍发送至配置的模型端点；显式 `--tolerate-stale` 可跳过失配的识别器，保留上游行为。
+- 核心 `tool-result-pairing-recovery` 使用 AST 恢复缺少配对的工具结果，保留词法绑定；同名 `patches.json` key 可关闭。Auto Mode 的 provider 判定改用 AST，覆盖 inline/helper/cached 形态，保留原模型限制和运行时开关。
+- 提取器记录资源原始 `text` / `file` loader，任意后缀的数据不再被误执行；补丁只处理 entry / chunks，不改技能模板。旧安装缺少 loader 元数据时，`--no-upgrade` 只恢复精确已安装版本，不取 `latest`。
 
 - 核心补丁增加按模块 AST 语义识别，修复 GrowthBook 提前返回，并随补丁器交付离线解析器；提取的文本资源按源字符串加载。
 - `privacy` 增强新增默认开启的 `remote-settings`：忽略企业远程设置及其缓存，不删除 `~/.claude/remote-settings.json`。**这会使组织远程下发的权限规则、远程控制限制和版本锁定不再生效**；需要这些策略时，设置 `CLAWGOD_FEATURE_REMOTE_SETTINGS=false` 或在 `patches.json` 中写入 `"remote-settings": false`。它不修改本地 settings 或系统管理策略。

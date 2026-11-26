@@ -82,6 +82,9 @@ try {
     const { run, output } = extract(modules);
     assert.equal(run.status, 0, run.stderr);
     assert.deepEqual(readFileSync(join(output, outputPath)), Buffer.from(expected), `${label}不得保留原字符串编码`);
+    const metadata = JSON.parse(readFileSync(join(output, 'asset-loaders.json'), 'utf8'));
+    assert.equal(metadata.schemaVersion, 1);
+    if (module.loader === 13) assert.deepEqual(metadata.assets[module.name], { path: outputPath, loader: 'text' });
     if (outputPath === 'cli.original.js') assert.doesNotThrow(() => new Function(readFileSync(join(output, outputPath), 'utf8')));
   }
 
@@ -100,6 +103,10 @@ try {
       assert.deepEqual(readFileSync(join(output, path)), bytes, `${path}不得按字符串转码`);
     }
     assert.deepEqual(readFileSync(join(output, 'assets/shell.gz')), compressed);
+    const metadata = JSON.parse(readFileSync(join(output, 'asset-loaders.json'), 'utf8'));
+    for (const name of ['payload.asset', 'opaque.asset', 'shell.gz']) {
+      assert.deepEqual(metadata.assets[name], { path: `assets/${name}`, loader: 'file' });
+    }
   }
 
   for (const loader of [1, 13]) {

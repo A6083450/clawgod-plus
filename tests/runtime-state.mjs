@@ -24,6 +24,8 @@ try {
   writeFileSync(join(live, 'cli.original.cjs'), 'import "./chunks/a.mjs";\n');
   writeFileSync(join(live, 'chunks', 'a.mjs'), 'export const value = 1;\n');
   writeFileSync(join(live, '.source-version'), '2.1.300\n');
+  const metadata = '{"schemaVersion":1,"assets":{}}\n';
+  writeFileSync(join(live, 'asset-loaders.json'), metadata);
   okay('clean-save', live, '2.1.300');
   writeFileSync(join(live, 'cli.cjs'), 'old wrapper');
   writeFileSync(join(live, 'assets', 'payload.txt'), 'old asset');
@@ -35,6 +37,7 @@ try {
   writeFileSync(join(live, 'enhancements.json'), 'user selection');
   okay('snapshot', live, transaction);
   writeFileSync(join(live, 'cli.cjs'), 'new wrapper');
+  writeFileSync(join(live, 'asset-loaders.json'), '{"schemaVersion":1,"assets":{"candidate":{}}}');
   writeFileSync(join(live, 'assets', 'payload.txt'), 'new asset');
   writeFileSync(join(live, 'assets', 'extra.txt'), 'candidate-only');
   writeFileSync(join(live, 'post-process.mjs'), 'new helper');
@@ -48,6 +51,7 @@ try {
   writeFileSync(join(live, 'provider.json'), 'user changed provider');
   okay('restore', live, transaction);
   assert.equal(readFileSync(join(live, 'cli.cjs'), 'utf8'), 'old wrapper');
+  assert.equal(readFileSync(join(live, 'asset-loaders.json'), 'utf8'), metadata, '回滚必须还原 loader 元数据');
   assert.equal(readFileSync(join(live, 'assets', 'payload.txt'), 'utf8'), 'old asset');
   assert.equal(existsSync(join(live, 'assets', 'extra.txt')), false);
   assert.equal(readFileSync(join(live, 'post-process.mjs'), 'utf8'), 'old helper');
@@ -66,6 +70,10 @@ try {
   assert.equal(readFileSync(join(live, 'chunks', 'a.mjs'), 'utf8'), 'export const value = 1;\n');
   assert.equal(existsSync(join(live, 'chunks', 'extra.mjs')), false);
   const before = readFileSync(join(live, 'cli.original.cjs'));
+  writeFileSync(join(live, 'asset-loaders.json'), '{"schemaVersion":1,"assets":{"drift":{}}}');
+  assert.notEqual(run('clean-restore', live, '2.1.300').status, 0, 'loader 元数据漂移时必须拒绝 clean 恢复');
+  assert.deepEqual(readFileSync(join(live, 'cli.original.cjs')), before, 'loader 校验必须先于入口修改');
+  writeFileSync(join(live, 'asset-loaders.json'), metadata);
   assert.notEqual(run('clean-restore', live, '2.1.299').status, 0, 'different-version clean source must be rejected');
   assert.deepEqual(readFileSync(join(live, 'cli.original.cjs')), before, 'version rejection must precede live mutation');
   rmSync(join(live, 'chunks.bak', 'a.mjs'));

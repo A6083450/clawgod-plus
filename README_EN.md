@@ -51,18 +51,18 @@ The installer fetches the current platform-specific official `@anthropic-ai/clau
 
 ## Install ClawGod Plus
 
-These commands download the pinned ClawGod Plus release assets (v2026.11.26-claude.2.1.332).
+These commands download the pinned ClawGod Plus release assets (v2026.11.26-claude.2.1.332.1).
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332.1/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332.1/install.ps1 | iex
 ```
 
 Useful installer options (with no version specified, the installer uses its verified Claude Code version and preserves a newer installed version):
@@ -163,9 +163,13 @@ The seven new installation options also have same-named `patches.json` switches.
 New patches parse individual modules and validate generated syntax; ambiguity or a missing parser prevents writes. Inapplicable version shapes are skipped. `--dry-run` is non-mutating; existing `--revert` behavior is retained. These changes are in source and locally generated installers, not automatically in the pinned Release downloads above before publication.
 
 
-### Upstream v2.2.0 parity
+### Upstream v2.3.1 parity
 
-Synced against [upstream v2.2.0](https://github.com/0Chencc/clawgod/releases/tag/v2.2.0) (`4038ca9`), preserving Bun-only operation, this fork's renderer/2.1.300 ABI and enhancement selection. Core patches use per-module semantic AST matching with an offline parser; extracted text assets load as source strings.
+Source incorporates the functional delta from v2.2.0 to [upstream v2.3.1](https://github.com/0Chencc/clawgod/releases/tag/v2.3.1) (`ad4de4d`), preserving Bun-only operation, the public renderer, Claude Code 2.1.332, Ship, Code Mode and enhancement selection. This sync targets the pinned version above; its Release page is authoritative for publication status.
+
+- `privacy` adds default-on `wiggly-dove`, blocking the identified Git origin/container/sandbox metadata collector before it generates `x-claude-code-wiggly-dove`. Set `"wiggly-dove": false` or `CLAWGOD_FEATURE_WIGGLY_DOVE=false` to restore upstream behavior. `geo-neutralize` independently controls known location/proxy date signals. This is not a complete telemetry block: normal prompts, tool results and code still reach the configured endpoint; explicit `--tolerate-stale` can skip an unrecognized protection.
+- Core `tool-result-pairing-recovery` uses AST recovery for orphaned tool results while preserving lexical bindings; the same-named `patches.json` key disables it. Auto Mode provider matching now covers inline/helper/cached AST shapes while retaining model restrictions and runtime switches.
+- Extraction records original `text`/`file` loaders so data with executable extensions remains data. Patches only process entry/chunks, leaving skill templates intact. Older installations without loader metadata recover the exact installed version under `--no-upgrade`, not `latest`.
 
 The `privacy` enhancement adds `remote-settings`, enabled by default. It ignores enterprise remote policies and their cache without deleting `~/.claude/remote-settings.json`. **Organization-supplied permission rules, Remote Control restrictions and version pins will not apply.** Set `CLAWGOD_FEATURE_REMOTE_SETTINGS=false` or `"remote-settings": false` in `patches.json` to restore upstream behavior. Local settings and OS-managed policy are not changed.
 

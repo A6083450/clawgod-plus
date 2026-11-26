@@ -94,6 +94,7 @@ const output = process.argv[3];
 mkdirSync(join(output, 'vendor'), { recursive: true });
 mkdirSync(join(output, 'chunks'), { recursive: true });
 writeFileSync(join(output, 'cli.original.js'), 'fixture source');
+writeFileSync(join(output, 'asset-loaders.json'), '{"schemaVersion":1,"assets":{}}');
 writeFileSync(join(output, 'vendor', 'candidate-native.node'), Buffer.from([0xca, 0xfe, 0xba, 0xbe]));
 writeFileSync(join(output, 'chunks', 'current.mjs'), 'candidate chunk\\n');
 mkdirSync(join(output, 'assets'));
@@ -317,6 +318,7 @@ $RuntimeWriteReleaseSafe = $true
       writeFileSync(join(candidateVendor, 'candidate-native.node'), candidateNative);
     }
     if (fixture.noUpgrade && !fixture.missingClean) {
+      writeFileSync(join(clawDir, 'asset-loaders.json'), '{"schemaVersion":1,"assets":{}}');
       const clean = spawnSync(process.execPath, [fileURLToPath(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)), 'clean-save', clawDir, '2.1.225'], { encoding: 'utf8' });
       assert.equal(clean.status, 0, clean.stdout + clean.stderr);
     }

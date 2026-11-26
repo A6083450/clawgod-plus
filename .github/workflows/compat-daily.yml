@@ -112,6 +112,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Run isolated Bun-only installer E2E
+        id: install
         shell: bash
         run: |
           set -euo pipefail
@@ -226,7 +227,8 @@ jobs:
           git push -fq "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:badges
 
       - name: Open or update issue on scheduled failure
-        if: failure() && github.event_name == 'schedule'
+        # 安装尚未开始时，准备或网络失败不能归因为 Claude 兼容性回归。
+        if: failure() && github.event_name == 'schedule' && (steps.install.outcome == 'failure' || steps.install.outcome == 'success')
         uses: actions/github-script@v8
         with:
           script: |

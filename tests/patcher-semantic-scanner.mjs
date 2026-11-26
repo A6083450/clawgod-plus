@@ -28,7 +28,8 @@ const unrelated={method(){return this.environmentOverridesParsed=true,this.envir
 const dateSource = 'function dateText (input) {let info=probe(),mark=apostrophe(info?.known??false,info?.labKw??false),formatted=info?.cnTZ?input.replaceAll("-","/"):input;return`Today${mark}s date is ${formatted}.`}';
 const scanned = scanAstPatches(source + dateSource);
 for (const id of AST_PATCH_IDS) assert.equal(scanned[id].matches.length,
-  id === 'remote-settings-off' ? 0 : 1, id);
+  ['remote-settings-off', 'wiggly-dove', 'tool-result-pairing-recovery', 'auto-mode-inline-gate',
+    'auto-mode-helper-gate', 'auto-mode-provider-opt-in'].includes(id) ? 0 : 1, id);
 const edits = Object.values(scanned).flatMap(result => result.matches);
 const patched = applyAstEdits(source + dateSource, edits);
 parsePatchSource(patched);

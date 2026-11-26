@@ -202,6 +202,7 @@ if (name === 'install-ripgrep.mjs') {
 } else if (name === 'extract-natives.mjs') {
   const output = args[1];
   const native = join(output, 'vendor', 'candidate-addon', 'arm64-darwin', 'candidate-addon.node');
+  writeFileSync(join(output, 'asset-loaders.json'), '{"schemaVersion":1,"assets":{}}');
   writeFileSync(join(output, 'cli.original.js'), process.env.CELL_SEGMENTER_REQUIRED === '1'
     ? 'new Bun.ant.CellSegmenter({});'
     : '(function(exports,require,module,__filename,__dirname){})');
@@ -362,6 +363,7 @@ if (name === 'install-ripgrep.mjs') {
       writeFileSync(target, options.priorRuntime, 'utf8');
       writeFileSync(sourceVersion, '2.1.225\n', 'utf8');
     }
+    if (!options.missingAssetLoaders) writeFileSync(join(dirname(target), 'asset-loaders.json'), '{"schemaVersion":1,"assets":{}}');
     if (args.includes('--no-upgrade') && !options.missingClean) {
       const clean = spawnSync(process.execPath, [fileURLToPath(new URL('../src/generic/runtime/runtime-state.cjs', import.meta.url)), 'clean-save', dirname(target), '2.1.225'], { encoding: 'utf8' });
       assert.equal(clean.status, 0, clean.stdout + clean.stderr);
@@ -513,6 +515,9 @@ if (name === 'install-ripgrep.mjs') {
   const stale = runLifecycleCase('explicit-stale', ['--tolerate-stale'], {});
   assert.equal(stale.run.status, 0, stale.run.stdout + stale.run.stderr);
   assert.deepEqual(stale.patchArgs, ['--enhancements-file', stale.configPath, '--tolerate-stale']);
+  const metadataRecovered = runLifecycleCase('no-upgrade-missing-asset-loaders', ['--no-upgrade', '--version', '9.9.9'], { missingAssetLoaders: true });
+  assert.equal(metadataRecovered.run.status, 0, metadataRecovered.run.stdout + metadataRecovered.run.stderr);
+  assert.equal(readFileSync(metadataRecovered.claudeResolver, 'utf8'), '@anthropic-ai/claude-code-darwin-arm64@2.1.225\n', '旧安装缺少 loader 元数据时，只能恢复已安装版本，不得升级到 latest 或命令行版本');
   const recovered = runLifecycleCase('no-upgrade-missing-clean', ['--no-upgrade', '--version', '9.9.9'], { missingClean: true });
   assert.equal(recovered.run.status, 0, recovered.run.stdout + recovered.run.stderr);
   assert.equal(readFileSync(recovered.claudeResolver, 'utf8'), '@anthropic-ai/claude-code-darwin-arm64@2.1.225\n', 'missing clean recovery must fetch exact installed version, ignoring requested upgrade version');
