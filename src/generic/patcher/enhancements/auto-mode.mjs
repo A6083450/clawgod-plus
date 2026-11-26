@@ -1,28 +1,7 @@
 import { gate } from '../runtime-features.mjs';
+import { applySemanticPatch } from '../semantic-runner.mjs';
 
 const patches = [
-  {
-    order: 26,
-    name: 'Auto-mode unlock for third-party API (provider helper gate)',
-    pattern: /if\(!([\w$]+)\(([\w$]+)\)\)return!1;(?=(?:(?!function\s).){0,300}!=="firstParty")/g,
-    replacer: (match) => `if(${gate('auto-mode-helper-gate')}===!1&&` + match.slice(3, -10) + ')return!1;',
-    optional: true,
-  },
-  {
-    order: 27,
-    name: 'Auto-mode unlock for third-party API (inline gate)',
-    pattern: /if\((?:([\w$]+)!=="firstParty"&&(?:\1!=="anthropicAws"|![\w$]+\(\1\))[^;]*|[\w$]+\(\)&&\([\w$]+==="claude-opus-4-6"\|\|[\w$]+==="claude-sonnet-4-6"\|\|[\w$]+\.includes\("haiku"\)[^;]*?\))\)return!1;/g,
-    replacer: (match) => `if(${gate('auto-mode-inline-gate')}===!1&&` + match.slice(3, -10) + ')return!1;',
-    optional: true,
-  },
-  {
-    order: 28,
-    name: 'Auto-mode unlock for third-party API (provider opt-in helper)',
-    pattern: /function ([\w$]+)\(([\w$]+)\)\{if\(\2==="firstParty"\|\|\2==="anthropicAws"\)return!0;return [\w$]+\(process\.env\.CLAUDE_CODE_ENABLE_AUTO_MODE\)\}/g,
-    replacer: (match, fn, arg) => `function ${fn}(${arg}){if(${gate('auto-mode-provider-opt-in')})return!0;${match.slice(match.indexOf('{') + 1, -1)}}`,
-    sentinel: 'process.env.CLAUDE_CODE_ENABLE_AUTO_MODE)}',
-    appliedMarker: /function [\w$]+\([^)]*\)\{if\(globalThis\.__clawgodPatches\?\.\["auto-mode-provider-opt-in"\]/,
-  },
   {
     order: 68,
     name: 'Auto-mode classifier timeout override (CLAWGOD_CLASSIFIER_TIMEOUT_MS)',
@@ -52,5 +31,14 @@ const patches = [
 export const autoModeRegistry = Object.freeze({
   id: 'auto-mode',
   patches: Object.freeze(patches),
-  customPatches: Object.freeze([]),
+  customPatches: Object.freeze([
+    [26, 'auto-mode-helper-gate', 'provider helper gate'],
+    [27, 'auto-mode-inline-gate', 'inline gate'],
+    [28, 'auto-mode-provider-opt-in', 'provider opt-in helper'],
+  ].map(([order, semanticId, label]) => ({
+    order,
+    name: `Auto-mode unlock for third-party API (${label})`,
+    semanticId,
+    apply: (source, options) => applySemanticPatch(source, { ...options, semanticId }),
+  }))),
 });

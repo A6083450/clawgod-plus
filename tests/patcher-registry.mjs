@@ -135,8 +135,8 @@ const ownedDescriptors = patchRegistries.flatMap(registry => [
   ...registry.patches.map(descriptor => ({ descriptor, owner: registry.id })),
   ...registry.customPatches.map(descriptor => ({ descriptor, owner: registry.id })),
 ]);
-assert.equal(ownedDescriptors.length, 86, 'every regex and custom patch descriptor must retain exactly one owner');
-assert.equal(Object.keys(runtimeFeatureMetadata).length, 51, 'all upstream runtime feature patch IDs must be exported');
+assert.equal(ownedDescriptors.length, 88, 'every regex and custom patch descriptor must retain exactly one owner');
+assert.equal(Object.keys(runtimeFeatureMetadata).length, 53, 'all upstream runtime feature patch IDs must be exported');
 assert.equal(
   new Set(ownedDescriptors.map(({ descriptor }) => descriptor)).size,
   ownedDescriptors.length,
@@ -159,8 +159,8 @@ assert.deepEqual(
   canonicalDescriptors
     .filter(({ descriptor }) => descriptor.order < 68)
     .map(({ descriptor, type }) => ({ name: descriptor.name, type, order: descriptor.order })),
-  task5Snapshot.descriptors.map(({ name, type, order }) => ({ name, type, order })),
-  'pre-runtime-feature descriptor names, types, and exact global order values must remain canonical',
+  task5Snapshot.descriptors.map(({ name, type, order }) => ({ name, type: [26, 27, 28].includes(order) ? 'custom' : type, order })),
+  'pre-runtime-feature descriptor names and exact global order values remain canonical; auto-mode moves to AST custom descriptors',
 );
 assert.deepEqual(
   canonicalDescriptors.filter(({ descriptor }) => descriptor.order >= 68 && descriptor.order < 100)
@@ -175,6 +175,8 @@ assert.deepEqual(
     { name: 'Disable enterprise remote settings', type: 'custom', order: 93 },
     { name: 'Design canvas local fallback (replace cloud hub)', type: 'regex', order: 94 },
     { name: 'Code Mode local eligibility', type: 'custom', order: 95 },
+    { name: 'Block wiggly-dove Git/environment collection', type: 'custom', order: 96 },
+    { name: 'Recover orphaned tool results from conversation history', type: 'custom', order: 97 },
     { name: 'Voice hold input: clean warmup once, consume recording repeats', type: 'custom', order: 99 },
   ],
   'runtime and terminal descriptors must have stable post-canonical order values',
@@ -257,10 +259,12 @@ assert.throws(
   'the metadata gate must reject a controlled regex mutation that the former name/order gate accepted',
 );
 
-assert.deepEqual(patches.filter(descriptor => descriptor.order < 68).map(descriptor => descriptor.name), expectedRegexOrder, 'pre-runtime-feature regex order must remain canonical');
+assert.deepEqual(patches.filter(descriptor => descriptor.order < 68).map(descriptor => descriptor.name),
+  expectedRegexOrder.filter(name => !name.startsWith('Auto-mode unlock for third-party API')), 'pre-runtime-feature regex order must remain canonical except auto-mode AST migration');
 assert.deepEqual(
   customPatches.filter(descriptor => descriptor.order < 68).map(descriptor => descriptor.name),
-  ['Claude in Chrome local socket fallback', 'Context limit configurable', 'Claude API skill lazy docs'],
+  ['Auto-mode unlock for third-party API (provider helper gate)', 'Auto-mode unlock for third-party API (inline gate)',
+    'Auto-mode unlock for third-party API (provider opt-in helper)', 'Claude in Chrome local socket fallback', 'Context limit configurable', 'Claude API skill lazy docs'],
   'custom patches must retain their canonical post-regex order',
 );
 
@@ -276,6 +280,7 @@ const expectedCore = [
   'Claude API skill lazy docs',
   'Built-in hooks module for plain Bun cli.cjs',
   'GrowthBook env overrides (graph dead-code fix)',
+  'Recover orphaned tool results from conversation history',
   'Cometix parity: context-limit',
 ];
 const core = patchRegistries.find(registry => registry.id === 'core');

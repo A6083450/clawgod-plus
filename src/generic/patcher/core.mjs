@@ -284,6 +284,11 @@ const customPatches = [{
   name: 'GrowthBook env overrides (graph dead-code fix)',
   semanticId: 'growthbook-env-overrides-graph',
   apply: (source, options) => applySemanticPatch(source, { ...options, semanticId: 'growthbook-env-overrides-graph' }),
+}, {
+  order: 97,
+  name: 'Recover orphaned tool results from conversation history',
+  semanticId: 'tool-result-pairing-recovery',
+  apply: (source, options) => applySemanticPatch(source, { ...options, semanticId: 'tool-result-pairing-recovery' }),
 }];
 
 export const coreRegistry = Object.freeze({

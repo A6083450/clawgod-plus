@@ -158,9 +158,11 @@ Important variables used by the installer or launchers:
 - `CLAWGOD_FEATURE_<NAME>` - inherited exact lowercase `true` / `false` per-launch override for a `patches.json` feature; hyphens become underscores, and unknown feature names warn.
 - `CLAWGOD_CLASSIFIER_TIMEOUT_MS`, `CLAWGOD_CLASSIFIER_MODEL`, `CLAWGOD_CLASSIFIER_RETRIES` - optional auto-mode classifier tuning values, read at call time (including `~/.claude/settings.json` `env`).
 
-## Upstream v2.2.0 parity
+## Upstream v2.3.1 parity
 
-同步基准：`v2.2.0`，实际提交 `4038ca932c3539911dfc8b97fcce3ab788185f96`。`remote-settings` 运行时开关归属 `privacy`，默认忽略企业远程策略；false 恢复上游行为，不删除用户缓存或修改本地策略。`protocol: anthropic | openai-chat` 优先于旧 provider type；独立版本查询无配置/网络副作用。`--tolerate-stale` 只跳过 recognizer 漂移，原有 update 自动整包 clean-runtime 回退保持不变；语法、歧义和启动失败不可容忍。`startup-check.cjs` 以 Bun 执行，默认 30000 ms，`runtime-state.cjs` 只备份受管运行时而非用户配置。文本资源必须以源字符串加载，不能破坏工具参数中的同名协议字段。
+同步基准：`v2.3.1`，实际提交 `ad4de4dcd9c9fd55a958c1168545755eeeae6463`；按上次 `v2.2.0`（`4038ca932c3539911dfc8b97fcce3ab788185f96`）后的功能差分移植。资源 loader 元数据 `asset-loaders.json` 与受管运行时一起发布、校验和回滚；仅 entry/chunks 进入补丁器，text/file 资源保持原字节与 loader 语义。缺元数据的旧安装在 `--no-upgrade` 下恢复精确已装版本。Auto Mode、工具结果配对恢复与 `wiggly-dove` 使用 AST，新增补丁遵循 [CONTRIBUTING.md](CONTRIBUTING.md)。同步差异、冲突取舍和验证记录见 [docs/upstream-v2.3.1-parity.md](docs/upstream-v2.3.1-parity.md)。
+
+保留前次同步约束：`remote-settings` 运行时开关归属 `privacy`，默认忽略企业远程策略；false 恢复上游行为，不删除用户缓存或修改本地策略。`protocol: anthropic | openai-chat` 优先于旧 provider type；独立版本查询无配置/网络副作用。`--tolerate-stale` 只跳过 recognizer 漂移，原有 update 自动整包 clean-runtime 回退保持不变；语法、歧义和启动失败不可容忍。`startup-check.cjs` 以 Bun 执行，默认 30000 ms，`runtime-state.cjs` 只备份受管运行时而非用户配置。文本资源必须以源字符串加载，不能破坏工具参数中的同名协议字段。
 
 Historical v1.9.7 parity base: `7bf3b15b10c475c132fe245679c7253792ec74f9`. Keep this fork's Bun-only runtime, public cell renderer, default Lean off, enhancement selection, and existing Cometix patches. Do not replace the renderer with a second `Bun.ant` shim or enable automatic issue closure.
 

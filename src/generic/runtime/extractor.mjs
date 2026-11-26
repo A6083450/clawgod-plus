@@ -339,6 +339,7 @@ function main() {
   mkdirSync(join(outputDir, 'vendor'));
 
   let cliCount = 0, napiCount = 0, assetCount = 0, chunkCount = 0, dropped = 0;
+  const assets = {};
   for (const m of modules) {
     if (m.entry) {
       const out = join(outputDir, 'cli.original.js');
@@ -375,6 +376,8 @@ function main() {
       mkdirSync(dir, { recursive: true });
       const out = join(dir, base);
       writeFileSync(out, m.content);
+      // 扩展名不能代表 Bun loader：可执行后缀的 text/file 仍是数据。
+      assets[m.name.replaceAll('\\', '/')] = { path: `assets/${base}`, loader: m.loader === 'text' ? 'text' : 'file' };
       logVerbose(`  asset    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
       assetCount++;
     } else if (m.loader === 'napi') {
@@ -390,6 +393,7 @@ function main() {
       dropped++;
     }
   }
+  writeFileSync(join(outputDir, 'asset-loaders.json'), JSON.stringify({ schemaVersion: 1, assets }) + '\n');
   console.log(`Extracted: ${cliCount} cli.js + ${napiCount} napi + ${assetCount} asset + ${chunkCount} chunk (${dropped} dropped)`);
   if (cliCount !== 1) {
     console.error(`error: expected exactly 1 entry-point, got ${cliCount}`);

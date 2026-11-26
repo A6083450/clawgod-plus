@@ -1085,7 +1085,7 @@ const { spawnSync } = require('node:child_process');
 const MANAGED = [
   'cli.cjs', 'cli.js', 'cli.original.js', 'cli.original.cjs',
   'cli.original.js.bak', 'cli.original.cjs.bak', 'chunks', 'chunks.bak', 'assets',
-  '.source-version', '.clawgod-version', '.clean-source.json', 'patch-fallback.json',
+  '.source-version', '.clawgod-version', '.clean-source.json', 'asset-loaders.json', 'patch-fallback.json',
   'patch.mjs', 'patch.js', 'extract-natives.mjs', 'post-process.mjs', 'repatch.mjs',
   'runtime-state.cjs', 'startup-check.cjs', 'vendor-transaction.mjs', 'self-update.cjs',
   'patch-fallback.cjs', 'feature-gates.cjs', 'openai-proxy.cjs', 'proxy-fetch.mjs',
@@ -1281,6 +1281,8 @@ function cleanManifest(root, version, backup) {
   const modules = files(entry, 'cli.original.cjs');
   const hasChunks = Boolean(present(chunks));
   if (hasChunks) Object.assign(modules, files(chunks, 'chunks'));
+  const assetLoaders = join(root, 'asset-loaders.json');
+  if (present(assetLoaders)) Object.assign(modules, files(assetLoaders, 'asset-loaders.json'));
   return { schemaVersion: 1, version, hasChunks, modules };
 }
 
@@ -1479,7 +1481,7 @@ if [ "$UNINSTALL" = "1" ]; then
       info "Removed ClawGod Plus alias ($DIR/clawgod)"
     fi
   done
-  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/runtime-state.cjs" "$CLAWGOD_DIR/startup-check.cjs" "$CLAWGOD_DIR/startup-check.log" "$CLAWGOD_DIR/.clean-source.json" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/restore-claude-3p-cu-browser.sh" "$CLAWGOD_DIR/desktop-language.mjs" "$CLAWGOD_DIR/desktop-zh-Hans.json" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
+  rm -rf "$CLAWGOD_DIR/node_modules" "$CLAWGOD_DIR/vendor" "$CLAWGOD_DIR/bun-runtime" "$CLAWGOD_DIR/assets" "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/chunks.bak" "$CLAWGOD_DIR/cli.original.js" "$CLAWGOD_DIR/cli.original.js.bak" "$CLAWGOD_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs.bak" "$CLAWGOD_DIR/cli.js" "$CLAWGOD_DIR/cli.cjs" "$CLAWGOD_DIR/patch.mjs" "$CLAWGOD_DIR/patch.js" "$CLAWGOD_DIR/extract-natives.mjs" "$CLAWGOD_DIR/post-process.mjs" "$CLAWGOD_DIR/repatch.mjs" "$CLAWGOD_DIR/vendor-transaction.mjs" "$CLAWGOD_DIR/runtime-state.cjs" "$CLAWGOD_DIR/startup-check.cjs" "$CLAWGOD_DIR/startup-check.log" "$CLAWGOD_DIR/.clean-source.json" "$CLAWGOD_DIR/asset-loaders.json" "$CLAWGOD_DIR/self-update.cjs" "$CLAWGOD_DIR/patch-fallback.cjs" "$CLAWGOD_DIR/feature-gates.cjs" "$CLAWGOD_DIR/patch-fallback.json" "$CLAWGOD_DIR/openai-proxy.cjs" "$CLAWGOD_DIR/proxy-fetch.mjs" "$CLAWGOD_DIR/fetch-file.mjs" "$CLAWGOD_DIR/enhancement-config.mjs" "$CLAWGOD_DIR/enhancement-manifest.json" "$CLAWGOD_DIR/install-ripgrep.mjs" "$CLAWGOD_DIR/install-voice-asr.mjs" "$CLAWGOD_DIR/clawgod-import" "$CLAWGOD_DIR/apply-claude-code-chrome-fix.sh" "$CLAWGOD_DIR/restore-claude-3p-cu-browser.sh" "$CLAWGOD_DIR/desktop-language.mjs" "$CLAWGOD_DIR/desktop-zh-Hans.json" "$CLAWGOD_DIR/claude-mem-compat.cjs" "$CLAWGOD_DIR/claude-mem" "$CLAWGOD_DIR/plugin-dependencies.mjs" "$CLAWGOD_DIR/claude-hud-statusline.mjs" "$CLAWGOD_DIR/plugin-dependencies-state.json" "$CLAWGOD_DIR/cache" "$CLAWGOD_DIR/staging" "$CLAWGOD_DIR/.source-version" "$CLAWGOD_DIR/.clawgod-version" "$CLAWGOD_DIR/.update-check" "$CLAWGOD_DIR/install.sh" "$CLAWGOD_DIR"/.patch-fallback.*.tmp "$CLAWGOD_DIR"/cli.original.js.backup-* "$CLAWGOD_DIR"/cli.original.cjs.backup-*
   RUNTIME_WRITE_RELEASE_SAFE=1
   hash -r 2>/dev/null
   info "ClawGod Plus uninstalled"
@@ -7022,7 +7024,7 @@ if [ "$NO_UPGRADE" = "1" ]; then
     err "Exact installed source version is required for --no-upgrade"
     exit 1
   fi
-  if "$BUN_BIN" "$RUNTIME_STATE_HELPER" clean-restore "$CLAWGOD_DIR" "$CURRENT_SOURCE_VERSION"; then
+  if [ -f "$CLAWGOD_DIR/asset-loaders.json" ] && "$BUN_BIN" "$RUNTIME_STATE_HELPER" clean-restore "$CLAWGOD_DIR" "$CURRENT_SOURCE_VERSION"; then
     CLEAN_SOURCE_READY=1
     info "Restored complete clean source ($CURRENT_SOURCE_VERSION)"
   else
@@ -7591,6 +7593,7 @@ function main() {
   mkdirSync(join(outputDir, 'vendor'));
 
   let cliCount = 0, napiCount = 0, assetCount = 0, chunkCount = 0, dropped = 0;
+  const assets = {};
   for (const m of modules) {
     if (m.entry) {
       const out = join(outputDir, 'cli.original.js');
@@ -7627,6 +7630,8 @@ function main() {
       mkdirSync(dir, { recursive: true });
       const out = join(dir, base);
       writeFileSync(out, m.content);
+      // 扩展名不能代表 Bun loader：可执行后缀的 text/file 仍是数据。
+      assets[m.name.replaceAll('\\', '/')] = { path: `assets/${base}`, loader: m.loader === 'text' ? 'text' : 'file' };
       logVerbose(`  asset    ${(m.content.length / 1024).toFixed(0).padStart(5)} KB → ${out}`);
       assetCount++;
     } else if (m.loader === 'napi') {
@@ -7642,6 +7647,7 @@ function main() {
       dropped++;
     }
   }
+  writeFileSync(join(outputDir, 'asset-loaders.json'), JSON.stringify({ schemaVersion: 1, assets }) + '\n');
   console.log(`Extracted: ${cliCount} cli.js + ${napiCount} napi + ${assetCount} asset + ${chunkCount} chunk (${dropped} dropped)`);
   if (cliCount !== 1) {
     console.error(`error: expected exactly 1 entry-point, got ${cliCount}`);
@@ -14204,7 +14210,77 @@ function fixTextRequires(code) {
   );
 }
 
-function rewrite(code, { chunkPrefix }) {
+// 只信提取器保存的 loader，不从文件后缀推断可执行性；旧安装另走兼容路径。
+function readAssetLoaders() {
+  const metadata = join(here, 'asset-loaders.json');
+  if (!existsSync(metadata)) return null;
+  const record = JSON.parse(readFileSync(metadata, 'utf8'));
+  if (record?.schemaVersion !== 1 || !record.assets || typeof record.assets !== 'object' || Array.isArray(record.assets)) {
+    throw new Error('无效的嵌入资源 loader 元数据，已拒绝后处理。');
+  }
+  const replacements = new Map(), types = new Map();
+  for (const [virtual, asset] of Object.entries(record.assets)) {
+    if (!asset || !['text', 'file'].includes(asset.loader) || !/^assets\/[^/\\\\]+$/.test(asset.path)
+      || asset.path.endsWith('/..') || asset.path.endsWith('/.')) throw new Error('无效的嵌入资源 loader 路径。');
+    const extracted = realpathSync.native(join(here, asset.path));
+    if (dirname(extracted) !== realpathSync.native(join(here, 'assets'))) throw new Error('嵌入资源不能指向提取目录外部。');
+    const target = join(clawgodDir, asset.path).replaceAll('\\', '/');
+    replacements.set(virtual, target);
+    const key = process.platform === 'win32' ? target.toLowerCase() : target;
+    if (types.has(key) && types.get(key) !== asset.loader) throw new Error('嵌入资源 loader 发生冲突。');
+    types.set(key, asset.loader);
+  }
+  return { replacements, types };
+}
+
+function fixAssetRequires(code, assets) {
+  if (!assets.types.size || !code.includes('require')) return code;
+  const loader = `(() => {
+    const fs = import.meta.require('node:fs');
+    const path = import.meta.require('node:path');
+    const types = new Map(${JSON.stringify([...assets.types])});
+    return (id) => {
+      if (typeof id === 'string') {
+        const target = path.isAbsolute(id) ? id : import.meta.require.resolve(id);
+        if (fs.existsSync(target)) {
+          const canonical = fs.realpathSync.native(target).replaceAll('\\\\', '/');
+          const key = process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+          const type = types.get(key);
+          if (type === 'text') return fs.readFileSync(target, 'utf8');
+          if (type === 'file') return target;
+        }
+      }
+      return import.meta.require(id);
+    };
+  })()`;
+  const isRequire = node => node?.type === 'MemberExpression'
+    && (node.computed ? node.property.value === 'require' : node.property.name === 'require')
+    && node.object.type === 'MetaProperty' && node.object.meta.name === 'import';
+  const pending = [cellAst.parse(code, { ecmaVersion: 'latest', sourceType: 'module' })], edits = [];
+  while (pending.length) {
+    const node = pending.pop();
+    const alias = node.type === 'VariableDeclarator' ? node.init
+      : node.type === 'AssignmentExpression' && node.operator === '=' ? node.right : null;
+    if (isRequire(alias)) edits.push(alias);
+    if (node.type === 'CallExpression' && isRequire(node.callee)) {
+      const id = node.arguments[0]?.value;
+      const key = typeof id === 'string' && process.platform === 'win32' ? id.toLowerCase() : id;
+      if (assets.types.has(key)) edits.push(node.callee);
+    }
+    for (const value of Object.values(node)) {
+      if (value?.type) pending.push(value);
+      else if (Array.isArray(value)) pending.push(...value.filter(child => child?.type));
+    }
+  }
+  for (const node of edits.sort((a, b) => b.start - a.start)) code = code.slice(0, node.start) + loader + code.slice(node.end);
+  return code;
+}
+
+function rewrite(code, { chunkPrefix, assets }) {
+  if (assets) code = code.replace(/["'`](?:\/\$bunfs\/root|[A-Za-z]:\/~BUN\/root)\/[^"'`]+["'`]/g, literal => {
+    const target = assets.replacements.get(literal.slice(1, -1));
+    return target ? JSON.stringify(target) : literal;
+  });
   // (1) code-split chunk import specifiers → local relative path.
   // v2.1.246 renamed many chunks from `chunk-<hash>.js` to `_<n>.js`; both
   // are flat files under chunks/ and must be rewritten to local paths.
@@ -14227,7 +14303,7 @@ function rewrite(code, { chunkPrefix }) {
     new RegExp(`${BUNFS}src/plugins/functionHooks/hooks-worker/hooks-worker\\.js`, 'g'),
     `${clawgodDir}/chunks/hooks-worker.js`,
   );
-  return fixTextRequires(code);
+  return assets ? fixAssetRequires(code, assets) : fixTextRequires(code);
 }
 
 // ── 公开 Bun 的字符格渲染器 ────────────────────────────────────────────────
@@ -16419,6 +16495,7 @@ function installPublicCellRenderer(modulePaths) {
 }
 
 function processCandidate() {
+  const assets = readAssetLoaders();
   const chunksDir = join(here, 'chunks');
   const split = existsSync(chunksDir);
   const chunkPaths = split
@@ -16433,12 +16510,12 @@ function processCandidate() {
     // chunk-*.js"` statements. Rewrite its specifiers (chunks live one level
     // down) and rewrite every chunk (sibling specifiers) in place.
     let entry = readFileSync(src, 'utf8');
-    entry = rewrite(entry, { chunkPrefix: './chunks/' });
+    entry = rewrite(entry, { chunkPrefix: './chunks/', assets });
     writeFileSync(dst, entry);
     unlinkSync(src);
 
     for (const path of chunkPaths) {
-      const code = rewrite(readFileSync(path, 'utf8'), { chunkPrefix: './' });
+      const code = rewrite(readFileSync(path, 'utf8'), { chunkPrefix: './', assets });
       writeFileSync(path, code);
     }
     console.log(`cli.original.cjs: ${entry.length} bytes (code-split, chunks rewritten)`);
@@ -16490,6 +16567,7 @@ mv "$RUNTIME_CANDIDATE_DIR/cli.original.cjs" "$CLAWGOD_DIR/cli.original.cjs"
 # cli.original.cjs so the patcher and runtime can resolve the rewritten
 # relative import specifiers.
 rm -rf "$CLAWGOD_DIR/chunks" "$CLAWGOD_DIR/assets"
+mv "$RUNTIME_CANDIDATE_DIR/asset-loaders.json" "$CLAWGOD_DIR/asset-loaders.json"
 if [ -d "$RUNTIME_CANDIDATE_DIR/chunks" ]; then
   mv "$RUNTIME_CANDIDATE_DIR/chunks" "$CLAWGOD_DIR/chunks"
 fi
@@ -16967,7 +17045,7 @@ cat > "$CLAWGOD_DIR/feature-gates.cjs" << 'FEATURE_GATES_EOF'
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 
-function loadFeatureGates(directory, metadata = JSON.parse('{"classifier-fail-open":["classifier-fail-open"],"cleanup-period":["cleanup-period"],"disable-collapse-read-search":["disable-collapse-read-search"],"enable-keybindings":["enable-keybindings"],"file-read-limit":["file-read-limit"],"transcript-dialog-replay":["transcript-dialog-replay"],"unlock-ultracode":["unlock-ultracode"],"chrome-local-socket":["chrome-local-socket"],"context-limit":["context-limit"],"computer-use":["computer-use"],"enable-voice-mode":["voice-mode"],"voice-asr-backend":["voice-asr-backend"],"agent-teams":["agent-teams"],"computer-use-sub":["computer-use"],"computer-use-default":["computer-use"],"computer-use-gate":["computer-use"],"ultraplan":["ultraplan"],"ship-local":["ship"],"ultrareview-gate":["ultrareview"],"ultrareview-direct":["ultrareview"],"voice-mode":["voice-mode"],"voice-hold-input":["voice-mode"],"auto-mode-helper-gate":["auto-mode"],"auto-mode-inline-gate":["auto-mode"],"auto-mode-provider-opt-in":["auto-mode"],"classifier-timeout":["classifier-tuning"],"classifier-model":["classifier-tuning"],"classifier-retries":["classifier-tuning"],"theme-logo-rgb":["theme"],"theme-logo-ansi":["theme"],"theme-claude-rgb-dark":["theme"],"theme-claude-rgb-light":["theme"],"theme-shimmer-rgb":["theme"],"theme-shimmer-rgb-light":["theme"],"theme-hex":["theme"],"theme-claude-ansi":["theme"],"theme-shimmer-ansi":["theme"],"theme-brief-rgb-dark":["theme"],"theme-brief-rgb-light":["theme"],"theme-brief-ansi":["theme"],"remote-settings-off":["remote-settings"],"geo-stego-date":["geo-neutralize"],"geo-detect-probe":["geo-neutralize"],"geo-apostrophe-stego":["geo-neutralize"],"remove-cyber-risk":["cyber-risk"],"remove-url-restriction":["url-restriction"],"remove-cautious-actions":["cautious-actions"],"remove-not-logged-in":["not-logged-in"],"attachment-filter-bypass":["message-filter"],"message-filter-legacy":["message-filter"],"message-filter-s8":["message-filter"]}'), env = process.env, warn = text => process.stderr.write(text)) {
+function loadFeatureGates(directory, metadata = JSON.parse('{"classifier-fail-open":["classifier-fail-open"],"cleanup-period":["cleanup-period"],"disable-collapse-read-search":["disable-collapse-read-search"],"enable-keybindings":["enable-keybindings"],"file-read-limit":["file-read-limit"],"transcript-dialog-replay":["transcript-dialog-replay"],"unlock-ultracode":["unlock-ultracode"],"chrome-local-socket":["chrome-local-socket"],"context-limit":["context-limit"],"computer-use":["computer-use"],"enable-voice-mode":["voice-mode"],"voice-asr-backend":["voice-asr-backend"],"tool-result-pairing-recovery":["tool-result-pairing-recovery"],"agent-teams":["agent-teams"],"computer-use-sub":["computer-use"],"computer-use-default":["computer-use"],"computer-use-gate":["computer-use"],"ultraplan":["ultraplan"],"ship-local":["ship"],"ultrareview-gate":["ultrareview"],"ultrareview-direct":["ultrareview"],"voice-mode":["voice-mode"],"voice-hold-input":["voice-mode"],"auto-mode-helper-gate":["auto-mode"],"auto-mode-inline-gate":["auto-mode"],"auto-mode-provider-opt-in":["auto-mode"],"classifier-timeout":["classifier-tuning"],"classifier-model":["classifier-tuning"],"classifier-retries":["classifier-tuning"],"theme-logo-rgb":["theme"],"theme-logo-ansi":["theme"],"theme-claude-rgb-dark":["theme"],"theme-claude-rgb-light":["theme"],"theme-shimmer-rgb":["theme"],"theme-shimmer-rgb-light":["theme"],"theme-hex":["theme"],"theme-claude-ansi":["theme"],"theme-shimmer-ansi":["theme"],"theme-brief-rgb-dark":["theme"],"theme-brief-rgb-light":["theme"],"theme-brief-ansi":["theme"],"remote-settings-off":["remote-settings"],"wiggly-dove":["wiggly-dove"],"geo-stego-date":["geo-neutralize"],"geo-detect-probe":["geo-neutralize"],"geo-apostrophe-stego":["geo-neutralize"],"remove-cyber-risk":["cyber-risk"],"remove-url-restriction":["url-restriction"],"remove-cautious-actions":["cautious-actions"],"remove-not-logged-in":["not-logged-in"],"attachment-filter-bypass":["message-filter"],"message-filter-legacy":["message-filter"],"message-filter-s8":["message-filter"]}'), env = process.env, warn = text => process.stderr.write(text)) {
   const configFile = join(directory, 'patches.json');
   let config = Object.create(null);
   try {
@@ -23578,7 +23656,12 @@ var AST_PATCH_IDS = [
   "ultraplan",
   "voice-mode",
   "geo-stego-date",
-  "remote-settings-off"
+  "remote-settings-off",
+  "wiggly-dove",
+  "tool-result-pairing-recovery",
+  "auto-mode-inline-gate",
+  "auto-mode-helper-gate",
+  "auto-mode-provider-opt-in"
 ];
 var gate = (id) => `globalThis.__clawgodPatches?.[${JSON.stringify(id)}]!==!1`;
 var literal = (node, value) => node?.type === "Literal" && node.value === value;
@@ -23610,6 +23693,172 @@ function walk(root, visit) {
     }
   }
 }
+function walkScope(root, visit) {
+  const pending = [root];
+  while (pending.length) {
+    const node = pending.pop();
+    visit(node);
+    for (const value of Object.values(node)) {
+      if (!value)
+        continue;
+      if (value.type) {
+        if (["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(value.type)) {
+          visit(value);
+        } else {
+          pending.push(value);
+        }
+      } else if (Array.isArray(value)) {
+        for (const child of value) {
+          if (!child?.type)
+            continue;
+          if (["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(child.type)) {
+            visit(child);
+          } else {
+            pending.push(child);
+          }
+        }
+      }
+    }
+  }
+}
+function lexicalBindings(tree) {
+  const scopes = new WeakMap, writes = [];
+  const names = (pattern) => {
+    const pending = [pattern], result = [];
+    while (pending.length) {
+      const node = pending.pop();
+      if (!node)
+        continue;
+      if (node.type === "Identifier")
+        result.push(node.name);
+      if (node.type === "RestElement")
+        pending.push(node.argument);
+      if (node.type === "AssignmentPattern")
+        pending.push(node.left);
+      if (node.type === "ArrayPattern")
+        pending.push(...node.elements);
+      if (node.type === "ObjectPattern")
+        pending.push(...node.properties.map((p) => p.type === "RestElement" ? p.argument : p.value));
+    }
+    return result;
+  };
+  const declare = (scope, pattern, value) => {
+    for (const name of names(pattern)) {
+      if (!scope.bindings.has(name))
+        scope.bindings.set(name, []);
+      if (value !== null)
+        scope.bindings.get(name).push(value);
+    }
+  };
+  const resolve = (scope, name) => {
+    for (;scope; scope = scope.parent) {
+      if (scope.bindings.has(name))
+        return scope.bindings.get(name);
+    }
+  };
+  const pending = [{ node: tree, scope: null }];
+  while (pending.length) {
+    let { node, scope } = pending.pop();
+    const fn = ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type);
+    const cls = node.type === "ClassDeclaration" || node.type === "ClassExpression";
+    if (node.type === "FunctionDeclaration")
+      declare(scope, node.id, node);
+    if (node.type === "ClassDeclaration")
+      declare(scope, node.id, undefined);
+    if (fn || cls || ["Program", "BlockStatement", "StaticBlock", "CatchClause", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement"].includes(node.type)) {
+      scope = { parent: scope, bindings: new Map, vars: scope?.vars };
+      if (fn || node.type === "Program" || node.type === "StaticBlock")
+        scope.vars = scope;
+    }
+    scopes.set(node, scope);
+    if (fn) {
+      if (node.id)
+        declare(scope, node.id, node);
+      for (const param of node.params)
+        declare(scope, param, undefined);
+    }
+    if (cls && node.id)
+      declare(scope, node.id, undefined);
+    if (node.type === "CatchClause")
+      declare(scope, node.param, undefined);
+    if (node.type === "ImportDeclaration")
+      for (const specifier of node.specifiers)
+        declare(scope, specifier.local, undefined);
+    if (node.type === "VariableDeclaration") {
+      for (const declaration of node.declarations)
+        declare(node.kind === "var" ? scope.vars : scope, declaration.id, declaration.id.type === "Identifier" ? declaration.init : undefined);
+    }
+    if (node.type === "AssignmentExpression" || node.type === "UpdateExpression")
+      writes.push({
+        scope,
+        pattern: node.left ?? node.argument,
+        value: node.operator === "=" && node.left.type === "Identifier" ? node.right : undefined
+      });
+    if (node.type === "ForInStatement" || node.type === "ForOfStatement") {
+      const patterns = node.left.type === "VariableDeclaration" ? node.left.declarations.map((d) => d.id) : [node.left];
+      for (const pattern of patterns)
+        writes.push({ scope, pattern, value: undefined });
+    }
+    for (const value of Object.values(node)) {
+      if (value?.type)
+        pending.push({ node: value, scope });
+      else if (Array.isArray(value)) {
+        for (const child of value)
+          if (child?.type)
+            pending.push({ node: child, scope });
+      }
+    }
+  }
+  for (const { scope, pattern, value } of writes)
+    for (const name of names(pattern))
+      resolve(scope, name)?.push(value);
+  const binding = (node, name) => resolve(scopes.get(node), name);
+  return {
+    binding,
+    values: (node) => node?.type === "Identifier" ? binding(node, node.name) : [node],
+    outside: (fn, name) => resolve(scopes.get(fn)?.parent, name)
+  };
+}
+function hasScopeGate(node, id) {
+  let found = false;
+  walkScope(node.body ?? node, (child) => {
+    if (member(child, id) && member(child.object, "__clawgodPatches") && child.object.object.name === "globalThis")
+      found = true;
+  });
+  return found;
+}
+var conjunctions = (node) => node?.type === "LogicalExpression" && node.operator === "&&" ? [...conjunctions(node.left), ...conjunctions(node.right)] : [node];
+var falseReturn = (statement) => {
+  const returned = statement?.type === "BlockStatement" && statement.body.length === 1 ? statement.body[0] : statement;
+  return returned?.type === "ReturnStatement" && boolean(returned.argument, false);
+};
+function providerRestriction(parts) {
+  const [first, second] = parts;
+  if (first?.type !== "BinaryExpression" || first.operator !== "!==" || first.left.type !== "Identifier" || !literal(first.right, "firstParty"))
+    return false;
+  if (second?.type === "BinaryExpression" && second.operator === "!==" && second.left.name === first.left.name && literal(second.right, "anthropicAws"))
+    return true;
+  const call = second?.type === "UnaryExpression" && second.operator === "!" ? second.argument : null;
+  return call?.type === "CallExpression" && call.callee.type === "Identifier" && call.arguments.length === 1 && call.arguments[0].name === first.left.name;
+}
+function autoModeOptIn(fn) {
+  if (!["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(fn?.type) || fn.async || fn.generator || fn.params.length !== 1 || fn.params[0].type !== "Identifier" || fn.body.type !== "BlockStatement")
+    return false;
+  const body = fn.body.body.filter((s) => !s.directive && s.type !== "EmptyStatement");
+  const check = body[0], ret = body[1]?.argument;
+  const parts = check?.test?.type === "LogicalExpression" && check.test.operator === "||" ? [check.test.left, check.test.right] : [];
+  return body.length === 2 && check.type === "IfStatement" && !check.alternate && parts.length === 2 && ["firstParty", "anthropicAws"].every((value) => parts.some((p) => p.type === "BinaryExpression" && p.operator === "===" && p.left.name === fn.params[0].name && literal(p.right, value))) && check.consequent.type === "ReturnStatement" && boolean(check.consequent.argument, true) && body[1].type === "ReturnStatement" && ret?.type === "CallExpression" && ret.arguments.length === 1 && member(ret.arguments[0], "CLAUDE_CODE_ENABLE_AUTO_MODE") && member(ret.arguments[0].object, "env") && ret.arguments[0].object.object.name === "process";
+}
+function autoModeModels(node) {
+  if (node?.type !== "LogicalExpression" || node.operator !== "||")
+    return false;
+  const models = new Map;
+  walkScope(node, (child) => {
+    if (child.type === "BinaryExpression" && child.operator === "===" && child.left.type === "Identifier" && ["claude-opus-4-6", "claude-sonnet-4-6"].some((model) => literal(child.right, model)))
+      models.set(child.right.value, child.left.name);
+  });
+  return models.size === 2 && models.get("claude-opus-4-6") === models.get("claude-sonnet-4-6");
+}
 function hasGate(node, id) {
   let found = false;
   walk(node, (child) => {
@@ -23630,6 +23879,11 @@ function hasRemoteSettingsContext(node) {
 function scanAstPatches(code) {
   const results = Object.fromEntries(AST_PATCH_IDS.map((id) => [id, { matches: [], present: false, patched: false }]));
   const tree = parsePatchSource(code);
+  const bindings = lexicalBindings(tree);
+  const sentinel = "[Tool result missing due to internal error]";
+  const wigglyFlag = "tengu_wiggly_dove";
+  const wigglyLiterals = new Set, wigglyCovered = new Set, wigglyCalls = new Set, wigglyCandidates = [];
+  let pairingHandled = false, pairingUnhandled = false;
   const edit = (id, node, replacement) => {
     results[id].matches.push({ start: node.start, end: node.end, replacement });
   };
@@ -23658,6 +23912,176 @@ function scanAstPatches(code) {
     if (node.type === "FunctionDeclaration" && node.id?.type === "Identifier")
       functions.set(node.id.name, node);
   }
+  const providerCall = (call) => {
+    if (call?.type !== "CallExpression" || call.arguments.length || call.callee.type !== "Identifier")
+      return false;
+    const values = bindings.values(call.callee);
+    if (values?.length !== 1)
+      return false;
+    const helper = values[0];
+    if (helper?.type !== "FunctionDeclaration" || helper.params.length || helper.async || helper.generator)
+      return false;
+    const returned = helper.body.body.filter((s) => s.type === "ReturnStatement");
+    return returned.length === 1 && providerRestriction(conjunctions(returned[0].argument));
+  };
+  walk(tree, (node) => {
+    if (literal(node, wigglyFlag))
+      wigglyLiterals.add(node);
+    if (node.type === "CallExpression" && node.arguments.length) {
+      const values = bindings.values(node.arguments[0]);
+      if (values?.some((value) => literal(value, wigglyFlag)))
+        wigglyCalls.add(node);
+    }
+    if (!["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type) || node.async || node.generator)
+      return;
+    if (node.body.type === "BlockStatement") {
+      const statements = node.body.body;
+      if (!node.params.length) {
+        const body = statements.filter((s) => !s.directive && s.type !== "EmptyStatement");
+        const checks = body.slice(0, -1);
+        const last = body.at(-1);
+        const guardedHelper = checks.length && checks.every((s) => s.type === "IfStatement" && !s.alternate && s.consequent.type === "ReturnStatement" && boolean(s.consequent.argument, false)) && last?.type === "ReturnStatement" && last.argument?.type === "CallExpression";
+        const firstParty = checks.some((s) => s.type === "IfStatement" && s.test.type === "UnaryExpression" && s.test.operator === "!" && s.test.argument.type === "CallExpression" && s.test.argument.arguments.length === 0);
+        const flagCheck = guardedHelper && checks.find((s) => {
+          const call = s.test.type === "UnaryExpression" && s.test.operator === "!" ? s.test.argument : null;
+          const values = call?.type === "CallExpression" ? bindings.values(call.arguments[0]) : null;
+          return call?.type === "CallExpression" && call.arguments.length === 2 && boolean(call.arguments[1], false) && values?.length && values.every((value) => literal(value, wigglyFlag));
+        });
+        if (firstParty && flagCheck) {
+          wigglyCandidates.push(node);
+          wigglyCovered.add(flagCheck.test.argument);
+          for (const value of bindings.values(flagCheck.test.argument.arguments[0]))
+            wigglyCovered.add(value);
+        }
+      }
+      const inline = [], helperSites = [];
+      for (const statement of statements) {
+        if (statement.type !== "IfStatement" || statement.alternate || !falseReturn(statement.consequent))
+          continue;
+        const parts = conjunctions(statement.test);
+        if (providerRestriction(parts)) {
+          const prefix = parts.length === 2 ? statement.test : { start: parts[0].start, end: parts[1].end };
+          inline.push(prefix);
+        } else if (parts.length === 2 && autoModeModels(parts[1])) {
+          if (providerCall(parts[0]))
+            inline.push(parts[0]);
+          else if (parts[0]?.type === "Identifier") {
+            const values = bindings.values(parts[0]);
+            const declarations = statements.filter((s) => s.type === "VariableDeclaration").flatMap((s) => s.declarations).filter((d) => d.id.type === "Identifier" && bindings.binding(d.id, d.id.name) === bindings.values(parts[0]));
+            if (values?.length === 1 && declarations.length === 1 && declarations[0].end < statement.start && providerCall(values[0]))
+              inline.push(values[0]);
+            else if (!hasScopeGate(node, "auto-mode-inline-gate"))
+              results["auto-mode-inline-gate"].present = true;
+          } else if (!hasScopeGate(node, "auto-mode-inline-gate"))
+            results["auto-mode-inline-gate"].present = true;
+        }
+        const call = statement.test.type === "UnaryExpression" && statement.test.operator === "!" ? statement.test.argument : null;
+        if (call?.type === "CallExpression" && call.callee.type === "Identifier" && call.arguments.length === 1 && call.arguments[0].type === "Identifier") {
+          const later = statements.filter((s) => s.start >= statement.end);
+          let provider = false, providerMention = false;
+          for (const s of later)
+            walkScope(s, (child) => {
+              if (child.type === "BinaryExpression" && child.operator === "!==" && literal(child.right, "firstParty")) {
+                providerMention = true;
+                if (child.left.type === "Identifier" && bindings.values(child.left) === bindings.values(call.arguments[0]))
+                  provider = true;
+              }
+            });
+          const values = bindings.values(call.callee);
+          if (provider && values?.length === 1 && autoModeOptIn(values[0]))
+            helperSites.push(statement.test);
+          else if (providerMention && !hasScopeGate(node, "auto-mode-helper-gate"))
+            results["auto-mode-helper-gate"].present = true;
+        }
+      }
+      for (const [id, sites] of [["auto-mode-inline-gate", inline], ["auto-mode-helper-gate", helperSites]]) {
+        if (sites.length && bindings.binding(node, "globalThis"))
+          results[id].present = true;
+        else if (hasScopeGate(node, id))
+          results[id].patched = true;
+        else
+          for (const site of new Set(sites))
+            edit(id, site, `(globalThis.__clawgodPatches?.[${JSON.stringify(id)}]===!1&&(${code.slice(site.start, site.end)}))`);
+      }
+      const optIn = "auto-mode-provider-opt-in";
+      if (autoModeOptIn(node) && bindings.binding(node, "globalThis"))
+        results[optIn].present = true;
+      else if (hasScopeGate(node, optIn))
+        results[optIn].patched = true;
+      else if (autoModeOptIn(node))
+        injectReturn(optIn, node, "!0");
+    }
+    const id = "tool-result-pairing-recovery";
+    if (hasScopeGate(node, id)) {
+      results[id].patched = true;
+      pairingHandled = true;
+      return;
+    }
+    if (!node.params.length || node.params[0].type !== "Identifier")
+      return;
+    const history = node.params[0].name, historyBinding = bindings.values(node.params[0]);
+    let historyArray = false;
+    walkScope(node.body, (child) => {
+      if (child.type === "MemberExpression" && child.object.type === "Identifier" && child.object.name === history && bindings.values(child.object) === historyBinding && (member(child, "length") || child.computed))
+        historyArray = true;
+    });
+    if (!historyArray)
+      return;
+    walkScope(node.body, (call) => {
+      if (call.type !== "CallExpression" || !member(call.callee, "map") || call.arguments.length !== 1)
+        return;
+      const cb = call.arguments[0];
+      if (!["ArrowFunctionExpression", "FunctionExpression"].includes(cb?.type) || cb.async || cb.generator || cb.params.length !== 1 || cb.params[0].type !== "Identifier")
+        return;
+      const object = cb.body.type === "ObjectExpression" ? cb.body : cb.body.type === "BlockStatement" && cb.body.body.length === 1 && cb.body.body[0].type === "ReturnStatement" ? cb.body.body[0].argument : null;
+      if (object?.type !== "ObjectExpression" || object.properties.length !== 4 || object.properties.some((p) => p.type !== "Property" || p.kind !== "init" || p.method || p.computed && p.key.type !== "Literal") || new Set(object.properties.map(propertyName)).size !== 4)
+        return;
+      const property = (name) => object.properties.find((p) => propertyName(p) === name)?.value;
+      const content = property("content"), values = bindings.values(content);
+      const pairingObject = literal(property("type"), "tool_result") && property("tool_use_id")?.name === cb.params[0].name && boolean(property("is_error"), true);
+      if (pairingObject && (!values?.length || !values.every((v) => literal(v, sentinel))))
+        pairingUnhandled = true;
+      if (!pairingObject || !values?.length || !values.every((v) => literal(v, sentinel)) || bindings.outside(cb, history) !== historyBinding || bindings.binding(call, "globalThis"))
+        return;
+      const used = new Set;
+      walk(node, (child) => {
+        if (child.type === "Identifier")
+          used.add(child.name);
+      });
+      const fresh = (base) => {
+        let name = base, i = 1;
+        while (used.has(name))
+          name = `${base}${i++}`;
+        used.add(name);
+        return name;
+      };
+      const p = fresh("_p"), m = fresh("_m"), b = fresh("_b"), key = fresh("_id");
+      const missing = JSON.stringify(sentinel);
+      edit(id, call, `${code.slice(call.callee.object.start, call.callee.object.end)}.map((${key})=>{let ${p};` + `if(${gate(id)}){for(let ${m} of ${history}){if(globalThis.Array.isArray(${m}?.message?.content)){` + `for(let ${b} of ${m}.message.content){if(${b}?.type==="tool_result"&&${b}.tool_use_id===${key}&&${b}.content!==${missing}){${p}=${b};break;}}}` + `if(${p})break;}}return ${p}?{...${p}}:{type:"tool_result",tool_use_id:${key},content:${missing},is_error:!0}})`);
+      pairingHandled = true;
+    });
+  });
+  const privacy = results["wiggly-dove"];
+  if (wigglyCandidates.length === 1 && [...wigglyLiterals, ...wigglyCalls].every((node) => wigglyCovered.has(node))) {
+    const fn = wigglyCandidates[0];
+    if (bindings.binding(fn, "globalThis"))
+      privacy.present = true;
+    else if (hasScopeGate(fn, "wiggly-dove"))
+      privacy.patched = true;
+    else
+      injectReturn("wiggly-dove", fn, "!1");
+  } else if (wigglyLiterals.size) {
+    privacy.present = true;
+    if (wigglyCandidates.length > 1)
+      privacy.ambiguous = true;
+  }
+  if (!pairingHandled || pairingUnhandled)
+    walk(tree, (node) => {
+      if (literal(node, sentinel)) {
+        results["tool-result-pairing-recovery"].present = true;
+        results["tool-result-pairing-recovery"].matches = [];
+      }
+    });
   walk(tree, (node) => {
     if (node.type === "ObjectExpression") {
       const props = node.properties;
@@ -23759,6 +24183,10 @@ function scanAstPatches(code) {
       }
     }
   });
+  for (const id of ["auto-mode-inline-gate", "auto-mode-helper-gate", "auto-mode-provider-opt-in"]) {
+    if (results[id].present)
+      results[id].matches = [];
+  }
   return results;
 }
 function applyAstEdits(code, edits) {
@@ -23790,7 +24218,7 @@ function applySemanticPatches(source, descriptors, { dryRun = false, verify = fa
       throw new Error(`Unknown semantic patch: ${id}`);
     const matches = scans.flatMap((scan) => scan[id].matches);
     const present = scans.some((scan) => scan[id].present);
-    if (scans.some((scan) => scan[id].ambiguous) || id === "remote-settings-off" && matches.length > 1) {
+    if (scans.some((scan) => scan[id].ambiguous) || ["remote-settings-off", "wiggly-dove"].includes(id) && matches.length > 1) {
       results.set(descriptor, { status: "failed", detail: `ambiguous AST patch sites: ${id}` });
     } else if (present) {
       results.set(descriptor, { status: "stale", detail: `AST matcher stale: ${id}` });
@@ -24091,6 +24519,11 @@ var customPatches = [{
   name: "GrowthBook env overrides (graph dead-code fix)",
   semanticId: "growthbook-env-overrides-graph",
   apply: (source, options) => applySemanticPatch(source, { ...options, semanticId: "growthbook-env-overrides-graph" })
+}, {
+  order: 97,
+  name: "Recover orphaned tool results from conversation history",
+  semanticId: "tool-result-pairing-recovery",
+  apply: (source, options) => applySemanticPatch(source, { ...options, semanticId: "tool-result-pairing-recovery" })
 }];
 var coreRegistry = Object.freeze({
   id: "core",
@@ -24140,6 +24573,7 @@ var runtimeFeatureMetadata = Object.freeze({
   "computer-use": ["computer-use"],
   "enable-voice-mode": ["voice-mode"],
   "voice-asr-backend": ["voice-asr-backend"],
+  "tool-result-pairing-recovery": ["tool-result-pairing-recovery"],
   "agent-teams": ["agent-teams"],
   "computer-use-sub": ["computer-use"],
   "computer-use-default": ["computer-use"],
@@ -24169,6 +24603,7 @@ var runtimeFeatureMetadata = Object.freeze({
   "theme-brief-rgb-light": ["theme"],
   "theme-brief-ansi": ["theme"],
   "remote-settings-off": ["remote-settings"],
+  "wiggly-dove": ["wiggly-dove"],
   "geo-stego-date": ["geo-neutralize"],
   "geo-detect-probe": ["geo-neutralize"],
   "geo-apostrophe-stego": ["geo-neutralize"],
@@ -24946,28 +25381,6 @@ function createAgentsRegistry({ chromeEnabled, codeModeEnabled = false }) {
 // src/generic/patcher/enhancements/auto-mode.mjs
 var patches2 = [
   {
-    order: 26,
-    name: "Auto-mode unlock for third-party API (provider helper gate)",
-    pattern: /if\(!([\w$]+)\(([\w$]+)\)\)return!1;(?=(?:(?!function\s).){0,300}!=="firstParty")/g,
-    replacer: (match) => `if(${gate2("auto-mode-helper-gate")}===!1&&` + match.slice(3, -10) + ")return!1;",
-    optional: true
-  },
-  {
-    order: 27,
-    name: "Auto-mode unlock for third-party API (inline gate)",
-    pattern: /if\((?:([\w$]+)!=="firstParty"&&(?:\1!=="anthropicAws"|![\w$]+\(\1\))[^;]*|[\w$]+\(\)&&\([\w$]+==="claude-opus-4-6"\|\|[\w$]+==="claude-sonnet-4-6"\|\|[\w$]+\.includes\("haiku"\)[^;]*?\))\)return!1;/g,
-    replacer: (match) => `if(${gate2("auto-mode-inline-gate")}===!1&&` + match.slice(3, -10) + ")return!1;",
-    optional: true
-  },
-  {
-    order: 28,
-    name: "Auto-mode unlock for third-party API (provider opt-in helper)",
-    pattern: /function ([\w$]+)\(([\w$]+)\)\{if\(\2==="firstParty"\|\|\2==="anthropicAws"\)return!0;return [\w$]+\(process\.env\.CLAUDE_CODE_ENABLE_AUTO_MODE\)\}/g,
-    replacer: (match, fn, arg) => `function ${fn}(${arg}){if(${gate2("auto-mode-provider-opt-in")})return!0;${match.slice(match.indexOf("{") + 1, -1)}}`,
-    sentinel: "process.env.CLAUDE_CODE_ENABLE_AUTO_MODE)}",
-    appliedMarker: /function [\w$]+\([^)]*\)\{if\(globalThis\.__clawgodPatches\?\.\["auto-mode-provider-opt-in"\]/
-  },
-  {
     order: 68,
     name: "Auto-mode classifier timeout override (CLAWGOD_CLASSIFIER_TIMEOUT_MS)",
     pattern: /function ([\w$]+)\(([\w$]+)\)\{let ([\w$]+)=Math\.max\(0,Math\.ceil\(\(\2-50000\)\/50000\)\);return Math\.min\(([\w$]+),([\w$]+)\+\3\*1e4\)\}/g,
@@ -24995,7 +25408,16 @@ var patches2 = [
 var autoModeRegistry = Object.freeze({
   id: "auto-mode",
   patches: Object.freeze(patches2),
-  customPatches: Object.freeze([])
+  customPatches: Object.freeze([
+    [26, "auto-mode-helper-gate", "provider helper gate"],
+    [27, "auto-mode-inline-gate", "inline gate"],
+    [28, "auto-mode-provider-opt-in", "provider opt-in helper"]
+  ].map(([order, semanticId, label]) => ({
+    order,
+    name: `Auto-mode unlock for third-party API (${label})`,
+    semanticId,
+    apply: (source, options) => applySemanticPatch(source, { ...options, semanticId })
+  })))
 });
 
 // src/generic/patcher/enhancements/branding.mjs
@@ -26311,6 +26733,11 @@ var privacyRegistry = Object.freeze({
     name: "Disable enterprise remote settings",
     semanticId: "remote-settings-off",
     apply: (source, options) => applySemanticPatch(source, { ...options, semanticId: "remote-settings-off" })
+  }, {
+    order: 96,
+    name: "Block wiggly-dove Git/environment collection",
+    semanticId: "wiggly-dove",
+    apply: (source, options) => applySemanticPatch(source, { ...options, semanticId: "wiggly-dove" })
   }])
 });
 

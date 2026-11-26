@@ -12,7 +12,7 @@ export function applySemanticPatches(source, descriptors, { dryRun = false, veri
     if (!AST_PATCH_IDS.includes(id)) throw new Error(`Unknown semantic patch: ${id}`);
     const matches = scans.flatMap(scan => scan[id].matches);
     const present = scans.some(scan => scan[id].present);
-    if (scans.some(scan => scan[id].ambiguous) || (id === 'remote-settings-off' && matches.length > 1)) {
+    if (scans.some(scan => scan[id].ambiguous) || (['remote-settings-off', 'wiggly-dove'].includes(id) && matches.length > 1)) {
       results.set(descriptor, { status: 'failed', detail: `ambiguous AST patch sites: ${id}` });
     } else if (present) {
       results.set(descriptor, { status: 'stale', detail: `AST matcher stale: ${id}` });

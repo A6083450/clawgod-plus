@@ -6,7 +6,7 @@ const { spawnSync } = require('node:child_process');
 const MANAGED = [
   'cli.cjs', 'cli.js', 'cli.original.js', 'cli.original.cjs',
   'cli.original.js.bak', 'cli.original.cjs.bak', 'chunks', 'chunks.bak', 'assets',
-  '.source-version', '.clawgod-version', '.clean-source.json', 'patch-fallback.json',
+  '.source-version', '.clawgod-version', '.clean-source.json', 'asset-loaders.json', 'patch-fallback.json',
   'patch.mjs', 'patch.js', 'extract-natives.mjs', 'post-process.mjs', 'repatch.mjs',
   'runtime-state.cjs', 'startup-check.cjs', 'vendor-transaction.mjs', 'self-update.cjs',
   'patch-fallback.cjs', 'feature-gates.cjs', 'openai-proxy.cjs', 'proxy-fetch.mjs',
@@ -202,6 +202,8 @@ function cleanManifest(root, version, backup) {
   const modules = files(entry, 'cli.original.cjs');
   const hasChunks = Boolean(present(chunks));
   if (hasChunks) Object.assign(modules, files(chunks, 'chunks'));
+  const assetLoaders = join(root, 'asset-loaders.json');
+  if (present(assetLoaders)) Object.assign(modules, files(assetLoaders, 'asset-loaders.json'));
   return { schemaVersion: 1, version, hasChunks, modules };
 }
 

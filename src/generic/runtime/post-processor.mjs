@@ -6512,7 +6512,77 @@ function fixTextRequires(code) {
   );
 }
 
-function rewrite(code, { chunkPrefix }) {
+// 只信提取器保存的 loader，不从文件后缀推断可执行性；旧安装另走兼容路径。
+function readAssetLoaders() {
+  const metadata = join(here, 'asset-loaders.json');
+  if (!existsSync(metadata)) return null;
+  const record = JSON.parse(readFileSync(metadata, 'utf8'));
+  if (record?.schemaVersion !== 1 || !record.assets || typeof record.assets !== 'object' || Array.isArray(record.assets)) {
+    throw new Error('无效的嵌入资源 loader 元数据，已拒绝后处理。');
+  }
+  const replacements = new Map(), types = new Map();
+  for (const [virtual, asset] of Object.entries(record.assets)) {
+    if (!asset || !['text', 'file'].includes(asset.loader) || !/^assets\/[^/\\\\]+$/.test(asset.path)
+      || asset.path.endsWith('/..') || asset.path.endsWith('/.')) throw new Error('无效的嵌入资源 loader 路径。');
+    const extracted = realpathSync.native(join(here, asset.path));
+    if (dirname(extracted) !== realpathSync.native(join(here, 'assets'))) throw new Error('嵌入资源不能指向提取目录外部。');
+    const target = join(clawgodDir, asset.path).replaceAll('\\', '/');
+    replacements.set(virtual, target);
+    const key = process.platform === 'win32' ? target.toLowerCase() : target;
+    if (types.has(key) && types.get(key) !== asset.loader) throw new Error('嵌入资源 loader 发生冲突。');
+    types.set(key, asset.loader);
+  }
+  return { replacements, types };
+}
+
+function fixAssetRequires(code, assets) {
+  if (!assets.types.size || !code.includes('require')) return code;
+  const loader = `(() => {
+    const fs = import.meta.require('node:fs');
+    const path = import.meta.require('node:path');
+    const types = new Map(${JSON.stringify([...assets.types])});
+    return (id) => {
+      if (typeof id === 'string') {
+        const target = path.isAbsolute(id) ? id : import.meta.require.resolve(id);
+        if (fs.existsSync(target)) {
+          const canonical = fs.realpathSync.native(target).replaceAll('\\\\', '/');
+          const key = process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+          const type = types.get(key);
+          if (type === 'text') return fs.readFileSync(target, 'utf8');
+          if (type === 'file') return target;
+        }
+      }
+      return import.meta.require(id);
+    };
+  })()`;
+  const isRequire = node => node?.type === 'MemberExpression'
+    && (node.computed ? node.property.value === 'require' : node.property.name === 'require')
+    && node.object.type === 'MetaProperty' && node.object.meta.name === 'import';
+  const pending = [cellAst.parse(code, { ecmaVersion: 'latest', sourceType: 'module' })], edits = [];
+  while (pending.length) {
+    const node = pending.pop();
+    const alias = node.type === 'VariableDeclarator' ? node.init
+      : node.type === 'AssignmentExpression' && node.operator === '=' ? node.right : null;
+    if (isRequire(alias)) edits.push(alias);
+    if (node.type === 'CallExpression' && isRequire(node.callee)) {
+      const id = node.arguments[0]?.value;
+      const key = typeof id === 'string' && process.platform === 'win32' ? id.toLowerCase() : id;
+      if (assets.types.has(key)) edits.push(node.callee);
+    }
+    for (const value of Object.values(node)) {
+      if (value?.type) pending.push(value);
+      else if (Array.isArray(value)) pending.push(...value.filter(child => child?.type));
+    }
+  }
+  for (const node of edits.sort((a, b) => b.start - a.start)) code = code.slice(0, node.start) + loader + code.slice(node.end);
+  return code;
+}
+
+function rewrite(code, { chunkPrefix, assets }) {
+  if (assets) code = code.replace(/["'`](?:\/\$bunfs\/root|[A-Za-z]:\/~BUN\/root)\/[^"'`]+["'`]/g, literal => {
+    const target = assets.replacements.get(literal.slice(1, -1));
+    return target ? JSON.stringify(target) : literal;
+  });
   // (1) code-split chunk import specifiers → local relative path.
   // v2.1.246 renamed many chunks from `chunk-<hash>.js` to `_<n>.js`; both
   // are flat files under chunks/ and must be rewritten to local paths.
@@ -6535,7 +6605,7 @@ function rewrite(code, { chunkPrefix }) {
     new RegExp(`${BUNFS}src/plugins/functionHooks/hooks-worker/hooks-worker\\.js`, 'g'),
     `${clawgodDir}/chunks/hooks-worker.js`,
   );
-  return fixTextRequires(code);
+  return assets ? fixAssetRequires(code, assets) : fixTextRequires(code);
 }
 
 // ── 公开 Bun 的字符格渲染器 ────────────────────────────────────────────────
@@ -8727,6 +8797,7 @@ function installPublicCellRenderer(modulePaths) {
 }
 
 function processCandidate() {
+  const assets = readAssetLoaders();
   const chunksDir = join(here, 'chunks');
   const split = existsSync(chunksDir);
   const chunkPaths = split
@@ -8741,12 +8812,12 @@ function processCandidate() {
     // chunk-*.js"` statements. Rewrite its specifiers (chunks live one level
     // down) and rewrite every chunk (sibling specifiers) in place.
     let entry = readFileSync(src, 'utf8');
-    entry = rewrite(entry, { chunkPrefix: './chunks/' });
+    entry = rewrite(entry, { chunkPrefix: './chunks/', assets });
     writeFileSync(dst, entry);
     unlinkSync(src);
 
     for (const path of chunkPaths) {
-      const code = rewrite(readFileSync(path, 'utf8'), { chunkPrefix: './' });
+      const code = rewrite(readFileSync(path, 'utf8'), { chunkPrefix: './', assets });
       writeFileSync(path, code);
     }
     console.log(`cli.original.cjs: ${entry.length} bytes (code-split, chunks rewritten)`);
