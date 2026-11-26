@@ -21,6 +21,14 @@ const upstream330Interfaces = new Set([
   'ff50cc1f86c571ea0f21b2b117648c2bae869f4da4de21ae19644863592ab8d9',
   '0246f6d5c38af4848e6c2d652a550bda0d071306b8555e3123cd7dacdd60db19',
 ]);
+// 2.1.332 使用独立本地交互 profile；SDK/headless 不在解锁范围内。
+const upstream332Contract = '25f7b81595d789b3072a6c832a498dcf3518da84cb9972edad8ba307aa7ec871';
+const patched332Contract = '5a007c3c7f8e35357b463b5edb9595a230f69146756c62878283d870b76f3afb';
+const upstream332Interfaces = new Set([
+  '1c6b0a4b5d01f9ab4118f1c5306240021cd4bc1a6c838c20f9f5dfa2f5081e2a',
+  '7036249a5a0797dbaf95b1a08850fe45edd125028657aec741028fd0f63c8575',
+  '4432e53020b6be21fc05fa3d24fb842d07c9837100df68b9891c05f308a647a3',
+]);
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function interfaceContract(ast) {
   return digest([
@@ -53,11 +61,50 @@ function contract(ast) {
   return createHash('sha256').update(JSON.stringify(normalize(ast))).digest('hex');
 }
 
+function local332(code, ast) {
+  const declarations = ast.body.filter(node => node.type === 'FunctionDeclaration');
+  const names = ast.body.find(node => node.type === 'ExportNamedDeclaration').specifiers.map(node => node.local.name);
+  const fn = name => declarations.find(node => node.id.name === name);
+  const [, modelFamily, model, , , , , , , , answer, finalize, stable] = names;
+  const edits = [];
+  const body = (name, value) => {
+    const node = fn(name);
+    if (!node) throw new Error(`Code Mode 332 缺少声明: ${name}`);
+    edits.push({ start: node.body.start, end: node.body.end, value: `{${value}}` });
+  };
+  // 只替换 Code Mode 自身的账号、模型和 rollout 资格；不动共享 Provider 或云端 gate。
+  body('se', 'return typeof Bun!=="undefined";');
+  for (const name of [modelFamily, model]) body(name, 'return!0;');
+  for (const name of ['_', 'L', 'O', 'W', 'C']) body(name, 'return!1;');
+  // Hy 同步读取已注册托管 verdict（缺失/失败即拒绝）。不恢复会主动发起官方加载的 i8n/Ks。
+  const policyAbsent = fn('X').body.body[0].argument.right.argument.callee.name;
+  const localReason = `${policyAbsent}()?"admin_unread":A()?"admin":y()?"compliance":R()?"otel":void 0`;
+  body('q', `return ${localReason};`);
+  body('N', 'return{read:!0};');
+  const eligibility = fn('I');
+  // SDK/headless 有独立的认证与确认语义；本次只解锁本地交互，不扩大这些入口。
+  edits.push({ start: eligibility.body.start + 1, end: eligibility.body.start + 1, value: 'if(ge())return"entrypoint";' });
+  const consent = fn(answer);
+  const consentGuards = consent.body.body.filter(node => node.type === 'IfStatement').slice(0, 3);
+  if (consentGuards.length !== 3) throw new Error('Code Mode 332 风险确认结构漂移');
+  body(answer, consentGuards.map(node => code.slice(node.start, node.end)).join('') + code.slice(consent.body.body.at(-1).start, consent.body.body.at(-1).end));
+  const finishing = fn(finalize), precondition = finishing.body.body[0];
+  const recheck = findNodes(finishing, node => node.type === 'CallExpression' && node.arguments[0]?.type === 'ArrowFunctionExpression')[0].callee.name;
+  body(finalize, `${code.slice(precondition.start, precondition.end)}let __clawgodReason=!r.reviewed?"no_setup":${localReason};if(__clawgodReason===void 0){r.signedInAs={};${recheck}(()=>${localReason});return"none"}return T(__clawgodReason,"restart_without_mode");`);
+  body(stable, 'return r.signedInAs!==void 0;');
+  let next = code;
+  for (const edit of edits.sort((a, b) => b.start - a.start)) next = next.slice(0, edit.start) + edit.value + next.slice(edit.end);
+  const signature = contract(parsePatchSource(next));
+  if (signature !== patched332Contract) throw new Error(`patched Code Mode 332 contract drift: ${signature}`);
+  return { code: `${next}\n${marker}`, count: edits.length };
+}
+
 async function apply(source, { dryRun = false, verify = false } = {}) {
   const modules = source.split(separator);
-  if (!source.includes(feature)) return { status: 'skipped', detail: 'Code Mode not present in this version' };
+  if (!source.includes(feature) && !source.includes(marker)) return { status: 'skipped', detail: 'Code Mode not present in this version' };
   try {
-    const candidates = modules.map((code, index) => ({ code, index })).filter(({ code }) => code.includes(feature)).map(candidate => ({ ...candidate, ast: parsePatchSource(candidate.code) })).filter(({ ast }) => {
+    const candidates = modules.map((code, index) => ({ code, index })).filter(({ code }) => code.includes(feature) || code.includes(marker)).map(candidate => ({ ...candidate, ast: parsePatchSource(candidate.code) })).filter(({ code, ast }) => {
+      if (code.includes(marker)) return true;
       const keys = findNodes(ast, node => node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init?.value === feature).map(node => node.id.name);
       return ast.body.some(node => node.type === 'ExportNamedDeclaration' && node.specifiers.some(specifier => keys.includes(specifier.local.name)));
     });
@@ -74,6 +121,18 @@ async function apply(source, { dryRun = false, verify = false } = {}) {
     if (versions[0] === '2.1.330' && upstream330Interfaces.has(edges)) {
       if (code.includes(marker) || contract(ast) !== upstream330Contract) throw new Error('Code Mode 2.1.330 upstream contract drift');
       return { status: 'skipped', warning: '2.1.330 local eligibility not supported; upstream Code Mode preserved' };
+    }
+    if (versions[0] === '2.1.332' && upstream332Interfaces.has(edges)) {
+      const signature = contract(ast);
+      if (code.includes(marker)) {
+        if (signature !== patched332Contract) throw new Error(`patched Code Mode 332 contract drift: ${signature}`);
+        return { status: 'already', detail: 'local Code Mode 332 eligibility already applied' };
+      }
+      if (signature !== upstream332Contract) throw new Error(`Code Mode 332 opt-in contract drift: ${signature}`);
+      const next = local332(code, ast);
+      if (dryRun || verify) return { status: verify ? 'verify' : 'applied', count: next.count };
+      modules[index] = next.code;
+      return { status: 'applied', count: next.count, code: modules.join(separator) };
     }
     if (!interfaceContracts.has(edges)) throw new Error(`Code Mode interface contract drift: ${edges}`);
     const signature = contract(ast);

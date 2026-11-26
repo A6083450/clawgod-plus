@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { voiceRegistry } from '../src/generic/patcher/enhancements/voice.mjs';
+import { findNodes, loadAcorn } from '../src/generic/patcher/core.mjs';
 import { getPatcherSources, seedPatcherAcorn } from './patcher-test-sources.mjs';
 
 const fixture = readFileSync(new URL('./fixtures/voice-composer-2.1.281.txt', import.meta.url), 'utf8');
@@ -153,6 +154,36 @@ try {
   const drifted = fixture.replace('v(te.current+Fe,', 'v(unknownCount(),');
   const rejected = await descriptor.apply(drifted, { rootDir: root });
   assert.equal(rejected.status, 'failed'); assert.equal(rejected.code, undefined, 'unknown warmup shape fails without partial writes');
+  // 2.1.332 的按键 hook 新增 setValueWithCursor，不能误认成第二个转写 composer。
+  const modern = readFileSync(new URL('./fixtures/voice-composer-2.1.332.txt', import.meta.url), 'utf8');
+  const modernResult = await descriptor.apply(modern, { rootDir: root });
+  assert.equal(modernResult.status, 'applied', modernResult.detail);
+  assert.equal((await descriptor.apply(modernResult.code, { rootDir: root })).status, 'already');
+  const acorn = await loadAcorn(root);
+  const modernAst = acorn.parse(modernResult.code, {ecmaVersion:'latest',sourceType:'module'});
+  const composerHook = modernAst.body.find(node => node.id?.name === 'ben');
+  const callback = findNodes(composerHook, node => node.type === 'VariableDeclarator' && node.id.name === 've')[0].init.arguments[0];
+  const input = {value:'前缀  后缀',cursorOffset:4,setValueWithCursor(value,cursor){this.value=value;this.cursorOffset=cursor}};
+  const before = {current:null}, after = {current:''}, expected = {current:null};
+  const stripModern = runInNewContext('(' + modernResult.code.slice(callback.start, callback.end) + ')',
+    {o:input,Q:before,E:after,D:expected,ede:value=>value.replaceAll('　',' '),__clawgodPatches:{}});
+  assert.equal(stripModern(0, {anchor:true}), 0);
+  assert.equal(input.value, '前缀  后缀', '新版锚定不提前插入后缀分隔符');
+  assert.equal(before.current, '前缀  ');
+  assert.equal(after.current, '后缀');
+  assert.equal(expected.current, input.value);
+  input.value = '前缀  后缀  '; input.cursorOffset = input.value.length; expected.current = input.value;
+  stripModern(1);
+  assert.equal(expected.current, input.value, '新版非锚定 strip 保留上游 expected snapshot 更新');
+  for (const mode of ['dryRun', 'verify']) {
+    const result = await descriptor.apply(modern, { rootDir: root, [mode]: true });
+    assert.notEqual(result.status, 'failed', result.detail);
+    assert.equal(result.code, modern, '新版预检不能写入源码');
+  }
+  const ambiguous = modern + '\n' + modern.slice(modern.indexOf('function ben('), modern.indexOf('function GFt(')).replace('function ben(', 'function duplicateComposer(');
+  const ambiguousResult = await descriptor.apply(ambiguous, { rootDir: root });
+  assert.equal(ambiguousResult.status, 'failed', '真正的双 composer 仍须拒绝');
+  assert.equal(ambiguousResult.code, undefined);
   for (const [label, runner] of await getPatcherSources()) for (const graph of [false, true]) {
     const directory = join(root, `${label}-${graph}`, '.clawgod'); mkdirSync(join(directory, 'chunks'), { recursive: true }); seedPatcherAcorn(directory); chmodSync(directory, 0o700);
     writeFileSync(join(directory, 'patch.mjs'), runner);

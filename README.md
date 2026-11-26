@@ -51,18 +51,18 @@ macOS/Linux 请从 Shell 运行安装命令，Windows 请从 PowerShell 运行�
 
 ## 安装 ClawGod Plus
 
-安装命令下载固定版本（v2026.11.21-claude.2.1.330）的 ClawGod Plus Release 资产。
+安装命令下载固定版本（v2026.11.26-claude.2.1.332）的 ClawGod Plus Release 资产。
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.21-claude.2.1.330/install.sh | bash
+curl -fsSL https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.21-claude.2.1.330/install.ps1 | iex
+irm https://github.com/A6083450/clawgod-plus/releases/download/v2026.11.26-claude.2.1.332/install.ps1 | iex
 ```
 
 常用安装参数（不传版本时默认使用安装器已验证的 Claude Code 版本，保留较新的已装版本）：
@@ -80,14 +80,14 @@ bash install.sh --lean-off        # 恢复完整工具集；默认值
 
 ## 可选增强（Enhancements）
 
-ClawGod Plus 提供 21 项可选增强，默认启用全部。增强 ID 固定且按以下顺序排列：
+ClawGod Plus 提供 22 项可选增强，默认启用全部。增强 ID 固定且按以下顺序排列：
 
 | 类型 | 增强 ID |
 |---|---|
-| 补丁 | `chrome`、`computer-use`、`design-canvas`、`agents`、`planning`、`voice`、`auto-mode`、`code-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding`、`classifier-fail-open`、`cleanup-period`、`disable-collapse-read-search`、`enable-keybindings`、`file-read-limit`、`transcript-dialog-replay`、`unlock-ultracode` |
+| 补丁 | `chrome`、`computer-use`、`design-canvas`、`agents`、`planning`、`ship`、`voice`、`auto-mode`、`code-mode`、`unrestricted-tools`、`paste-images`、`privacy`、`branding`、`classifier-fail-open`、`cleanup-period`、`disable-collapse-read-search`、`enable-keybindings`、`file-read-limit`、`transcript-dialog-replay`、`unlock-ultracode` |
 | 插件 | `claude-hud`、`claude-mem` |
 
-非交互环境（管道安装、CI、`claude update`）不传任何选项时，默认启用全部 21 项增强。选择会以严格 JSON 形式保存到 `~/.clawgod/enhancements.json`：
+非交互环境（管道安装、CI、`claude update`）不传任何选项时，默认启用全部 22 项增强。选择会以严格 JSON 形式保存到 `~/.clawgod/enhancements.json`：
 
 ```json
 {
@@ -103,7 +103,7 @@ ClawGod Plus 提供 21 项可选增强，默认启用全部。增强 ID 固定�
 
 ```
   ClawGod Plus 增强选择
-   1) 全部 21 项增强（默认，回车即选）
+   1) 全部 22 项增强（默认，回车即选）
    2) 仅核心（不装任何增强）
    3) 自定义菜单（逐项勾选）
    回车 全部增强 · Esc 退出
@@ -129,7 +129,9 @@ Windows PowerShell 对应参数：
 
 后续运行 `claude update` 会复用 `~/.clawgod/enhancements.json` 中已保存的选择，并且从不主动询问。关闭 `claude-hud` 或 `claude-mem` 会恢复由 ClawGod 托管的对应配置。其他已安装插件保持不变。
 
-**Code Mode：** 需要包含 Code Mode 的官方版本；本地资格增强已验证 2.1.325，旧版 2.1.322 不支持。2.1.330 可正常安装，但新版 SDK/后台准入暂未适配，安装器会提示并保留官方 Code Mode 行为。`code-mode` 增强默认包含在“全部”中，自定义安装需勾选 `Code Mode`；未选择时保留上游行为。安装后，Unix/macOS 用 `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 claude` 启动；PowerShell 先执行 `$env:CLAUDE_CODE_EXPERIMENTAL_CODE_MODE='1'`，再运行 `claude`。首次仍需在官方界面确认风险说明，不会自动接受或写入用户同意。此补丁仅将 Code Mode 资格判断本地化、不再为此访问官方资格服务；**模型请求仍通过现有 API 配置联网，并非离线模型**。保留本地管理员、合规和工具限制，显式启用 Agent Teams（环境变量或 `--agent-teams`）仍与 Code Mode 互斥；后台或远控入口暂不支持。请求 Code Mode 时，`agents` 增强不会隐式强开 Teams；未请求或未安装 `code-mode` 时保留原有 Agents 行为。
+**Ship 本地 PR 流程：** `ship` 增强复用内置 `ship-local`，让 `/ship` 和 `/ship-local` 在本地运行 PR review/watch，无需 Claude 云端会话或官方登录。仍需已配置的模型 provider、`git`、已完成 GitHub 授权的 `gh`，以及访问 GitHub 的网络连接；这不是离线模式。保留原有确认和权限流程，不会自动确认或绕过权限，也不承诺自动合并 PR。
+
+**Code Mode：** 需要包含 Code Mode 的官方版本；本地资格增强已验证 2.1.325 和 2.1.332，旧版 2.1.322 不支持。2.1.330 可正常安装，但安装器会提示并保留官方 Code Mode 行为。2.1.332 仅解锁本地交互资格，不要求官方账号、官方模型或云端资格服务；SDK/headless、后台和远控入口不在开放范围。`code-mode` 增强默认包含在“全部”中，自定义安装需勾选 `Code Mode`；未选择时保留上游行为。安装后，Unix/macOS 用 `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 claude` 启动；PowerShell 先执行 `$env:CLAUDE_CODE_EXPERIMENTAL_CODE_MODE='1'`，再运行 `claude`。首次仍需在官方界面确认风险说明，不会自动接受或写入用户同意。此补丁仅将 Code Mode 资格判断本地化、不再为此访问官方资格服务；**模型请求仍通过现有 API 配置联网，并非离线模型**。保留本地管理员、合规、遥测、工具与引擎限制；2.1.325 保留原生 Teams 互斥，2.1.332 保留 teammate／后台与远控限制，不额外修改 Teams 门控。请求 Code Mode 时，`agents` 增强不会隐式强开 Teams；未请求或未安装 `code-mode` 时保留原有 Agents 行为。
 
 **Claude Desktop 自动增强已暂停：** 当前源码的安装和更新流程不再自动修改 `Claude.app`，选择“全部安装”或单独启用 `computer-use` 也不包含 Desktop 的 CU/内置浏览器补丁及简体中文语言增强。CLI 的 Computer Use 功能不受影响。已有 Desktop 修改和备份保留，不自动回滚；此变更不影响此前发布的安装器。
 

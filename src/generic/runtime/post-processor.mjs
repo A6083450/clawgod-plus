@@ -6717,11 +6717,12 @@ function writeCell(screen, x, y, cell) {
       if ((cells[orphan + 1] & bn) === 2) {
         cells[orphan] = wo;
         cells[orphan + 1] = packCell(screen.emptyStyleId, 0, 0);
+        right = x + 2;
       }
     }
     cells[tail] = Xf;
     cells[tail + 1] = packCell(screen.emptyStyleId, 0, 2);
-    right = x + 1;
+    right = Math.max(right, x + 1);
   }
   var damage = { x: left, y: y, width: right - left + 1, height: 1 };
   screen.damage = screen.damage ? unionDamage(screen.damage, damage) : damage;
@@ -7988,12 +7989,12 @@ function structuralCellProfile(source, dependencies) {
 }
 
 // 2.1.330 的测宽/剪裁共用这一字素表；保留上游的宽度修正和同一轮缓存。
-function publicCellWidth330({ source, structure }) {
+function publicCellWidth330({ source, structure }, widthOptions = structure.bindings[75]) {
   const b = structure.bindings;
   const method = structure.ast.body.find(node => node.id?.name === b[62]);
   const reset = structure.ast.body.find(node => node.id?.name === b[72]);
-  const [validUnicode, stripAnsi, invalidUnicode, table, extraWidths, cache, adjust, collect, clear, widthOptions] =
-    [0, 1, 13, 15, 16, 19, 26, 62, 72, 75].map(index => b[index]);
+  const [validUnicode, stripAnsi, invalidUnicode, table, extraWidths, cache, adjust, collect, clear] =
+    [0, 1, 13, 15, 16, 19, 26, 62, 72].map(index => b[index]);
   const replacement = `
 var clawgodWidthSegmenter;
 function ${collect}(text) {
@@ -8156,6 +8157,131 @@ function cellProfile330(source, ast, roots, renderer, dependencies) {
   };
 }
 
+// 2.1.332 合并原生分词和画行类；沿用公开画格路径，不能把新的 packed paint 返回值当列号。
+function cellProfile332(source, ast, roots, renderer, dependencies) {
+  const windows = renderer.digest === 'ee2c5ea7b6fcd664c801632b6af505ea3a11d0e9d94bd597ce4d13e39830b96a';
+  if (!windows && renderer.digest !== '2fc1c5dbc1537f25eb6a296e1c6a48c2185052b75182583b581edf5a8ecb68b5') return null;
+  const hash = text => createHash('sha256').update(text).digest('hex');
+  const sharedDigest = '8051a4a6bb91ea6383d1243f1a9bb960696c20fc8ad99087e180b5104e14bd8a';
+  const chalkDigest = windows ? 'b46de96d6afed47fef1cac9b358197f2a8fbafd344599baea9ba49742afe5163'
+    : '7332b687173a15018641b7272d6be3725eb3b12582acc1388d59b994794d386a';
+  const tabsDigest = 'b8b7a172931ecf036e72f317bb9d23d4a6ca3dd63500302f6892e2711d46afdb';
+  const parsed = new Map();
+  const edges = nodes => nodes.filter(node => node.type === 'ImportDeclaration').flatMap(node => node.specifiers
+    .map(item => ({ local: item.local.name, imported: item.imported?.name, specifier: node.source.value, node })));
+  function resolve(edge) {
+    const file = basename(edge.specifier), text = dependencies.get(file);
+    if (typeof text !== 'string') throw Error('缺少 2.1.332 字符格依赖');
+    if (!parsed.has(file)) parsed.set(file, structuralModule(text));
+    const structure = parsed.get(file);
+    const target = structure.ast.body.flatMap(node => node.type === 'ExportNamedDeclaration' ? node.specifiers : [])
+      .find(item => item.exported.name === edge.imported);
+    return { file, source: text, structure, specifier: edge.specifier, local: target?.local.name, imported: edge.imported };
+  }
+  const at = index => resolve(renderer.imports.find(edge => edge.local === renderer.bindings[index]));
+  const matches = (edge, digest, index) => edge.structure.digest === digest && edge.local === edge.structure.bindings[index];
+  const verify = (imports, expected) => imports.length === expected.length
+    && imports.every((edge, index) => matches(resolve(edge), ...expected[index]));
+  const shared = at(0), tabs = at(1), chalk = at(3), normalizer = at(7), styles = at(8), colorStyles = at(9);
+  if (!matches(shared, sharedDigest, 3) || !matches(tabs, tabsDigest, 74)
+    || !matches(chalk, chalkDigest, windows ? 123 : 122) || styles.file !== colorStyles.file
+    || [[2, 0], [windows ? 13 : 14, 1], [windows ? 14 : 15, 2]].some(([binding, target]) =>
+      !matches(at(binding), '31683ccb63cf6df87b419fe7616b9e2d93efa961bea5024c8f1b859163dbe91c', target))
+    || [4, 5, 6].some((index, n) => !matches(at(index), sharedDigest, [2, 22, 26][n]))) return null;
+  if (!verify(edges(shared.structure.ast.body), [
+    ['e42316e0929eb919ce3afc3509978e5dfcd7ad6d973f9f4ae936c63646b9b66e', 52],
+    ['ca9c06193809792f894f462447585961af7e7ebd1070f524f76a145a6e309849', 1],
+  ])) return null;
+  const rendererEdges = edges(ast.body);
+  function findImport(module, index) {
+    const found = rendererEdges.filter(edge => basename(edge.specifier) === module.file
+      && resolve(edge).local === module.structure.bindings[index]);
+    if (found.length !== 1) throw Error('字符格依赖绑定不唯一');
+    return found[0].local;
+  }
+  const names = Object.fromEntries(Object.entries({ Ns:16, Dd:24, Cx:83, xC:112, Dc:140,
+    wo:18, Xf:19, jn:20, Rx:92, xx:95, hht:1, bGt:3, MNr:8, LNr:9 })
+    .map(([key, index]) => [key, renderer.bindings[index - (windows && index >= 13 ? 1 : 0)]]));
+  names.bn = '3';
+  names.C8 = findImport(tabs, 84);
+  const tokenize = tabs.structure.bindings[104], sliceAnsi = findImport(shared, 44);
+  const tabContract = cellDeclarationContract(tabs.source, [tabs.local, tokenize, tabs.structure.bindings[84],
+    tabs.structure.bindings[207], tabs.structure.bindings[208]]);
+  const styleContract = cellDeclarationContract(styles.source, [colorStyles.local, styles.local]);
+  const graphemeContract = cellDeclarationContract(normalizer.source, [normalizer.local]);
+  if (tabContract.digest !== 'a809766b5ebb3d1ae85a864634200b0087c7b12a970b33d7267cfe8eed7f8cb6'
+    || !verify(tabContract.imports, [...[0,5,12,6,14,10].map(index => ['07aec9bac7397da3b7557424b5138434dd2fb041464aad875eb0d5d8505baf14', index]), [sharedDigest, 75]])
+    || styleContract.digest !== 'd080b3a5474f20355ea8d1f0f7096ff43ce78117e6880036986e4250de1413fd'
+    || !verify(styleContract.imports, [[chalkDigest, windows ? 122 : 121], ['0cbfa6c8a05cecb7914f4102f49650d1a14e48bd4a2c326360149d8552dcbc9b', 11]])
+    || graphemeContract.digest !== 'f2e91101b5346e72ebcb5c4cecf2b8e18c6de54820d22e183a0172caebde099f'
+    || !verify(graphemeContract.imports, [[sharedDigest, 75], ['1f13e12fe4e249682a52cc7cca8e50f6fe742676f0145b749fac43fb8ecb8e3d', 6]])) return null;
+
+  const cuts = ast.body.flatMap(node => node.type === 'ClassDeclaration' ? node.body.body : [])
+    .filter(node => node.key?.name === 'cutToColumns');
+  if (cuts.length !== 1) return null;
+  const cut = cuts[0], tabAnchor = source.slice(cut.start, cut.end);
+  const [, column] = cut.value.params.map(param => param.name), init = cut.value.body.body[1]?.declarations;
+  if (init?.[0]?.init?.callee?.name !== names.Dc || init[3]?.init?.callee?.name !== sliceAnsi) return null;
+  if (!['fa49c8ab98165e88b0f35f867c726b03ed9aa7e3f526ba031a5e80ecc8dd3f3d',
+    '0339299fd12546c8a47768ce31eac83994b62301df1e1d558f882cade3fc6f6e',
+    '6794ec042af90f75839193e020b4f5cf678a466040cd206cf4e63db5ef97f15a'].includes(structuralModule('class ClawgodCut{' + tabAnchor + '}').digest)) return null;
+  const sanitizeEnd = init[0].init.end - cut.start;
+  const tabReplacement = tabAnchor.slice(0, sanitizeEnd)
+    + ',clawgodTabOffset=((' + column + '%' + names.hht + ')+' + names.hht + ')%' + names.hht
+    + ',clawgodClipText=' + init[0].id.name + '.includes(String.fromCharCode(9))?'
+    + names.C8 + '([" ".repeat(clawgodTabOffset)+' + init[0].id.name + ']).join("").slice(clawgodTabOffset):' + init[0].id.name
+    + tabAnchor.slice(sanitizeEnd).replaceAll(sliceAnsi + '(' + init[0].id.name + ',', sliceAnsi + '(clawgodClipText,');
+  const textCandidates = [];
+  for (const [file, text] of dependencies) {
+    if (!text.includes(shared.specifier) || !text.includes('.trimEnd()') || text === source) continue;
+    const module = structuralModule(text), edge = edges(module.ast.body)
+      .find(edge => basename(edge.specifier) === shared.file && edge.imported === shared.imported);
+    if (!edge) continue;
+    const functions = module.ast.body.filter(node => node.type === 'FunctionDeclaration');
+    const check = functions.find(node => text.slice(node.start, node.end).includes('.trimEnd()') && text.slice(node.start, node.end).includes('.indexOf('));
+    const segment = functions.find(node => text.slice(node.start, node.end).includes(edge.local + '('));
+    if (!check || !segment || module.identifiers.some(item => item.binding === module.topBindings[edge.local]
+      && ![edge.node, segment].some(node => item.start >= node.start && item.end <= node.end))) return null;
+    const contract = cellDeclarationContract(text, [check.id.name, segment.id.name]);
+    const branch = text.slice(check.start, check.end).match(/if\(![\w$]+\.test\([\w$]+\)\)return [\w$]+\([\w$]+\([\w$]+\)\);/)?.[0];
+    if (!branch || contract.digest !== '02a20ad049b036e4736c5815d30a0cd9d9ecf7442b3c3a10bc605188b12f3960'
+      || !matches(resolve(contract.imports[4]), sharedDigest, 2) || contract.imports[5].local !== edge.local) return null;
+    textCandidates.push({ file, source: text, branch });
+  }
+  if (textCandidates.length !== 1) return null;
+  const text = textCandidates[0];
+  const shape = roots.map(name => {
+    const node = ast.body.find(node => node.id?.name === name), declaration = source.slice(node.start, node.end);
+    return { header: declaration.slice(0, declaration.indexOf('{') + 1), digest: hash(declaration) };
+  });
+  const line = ast.body.find(node => node.id?.name === names.xC), [screen,, x, y, cells] = line.params.map(param => param.name);
+  const call = line.body.body.at(-1)?.argument?.alternate;
+  if (call?.type !== 'CallExpression') return null;
+  const writeLineSource = source.slice(line.start, call.start) + 'paintCells(' + [screen, cells + '.cells', x, y].join(',') + ')' + source.slice(call.end, line.end);
+  const rendererSource = CELL_RENDERER_SOURCE
+    .replace('var styles = [];', 'var styles = clawgodSgrState();')
+    .replace('MNr(LNr(styles))', 'MNr(LNr(clawgodStyleEntries(styles)))')
+    .replace('var value = segment.segment;', 'var value = clawgodNormalizeGrapheme(segment.segment);\n      var width = Bun.stringWidth(segment.segment, clawgodAmbiguousNarrow);')
+    .replace('width: Bun.stringWidth(value, clawgodAmbiguousNarrow),', 'width: width + (clawgodNeedsWidthCorrection(segment.segment) ? clawgodExtraWidth(segment.segment, width) : 0),')
+    .replace('for (var token of cmr(text))', 'for (var token of clawgodTokenize(text))')
+    .replace('token.type === "char"', 'token.type === "text"')
+    .replace('var code = token.code;', 'var code = token.value;')
+    .replace('styles = Kf(styles, [token]);', 'clawgodUpdateSgr(code, styles);');
+  const rendererImports = 'import{clawgodSgrState,clawgodUpdateSgr,clawgodStyleEntries,clawgodTokenize}from' + JSON.stringify(tabs.specifier) + ';\n'
+    + 'const clawgodNeedsWidthCorrection=' + renderer.bindings[5] + ',clawgodExtraWidth=' + renderer.bindings[6] + ';\n';
+  const tabBindings = tabs.structure.bindings;
+  const tabsUpdate = '\nexport{' + tabBindings[207] + ' as clawgodSgrState,' + tabBindings[208] + ' as clawgodUpdateSgr,' + tokenize + ' as clawgodTokenize};\n'
+    + 'export function clawgodStyleEntries(styles){return styles.flatMap((value,index)=>{const end=' + tabBindings[134]
+    + '[index];return value&&end!==28?[{type:"ansi",code:"\\x1b["+value+"m",endCode:"\\x1b["+end+"m"}]:[]})}\n';
+  return { shape, names, tabAnchor, tabReplacement, rendererSource, rendererImports, writeLineSource, mappedWriteLine:true,
+    graphemeNormalizer: renderer.bindings[7],
+    lineCellsSource: CELL_LINE_CELLS_SOURCE.replace('trailingSpaces() {', 'trailingSpaces(text) {\n    this.segment(text);'),
+    shared: { specifier:shared.specifier, digest:hash(shared.source), factory:shared.imported,
+      text:text.file, textDigest:hash(text.source), textBranch:text.branch,
+      widthSource:publicCellWidth330(shared, '{ambiguousIsNarrow:true}'), tabs:tabs.file, tabsUpdate },
+  };
+}
+
 // 七参数字符格 ABI：冻结可达声明而非整个 renderer，绑定名和分块路径不属于接口。
 function localCellProfile(source, dependencies) {
   try {
@@ -8173,6 +8299,10 @@ function localCellProfile(source, dependencies) {
       one(text => /^function [\w$]+\(([\w$]+)\)\{return [\w$]+\.test\(\1\)\?\1\.replace\([\w$]+,"\\uFFFD"\):\1\}$/.test(text)),
     ];
     const renderer = cellDeclarationContract(source, roots);
+    if (['2fc1c5dbc1537f25eb6a296e1c6a48c2185052b75182583b581edf5a8ecb68b5',
+      'ee2c5ea7b6fcd664c801632b6af505ea3a11d0e9d94bd597ce4d13e39830b96a'].includes(renderer.digest)) {
+      return cellProfile332(source, ast, roots, renderer, dependencies);
+    }
     if (['50ca962a65ba1c1dc9e5b9276e2bd547811133070bed4242150cfffb1ea71744',
       '26a8113e812510d50521dfbf05b116da286fcb71edaa4690c24cabcbf71e634b'].includes(renderer.digest)) {
       return cellProfile330(source, ast, roots, renderer, dependencies);

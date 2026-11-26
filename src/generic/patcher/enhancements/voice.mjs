@@ -46,7 +46,9 @@ const voiceHoldInput = Object.freeze({
           n.alternate.expression.type === 'AssignmentExpression' && text(n.alternate.expression.left) === text(pending)), 'warmup branch');
         const increment = warmup.alternate.expression.right;
         if (increment.type !== 'BinaryExpression' || increment.operator !== '+' || text(increment.left) !== text(pending) || increment.right.type !== 'Identifier') throw Error('voice input warmup increment changed');
-        const stripFunctions = nodes(ast, 'FunctionDeclaration', n => nodes(n, 'Property', p => p.key?.name === 'stripTrailing' && p.value.type === 'Identifier').length > 0 && text(n).includes('setValueWithCursor'));
+        const stripFunctions = nodes(ast, 'FunctionDeclaration', n => n !== hook && n.params[0]?.type === 'ObjectPattern'
+          && n.params[0].properties.some(p => p.key?.name === 'composer')
+          && nodes(n, 'Property', p => p.key?.name === 'stripTrailing' && p.value.type === 'Identifier').length > 0 && text(n).includes('setValueWithCursor'));
         const stripFunction = one(stripFunctions, 'composer hook');
         const stripName = one(nodes(stripFunction, 'Property', p => p.key?.name === 'stripTrailing'), 'strip callback').value.name;
         const strip = one(nodes(stripFunction, 'VariableDeclarator', n => n.id.name === stripName && n.init?.type === 'CallExpression'), 'strip closure').init.arguments[0];
@@ -55,7 +57,13 @@ const voiceHoldInput = Object.freeze({
         const anchorBlock = one(nodes(strip, 'IfStatement', n => n.test.name === anchorName && n.consequent.type === 'BlockStatement'), 'anchor snapshot').consequent;
         const anchors = nodes(anchorBlock, 'AssignmentExpression', n => n.left.type === 'MemberExpression' && n.left.property.name === 'current');
         if (anchors.length !== 2) throw Error('voice input anchor refs changed');
-        const expected = one(nodes(strip, 'IfStatement', n => n.test.name === anchorName && n.consequent.type === 'ExpressionStatement' && n.consequent.expression.type === 'AssignmentExpression'), 'expected snapshot').consequent.expression.left;
+        const expected = one(nodes(strip, 'IfStatement', n => (n.test.name === anchorName
+          || n.test.type === 'LogicalExpression' && n.test.operator === '||' && n.test.left.name === anchorName
+          && n.test.right.type === 'BinaryExpression' && n.test.right.operator === '==='
+          && n.test.right.left.type === 'MemberExpression' && n.test.right.left.property.name === 'current'
+          && n.test.right.right.type === 'Identifier')
+          && n.consequent.type === 'ExpressionStatement' && n.consequent.expression.type === 'AssignmentExpression'
+          && (n.test.type !== 'LogicalExpression' || text(n.test.right.left) === text(n.consequent.expression.left))), 'expected snapshot').consequent.expression.left;
         const stripComposer = one(stripFunction.params[0].properties.filter(p => p.key?.name === 'composer'), 'strip composer').value.name;
         // 没有转写内容时只保存锚点，不提前往后缀前插分隔空格。
         insert(strip.body.start + 1, `if(${enabled}&&${strip.params[0].name}===0&&${anchorName}){let {value:__v,cursorOffset:__c}=${stripComposer};${text(anchors[0].left)}=__v.slice(0,__c);${text(anchors[1].left)}=__v.slice(__c);${text(expected)}=__v;return 0;}`);

@@ -148,11 +148,31 @@ for (const [name, patcherSource] of await getPatcherSources()) {
       rmSync(result.fixtureRoot, { recursive: true, force: true });
     }
   }
+  for (const [label, config, selected] of [
+    ['code-mode-332-all', allConfig, true],
+    ['code-mode-332-custom', customConfig(['code-mode']), true],
+    ['code-mode-332-unselected', customConfig(['agents']), false],
+  ]) {
+    const fixture = readFileSync(new URL('./fixtures/code-mode-2.1.332-darwin-arm64.js', import.meta.url), 'utf8');
+    const result = runSelectionCase(name, patcherSource, label, config, fixture);
+    try {
+      assert.equal(result.run.status, 0, `${name}: ${label} 必须成功：${result.output}`);
+      if (selected) {
+        assert.ok(result.patched.includes(codeModeMarker), `${name}: 332 默认全部和自定义选择均应解锁本地资格`);
+        assert.match(result.patched, /if\(ge\(\)\)return"entrypoint";/, `${name}: 不得开放 headless 入口`);
+        assert.doesNotMatch(result.output, /local eligibility not supported/, `${name}: 332 不再跳过本地资格`);
+      } else {
+        assert.equal(result.patched, fixture, `${name}: 未选择时必须保留 332 上游行为`);
+      }
+    } finally {
+      rmSync(result.fixtureRoot, { recursive: true, force: true });
+    }
+  }
   {
     const result = runSelectionCase(name, patcherSource, 'all', allConfig, representativeFixture);
     try {
       assert.equal(result.run.status, 0, `${name}: all selection must patch cleanly: ${result.output}`);
-      assert.match(result.output, /Enhancements: 21 enabled, 0 disabled/, `${name}: all summary must be exact`);
+      assert.match(result.output, /Enhancements: 22 enabled, 0 disabled/, `${name}: all summary must be exact`);
       assert.match(result.patched, /function teams\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]!==!1&&!\["1","true","yes","on"\]/, `${name}: all must runtime-gate agents`);
       assert.match(result.patched, /clawd_body:globalThis\.__clawgodPatches\?\.\["theme-logo-rgb"\]!==!1\?"rgb\(34,197,94\)":"rgb\(215,119,87\)"/, `${name}: all must runtime-gate branding`);
     } finally {
@@ -170,7 +190,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     );
     try {
       assert.equal(result.run.status, 0, `${name}: subset must patch cleanly: ${result.output}`);
-      assert.match(result.output, /Enhancements: 3 enabled, 18 disabled/, `${name}: subset summary must be exact`);
+      assert.match(result.output, /Enhancements: 3 enabled, 19 disabled/, `${name}: subset summary must be exact`);
       assert.match(result.patched, /function Sub\(\)\{if\(globalThis\.__clawgodPatches\?\.\["computer-use-sub"\]!==!1\)return!0;/, `${name}: subset must runtime-gate computer-use`);
       assert.match(result.patched, /argumentHint:"<prompt>",isEnabled:\(\)=>\(globalThis\.__clawgodPatches\?\.\["ultraplan"\]/, `${name}: subset must runtime-gate planning`);
       assert.match(result.patched, /clawd_body:globalThis\.__clawgodPatches\?\.\["theme-logo-rgb"\]/, `${name}: subset must runtime-gate branding`);
@@ -187,7 +207,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     const result = runSelectionCase(name, patcherSource, 'agents-only', customConfig(['agents']), agentsFixture);
     try {
       assert.equal(result.run.status, 0, `${name}: agents without chrome must be valid: ${result.output}`);
-      assert.match(result.output, /Enhancements: 1 enabled, 20 disabled/, `${name}: agents-only summary must be exact`);
+      assert.match(result.output, /Enhancements: 1 enabled, 21 disabled/, `${name}: agents-only summary must be exact`);
       assert.match(result.patched, /function teamGate\(\)\{if\(globalThis\.__clawgodPatches\?\.\["agent-teams"\]!==!1\)return!0;/, `${name}: agents selection must runtime-gate agents descriptors`);
       assert.match(result.patched, /let mode="chat"/, `${name}: agents without chrome must retain chat default`);
       assert.match(result.patched, /claudeInChrome/, `${name}: agents must not silently enable chrome patches`);
@@ -201,7 +221,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     const result = runSelectionCase(name, patcherSource, 'none', customConfig([]), representativeFixture);
     try {
       assert.equal(result.run.status, 0, `${name}: none/core-only must patch cleanly: ${result.output}`);
-      assert.match(result.output, /Enhancements: 0 enabled, 21 disabled/, `${name}: none summary must be exact`);
+      assert.match(result.output, /Enhancements: 0 enabled, 22 disabled/, `${name}: none summary must be exact`);
       assert.match(result.patched, /function teams\(\)\{if\(!enabled/, `${name}: none must leave agents untouched`);
       assert.match(result.patched, /clawd_body:"rgb\(215,119,87\)"/, `${name}: none must leave branding untouched`);
       assert.doesNotMatch(result.output, /Agent Teams enable|Brand RGB green/, `${name}: none must not search disabled descriptors`);
@@ -221,7 +241,7 @@ for (const [name, patcherSource] of await getPatcherSources()) {
     );
     try {
       assert.equal(result.run.status, 0, `${name}: ${mode} with saved selection must succeed: ${result.output}`);
-      assert.match(result.output, /Enhancements: 1 enabled, 20 disabled/, `${name}: ${mode} summary must be exact`);
+      assert.match(result.output, /Enhancements: 1 enabled, 21 disabled/, `${name}: ${mode} summary must be exact`);
       assert.equal(result.patched, result.original, `${name}: ${mode} must not write the runtime`);
       assert.equal(result.backupExists, false, `${name}: ${mode} must not create a runtime backup`);
       assert.doesNotMatch(result.output, /Agent Teams enable|Voice Mode enable|Security permissions unrestricted/, `${name}: ${mode} must not report disabled descriptors`);

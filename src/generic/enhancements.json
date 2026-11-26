@@ -4,6 +4,7 @@
   { "id": "design-canvas", "kind": "patch" },
   { "id": "agents", "kind": "patch" },
   { "id": "planning", "kind": "patch" },
+  { "id": "ship", "kind": "patch" },
   { "id": "voice", "kind": "patch" },
   { "id": "auto-mode", "kind": "patch" },
   { "id": "code-mode", "kind": "patch" },

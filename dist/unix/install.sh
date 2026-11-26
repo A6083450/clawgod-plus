@@ -16,7 +16,7 @@ set -e
 CLAWGOD_DIR="$HOME/.clawgod"
 BIN_DIR="$HOME/.local/bin"
 VERSION="${CLAWGOD_VERSION:-}"
-VERIFIED_VERSION="2.1.330"
+VERIFIED_VERSION="2.1.332"
 # 旧 updater 把无参更新标记为 latest；显式 --version 在后面的参数解析中恢复。
 if [ "$VERSION" = latest ] && [ "${CLAWGOD_UPDATE_PATCH_FAIL_OPEN:-}" = 1 ]; then VERSION=""; fi
 NO_UPGRADE="${CLAWGOD_NO_UPGRADE:-}"
@@ -72,6 +72,7 @@ CLAWGOD_ENHANCEMENT_IDS=(
   design-canvas
   agents
   planning
+  ship
   voice
   auto-mode
   code-mode
@@ -96,6 +97,7 @@ CLAWGOD_ENHANCEMENT_LABELS=(
   'Design Canvas'
   'Agents'
   'Planning'
+  'Ship (Local PR Review/Watch)'
   'Voice'
   'Auto Mode'
   'Code Mode'
@@ -2884,6 +2886,7 @@ cat > "$CLAWGOD_DIR/enhancement-manifest.json" << 'ENHANCEMENT_MANIFEST_EOF'
   { "id": "design-canvas", "kind": "patch" },
   { "id": "agents", "kind": "patch" },
   { "id": "planning", "kind": "patch" },
+  { "id": "ship", "kind": "patch" },
   { "id": "voice", "kind": "patch" },
   { "id": "auto-mode", "kind": "patch" },
   { "id": "code-mode", "kind": "patch" },
@@ -14406,11 +14409,12 @@ function writeCell(screen, x, y, cell) {
       if ((cells[orphan + 1] & bn) === 2) {
         cells[orphan] = wo;
         cells[orphan + 1] = packCell(screen.emptyStyleId, 0, 0);
+        right = x + 2;
       }
     }
     cells[tail] = Xf;
     cells[tail + 1] = packCell(screen.emptyStyleId, 0, 2);
-    right = x + 1;
+    right = Math.max(right, x + 1);
   }
   var damage = { x: left, y: y, width: right - left + 1, height: 1 };
   screen.damage = screen.damage ? unionDamage(screen.damage, damage) : damage;
@@ -15677,12 +15681,12 @@ function structuralCellProfile(source, dependencies) {
 }
 
 // 2.1.330 的测宽/剪裁共用这一字素表；保留上游的宽度修正和同一轮缓存。
-function publicCellWidth330({ source, structure }) {
+function publicCellWidth330({ source, structure }, widthOptions = structure.bindings[75]) {
   const b = structure.bindings;
   const method = structure.ast.body.find(node => node.id?.name === b[62]);
   const reset = structure.ast.body.find(node => node.id?.name === b[72]);
-  const [validUnicode, stripAnsi, invalidUnicode, table, extraWidths, cache, adjust, collect, clear, widthOptions] =
-    [0, 1, 13, 15, 16, 19, 26, 62, 72, 75].map(index => b[index]);
+  const [validUnicode, stripAnsi, invalidUnicode, table, extraWidths, cache, adjust, collect, clear] =
+    [0, 1, 13, 15, 16, 19, 26, 62, 72].map(index => b[index]);
   const replacement = `
 var clawgodWidthSegmenter;
 function ${collect}(text) {
@@ -15845,6 +15849,131 @@ function cellProfile330(source, ast, roots, renderer, dependencies) {
   };
 }
 
+// 2.1.332 合并原生分词和画行类；沿用公开画格路径，不能把新的 packed paint 返回值当列号。
+function cellProfile332(source, ast, roots, renderer, dependencies) {
+  const windows = renderer.digest === 'ee2c5ea7b6fcd664c801632b6af505ea3a11d0e9d94bd597ce4d13e39830b96a';
+  if (!windows && renderer.digest !== '2fc1c5dbc1537f25eb6a296e1c6a48c2185052b75182583b581edf5a8ecb68b5') return null;
+  const hash = text => createHash('sha256').update(text).digest('hex');
+  const sharedDigest = '8051a4a6bb91ea6383d1243f1a9bb960696c20fc8ad99087e180b5104e14bd8a';
+  const chalkDigest = windows ? 'b46de96d6afed47fef1cac9b358197f2a8fbafd344599baea9ba49742afe5163'
+    : '7332b687173a15018641b7272d6be3725eb3b12582acc1388d59b994794d386a';
+  const tabsDigest = 'b8b7a172931ecf036e72f317bb9d23d4a6ca3dd63500302f6892e2711d46afdb';
+  const parsed = new Map();
+  const edges = nodes => nodes.filter(node => node.type === 'ImportDeclaration').flatMap(node => node.specifiers
+    .map(item => ({ local: item.local.name, imported: item.imported?.name, specifier: node.source.value, node })));
+  function resolve(edge) {
+    const file = basename(edge.specifier), text = dependencies.get(file);
+    if (typeof text !== 'string') throw Error('缺少 2.1.332 字符格依赖');
+    if (!parsed.has(file)) parsed.set(file, structuralModule(text));
+    const structure = parsed.get(file);
+    const target = structure.ast.body.flatMap(node => node.type === 'ExportNamedDeclaration' ? node.specifiers : [])
+      .find(item => item.exported.name === edge.imported);
+    return { file, source: text, structure, specifier: edge.specifier, local: target?.local.name, imported: edge.imported };
+  }
+  const at = index => resolve(renderer.imports.find(edge => edge.local === renderer.bindings[index]));
+  const matches = (edge, digest, index) => edge.structure.digest === digest && edge.local === edge.structure.bindings[index];
+  const verify = (imports, expected) => imports.length === expected.length
+    && imports.every((edge, index) => matches(resolve(edge), ...expected[index]));
+  const shared = at(0), tabs = at(1), chalk = at(3), normalizer = at(7), styles = at(8), colorStyles = at(9);
+  if (!matches(shared, sharedDigest, 3) || !matches(tabs, tabsDigest, 74)
+    || !matches(chalk, chalkDigest, windows ? 123 : 122) || styles.file !== colorStyles.file
+    || [[2, 0], [windows ? 13 : 14, 1], [windows ? 14 : 15, 2]].some(([binding, target]) =>
+      !matches(at(binding), '31683ccb63cf6df87b419fe7616b9e2d93efa961bea5024c8f1b859163dbe91c', target))
+    || [4, 5, 6].some((index, n) => !matches(at(index), sharedDigest, [2, 22, 26][n]))) return null;
+  if (!verify(edges(shared.structure.ast.body), [
+    ['e42316e0929eb919ce3afc3509978e5dfcd7ad6d973f9f4ae936c63646b9b66e', 52],
+    ['ca9c06193809792f894f462447585961af7e7ebd1070f524f76a145a6e309849', 1],
+  ])) return null;
+  const rendererEdges = edges(ast.body);
+  function findImport(module, index) {
+    const found = rendererEdges.filter(edge => basename(edge.specifier) === module.file
+      && resolve(edge).local === module.structure.bindings[index]);
+    if (found.length !== 1) throw Error('字符格依赖绑定不唯一');
+    return found[0].local;
+  }
+  const names = Object.fromEntries(Object.entries({ Ns:16, Dd:24, Cx:83, xC:112, Dc:140,
+    wo:18, Xf:19, jn:20, Rx:92, xx:95, hht:1, bGt:3, MNr:8, LNr:9 })
+    .map(([key, index]) => [key, renderer.bindings[index - (windows && index >= 13 ? 1 : 0)]]));
+  names.bn = '3';
+  names.C8 = findImport(tabs, 84);
+  const tokenize = tabs.structure.bindings[104], sliceAnsi = findImport(shared, 44);
+  const tabContract = cellDeclarationContract(tabs.source, [tabs.local, tokenize, tabs.structure.bindings[84],
+    tabs.structure.bindings[207], tabs.structure.bindings[208]]);
+  const styleContract = cellDeclarationContract(styles.source, [colorStyles.local, styles.local]);
+  const graphemeContract = cellDeclarationContract(normalizer.source, [normalizer.local]);
+  if (tabContract.digest !== 'a809766b5ebb3d1ae85a864634200b0087c7b12a970b33d7267cfe8eed7f8cb6'
+    || !verify(tabContract.imports, [...[0,5,12,6,14,10].map(index => ['07aec9bac7397da3b7557424b5138434dd2fb041464aad875eb0d5d8505baf14', index]), [sharedDigest, 75]])
+    || styleContract.digest !== 'd080b3a5474f20355ea8d1f0f7096ff43ce78117e6880036986e4250de1413fd'
+    || !verify(styleContract.imports, [[chalkDigest, windows ? 122 : 121], ['0cbfa6c8a05cecb7914f4102f49650d1a14e48bd4a2c326360149d8552dcbc9b', 11]])
+    || graphemeContract.digest !== 'f2e91101b5346e72ebcb5c4cecf2b8e18c6de54820d22e183a0172caebde099f'
+    || !verify(graphemeContract.imports, [[sharedDigest, 75], ['1f13e12fe4e249682a52cc7cca8e50f6fe742676f0145b749fac43fb8ecb8e3d', 6]])) return null;
+
+  const cuts = ast.body.flatMap(node => node.type === 'ClassDeclaration' ? node.body.body : [])
+    .filter(node => node.key?.name === 'cutToColumns');
+  if (cuts.length !== 1) return null;
+  const cut = cuts[0], tabAnchor = source.slice(cut.start, cut.end);
+  const [, column] = cut.value.params.map(param => param.name), init = cut.value.body.body[1]?.declarations;
+  if (init?.[0]?.init?.callee?.name !== names.Dc || init[3]?.init?.callee?.name !== sliceAnsi) return null;
+  if (!['fa49c8ab98165e88b0f35f867c726b03ed9aa7e3f526ba031a5e80ecc8dd3f3d',
+    '0339299fd12546c8a47768ce31eac83994b62301df1e1d558f882cade3fc6f6e',
+    '6794ec042af90f75839193e020b4f5cf678a466040cd206cf4e63db5ef97f15a'].includes(structuralModule('class ClawgodCut{' + tabAnchor + '}').digest)) return null;
+  const sanitizeEnd = init[0].init.end - cut.start;
+  const tabReplacement = tabAnchor.slice(0, sanitizeEnd)
+    + ',clawgodTabOffset=((' + column + '%' + names.hht + ')+' + names.hht + ')%' + names.hht
+    + ',clawgodClipText=' + init[0].id.name + '.includes(String.fromCharCode(9))?'
+    + names.C8 + '([" ".repeat(clawgodTabOffset)+' + init[0].id.name + ']).join("").slice(clawgodTabOffset):' + init[0].id.name
+    + tabAnchor.slice(sanitizeEnd).replaceAll(sliceAnsi + '(' + init[0].id.name + ',', sliceAnsi + '(clawgodClipText,');
+  const textCandidates = [];
+  for (const [file, text] of dependencies) {
+    if (!text.includes(shared.specifier) || !text.includes('.trimEnd()') || text === source) continue;
+    const module = structuralModule(text), edge = edges(module.ast.body)
+      .find(edge => basename(edge.specifier) === shared.file && edge.imported === shared.imported);
+    if (!edge) continue;
+    const functions = module.ast.body.filter(node => node.type === 'FunctionDeclaration');
+    const check = functions.find(node => text.slice(node.start, node.end).includes('.trimEnd()') && text.slice(node.start, node.end).includes('.indexOf('));
+    const segment = functions.find(node => text.slice(node.start, node.end).includes(edge.local + '('));
+    if (!check || !segment || module.identifiers.some(item => item.binding === module.topBindings[edge.local]
+      && ![edge.node, segment].some(node => item.start >= node.start && item.end <= node.end))) return null;
+    const contract = cellDeclarationContract(text, [check.id.name, segment.id.name]);
+    const branch = text.slice(check.start, check.end).match(/if\(![\w$]+\.test\([\w$]+\)\)return [\w$]+\([\w$]+\([\w$]+\)\);/)?.[0];
+    if (!branch || contract.digest !== '02a20ad049b036e4736c5815d30a0cd9d9ecf7442b3c3a10bc605188b12f3960'
+      || !matches(resolve(contract.imports[4]), sharedDigest, 2) || contract.imports[5].local !== edge.local) return null;
+    textCandidates.push({ file, source: text, branch });
+  }
+  if (textCandidates.length !== 1) return null;
+  const text = textCandidates[0];
+  const shape = roots.map(name => {
+    const node = ast.body.find(node => node.id?.name === name), declaration = source.slice(node.start, node.end);
+    return { header: declaration.slice(0, declaration.indexOf('{') + 1), digest: hash(declaration) };
+  });
+  const line = ast.body.find(node => node.id?.name === names.xC), [screen,, x, y, cells] = line.params.map(param => param.name);
+  const call = line.body.body.at(-1)?.argument?.alternate;
+  if (call?.type !== 'CallExpression') return null;
+  const writeLineSource = source.slice(line.start, call.start) + 'paintCells(' + [screen, cells + '.cells', x, y].join(',') + ')' + source.slice(call.end, line.end);
+  const rendererSource = CELL_RENDERER_SOURCE
+    .replace('var styles = [];', 'var styles = clawgodSgrState();')
+    .replace('MNr(LNr(styles))', 'MNr(LNr(clawgodStyleEntries(styles)))')
+    .replace('var value = segment.segment;', 'var value = clawgodNormalizeGrapheme(segment.segment);\n      var width = Bun.stringWidth(segment.segment, clawgodAmbiguousNarrow);')
+    .replace('width: Bun.stringWidth(value, clawgodAmbiguousNarrow),', 'width: width + (clawgodNeedsWidthCorrection(segment.segment) ? clawgodExtraWidth(segment.segment, width) : 0),')
+    .replace('for (var token of cmr(text))', 'for (var token of clawgodTokenize(text))')
+    .replace('token.type === "char"', 'token.type === "text"')
+    .replace('var code = token.code;', 'var code = token.value;')
+    .replace('styles = Kf(styles, [token]);', 'clawgodUpdateSgr(code, styles);');
+  const rendererImports = 'import{clawgodSgrState,clawgodUpdateSgr,clawgodStyleEntries,clawgodTokenize}from' + JSON.stringify(tabs.specifier) + ';\n'
+    + 'const clawgodNeedsWidthCorrection=' + renderer.bindings[5] + ',clawgodExtraWidth=' + renderer.bindings[6] + ';\n';
+  const tabBindings = tabs.structure.bindings;
+  const tabsUpdate = '\nexport{' + tabBindings[207] + ' as clawgodSgrState,' + tabBindings[208] + ' as clawgodUpdateSgr,' + tokenize + ' as clawgodTokenize};\n'
+    + 'export function clawgodStyleEntries(styles){return styles.flatMap((value,index)=>{const end=' + tabBindings[134]
+    + '[index];return value&&end!==28?[{type:"ansi",code:"\\x1b["+value+"m",endCode:"\\x1b["+end+"m"}]:[]})}\n';
+  return { shape, names, tabAnchor, tabReplacement, rendererSource, rendererImports, writeLineSource, mappedWriteLine:true,
+    graphemeNormalizer: renderer.bindings[7],
+    lineCellsSource: CELL_LINE_CELLS_SOURCE.replace('trailingSpaces() {', 'trailingSpaces(text) {\n    this.segment(text);'),
+    shared: { specifier:shared.specifier, digest:hash(shared.source), factory:shared.imported,
+      text:text.file, textDigest:hash(text.source), textBranch:text.branch,
+      widthSource:publicCellWidth330(shared, '{ambiguousIsNarrow:true}'), tabs:tabs.file, tabsUpdate },
+  };
+}
+
 // 七参数字符格 ABI：冻结可达声明而非整个 renderer，绑定名和分块路径不属于接口。
 function localCellProfile(source, dependencies) {
   try {
@@ -15862,6 +15991,10 @@ function localCellProfile(source, dependencies) {
       one(text => /^function [\w$]+\(([\w$]+)\)\{return [\w$]+\.test\(\1\)\?\1\.replace\([\w$]+,"\\uFFFD"\):\1\}$/.test(text)),
     ];
     const renderer = cellDeclarationContract(source, roots);
+    if (['2fc1c5dbc1537f25eb6a296e1c6a48c2185052b75182583b581edf5a8ecb68b5',
+      'ee2c5ea7b6fcd664c801632b6af505ea3a11d0e9d94bd597ce4d13e39830b96a'].includes(renderer.digest)) {
+      return cellProfile332(source, ast, roots, renderer, dependencies);
+    }
     if (['50ca962a65ba1c1dc9e5b9276e2bd547811133070bed4242150cfffb1ea71744',
       '26a8113e812510d50521dfbf05b116da286fcb71edaa4690c24cabcbf71e634b'].includes(renderer.digest)) {
       return cellProfile330(source, ast, roots, renderer, dependencies);
@@ -16834,7 +16967,7 @@ cat > "$CLAWGOD_DIR/feature-gates.cjs" << 'FEATURE_GATES_EOF'
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 
-function loadFeatureGates(directory, metadata = JSON.parse('{"classifier-fail-open":["classifier-fail-open"],"cleanup-period":["cleanup-period"],"disable-collapse-read-search":["disable-collapse-read-search"],"enable-keybindings":["enable-keybindings"],"file-read-limit":["file-read-limit"],"transcript-dialog-replay":["transcript-dialog-replay"],"unlock-ultracode":["unlock-ultracode"],"chrome-local-socket":["chrome-local-socket"],"context-limit":["context-limit"],"computer-use":["computer-use"],"enable-voice-mode":["voice-mode"],"voice-asr-backend":["voice-asr-backend"],"agent-teams":["agent-teams"],"computer-use-sub":["computer-use"],"computer-use-default":["computer-use"],"computer-use-gate":["computer-use"],"ultraplan":["ultraplan"],"ultrareview-gate":["ultrareview"],"ultrareview-direct":["ultrareview"],"voice-mode":["voice-mode"],"voice-hold-input":["voice-mode"],"auto-mode-helper-gate":["auto-mode"],"auto-mode-inline-gate":["auto-mode"],"auto-mode-provider-opt-in":["auto-mode"],"classifier-timeout":["classifier-tuning"],"classifier-model":["classifier-tuning"],"classifier-retries":["classifier-tuning"],"theme-logo-rgb":["theme"],"theme-logo-ansi":["theme"],"theme-claude-rgb-dark":["theme"],"theme-claude-rgb-light":["theme"],"theme-shimmer-rgb":["theme"],"theme-shimmer-rgb-light":["theme"],"theme-hex":["theme"],"theme-claude-ansi":["theme"],"theme-shimmer-ansi":["theme"],"theme-brief-rgb-dark":["theme"],"theme-brief-rgb-light":["theme"],"theme-brief-ansi":["theme"],"remote-settings-off":["remote-settings"],"geo-stego-date":["geo-neutralize"],"geo-detect-probe":["geo-neutralize"],"geo-apostrophe-stego":["geo-neutralize"],"remove-cyber-risk":["cyber-risk"],"remove-url-restriction":["url-restriction"],"remove-cautious-actions":["cautious-actions"],"remove-not-logged-in":["not-logged-in"],"attachment-filter-bypass":["message-filter"],"message-filter-legacy":["message-filter"],"message-filter-s8":["message-filter"]}'), env = process.env, warn = text => process.stderr.write(text)) {
+function loadFeatureGates(directory, metadata = JSON.parse('{"classifier-fail-open":["classifier-fail-open"],"cleanup-period":["cleanup-period"],"disable-collapse-read-search":["disable-collapse-read-search"],"enable-keybindings":["enable-keybindings"],"file-read-limit":["file-read-limit"],"transcript-dialog-replay":["transcript-dialog-replay"],"unlock-ultracode":["unlock-ultracode"],"chrome-local-socket":["chrome-local-socket"],"context-limit":["context-limit"],"computer-use":["computer-use"],"enable-voice-mode":["voice-mode"],"voice-asr-backend":["voice-asr-backend"],"agent-teams":["agent-teams"],"computer-use-sub":["computer-use"],"computer-use-default":["computer-use"],"computer-use-gate":["computer-use"],"ultraplan":["ultraplan"],"ship-local":["ship"],"ultrareview-gate":["ultrareview"],"ultrareview-direct":["ultrareview"],"voice-mode":["voice-mode"],"voice-hold-input":["voice-mode"],"auto-mode-helper-gate":["auto-mode"],"auto-mode-inline-gate":["auto-mode"],"auto-mode-provider-opt-in":["auto-mode"],"classifier-timeout":["classifier-tuning"],"classifier-model":["classifier-tuning"],"classifier-retries":["classifier-tuning"],"theme-logo-rgb":["theme"],"theme-logo-ansi":["theme"],"theme-claude-rgb-dark":["theme"],"theme-claude-rgb-light":["theme"],"theme-shimmer-rgb":["theme"],"theme-shimmer-rgb-light":["theme"],"theme-hex":["theme"],"theme-claude-ansi":["theme"],"theme-shimmer-ansi":["theme"],"theme-brief-rgb-dark":["theme"],"theme-brief-rgb-light":["theme"],"theme-brief-ansi":["theme"],"remote-settings-off":["remote-settings"],"geo-stego-date":["geo-neutralize"],"geo-detect-probe":["geo-neutralize"],"geo-apostrophe-stego":["geo-neutralize"],"remove-cyber-risk":["cyber-risk"],"remove-url-restriction":["url-restriction"],"remove-cautious-actions":["cautious-actions"],"remove-not-logged-in":["not-logged-in"],"attachment-filter-bypass":["message-filter"],"message-filter-legacy":["message-filter"],"message-filter-s8":["message-filter"]}'), env = process.env, warn = text => process.stderr.write(text)) {
   const configFile = join(directory, 'patches.json');
   let config = Object.create(null);
   try {
@@ -23972,6 +24105,7 @@ var enhancements_default = `[
   { "id": "design-canvas", "kind": "patch" },
   { "id": "agents", "kind": "patch" },
   { "id": "planning", "kind": "patch" },
+  { "id": "ship", "kind": "patch" },
   { "id": "voice", "kind": "patch" },
   { "id": "auto-mode", "kind": "patch" },
   { "id": "code-mode", "kind": "patch" },
@@ -24011,6 +24145,7 @@ var runtimeFeatureMetadata = Object.freeze({
   "computer-use-default": ["computer-use"],
   "computer-use-gate": ["computer-use"],
   ultraplan: ["ultraplan"],
+  "ship-local": ["ship"],
   "ultrareview-gate": ["ultrareview"],
   "ultrareview-direct": ["ultrareview"],
   "voice-mode": ["voice-mode"],
@@ -24563,8 +24698,15 @@ function transform(id, source, ast) {
       const legacy = nodes("IfStatement", (n) => n.test.operator === "||" && n.test.left.operator === "&&" && n.test.left.left.type === "CallExpression" && n.test.left.right.operator === "===" && text(n.consequent).includes("popsOutOnError"), classify);
       const callTo = (n, name, args) => n?.type === "CallExpression" && n.callee.name === name && n.arguments.length === args.length && args.every((arg, i) => n.arguments[i]?.name === arg);
       const includes = (n, argument) => n?.type === "CallExpression" && member2(n.callee, "includes") && !n.callee.computed && n.callee.object.type === "Identifier" && n.arguments.length === 1 && n.arguments[0]?.name === argument;
-      const toolImports = new Set(["chunk-t99xdws4.js", "chunk-qhdcfsp4.js", "chunk-m47rkk3y.js"]);
-      const toolSearch = (name) => nodes("VariableDeclarator", (n) => n.id.name === name && literal2(n.init, "ToolSearch")).length === 1 || ast.body.some((n) => n.type === "ImportDeclaration" && toolImports.has(n.source.value.split("/").at(-1)) && n.specifiers.some((s) => s.imported?.name === "co" && s.local.name === name));
+      const toolImports = new Map([
+        ["chunk-t99xdws4.js", "co"],
+        ["chunk-qhdcfsp4.js", "co"],
+        ["chunk-m47rkk3y.js", "co"],
+        ["chunk-4c3dh96d.js", "Er"],
+        ["chunk-bpyyz97z.js", "Eo"],
+        ["chunk-myx1aaz9.js", "vo"]
+      ]);
+      const toolSearch = (name) => nodes("VariableDeclarator", (n) => n.id.name === name && literal2(n.init, "ToolSearch")).length === 1 || ast.body.some((n) => n.type === "ImportDeclaration" && toolImports.has(n.source.value.split("/").at(-1)) && n.specifiers.some((s) => s.imported?.name === toolImports.get(n.source.value.split("/").at(-1)) && s.local.name === name));
       const modern = [];
       const tool = classify.params[0].name;
       for (const branch of classify.body.body) {
@@ -25207,6 +25349,13 @@ var upstream330Interfaces = new Set([
   "ff50cc1f86c571ea0f21b2b117648c2bae869f4da4de21ae19644863592ab8d9",
   "0246f6d5c38af4848e6c2d652a550bda0d071306b8555e3123cd7dacdd60db19"
 ]);
+var upstream332Contract = "25f7b81595d789b3072a6c832a498dcf3518da84cb9972edad8ba307aa7ec871";
+var patched332Contract = "5a007c3c7f8e35357b463b5edb9595a230f69146756c62878283d870b76f3afb";
+var upstream332Interfaces = new Set([
+  "1c6b0a4b5d01f9ab4118f1c5306240021cd4bc1a6c838c20f9f5dfa2f5081e2a",
+  "7036249a5a0797dbaf95b1a08850fe45edd125028657aec741028fd0f63c8575",
+  "4432e53020b6be21fc05fa3d24fb842d07c9837100df68b9891c05f308a647a3"
+]);
 var digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function interfaceContract(ast) {
   return digest([
@@ -25235,12 +25384,55 @@ function contract(ast) {
   }
   return createHash("sha256").update(JSON.stringify(normalize(ast))).digest("hex");
 }
+function local332(code, ast) {
+  const declarations = ast.body.filter((node) => node.type === "FunctionDeclaration");
+  const names = ast.body.find((node) => node.type === "ExportNamedDeclaration").specifiers.map((node) => node.local.name);
+  const fn = (name) => declarations.find((node) => node.id.name === name);
+  const [, modelFamily, model, , , , , , , , answer, finalize, stable] = names;
+  const edits = [];
+  const body = (name, value) => {
+    const node = fn(name);
+    if (!node)
+      throw new Error(`Code Mode 332 \u7F3A\u5C11\u58F0\u660E: ${name}`);
+    edits.push({ start: node.body.start, end: node.body.end, value: `{${value}}` });
+  };
+  body("se", 'return typeof Bun!=="undefined";');
+  for (const name of [modelFamily, model])
+    body(name, "return!0;");
+  for (const name of ["_", "L", "O", "W", "C"])
+    body(name, "return!1;");
+  const policyAbsent = fn("X").body.body[0].argument.right.argument.callee.name;
+  const localReason = `${policyAbsent}()?"admin_unread":A()?"admin":y()?"compliance":R()?"otel":void 0`;
+  body("q", `return ${localReason};`);
+  body("N", "return{read:!0};");
+  const eligibility = fn("I");
+  edits.push({ start: eligibility.body.start + 1, end: eligibility.body.start + 1, value: 'if(ge())return"entrypoint";' });
+  const consent = fn(answer);
+  const consentGuards = consent.body.body.filter((node) => node.type === "IfStatement").slice(0, 3);
+  if (consentGuards.length !== 3)
+    throw new Error("Code Mode 332 \u98CE\u9669\u786E\u8BA4\u7ED3\u6784\u6F02\u79FB");
+  body(answer, consentGuards.map((node) => code.slice(node.start, node.end)).join("") + code.slice(consent.body.body.at(-1).start, consent.body.body.at(-1).end));
+  const finishing = fn(finalize), precondition = finishing.body.body[0];
+  const recheck = findNodes(finishing, (node) => node.type === "CallExpression" && node.arguments[0]?.type === "ArrowFunctionExpression")[0].callee.name;
+  body(finalize, `${code.slice(precondition.start, precondition.end)}let __clawgodReason=!r.reviewed?"no_setup":${localReason};if(__clawgodReason===void 0){r.signedInAs={};${recheck}(()=>${localReason});return"none"}return T(__clawgodReason,"restart_without_mode");`);
+  body(stable, "return r.signedInAs!==void 0;");
+  let next = code;
+  for (const edit of edits.sort((a, b) => b.start - a.start))
+    next = next.slice(0, edit.start) + edit.value + next.slice(edit.end);
+  const signature = contract(parsePatchSource(next));
+  if (signature !== patched332Contract)
+    throw new Error(`patched Code Mode 332 contract drift: ${signature}`);
+  return { code: `${next}
+${marker}`, count: edits.length };
+}
 async function apply(source, { dryRun = false, verify = false } = {}) {
   const modules = source.split(separator2);
-  if (!source.includes(feature))
+  if (!source.includes(feature) && !source.includes(marker))
     return { status: "skipped", detail: "Code Mode not present in this version" };
   try {
-    const candidates = modules.map((code, index) => ({ code, index })).filter(({ code }) => code.includes(feature)).map((candidate) => ({ ...candidate, ast: parsePatchSource(candidate.code) })).filter(({ ast }) => {
+    const candidates = modules.map((code, index) => ({ code, index })).filter(({ code }) => code.includes(feature) || code.includes(marker)).map((candidate) => ({ ...candidate, ast: parsePatchSource(candidate.code) })).filter(({ code, ast }) => {
+      if (code.includes(marker))
+        return true;
       const keys = findNodes(ast, (node) => node.type === "VariableDeclarator" && node.id.type === "Identifier" && node.init?.value === feature).map((node) => node.id.name);
       return ast.body.some((node) => node.type === "ExportNamedDeclaration" && node.specifiers.some((specifier) => keys.includes(specifier.local.name)));
     });
@@ -25262,6 +25454,21 @@ async function apply(source, { dryRun = false, verify = false } = {}) {
       if (code.includes(marker) || contract(ast) !== upstream330Contract)
         throw new Error("Code Mode 2.1.330 upstream contract drift");
       return { status: "skipped", warning: "2.1.330 local eligibility not supported; upstream Code Mode preserved" };
+    }
+    if (versions[0] === "2.1.332" && upstream332Interfaces.has(edges)) {
+      const signature = contract(ast);
+      if (code.includes(marker)) {
+        if (signature !== patched332Contract)
+          throw new Error(`patched Code Mode 332 contract drift: ${signature}`);
+        return { status: "already", detail: "local Code Mode 332 eligibility already applied" };
+      }
+      if (signature !== upstream332Contract)
+        throw new Error(`Code Mode 332 opt-in contract drift: ${signature}`);
+      const next = local332(code, ast);
+      if (dryRun || verify)
+        return { status: verify ? "verify" : "applied", count: next.count };
+      modules[index] = next.code;
+      return { status: "applied", count: next.count, code: modules.join(separator2) };
     }
     if (!interfaceContracts.has(edges))
       throw new Error(`Code Mode interface contract drift: ${edges}`);
@@ -26007,6 +26214,68 @@ var planningRegistry = Object.freeze({
   customPatches: Object.freeze([])
 });
 
+// src/generic/patcher/enhancements/ship.mjs
+import { createHash as createHash2 } from "crypto";
+var separator3 = `
+/*__CLAWGOD_MODULE_BOUNDARY__*/
+`;
+var feature2 = "tengu_ancient_backus";
+var marker2 = "/*__clawgod_ship_local_v1__*/";
+var contracts = new Map([
+  ["b854167730939cc250c9bf1399a4eaf82097066f5da6c0a0b2f967f96da53236", "9a39459b114788feca8a934cc522828f8f5573a6e3fcf68ff79f4d5bd099369e"],
+  ["927aeb9d7ecac09f1b1c769566425988fe8d96a80d08a5b70c6092d6fdef4fb6", "bf5bdab3bd63f2eab8402bac8e87b2ceef71c9372486ca05cfa7ce430b47b030"],
+  ["6621ef2580386a29f7bb7bfdac9517ccec8ac6ba830424ad9dd1a5909b15640e", "0833027013af36b877810009466e1c60a9d1d7f4545302f104991c0c9b1defe1"]
+]);
+function contract2(ast) {
+  return createHash2("sha256").update(JSON.stringify(ast, (key, value) => {
+    if (["start", "end", "raw"].includes(key))
+      return;
+    if (key === "value" && typeof value === "string")
+      return value.replace(/^(?:\/\$bunfs\/root\/|[A-Z]:\/~BUN\/root\/)/, "./");
+    return value;
+  })).digest("hex");
+}
+async function apply2(source, { dryRun = false, verify = false } = {}) {
+  if (!source.includes(feature2) && !source.includes(marker2))
+    return { status: "skipped", detail: "\u672C\u7248\u672C\u6CA1\u6709\u5185\u7F6E ship-local" };
+  try {
+    const modules = source.split(separator3);
+    const candidates = modules.map((code, index) => ({ code, index })).filter(({ code }) => code.includes(marker2) || code.includes(feature2) && code.includes("CLAUDE_CODE_DISABLE_SHIP"));
+    if (candidates.length !== 1)
+      throw Error(`ship \u8D44\u683C\u6A21\u5757\u5E94\u552F\u4E00\uFF0C\u5B9E\u9645 ${candidates.length}`);
+    const { code, index } = candidates[0];
+    const versions = [...code.matchAll(/^\/\/ Version: ([^\r\n]*)$/gm)].map((match) => match[1]);
+    if (versions.length !== 1 || versions[0] !== "2.1.332")
+      throw Error("ship \u7248\u672C\u672A\u8BC6\u522B");
+    const ast = parsePatchSource(code);
+    const signature = contract2(ast);
+    if (code.includes(marker2)) {
+      if (![...contracts.values()].includes(signature))
+        throw Error("\u5DF2\u4FEE\u8865 ship \u8D44\u683C\u6A21\u5757\u53D1\u751F\u6F02\u79FB");
+      return { status: "already", detail: "\u672C\u5730 ship \u8D44\u683C\u5DF2\u542F\u7528" };
+    }
+    if (!contracts.has(signature) || !/^\/\/ Version: 2\.1\.332\s*$/m.test(code))
+      throw Error(`ship \u8D44\u683C\u5951\u7EA6\u672A\u8BC6\u522B: ${signature}`);
+    const enabled = ast.body.find((node) => node.type === "FunctionDeclaration" && node.id.name === "o");
+    const insertion = `${marker2}if(${gate2("ship-local")})return!s.CLAUDE_CODE_REMOTE;`;
+    modules[index] = code.slice(0, enabled.body.start + 1) + insertion + code.slice(enabled.body.start + 1);
+    if (contract2(parsePatchSource(modules[index])) !== contracts.get(signature))
+      throw Error("ship \u8865\u4E01\u8F93\u51FA\u5951\u7EA6\u4E0D\u4E00\u81F4");
+    if (verify)
+      return { status: "verify" };
+    return { status: "applied", count: 1, ...dryRun ? {} : { code: modules.join(separator3) } };
+  } catch (error) {
+    return { status: "stale", detail: `${error.message}; no writes` };
+  }
+}
+var shipRegistry = Object.freeze({
+  id: "ship",
+  patches: Object.freeze([]),
+  customPatches: Object.freeze([
+    Object.freeze({ id: "ship-local", order: 130, name: "Ship: local terminal eligibility", apply: apply2 })
+  ])
+});
+
 // src/generic/patcher/enhancements/privacy.mjs
 var patches9 = [
   {
@@ -26171,7 +26440,7 @@ var voiceHoldInput = Object.freeze({
         const increment = warmup.alternate.expression.right;
         if (increment.type !== "BinaryExpression" || increment.operator !== "+" || text(increment.left) !== text(pending) || increment.right.type !== "Identifier")
           throw Error("voice input warmup increment changed");
-        const stripFunctions = nodes(ast, "FunctionDeclaration", (n) => nodes(n, "Property", (p) => p.key?.name === "stripTrailing" && p.value.type === "Identifier").length > 0 && text(n).includes("setValueWithCursor"));
+        const stripFunctions = nodes(ast, "FunctionDeclaration", (n) => n !== hook && n.params[0]?.type === "ObjectPattern" && n.params[0].properties.some((p) => p.key?.name === "composer") && nodes(n, "Property", (p) => p.key?.name === "stripTrailing" && p.value.type === "Identifier").length > 0 && text(n).includes("setValueWithCursor"));
         const stripFunction = one(stripFunctions, "composer hook");
         const stripName = one(nodes(stripFunction, "Property", (p) => p.key?.name === "stripTrailing"), "strip callback").value.name;
         const strip = one(nodes(stripFunction, "VariableDeclarator", (n) => n.id.name === stripName && n.init?.type === "CallExpression"), "strip closure").init.arguments[0];
@@ -26182,7 +26451,7 @@ var voiceHoldInput = Object.freeze({
         const anchors = nodes(anchorBlock, "AssignmentExpression", (n) => n.left.type === "MemberExpression" && n.left.property.name === "current");
         if (anchors.length !== 2)
           throw Error("voice input anchor refs changed");
-        const expected = one(nodes(strip, "IfStatement", (n) => n.test.name === anchorName && n.consequent.type === "ExpressionStatement" && n.consequent.expression.type === "AssignmentExpression"), "expected snapshot").consequent.expression.left;
+        const expected = one(nodes(strip, "IfStatement", (n) => (n.test.name === anchorName || n.test.type === "LogicalExpression" && n.test.operator === "||" && n.test.left.name === anchorName && n.test.right.type === "BinaryExpression" && n.test.right.operator === "===" && n.test.right.left.type === "MemberExpression" && n.test.right.left.property.name === "current" && n.test.right.right.type === "Identifier") && n.consequent.type === "ExpressionStatement" && n.consequent.expression.type === "AssignmentExpression" && (n.test.type !== "LogicalExpression" || text(n.test.right.left) === text(n.consequent.expression.left))), "expected snapshot").consequent.expression.left;
         const stripComposer = one(stripFunction.params[0].properties.filter((p) => p.key?.name === "composer"), "strip composer").value.name;
         insert(strip.body.start + 1, `if(${enabled}&&${strip.params[0].name}===0&&${anchorName}){let {value:__v,cursorOffset:__c}=${stripComposer};${text(anchors[0].left)}=__v.slice(0,__c);${text(anchors[1].left)}=__v.slice(__c);${text(expected)}=__v;return 0;}`);
         const suffixSeparator = one(nodes(anchorBlock, "IfStatement", (n) => nodes(n.consequent, "AssignmentExpression", (a) => a.right.value === " ").length > 0), "suffix separator");
@@ -26235,6 +26504,7 @@ var registryById = new Map([
   [computerUseRegistry.id, computerUseRegistry],
   [designCanvasRegistry.id, designCanvasRegistry],
   [planningRegistry.id, planningRegistry],
+  [shipRegistry.id, shipRegistry],
   [voiceRegistry.id, voiceRegistry],
   [autoModeRegistry.id, autoModeRegistry],
   [codeModeRegistry.id, codeModeRegistry],
